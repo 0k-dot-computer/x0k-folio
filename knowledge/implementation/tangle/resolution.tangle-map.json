@@ -1,0 +1,17 @@
+{
+  "source": "knowledge/implementation/tangle/resolution.md",
+  "source_hash": "e3e4216a89e6bfb7",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "fe7ed605271cd45a",
+      "outputs": [
+        {
+          "path": "x0k-tangle/src/resolve.rs",
+          "hash": "d28d287c908eec5c"
+        }
+      ]
+    }
+  ]
+}

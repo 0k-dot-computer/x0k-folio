@@ -1,0 +1,63 @@
+[package]
+name = "x0k-tangle"
+version = "0.1.0"
+edition = { workspace = true }
+description = "Literate programming tangler/weaver with bidirectional sync. Extracts compilable source from folio/v1 documents and reconciles edits from either side."
+license = "MIT"
+keywords = ["literate-programming", "tangle", "markdown", "codegen", "documentation"]
+categories = ["development-tools", "development-tools::build-utils", "command-line-utilities", "text-processing"]
+rust-version = { workspace = true }
+repository = "https://github.com/0k-dot-computer/x0k-folio"
+readme = "../README.md"
+
+[lib]
+name = "x0k_tangle"
+
+[[bin]]
+name = "x0k-tangle"
+path = "src/main.rs"
+
+[features]
+# `motifs` wires the x0k:media / surface-wasm bundling into the HTML region
+# weaver (region_project/region_weave). Default in the monorepo. x0k-surface-build
+# is publish-excluded, so the repository projector severs this feature in the
+# published manifest: it stays declared (the `#[cfg(feature = "motifs")]` sites
+# ship) with an empty list, out of `default`, so the motif system never ships.
+# The repo backend (region_repo) needs neither motifs nor syntax and stays
+# feature-independent.
+default = []
+motifs = [] # severed in this publication: its dependency is not published; enabling it does not build
+
+[dependencies]
+x0k-folio = { path = "../x0k-folio" , version = "0.1.0" }
+# Shared renderer-agnostic syntax tokenizer; weave uses it to emit
+# highlighted <span class="tok-*"> spans in the HTML output.
+x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
+
+pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
+# TeX → MathML at weave time. Browsers (the Chromium-only 0k.computer target)
+# render MathML Core natively, so prose math needs no client-side JS library.
+latex2mathml = "0.2"
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+walkdir = "2"
+# Format-preserving TOML editing for the repository projector (region_repo):
+# rewrites vendored crate manifests (strip workspace-hack + publish-excluded
+# optional deps, set license) without disturbing hand-authored layout.
+toml_edit = "0.22"
+# In-process unified diffs for the receiver (receive.rs): a contribution's
+# patch set is computed without shelling out, so the report is complete
+# wherever the tool runs.
+similar = "2"
+# Reference projections for receive-repo live in a temp dir removed with
+# the report.
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"

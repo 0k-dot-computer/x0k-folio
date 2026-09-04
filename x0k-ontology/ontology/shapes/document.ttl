@@ -1,0 +1,12 @@
+# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.
+# Bootstrap source: this view seeds an empty region exactly once.
+# Shapes: document
+
+<https://0k.computer/ontology#excludes> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Implementation> .
+<https://0k.computer/ontology#excludes> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#SoftwareModule> .
+<https://0k.computer/ontology#informedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#informedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Observation> .
+<https://0k.computer/ontology#motivatedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#motivatedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Intent> .
+<https://0k.computer/ontology#publishedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Profile> .
+<https://0k.computer/ontology#publishedFor> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Actor> .

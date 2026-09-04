@@ -1,0 +1,17 @@
+{
+  "source": "knowledge/implementation/folio/html-canonical.md",
+  "source_hash": "df303912c0b71409",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "fdf4f4b6da265183",
+      "outputs": [
+        {
+          "path": "x0k-folio/src/html_canonical.rs",
+          "hash": "62d017181e12e358"
+        }
+      ]
+    }
+  ]
+}

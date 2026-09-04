@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" width="880" height="300" role="img" aria-label="one document tangles to source which a machine runs, and weaves to a page which a person reads">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8e6a30"/></marker></defs>
+  <g font-family="Georgia,'Palatino Linotype',Palatino,serif">
+    <path d="M24,96 h54 l14,14 v74 h-68 z" fill="#fffff8" stroke="#b88e44" stroke-width="1.2"/>
+    <path d="M78,96 v14 h14" fill="none" stroke="#b88e44" stroke-width="1.2"/>
+    <line x1="34" y1="121" x2="80" y2="121" stroke="#d9d0b6" stroke-width="2"/>
+    <rect x="34" y="126" width="41" height="10" fill="#ede4c6"/>
+    <line x1="34" y1="147" x2="80" y2="147" stroke="#d9d0b6" stroke-width="2"/>
+    <rect x="34" y="152" width="41" height="10" fill="#ede4c6"/>
+    <text x="58" y="212" text-anchor="middle" font-size="15" fill="#111111">one document</text>
+    <path d="M270,20 h54 l14,14 v74 h-68 z" fill="#fffff8" stroke="#b88e44" stroke-width="1.2"/>
+    <path d="M324,20 v14 h14" fill="none" stroke="#b88e44" stroke-width="1.2"/>
+    <rect x="280" y="39" width="41" height="10" fill="#ede4c6"/>
+    <rect x="280" y="54" width="41" height="10" fill="#ede4c6"/>
+    <rect x="280" y="69" width="41" height="10" fill="#ede4c6"/>
+    <text x="304" y="128" text-anchor="middle" font-size="15" fill="#111111">source</text>
+    <path d="M270,176 h54 l14,14 v74 h-68 z" fill="#fffff8" stroke="#b88e44" stroke-width="1.2"/>
+    <path d="M324,176 v14 h14" fill="none" stroke="#b88e44" stroke-width="1.2"/>
+    <line x1="280" y1="201" x2="326" y2="201" stroke="#d9d0b6" stroke-width="2"/>
+    <line x1="280" y1="212" x2="326" y2="212" stroke="#d9d0b6" stroke-width="2"/>
+    <line x1="280" y1="223" x2="326" y2="223" stroke="#d9d0b6" stroke-width="2"/>
+    <text x="304" y="284" text-anchor="middle" font-size="15" fill="#111111">a page</text>
+    <line x1="96" y1="124" x2="262" y2="66" stroke="#8e6a30" stroke-width="1.2" marker-end="url(#a)"/>
+    <text x="178" y="84" text-anchor="middle" font-size="12" fill="#8e6a30" font-style="italic">tangle</text>
+    <line x1="96" y1="168" x2="262" y2="222" stroke="#8e6a30" stroke-width="1.2" marker-end="url(#a)"/>
+    <text x="178" y="212" text-anchor="middle" font-size="12" fill="#8e6a30" font-style="italic">weave</text>
+    <rect x="520" y="42" width="30" height="30" fill="#fffff8" stroke="#b88e44" stroke-width="1.1"/>
+    <rect x="528" y="54" width="14" height="6" fill="#ede4c6"/>
+    <rect x="550" y="42" width="30" height="30" fill="#fffff8" stroke="#b88e44" stroke-width="1.1"/>
+    <rect x="580" y="42" width="30" height="30" fill="#fffff8" stroke="#b88e44" stroke-width="1.1"/>
+    <rect x="588" y="54" width="14" height="6" fill="#ede4c6"/>
+    <rect x="610" y="42" width="30" height="30" fill="#fffff8" stroke="#b88e44" stroke-width="1.1"/>
+    <rect x="618" y="54" width="14" height="6" fill="#ede4c6"/>
+    <rect x="640" y="42" width="30" height="30" fill="#fffff8" stroke="#b88e44" stroke-width="1.1"/>
+    <rect x="670" y="42" width="30" height="30" fill="#fffff8" stroke="#b88e44" stroke-width="1.1"/>
+    <rect x="678" y="54" width="14" height="6" fill="#ede4c6"/>
+    <g><path d="M526.0,23 h18 v9 l-9,8 l-9,-8 z" fill="#b22222" opacity="0.85"/>
+      <animateTransform attributeName="transform" type="translate" calcMode="discrete" values="0,0;30,0;60,0;90,0;120,0;150,0;120,0;90,0;60,0;30,0" dur="6s" repeatCount="indefinite"/></g>
+    <line x1="346" y1="66" x2="512" y2="60" stroke="#8e6a30" stroke-width="1.2" marker-end="url(#a)"/>
+    <text x="429" y="50" text-anchor="middle" font-size="12" fill="#8e6a30" font-style="italic">compile</text>
+    <text x="610.0" y="128" text-anchor="middle" font-size="14" fill="#111111">a machine runs it</text>
+    <path d="M528,222 C554,189 606,189 632,222 C606,255 554,255 528,222 Z" fill="#fffff8" stroke="#b88e44" stroke-width="1.3"/>
+    <circle cx="580" cy="222" r="16" fill="#f6efd8" stroke="#b88e44" stroke-width="1.1"/>
+    <circle cx="580" cy="222" r="6.5" fill="#111111"/>
+    <circle cx="586" cy="216" r="2.2" fill="#fffff8"/>
+    <line x1="346" y1="222" x2="522" y2="222" stroke="#8e6a30" stroke-width="1.2" marker-end="url(#a)"/>
+    <text x="434" y="212" text-anchor="middle" font-size="12" fill="#8e6a30" font-style="italic">read</text>
+    <text x="580" y="284" text-anchor="middle" font-size="14" fill="#111111">a person reads it</text>
+  </g>
+</svg>

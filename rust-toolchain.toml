@@ -1,0 +1,10 @@
+# The toolchain this repository is built and tested on. Pinned so that a CI
+# run and a local `tools/ci` run are the same build.
+#
+# This is the CEILING. The FLOOR — the oldest Rust that can build this
+# repository — is `rust-version` in the workspace Cargo.toml, and `tools/ci`
+# proves it: clippy's `incompatible_msrv` lint fails on any item stable later
+# than that version.
+[toolchain]
+channel = "1.95.0"
+components = ["clippy"]

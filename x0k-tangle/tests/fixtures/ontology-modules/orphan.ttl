@@ -1,0 +1,13 @@
+# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.
+# Bootstrap source: this view seeds an empty region exactly once.
+# Module: orphan
+
+<https://0k.computer/ontology/orphan#Stray> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology/orphan#Stray> <http://www.w3.org/2000/01/rdf-schema#comment> "A class whose module imports a module that is not in the tree." .
+<https://0k.computer/ontology/orphan#Stray> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/orphan> .
+<https://0k.computer/ontology/orphan#Stray> <http://www.w3.org/2000/01/rdf-schema#label> "Stray" .
+<https://0k.computer/ontology/orphan> <http://purl.org/vocab/vann/preferredNamespaceUri> "https://0k.computer/ontology/orphan#" .
+<https://0k.computer/ontology/orphan> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<https://0k.computer/ontology/orphan> <http://www.w3.org/2000/01/rdf-schema#comment> "A domain extension whose only import is absent from the tree." .
+<https://0k.computer/ontology/orphan> <http://www.w3.org/2000/01/rdf-schema#label> "orphan" .
+<https://0k.computer/ontology/orphan> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/absent> .

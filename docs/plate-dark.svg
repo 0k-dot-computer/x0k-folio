@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 170" width="960" height="170" role="img" aria-label="folio">
+  <rect width="960" height="170" fill="#12121a"/>
+  <rect x="16" y="16" width="928" height="138" fill="none" stroke="#2a2a3a" stroke-width="1"/>
+  <rect x="23" y="23" width="914" height="124" fill="none" stroke="#525278" stroke-width="0.5"/>
+  <text x="480" y="102" text-anchor="middle" font-family="Georgia,'Palatino Linotype',Palatino,'Book Antiqua',serif" font-size="72" font-style="italic" letter-spacing="3" fill="#e2e8f0">folio</text>
+  <line x1="400" y1="122" x2="560" y2="122" stroke="#22d3ee" stroke-width="1"/>
+</svg>

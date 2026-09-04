@@ -1,0 +1,35 @@
+[package]
+name = "x0k-syntax"
+version = "0.1.0"
+edition = { workspace = true }
+license = "MIT"
+description = "Pure tree-sitter syntax tokenizer: maps source code to semantic TokenKind spans with no rendering dependencies, so native and web presenters share one classification and choose their own colors."
+keywords = ["syntax-highlighting", "tree-sitter", "tokenizer", "highlighting", "parsing"]
+categories = ["parser-implementations", "text-processing", "development-tools"]
+rust-version = { workspace = true }
+repository = "https://github.com/0k-dot-computer/x0k-folio"
+readme = "../README.md"
+
+[features]
+default = ["syntax-highlight"]
+# Enable tree-sitter based syntax highlighting. When disabled, `highlight`
+# always returns `None` and the grammar crates are not compiled.
+syntax-highlight = [
+    "dep:tree-sitter",
+    "dep:tree-sitter-json",
+    "dep:tree-sitter-rust",
+    "dep:tree-sitter-python",
+    "dep:tree-sitter-typescript",
+]
+
+[dependencies]
+tracing = "0.1"
+
+# Grammar versions are pinned to tree-sitter 0.24 (language ABI 14). Consumers
+# of this crate that link their own tree-sitter grammars must bump in lockstep:
+# do not move to tree-sitter 0.25 / ABI 15 here without moving every consumer.
+tree-sitter = { version = "0.24", optional = true }
+tree-sitter-json = { version = "0.24", optional = true }
+tree-sitter-rust = { version = "0.23", optional = true }
+tree-sitter-python = { version = "0.23", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }

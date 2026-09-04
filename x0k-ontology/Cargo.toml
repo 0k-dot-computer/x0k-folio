@@ -1,0 +1,31 @@
+[package]
+name = "x0k-ontology"
+version = "0.1.0"
+edition = { workspace = true }
+license = "MIT"
+description = "Compiles a set of OWL vocabulary modules into the Rust class, property, and edge-predicate tables a document's type and edges are checked against."
+build = "build.rs"
+keywords = ["ontology", "owl", "rdf", "vocabulary", "codegen"]
+categories = ["development-tools::build-utils", "data-structures"]
+rust-version = { workspace = true }
+repository = "https://github.com/0k-dot-computer/x0k-folio"
+readme = "../README.md"
+
+[features]
+# The hand-authored vocabularies for x0k's own internal subjects — grants,
+# calendars, declarations, entries, findings, proposals, settlements, usage.
+# Off by default: a plain build is the concept-fact fold and its views.
+product = ["blake3"]
+
+[dependencies]
+# The finding vocabulary's subject-determined URI mint hashes its
+# (check, tree-state) pair; nothing RDF-shaped enters the runtime graph.
+# That vocabulary is behind `product`, and so is the hash.
+blake3 = { version = "1.5", optional = true }
+
+[build-dependencies]
+# The checked Turtle is parsed only to bootstrap an empty concept region.
+# Runtime consumers fold ordinary facts and never pull an RDF parser into
+# their dependency graph.
+oxttl = "0.2"
+oxrdf = "0.3"

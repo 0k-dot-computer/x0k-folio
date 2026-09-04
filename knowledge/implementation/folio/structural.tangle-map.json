@@ -1,0 +1,17 @@
+{
+  "source": "knowledge/implementation/folio/structural.md",
+  "source_hash": "9f9cc4ea09c8c864",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "8e09d628d274c588",
+      "outputs": [
+        {
+          "path": "x0k-folio/src/structural_block.rs",
+          "hash": "e5bda3bc1ea7f290"
+        }
+      ]
+    }
+  ]
+}

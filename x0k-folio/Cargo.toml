@@ -1,0 +1,62 @@
+[package]
+name = "x0k-folio"
+version = "0.1.0"
+edition = { workspace = true }
+description = "folio/v1 envelope types, projection plugin, and HTML canonicalizer. Substrate for ontology-aware markdown/HTML documents."
+license = "MIT"
+keywords = ["literate-programming", "markdown", "frontmatter", "yaml", "documentation"]
+categories = ["parser-implementations", "text-processing", "development-tools"]
+rust-version = { workspace = true }
+repository = "https://github.com/0k-dot-computer/x0k-folio"
+readme = "../README.md"
+
+[lib]
+name = "x0k_folio"
+
+[features]
+# `plugins` wires the folio/v1 projection into x0k-types's ClassRegistry
+# (the `projection` module + `register_colophon_factory`). Default in the
+# monorepo. x0k-types is publish-excluded, so the repository projector
+# severs this feature in the published manifest: it stays declared (the
+# `#[cfg(feature = "plugins")]` sites ship) with an empty list, out of
+# `default`, so the minimal format library never pulls the x0k-types
+# substrate tree (x0k-serialization, x0k-entry-types, vector-clock,
+# x0k-macros, …).
+default = []
+plugins = [] # severed in this publication: its dependency is not published; enabling it does not build
+
+[dependencies]
+
+# The vocabulary the envelope's `edges:` predicates are terms of.
+# `envelope_check` reads a document against whichever ontology modules
+# this build compiled, and `inline_entity` maps an inline entity's
+# snake_case keys to their camelCase ontology names. Published alongside
+# this crate and non-optional: a format library that cannot check a
+# document against its own vocabulary is the missing layer
+# `x0k:architecture/publication-projection` §6 names. Its own dependency
+# tree is a build-time TTL parser plus an optional blake3, so the
+# standalone build stays small.
+x0k-ontology = { path = "../x0k-ontology" , version = "0.1.0" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_norway = "0.9"
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+# HTML normalization for folio/v1 HTML bodies. `html5ever` parses the
+# fragment into an `RcDom`; the custom serializer in `html_canonical.rs`
+# walks the tree and emits the canonical form.
+html5ever = "0.39"
+markup5ever_rcdom = "=0.39.0"
+
+# Block segmentation (`block_segment.rs`) and inline-entity extraction
+# (`inline_entity.rs`) both walk the body with pulldown-cmark: the
+# segmenter splits it into top-level blocks and the extractor finds
+# marked fences by byte range. blake3 stamps a compiler-version-stable
+# content hash per block (DefaultHasher is unstable across rebuilds, which would break
+# underwriting acceptances that lock to a hash). Version matches x0k-tangle.
+pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
+blake3 = "1"
+
+[dev-dependencies]

@@ -1,0 +1,1268 @@
+---
+x0k:
+  format: folio/v1
+  id: x0k:implementation/folio/inline-entities
+  type: implementation
+  status: draft
+  summary: Pulling an entity that was authored inside a document's prose back out of it — the section is the record, the heading is the title, and the extractor reads declarations without resolving them.
+  concerns: [folio, affordances, extraction, publishing, markdown]
+  tangle:
+    crate: x0k-folio
+    root: src/inline_entity.rs
+  edges:
+    implements:
+      - x0k:design/publish-a-region-as-a-repository
+    cites:
+      - x0k:architecture/publication-projection
+      - x0k:implementation/folio/colophon
+      - x0k:implementation/folio/identity
+      - x0k:implementation/folio/segmentation
+---
+# Entities authored inside prose
+
+A design document does not merely mention the affordances it defines; it
+*defines* them, in place, as a run of sections:
+
+````markdown
+### Publish a region as a repository
+
+I project a demarcated region of my graph outward as a standalone
+repository: its literate documents and the code they tangle to,
+committed so anyone can clone, read, and build it.
+
+```yaml x0k:!affordance
+id: x0k:affordance/publish_region_as_repository
+status: wip
+actors: [human]
+edges:
+  requires:
+    - x0k:affordance/demarcate_publication
+```
+````
+
+The prose is the affordance's description, the heading is its title, and
+the fenced block is its structured half. Nothing about that arrangement
+is a convenience: an affordance exists *because* a design brought it into
+being, so putting the declaration anywhere else would let the two drift.
+The cost is that reading the affordance means reading the document, and
+this module is what does the reading.
+
+The `!` in that block's marker is the reason this chapter can show you
+the grammar at all. A real declaration reads `yaml x0k:affordance`;
+`yaml x0k:!affordance` is the same block held at arm's length — it
+parses and renders identically and declares nothing, the way the
+tangler's `<<!name>>` shows a chunk reference without expanding it.
+Without it, a document about the syntax would be a document *performing*
+the syntax, and this one would ship an affordance it has no means to
+deliver.
+
+It is one pure function — bytes in, structured records out. No store, no
+socket, no resolution. That is why it belongs to the format library and
+not to the daemon it grew up in: the question "what does this document
+declare?" is document semantics, answerable by anyone holding the
+document.
+
+## The extractor extracts; it does not resolve
+
+One field forces the boundary. An affordance may declare
+`requires_resources:` — a placement demand, saying the capability needs
+two CPU cores or a GPU or a Linux host. Turning that into typed fleet
+values is a different act from reading it: it means knowing what a
+`ResourceKind` is, which arches exist, which currencies and token kinds
+and periods the platform recognizes. Measured across the corpus at the
+cut: of 427 affordances in 82 documents, five declare
+`requires_resources`, and that one field accounted for ten of the eleven
+substrate types the extractor was importing.
+
+So the split runs through that field. This module reads the demands and
+hands them back **as declared** — well-formed YAML mappings, unresolved.
+Interpreting them is the host's job, above. The rule stated generally:
+*the extractor extracts; it does not resolve.* What survives here is the
+grammar every reader of a folio document agrees on; what leaves is the
+fleet's opinion about what the words mean.
+
+The shape is still checked, because shape is grammar: `requires_resources`
+must be a mapping or a list of mappings, and a document that writes a
+bare string there is malformed in a way any reader can see.
+
+```rust {#module-doc}
+//! Inline-entity extraction for folio/v1 bodies.
+//!
+//! Walks the markdown body of a folio document looking for fenced code
+//! blocks whose info string carries the marker `yaml x0k:<type>`. Each
+//! match is an *inline entity* — an entity authored inside its parent
+//! document rather than in a file of its own. The motivating case is an
+//! `affordance` defined within its parent `design`, but the mechanism is
+//! class-agnostic.
+//!
+//! ## Section-per-entity demarcation
+//!
+//! Each inline entity owns the heading section that encloses its YAML
+//! block:
+//!
+//! - **Heading text = entity title.** The YAML must not carry a
+//!   `title:` field; the heading provides it.
+//! - **All prose under the heading until the next heading at any level =
+//!   description.** The YAML block itself is excised from it.
+//! - **Exactly one `yaml x0k:<type>` block per section.** A second is an
+//!   error against that block, not against the section.
+//! - **No enclosing heading** is an error — an inline entity needs a
+//!   title, and the heading is where it lives.
+//!
+//! ## Info string format
+//!
+//! CommonMark exposes the text after the opening fence
+//! (` ```yaml x0k:affordance ` → `"yaml x0k:affordance"`) as one string.
+//! Split on ASCII whitespace, token 0 must be `yaml` (the content format,
+//! so editors highlight it) and token 1 must be `x0k:<type>` (the entity
+//! marker). Nothing else is accepted; the info string is shaped, not
+//! free-form.
+//!
+//! HTML bodies use the equivalent `<pre><code class="language-yaml"
+//! data-x0k-type="<type>">` shape. This module parses markdown only.
+//!
+//! A marker written `x0k:!<type>` is illustrative — a block that *shows*
+//! the grammar rather than declaring an entity — and is skipped here.
+//! See [`crate::FenceInfo`].
+//!
+//! ## What it does not do
+//!
+//! Pure: bytes in, records out. No IO, no global state, no resolution.
+//! `requires_resources` is handed back as declared — well-formed YAML,
+//! uninterpreted — because turning a placement demand into typed fleet
+//! values is the host's judgment, not the document's meaning.
+
+use std::collections::HashSet;
+
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use tracing::warn;
+
+use crate::entity_id::EntityId;
+use crate::structural_block::FenceInfo;
+```
+
+## The record
+
+Six fields, and the two that look redundant are not. `uri` comes from
+the YAML `id:`; `marker_class` comes from the fence's info string. They
+must agree — the marker is the routing key and the id carries the
+identity — and keeping both is what lets the extractor say *which* of
+them was wrong.
+
+```rust {#inline-entity}
+/// A single inline entity extracted from a parent document's body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlineEntity {
+    /// Identity from the YAML `id:` field.
+    pub uri: EntityId,
+    /// Heading text of the enclosing section.
+    pub title: String,
+    /// Prose under that heading, with the YAML block excised. Trimmed.
+    pub description: String,
+    /// The YAML mapping as authored. Top-level only — nested maps
+    /// (`edges:`) are flattened by whoever emits facts.
+    pub yaml: serde_norway::Mapping,
+    /// Placement demands the entity declared, **as declared**. Shape is
+    /// checked (each is a mapping); meaning is not. Interpreting these
+    /// as typed resources is a host concern above this layer.
+    pub requires_resources: Vec<serde_norway::Mapping>,
+    /// Class marker from the info string's second token (`x0k:<type>` →
+    /// `<type>`). Mirrors `uri.class` when the YAML is well-formed;
+    /// carried separately so a mismatch is reportable.
+    pub marker_class: String,
+}
+```
+
+## Errors, per block
+
+A malformed block disqualifies itself and nothing else: one bad
+affordance in a design does not cost the document its other seven. So
+extraction returns a `Result` per attempted record rather than a
+`Result` over the batch, and every variant carries enough to name the
+offending section in a log line.
+
+```rust {#error}
+/// Extraction error. Non-fatal at the document level: the caller logs
+/// and skips per record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InlineEntityError {
+    /// A marked block with no enclosing heading. Inline entities own a
+    /// heading section; without one there is no title.
+    MissingHeading { marker_class: String },
+    /// A second marked block under the same heading. One section, one
+    /// entity.
+    MultipleBlocksInSection {
+        marker_class: String,
+        heading: String,
+    },
+    /// The YAML did not parse, or its top level was not a mapping.
+    InvalidYaml {
+        marker_class: String,
+        heading: String,
+        reason: String,
+    },
+    /// No `id:` field, or its value was not a string.
+    MissingId {
+        marker_class: String,
+        heading: String,
+    },
+    /// The `id:` value is not a well-formed entity id.
+    InvalidUri {
+        marker_class: String,
+        heading: String,
+        value: String,
+        reason: String,
+    },
+    /// The `id:` URI's class disagrees with the info-string marker.
+    ClassMismatch {
+        marker_class: String,
+        heading: String,
+        uri_class: String,
+    },
+    /// The YAML declared a `definedIn` / `defined_in` edge. That edge is
+    /// implicit from embedding and must not appear in the source.
+    ExplicitDefinedIn {
+        marker_class: String,
+        heading: String,
+    },
+    /// The YAML carried a `title:` field. The heading is the title.
+    DuplicateTitle {
+        marker_class: String,
+        heading: String,
+    },
+    /// `requires_resources:` is not a mapping or a list of mappings.
+    /// A host that interprets the demands reuses this variant when a
+    /// well-shaped mapping still fails its own reading.
+    InvalidResources {
+        marker_class: String,
+        heading: String,
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for InlineEntityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingHeading { marker_class } => write!(
+                f,
+                "inline `{marker_class}` block has no enclosing heading; the section-per-entity rule requires a heading above the block"
+            ),
+            Self::MultipleBlocksInSection {
+                marker_class,
+                heading,
+            } => write!(
+                f,
+                "more than one `yaml x0k:{marker_class}` block in section `{heading}`; one entity per section"
+            ),
+            Self::InvalidYaml {
+                marker_class,
+                heading,
+                reason,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` has invalid YAML: {reason}"
+            ),
+            Self::MissingId {
+                marker_class,
+                heading,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` is missing the required `id:` field"
+            ),
+            Self::InvalidUri {
+                marker_class,
+                heading,
+                value,
+                reason,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` has invalid id `{value}`: {reason}"
+            ),
+            Self::ClassMismatch {
+                marker_class,
+                heading,
+                uri_class,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` carries a `{uri_class}` id; info-string marker and id class must agree"
+            ),
+            Self::ExplicitDefinedIn {
+                marker_class,
+                heading,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` declared `definedIn` (or `defined_in`) — that edge is implicit from embedding and must not appear in the YAML"
+            ),
+            Self::DuplicateTitle {
+                marker_class,
+                heading,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` carries a `title:` field — the heading is the title"
+            ),
+            Self::InvalidResources {
+                marker_class,
+                heading,
+                reason,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` has invalid resource requirements: {reason}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InlineEntityError {}
+```
+
+## Reading the fence
+
+The fence carrier is already parsed once, canonically, by
+[`FenceInfo`](structural.md) — the same type the markdown parser, the
+HTML parser and the renderers share. So this module does not re-scan the
+info string; it asks the carrier for the type the fence *declares* and
+then applies the two extra conditions that are this grammar's own: the
+language must be `yaml`, and there must be nothing trailing.
+
+Delegating is what makes the illustrative escape reach here for free.
+`FenceInfo::x0k_type` answers `None` for `x0k:!affordance`, so a block
+that shows the grammar is simply not a block this walk cares about — and
+it is `None` for the same reason a fence with no marker at all is, which
+is the point: there is one question, asked one way, with no flag beside
+it for this module to forget.
+
+```rust {#info-string}
+/// Parse a fence info string into `Some(marker_class)` when it matches
+/// `yaml x0k:<type>`, else `None`. Whitespace-insensitive between the
+/// tokens; case-insensitive on `yaml`; trailing tokens are refused; an
+/// illustrative marker (`x0k:!<type>`) declares nothing and is refused
+/// with it.
+fn parse_info_string(info: &str) -> Option<String> {
+    let carrier = FenceInfo::parse(info);
+    if !carrier.language()?.eq_ignore_ascii_case("yaml") || carrier.info().is_some() {
+        return None;
+    }
+    carrier.x0k_type().map(str::to_string)
+}
+```
+
+## Two passes over the body
+
+The description is "everything under the heading except the block", and
+that phrasing is why the walk is two passes rather than one. A streaming
+pass knows what came before the block but not what comes after, and the
+prose after a block is as much the entity's description as the prose
+before — the corpus writes it both ways. So the first pass records byte
+ranges for every heading and every qualifying block, and the second pass
+does arithmetic on them: the section runs from the heading's end to the
+next heading's start, minus the block's own span.
+
+Byte offsets are available because `into_offset_iter` gives each event
+its source range, which is also what makes the excision exact rather
+than a re-serialization of parsed events.
+
+```rust {#extract}
+/// Walk a markdown body and return one `Result` per attempted record, so
+/// a caller can warn per error without dropping the batch.
+///
+/// `allowed_inline_classes` is the eligible set for this parent: markers
+/// outside it are logged and skipped rather than reported as errors,
+/// because a class this document may not host is not this document's
+/// mistake.
+pub fn extract_from_markdown(
+    body: &str,
+    allowed_inline_classes: &HashSet<String>,
+) -> Vec<Result<InlineEntity, InlineEntityError>> {
+    let mut out: Vec<Result<InlineEntity, InlineEntityError>> = Vec::new();
+
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_HEADING_ATTRIBUTES;
+
+    struct PendingHeading {
+        text: String,
+        /// End offset of the heading line — where its section's prose starts.
+        end: usize,
+        /// Start offset of the heading line — the previous section's end.
+        start: usize,
+    }
+    struct PendingBlock {
+        marker_class: String,
+        yaml: String,
+        block_start: usize,
+        block_end: usize,
+    }
+
+    let mut headings: Vec<PendingHeading> = Vec::new();
+    let mut blocks: Vec<PendingBlock> = Vec::new();
+
+    let mut active_marker: Option<String> = None;
+    let mut active_block_byte_start: usize = 0;
+    let mut active_yaml = String::new();
+
+    let mut in_heading: bool = false;
+    let mut active_heading_buf = String::new();
+    let mut active_heading_start: usize = 0;
+
+    let parser = Parser::new_ext(body, options).into_offset_iter();
+    for (event, range) in parser {
+        match event {
+            Event::Start(Tag::Heading { .. }) => {
+                in_heading = true;
+                active_heading_buf.clear();
+                active_heading_start = range.start;
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                in_heading = false;
+                let text = active_heading_buf.trim().to_string();
+                active_heading_buf.clear();
+                headings.push(PendingHeading {
+                    text,
+                    end: range.end,
+                    start: active_heading_start,
+                });
+            }
+            Event::Text(t) if in_heading => active_heading_buf.push_str(&t),
+            Event::Code(c) if in_heading => active_heading_buf.push_str(&c),
+
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                if let Some(marker) = parse_info_string(&info) {
+                    if !allowed_inline_classes.contains(&marker) {
+                        warn!(
+                            marker_class = %marker,
+                            "inline-entity: marker class is not allowed under this parent class; skipping"
+                        );
+                    } else {
+                        active_marker = Some(marker);
+                        active_block_byte_start = range.start;
+                        active_yaml.clear();
+                    }
+                }
+            }
+            Event::Text(t) if active_marker.is_some() => active_yaml.push_str(&t),
+            Event::End(TagEnd::CodeBlock) => {
+                let Some(marker_class) = active_marker.take() else {
+                    continue;
+                };
+                blocks.push(PendingBlock {
+                    marker_class,
+                    yaml: std::mem::take(&mut active_yaml),
+                    block_start: active_block_byte_start,
+                    block_end: range.end,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    for (block_idx, block) in blocks.iter().enumerate() {
+        // The enclosing heading is the last one that closed before the
+        // block opened.
+        let mut enclosing: Option<&PendingHeading> = None;
+        for h in &headings {
+            if h.end <= block.block_start {
+                enclosing = Some(h);
+            } else {
+                break;
+            }
+        }
+
+        let section_end = match enclosing {
+            Some(h) => headings
+                .iter()
+                .find(|other| other.start > h.start)
+                .map(|next| next.start)
+                .unwrap_or(body.len()),
+            None => body.len(),
+        };
+
+        // Earlier qualifying blocks inside the same section make this one
+        // the second, which is the error case.
+        let section_block_count = match enclosing {
+            Some(h) => blocks
+                .iter()
+                .take(block_idx)
+                .filter(|prev| prev.block_start >= h.end && prev.block_start < section_end)
+                .count(),
+            None => 0,
+        };
+
+        let section_prose_start = enclosing.map(|h| h.end).unwrap_or(0);
+        if let Some(record) = finalize_block(
+            &block.marker_class,
+            &block.yaml,
+            enclosing.map(|h| h.text.as_str()),
+            section_block_count,
+            body,
+            section_prose_start,
+            section_end,
+            block.block_start,
+            block.block_end,
+        ) {
+            out.push(record);
+        }
+    }
+
+    out
+}
+```
+
+## Turning one block into a record
+
+The checks run in the order that lets each one assume the last: a
+heading before a section, a mapping before a field, an id before a class
+comparison. Two of them are prohibitions rather than validations —
+`title:` and `definedIn` are both *forbidden*, because both would let a
+document state something the embedding already says, and two sources for
+one fact is how they come to disagree.
+
+```rust {#finalize}
+/// Convert one captured block plus its section state into a record, or
+/// the error that disqualifies it. `None` is the skip-after-warn branch.
+#[allow(clippy::too_many_arguments)]
+fn finalize_block(
+    marker_class: &str,
+    yaml_text: &str,
+    heading: Option<&str>,
+    section_block_count: usize,
+    body: &str,
+    section_prose_start: usize,
+    section_prose_end: usize,
+    block_byte_start: usize,
+    block_byte_end: usize,
+) -> Option<Result<InlineEntity, InlineEntityError>> {
+    let heading_text = match heading {
+        Some(h) if !h.is_empty() => h,
+        _ => {
+            return Some(Err(InlineEntityError::MissingHeading {
+                marker_class: marker_class.to_string(),
+            }));
+        }
+    };
+
+    if section_block_count > 0 {
+        return Some(Err(InlineEntityError::MultipleBlocksInSection {
+            marker_class: marker_class.to_string(),
+            heading: heading_text.to_string(),
+        }));
+    }
+
+    let invalid_yaml = |reason: String| InlineEntityError::InvalidYaml {
+        marker_class: marker_class.to_string(),
+        heading: heading_text.to_string(),
+        reason,
+    };
+
+    let mapping = match serde_norway::from_str::<serde_norway::Value>(yaml_text) {
+        Ok(serde_norway::Value::Mapping(m)) => m,
+        Ok(_) => return Some(Err(invalid_yaml("top-level YAML is not a mapping".into()))),
+        Err(e) => return Some(Err(invalid_yaml(e.to_string()))),
+    };
+
+    let id_value = match yaml_get(&mapping, "id") {
+        Some(serde_norway::Value::String(s)) => s.clone(),
+        Some(_) => return Some(Err(invalid_yaml("`id` must be a string".into()))),
+        None => {
+            return Some(Err(InlineEntityError::MissingId {
+                marker_class: marker_class.to_string(),
+                heading: heading_text.to_string(),
+            }));
+        }
+    };
+    let uri: EntityId = match id_value.parse() {
+        Ok(u) => u,
+        Err(e) => {
+            return Some(Err(InlineEntityError::InvalidUri {
+                marker_class: marker_class.to_string(),
+                heading: heading_text.to_string(),
+                value: id_value,
+                reason: e.to_string(),
+            }));
+        }
+    };
+
+    if uri.class != marker_class {
+        return Some(Err(InlineEntityError::ClassMismatch {
+            marker_class: marker_class.to_string(),
+            heading: heading_text.to_string(),
+            uri_class: uri.class.clone(),
+        }));
+    }
+
+    if yaml_get(&mapping, "title").is_some() {
+        return Some(Err(InlineEntityError::DuplicateTitle {
+            marker_class: marker_class.to_string(),
+            heading: heading_text.to_string(),
+        }));
+    }
+
+    // `definedIn` is implicit from embedding. Look both at the top level
+    // and inside `edges:`, the canonical home for edge predicates.
+    let declared_defined_in = yaml_get(&mapping, "definedIn").is_some()
+        || yaml_get(&mapping, "defined_in").is_some()
+        || matches!(
+            yaml_get(&mapping, "edges"),
+            Some(serde_norway::Value::Mapping(edges))
+                if yaml_get(edges, "definedIn").is_some()
+                    || yaml_get(edges, "defined_in").is_some()
+        );
+    if declared_defined_in {
+        return Some(Err(InlineEntityError::ExplicitDefinedIn {
+            marker_class: marker_class.to_string(),
+            heading: heading_text.to_string(),
+        }));
+    }
+
+    let requires_resources =
+        match declared_resources(&mapping, marker_class, heading_text) {
+            Ok(r) => r,
+            Err(e) => return Some(Err(e)),
+        };
+
+    let description = section_description(
+        body,
+        section_prose_start,
+        section_prose_end,
+        block_byte_start,
+        block_byte_end,
+    );
+
+    Some(Ok(InlineEntity {
+        uri,
+        title: heading_text.to_string(),
+        description,
+        yaml: mapping,
+        requires_resources,
+        marker_class: marker_class.to_string(),
+    }))
+}
+```
+
+The description is the section with a hole in it, and the two remaining
+fragments are joined by a blank line so the result reads as markdown
+rather than as two paragraphs run together.
+
+```rust {#description}
+/// Section prose with the YAML block's span excised. Prose before and
+/// after the block are both kept — the corpus writes it both ways — and
+/// rejoined with a blank line.
+fn section_description(
+    body: &str,
+    section_prose_start: usize,
+    section_prose_end: usize,
+    block_byte_start: usize,
+    block_byte_end: usize,
+) -> String {
+    let pre = body
+        .get(section_prose_start..block_byte_start)
+        .unwrap_or("");
+    let post = body.get(block_byte_end..section_prose_end).unwrap_or("");
+    let mut description = String::with_capacity(pre.len() + post.len() + 2);
+    description.push_str(pre.trim());
+    let post_trimmed = post.trim();
+    if !description.is_empty() && !post_trimmed.is_empty() {
+        description.push_str("\n\n");
+    }
+    description.push_str(post_trimmed);
+    description.trim().to_string()
+}
+```
+
+## Declared demands, unread
+
+Both spellings are accepted because both appear in the corpus, and a
+single mapping is accepted where a list would be because a one-element
+list is a papercut nobody should have to remember. Beyond that the
+mapping is passed through untouched.
+
+```rust {#resources}
+/// Read `requires_resources:` as declared. Shape only: each entry must
+/// be a mapping. What a mapping *means* is the host's reading.
+fn declared_resources(
+    mapping: &serde_norway::Mapping,
+    marker_class: &str,
+    heading: &str,
+) -> Result<Vec<serde_norway::Mapping>, InlineEntityError> {
+    let invalid = |reason: String| InlineEntityError::InvalidResources {
+        marker_class: marker_class.to_string(),
+        heading: heading.to_string(),
+        reason,
+    };
+
+    let value = yaml_get(mapping, "requires_resources")
+        .or_else(|| yaml_get(mapping, "requiresResources"));
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    match value {
+        serde_norway::Value::Mapping(one) => Ok(vec![one.clone()]),
+        serde_norway::Value::Sequence(seq) => seq
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| match item {
+                serde_norway::Value::Mapping(m) => Ok(m.clone()),
+                _ => Err(invalid(format!("resource #{} is not a mapping", idx + 1))),
+            })
+            .collect(),
+        _ => Err(invalid(
+            "`requires_resources` must be a resource mapping or a list of resource mappings"
+                .to_string(),
+        )),
+    }
+}
+
+/// String-keyed lookup, the only kind an envelope uses.
+fn yaml_get<'a>(
+    mapping: &'a serde_norway::Mapping,
+    key: &str,
+) -> Option<&'a serde_norway::Value> {
+    mapping.get(serde_norway::Value::String(key.to_string()))
+}
+```
+
+## Flattening a record to facts
+
+An extracted entity becomes a flat `(predicate, value)` list on the way
+to a fact store. Two decisions in that translation are worth naming.
+
+Unknown top-level keys are namespaced under the entity's own class
+(`x0k:affordance/status`) rather than dropped or promoted, so a
+declarative field a future vocabulary has not reached cannot collide
+with a structural predicate. And the `definedIn` edge is appended
+unconditionally, from the embedding location — the source never
+declares it, so the fact is minted rather than copied.
+
+The predicate mapping is a parameter because a host may know more terms
+than the compiled vocabulary does. The default answers from
+`x0k-ontology` alone, which is the right answer for a consumer holding
+only what this bundle ships.
+
+```rust {#facts}
+/// The declared half of an entity's facts: title, description, scalar
+/// fields, and `edges:` targets. No `definedIn` — that is the parent's
+/// to add, via [`defined_in_fact`] — and no resources, which a host
+/// emits from its own reading of `requires_resources`.
+///
+/// `predicate` maps a snake_case key to its camelCase ontology name.
+pub fn declared_facts_with<F>(entity: &InlineEntity, predicate: F) -> Vec<(String, String)>
+where
+    F: Fn(&str) -> Option<&'static str>,
+{
+    let mut out: Vec<(String, String)> = Vec::new();
+
+    out.push(("x0k:title".to_string(), format!("string:{}", entity.title)));
+    if !entity.description.is_empty() {
+        out.push((
+            "x0k:description".to_string(),
+            format!("string:{}", entity.description),
+        ));
+    }
+
+    for (key, value) in &entity.yaml {
+        let serde_norway::Value::String(key_str) = key else {
+            continue;
+        };
+        if matches!(
+            key_str.as_str(),
+            "id" | "edges" | "title" | "requires_resources" | "requiresResources"
+        ) {
+            continue;
+        }
+        let name = match predicate(key_str) {
+            Some(camel) => camel.to_string(),
+            None => format!("x0k:{}/{}", entity.marker_class, key_str),
+        };
+        emit_value(&name, value, &mut out);
+    }
+
+    if let Some(serde_norway::Value::Mapping(edges)) = yaml_get(&entity.yaml, "edges") {
+        for (pred_key, targets) in edges {
+            let serde_norway::Value::String(pred_snake) = pred_key else {
+                continue;
+            };
+            // Unknown predicates pass through verbatim — the same
+            // forward-compatibility the envelope path applies.
+            let name = predicate(pred_snake)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| pred_snake.clone());
+            let targets_seq: Vec<&serde_norway::Value> = match targets {
+                serde_norway::Value::Sequence(seq) => seq.iter().collect(),
+                single @ serde_norway::Value::String(_) => vec![single],
+                _ => continue,
+            };
+            for t in targets_seq {
+                if let serde_norway::Value::String(target) = t {
+                    out.push((name.clone(), format!("entity:{target}")));
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// [`declared_facts_with`] answering from the compiled vocabulary alone.
+pub fn declared_facts(entity: &InlineEntity) -> Vec<(String, String)> {
+    declared_facts_with(entity, x0k_ontology::snake_to_camel)
+}
+
+/// The implicit edge back to the document the entity was authored in.
+/// Minted from the embedding location; never read from the source.
+pub fn defined_in_fact(parent_uri: &str) -> (String, String) {
+    ("definedIn".to_string(), format!("entity:{parent_uri}"))
+}
+
+/// Declared facts plus the implicit `definedIn` edge — the whole record
+/// for a consumer that does not interpret `requires_resources`.
+pub fn inline_entity_facts(entity: &InlineEntity, parent_uri: &str) -> Vec<(String, String)> {
+    let mut out = declared_facts(entity);
+    out.push(defined_in_fact(parent_uri));
+    out
+}
+```
+
+A sequence under a scalar key flattens to one fact per element rather
+than one fact holding a list, because the fact store's value is a scalar
+and `actors: [human, ai_agent]` means two claims. Nested mappings under
+a scalar key are skipped: `edges:` is the only mapping with an agreed
+flattening, and guessing at the others would invent structure the
+document did not state.
+
+```rust {#emit-value}
+/// One fact per scalar; one per element for a sequence; nothing for a
+/// nested mapping, whose flattening this layer does not get to invent.
+fn emit_value(predicate: &str, value: &serde_norway::Value, out: &mut Vec<(String, String)>) {
+    match value {
+        serde_norway::Value::String(s) => {
+            out.push((predicate.to_string(), format!("string:{s}")));
+        }
+        serde_norway::Value::Bool(b) => {
+            out.push((predicate.to_string(), format!("string:{b}")));
+        }
+        serde_norway::Value::Number(n) => {
+            out.push((predicate.to_string(), format!("string:{n}")));
+        }
+        serde_norway::Value::Sequence(seq) => {
+            for item in seq {
+                emit_value(predicate, item, out);
+            }
+        }
+        serde_norway::Value::Mapping(_)
+        | serde_norway::Value::Null
+        | serde_norway::Value::Tagged(_) => {}
+    }
+}
+```
+
+## Tests
+
+The carried example is the affordance at the top of this document; the
+rest pin one refusal each, and one pins the boundary — that a declared
+resource comes back as a mapping and not as an interpretation.
+
+`````rust {#tests}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn allowed_set() -> HashSet<String> {
+        let mut s = HashSet::new();
+        s.insert("affordance".to_string());
+        s
+    }
+
+    fn one(body: &str) -> InlineEntity {
+        let mut results = extract_from_markdown(body, &allowed_set());
+        assert_eq!(results.len(), 1, "expected exactly one inline entity");
+        results.remove(0).expect("entity parsed")
+    }
+
+    #[test]
+    fn extracts_the_carried_example() {
+        let body = r#"## Affordances
+
+### Publish a region as a repository
+
+```yaml x0k:affordance
+id: x0k:affordance/publish_region_as_repository
+status: wip
+actors: [human]
+edges:
+  requires: [x0k:affordance/demarcate_publication]
+```
+
+I project a demarcated region of my graph outward as a standalone
+repository.
+"#;
+        let entity = one(body);
+        assert_eq!(entity.uri.class, "affordance");
+        assert_eq!(entity.uri.identifier, "publish_region_as_repository");
+        assert_eq!(entity.title, "Publish a region as a repository");
+        assert_eq!(entity.marker_class, "affordance");
+        assert!(
+            entity.description.contains("I project a demarcated region"),
+            "prose after the block belongs to the description; got `{}`",
+            entity.description
+        );
+
+        let facts = inline_entity_facts(&entity, "x0k:design/publish-a-region-as-a-repository");
+        assert!(facts
+            .iter()
+            .any(|(p, v)| p == "x0k:title" && v == "string:Publish a region as a repository"));
+        assert!(facts
+            .iter()
+            .any(|(p, v)| p == "x0k:affordance/status" && v == "string:wip"));
+        // A sequence under a scalar key flattens per element.
+        assert!(facts
+            .iter()
+            .any(|(p, v)| p == "x0k:affordance/actors" && v == "string:human"));
+        // `requires` is already camelCase and not in the compiled slice,
+        // so it passes through verbatim.
+        assert!(facts
+            .iter()
+            .any(|(p, v)| p == "requires" && v == "entity:x0k:affordance/demarcate_publication"));
+        assert_eq!(
+            facts.last(),
+            Some(&(
+                "definedIn".to_string(),
+                "entity:x0k:design/publish-a-region-as-a-repository".to_string()
+            ))
+        );
+    }
+
+    // A document that teaches the grammar writes the block with a `!`
+    // and stays a document about affordances rather than a document
+    // declaring one. This chapter's own carried example does exactly
+    // that; if the escape ever stopped working, the published bundle
+    // would claim `publish_region_as_repository`.
+    #[test]
+    fn an_illustrative_fence_declares_nothing() {
+        let body = r#"### Publish a region as a repository
+
+```yaml x0k:!affordance
+id: x0k:affordance/publish_region_as_repository
+status: wip
+```
+
+Prose that merely shows the reader what a declaration looks like.
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(
+            results.is_empty(),
+            "an escaped marker must not be extracted; got {} record(s)",
+            results.len()
+        );
+    }
+
+    // The escape is a property of the marker, not of the block's
+    // contents: nothing else about the fence changes.
+    #[test]
+    fn the_escape_is_the_only_difference() {
+        let declaring = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+```
+"#;
+        let illustrating = declaring.replace("x0k:affordance\n", "x0k:!affordance\n");
+        assert_eq!(extract_from_markdown(declaring, &allowed_set()).len(), 1);
+        assert!(extract_from_markdown(&illustrating, &allowed_set()).is_empty());
+    }
+
+    #[test]
+    fn description_captures_prose_before_the_block_too() {
+        let body = r#"### Authenticate
+
+Some intro prose under the heading, before the block.
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+```
+"#;
+        assert!(one(body)
+            .description
+            .contains("Some intro prose under the heading"));
+    }
+
+    #[test]
+    fn declared_resources_come_back_as_declared() {
+        let body = r#"### Run an agent
+
+```yaml x0k:affordance
+id: x0k:affordance/run_agent
+status: wip
+requires_resources:
+  - kind: { os: linux }
+    quantity: { qualitative: linux }
+    origin: operator_declared
+  - kind: cpu_cores
+    quantity: { numeric: 2 }
+    origin: operator_declared
+```
+"#;
+        let entity = one(body);
+        assert_eq!(entity.requires_resources.len(), 2);
+        // Handed back as authored — a mapping, not a typed value.
+        assert_eq!(
+            yaml_get(&entity.requires_resources[1], "kind"),
+            Some(&serde_norway::Value::String("cpu_cores".to_string()))
+        );
+        // And never re-emitted as a class-namespaced scalar: a host that
+        // interprets them owns their facts.
+        let facts = inline_entity_facts(&entity, "x0k:design/test-doc");
+        assert!(!facts
+            .iter()
+            .any(|(p, _)| p == "x0k:affordance/requires_resources"));
+    }
+
+    #[test]
+    fn a_single_resource_mapping_is_accepted_without_a_list() {
+        let body = r#"### Run an agent
+
+```yaml x0k:affordance
+id: x0k:affordance/run_agent
+status: wip
+requires_resources:
+  kind: cpu_cores
+  quantity: { numeric: 2 }
+  origin: operator_declared
+```
+"#;
+        assert_eq!(one(body).requires_resources.len(), 1);
+    }
+
+    #[test]
+    fn a_resource_that_is_not_a_mapping_is_an_error() {
+        let body = r#"### Run an agent
+
+```yaml x0k:affordance
+id: x0k:affordance/run_agent
+status: wip
+requires_resources: two cores
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::InvalidResources { .. })
+        ));
+    }
+
+    #[test]
+    fn a_block_without_a_heading_errors() {
+        let body = r#"```yaml x0k:affordance
+id: x0k:affordance/orphan
+status: wip
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert_eq!(results.len(), 1);
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::MissingHeading { .. })
+        ));
+    }
+
+    #[test]
+    fn a_second_block_in_one_section_errors_and_the_first_survives() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+```
+
+```yaml x0k:affordance
+id: x0k:affordance/another
+status: wip
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert_eq!(results.len(), 2);
+        results[0].as_ref().expect("first block survives");
+        match &results[1] {
+            Err(InlineEntityError::MultipleBlocksInSection { heading, .. }) => {
+                assert_eq!(heading, "Authenticate");
+            }
+            other => panic!("expected MultipleBlocksInSection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_class_this_parent_may_not_host_is_skipped_not_reported() {
+        let body = r#"### Foo
+
+```yaml x0k:unknown-class
+id: x0k:unknown-class/foo
+```
+"#;
+        assert!(extract_from_markdown(body, &allowed_set()).is_empty());
+    }
+
+    #[test]
+    fn an_unmarked_yaml_block_is_an_ordinary_code_block() {
+        let body = r#"### Some section
+
+```yaml
+key: value
+```
+"#;
+        assert!(extract_from_markdown(body, &allowed_set()).is_empty());
+    }
+
+    #[test]
+    fn marker_and_id_class_must_agree() {
+        let body = r#"### Section
+
+```yaml x0k:affordance
+id: x0k:design/not-an-affordance
+status: wip
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        match &results[0] {
+            Err(InlineEntityError::ClassMismatch {
+                uri_class,
+                marker_class,
+                ..
+            }) => {
+                assert_eq!(marker_class, "affordance");
+                assert_eq!(uri_class, "design");
+            }
+            other => panic!("expected ClassMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn declaring_the_implicit_edge_errors() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+edges:
+  definedIn: [x0k:design/foo]
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::ExplicitDefinedIn { .. })
+        ));
+    }
+
+    #[test]
+    fn declaring_a_title_errors() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+title: "Some other title"
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::DuplicateTitle { .. })
+        ));
+    }
+
+    #[test]
+    fn an_id_carrying_a_content_state_pin_errors() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate@file-content:abcd
+status: wip
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::InvalidUri { .. })
+        ));
+    }
+
+    #[test]
+    fn info_string_shape_is_enforced() {
+        assert_eq!(
+            parse_info_string("yaml x0k:affordance"),
+            Some("affordance".to_string())
+        );
+        assert_eq!(
+            parse_info_string("yaml   x0k:affordance"),
+            Some("affordance".to_string())
+        );
+        assert_eq!(
+            parse_info_string("YAML x0k:affordance"),
+            Some("affordance".to_string())
+        );
+        assert_eq!(parse_info_string("yaml x0k:affordance extra"), None);
+        assert_eq!(parse_info_string("yaml"), None);
+        assert_eq!(parse_info_string("yaml x0k:"), None);
+        assert_eq!(parse_info_string("json x0k:affordance"), None);
+    }
+
+    #[test]
+    fn a_host_vocabulary_can_extend_the_predicate_mapping() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+edges:
+  refined_from: [x0k:affordance/older]
+```
+"#;
+        let entity = one(body);
+        // The compiled vocabulary does not know `refined_from`, so the
+        // default emitter passes it through verbatim.
+        assert!(declared_facts(&entity)
+            .iter()
+            .any(|(p, _)| p == "refined_from"));
+        // A host that does know it maps it.
+        let facts = declared_facts_with(&entity, |snake| {
+            (snake == "refined_from").then_some("refinedFrom")
+        });
+        assert!(facts.iter().any(|(p, _)| p == "refinedFrom"));
+    }
+}
+`````
+
+## Composing the module
+
+```rust {#root}
+<<module-doc>>
+
+<<inline-entity>>
+
+<<error>>
+
+<<info-string>>
+
+<<extract>>
+
+<<finalize>>
+
+<<description>>
+
+<<resources>>
+
+<<facts>>
+
+<<emit-value>>
+
+<<tests>>
+```
+
+The section-per-entity rule is the load-bearing idea and it is worth
+saying what it costs. Binding an entity to a heading means renaming a
+heading renames the entity, and moving a block between sections
+re-parents it — the document's shape *is* the data model, with no
+indirection to absorb an edit. That is the trade the design took
+deliberately: an affordance that cannot drift from the design that
+defines it, at the price of a document whose structure has to be edited
+with that in mind.

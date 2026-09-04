@@ -1,0 +1,1620 @@
+---
+x0k:
+  format: folio/v1
+  id: x0k:implementation/tangle/atlas
+  type: implementation
+  status: draft
+  summary: "Placing every member of a woven region at (year, idea-lane) as data rather than as rendering: the year sources, the lane and band membership, and the sorting that makes `atlas.json` byte-identical across runs."
+  concerns: [tangle, publication, atlas, layout]
+  tangle:
+    crate: x0k-tangle
+    root: src/atlas.rs
+  edges:
+    implements:
+      - x0k:design/author-and-publish-the-same-surface
+    cites:
+      - x0k:implementation/tangle/region-weave
+      - x0k:implementation/tangle/presentation
+      - x0k:implementation/folio/colophon
+---
+
+# Atlas: a region laid out in time and idea
+
+A woven region is a set of documents and the links between them. Rendered as
+a list it is a table of contents; rendered as a graph it is a hairball. The
+atlas is the third rendering: every member becomes a node placed at
+`(year, idea-lane)`, so the reader sees a project as a **time × idea map** —
+what came first, which lanes it advanced, and which later members drew on it.
+
+The central idea is that the layout is *data, not rendering*. `build_atlas`
+computes positions once, at projection, and writes them to `atlas.json`;
+the shell's viewer only draws what it is handed. Because the computation is
+deterministic — every intermediate collection is a `BTreeMap`/`BTreeSet` and
+every output vector is explicitly sorted — the same region always projects a
+byte-identical `atlas.json`, which is what makes the artifact reproducible
+and diffable.
+
+The module documentation carries the full description of the layout: lanes
+and bands, the year sources, and the two ways a project can belong in several
+places at once.
+
+```rust {#module-doc}
+//! Atlas builder — the publication's time×idea layout, computed at projection.
+//!
+//! The **atlas** is the keystone shared layout that connects the publication's
+//! map / narrative / deep-dive views. From a publication region's members (each
+//! a folio/v1 wiki page) it computes, *in Rust during projection*, a
+//! deterministic **time×idea plane**:
+//!
+//! - **x** is a linear map of the node's anchor **year** → horizontal position,
+//! - **y** is the node's **idea-lane** (one of eight idea threads) × a fixed
+//!   lane height,
+//! - **mass** is the node's inbound-citation count *within the region* (how many
+//!   member pages cite it),
+//! - **edges** are the influence arcs: each member's `edges.cites` plus its body
+//!   `[[wikilink]]`s, restricted to in-region targets and deduplicated.
+//!
+//! # Multi-lane membership (transclusion, not duplication)
+//!
+//! The taxonomy is keyed by **idea**, not by project. A project that advances
+//! several ideas belongs to *every* lane it advances — it is **one** canonical
+//! node ([`AtlasNode`], keyed by URI) **transcluded** into each lane as a
+//! separate **placement** ([`AtlasPlacement`], one `(uri, lane)` row). The node
+//! carries its lane set in [`AtlasNode::threads`]; the renderer paints one glyph
+//! per placement at the same `x` (year) but a per-lane `y`. So Urbit appears in
+//! the authority-identity, networking, *and* durable-execution lanes, while
+//! remaining one node with one mass and one doc.
+//!
+//! Three non-lane **bands** sit at the present/right edge: [`SYNTHESIS_BAND`]
+//! (projects that fuse several lanes into one system), [`CAPSTONE_BAND`] (the
+//! contemporary umbrella-statement of the whole thesis), and [`FRONTIER_BAND`]
+//! (open problems / current research). Their members render in a distinct zone
+//! to the right of the eight lanes, not inside a lane.
+//!
+//! The output [`Atlas`] is serialized to `atlas.json` and bundled into the
+//! artifact (parallel to the woven HTML pages and motif wasm). render-vello
+//! consumes the placements via the explicit-position `set_graph` path (a
+//! hand-authored layout renders offline the same way), so **no render-vello
+//! layout pass is needed**: the positions are computed here.
+//!
+//! # Sourcing decisions (year / lane)
+//!
+//! **year** resolves in precedence order: (1) an explicit `year:` frontmatter
+//! field, (2) the curated anchor-year table ([`CURATED_YEARS`]) for the known
+//! lineage members, (3) the earliest 18xx/19xx/20xx year mined from the page
+//! body, (4) otherwise the node is *flagged* (its URI lands in
+//! [`Atlas::unresolved_years`] and it is omitted from the plane).
+//!
+//! **lane membership** is the curated idea-taxonomy ([`CURATED_THREADS`]): each
+//! member names the idea-lane(s) it advances (or a convergence band). A member
+//! absent from the table falls back to the first lane. Membership is the source
+//! of truth — the map *is* the idea taxonomy made spatial.
+```
+
+```rust {#uses}
+use crate::region_weave::RegionInput;
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
+use x0k_folio::colophon::{parse_envelope, split_frontmatter};
+```
+
+## The carried example
+
+Take, as an example, a genealogy region whose members include a wiki page
+`x0k:wiki/local-first-software` (curated year 2019, lanes `data-ownership`
+and `malleability`) and another, `x0k:wiki/crdt-formal-verification`, that
+is a frontier-band member; the ids are illustrative. The first
+becomes one node with **two placements**, one per lane, both at the same
+x-coordinate; the second becomes one node placed in the frontier band, to the
+right of the rightmost lane node. If the verification page cites the
+local-first page, that is one influence edge, and it adds one unit of *mass*
+to the local-first node. Everything below is that pipeline.
+
+## Geometry
+
+The x-axis is time, scaled by `X_SCALE` units per year; when a region carries
+no years at all, reading order stands in for time with `ORDINAL_X_STEP_YEARS`
+pseudo-years per member. Each lane is `LANE_HEIGHT` tall.
+
+```rust {#scale}
+/// Horizontal pixels per year. `x = (year - min_year) * X_SCALE`.
+pub const X_SCALE: f64 = 60.0;
+/// Ordinal step (in year units) between reading-order nodes when a year-less
+/// region falls back to authored order — see [`YearSource::ReadingOrder`].
+pub const ORDINAL_X_STEP_YEARS: u32 = 4;
+/// Vertical pixels per lane row. `y = row_index * LANE_HEIGHT`.
+pub const LANE_HEIGHT: f64 = 200.0;
+```
+
+The idea lanes are a fixed, ordered set. Their order is the vertical order of
+the map and is part of the atlas's canonical form: `threads` in the output
+lists only the lanes that are present, but always in this order.
+
+```rust {#lanes}
+/// The eight idea-lanes, in arc order (lane index = vertical row).
+/// Each is the *idea* a project advances; a project belongs to every lane it
+/// advances (multi-membership), keyed here by stable idea slug.
+pub const THREAD_LANES: [&str; 8] = [
+    "founding-vision",    // 1 — augment the intellect
+    "malleability",       // 2 — shape your own tools
+    "data-ownership",     // 3 — own your data (local-first / CRDT)
+    "networking",         // 4 — route your own bytes (P2P)
+    "authority-identity", // 5 — hold your own keys
+    "privacy",            // 6 — be unobservable (surveillance-resistance)
+    "durable-execution",  // 7 — computations that survive
+    "sovereign-ai",       // 8 — own your intelligence (open weights / local inference)
+];
+```
+
+Three convergence bands sit to the right of the lanes rather than along them:
+synthesis, frontier, and capstone. They are not time-positioned — a band
+member's x-coordinate is `band_x`, just past the last lane node, offset by
+`BAND_X_OFFSET`.
+
+```rust {#bands}
+/// Convergence-band sentinel: projects that fuse several lanes into one system.
+/// Rendered at the present/right edge, not inside a lane.
+pub const SYNTHESIS_BAND: &str = "synthesis";
+/// Convergence-band sentinel: open problems / current research at the present
+/// edge.
+pub const FRONTIER_BAND: &str = "frontier";
+/// Capstone-band sentinel: the contemporary umbrella-statement of the whole
+/// thesis. Sits at the present right edge, visually distinct from the eight
+/// idea-lanes and the synthesis / frontier bands.
+pub const CAPSTONE_BAND: &str = "capstone";
+
+/// Lane-equivalent row index for the synthesis band (below the eight lanes).
+const SYNTHESIS_ROW: usize = THREAD_LANES.len();
+/// Lane-equivalent row index for the frontier band (below synthesis).
+const FRONTIER_ROW: usize = THREAD_LANES.len() + 1;
+/// Lane-equivalent row index for the capstone band (the contemporary
+/// umbrella-statement, below frontier).
+const CAPSTONE_ROW: usize = THREAD_LANES.len() + 2;
+/// Horizontal gap (world units) past the rightmost lane node where the two
+/// convergence bands sit — pushing them into a distinct right-edge zone.
+const BAND_X_OFFSET: f64 = 2.0 * X_SCALE;
+```
+
+## The curated tables
+
+Two tables are the editorial layer of the atlas. `CURATED_YEARS` answers
+"when" for members whose frontmatter carries no `year:`; `CURATED_THREADS`
+answers "which lanes". Both are keyed by wiki slug (the identifier after the
+last `/` of a URI), so a chapter authored as `x0k:genealogy/<slug>` and a
+reference at `x0k:wiki/<slug>` resolve against the same rows.
+
+```rust {#curated-years}
+/// Curated anchor years for the known lineage members (keyed by wiki slug).
+/// These are canonical history (a node's own anchor year, not the earliest idea
+/// it references) and override body-mining. Thread/index pages use the era they
+/// open.
+pub const CURATED_YEARS: &[(&str, u32)] = &[
+    ("malleable-systems-lineage", 1945),
+    ("augmenting-intellect-foundations", 1962),
+    ("malleable-software-lineage", 1972),
+    ("hypercard", 1987),
+    ("literate-programming", 1984),
+    ("dynamic-medium-bret-victor", 2011),
+    ("local-first-and-crdt-lineage", 2011),
+    ("event-graph-crdts", 2020),
+    ("automerge", 2017),
+    ("loro", 2023),
+    ("p2p-data-substrate-lineage", 2001),
+    ("blake3-bao", 2020),
+    ("iroh", 2023),
+    ("willow-protocol", 2023),
+    ("range-based-set-reconciliation", 2020),
+    ("p2panda", 2020),
+    ("beelay", 2024),
+    ("dht", 2002),
+    ("bittorrent", 2001),
+    ("capability-security-lineage", 1966),
+    ("ucan", 2021),
+    ("meadowcap", 2023),
+    ("keyhive", 2024),
+    ("privacy-surveillance-resistance", 1981),
+    ("mix-networks", 1981),
+    ("pgp", 1991),
+    ("freenet", 2000),
+    ("tor", 2004),
+    ("e2ee", 2013),
+    ("tee-confidential-computing", 2015),
+    ("durable-execution-lineage", 2005),
+    ("sovereign-computing-projects", 2002),
+    ("urbit", 2002),
+    ("spritely-goblins", 2020),
+    ("ssb", 2014),
+    ("dfos", 2024),
+    ("resonant-computing-manifesto", 2025),
+    ("plan-plunder", 2024),
+    ("local-first-field-guide", 2019),
+    ("crdt-formal-verification", 2014),
+    ("formal-method-tooling", 2014),
+    ("sync-engine-prior-art", 2023),
+    // sovereign-ai (8th lane)
+    ("sovereign-ai-lineage", 2023),
+    ("open-weights", 2023),
+    ("local-inference", 2023),
+    ("decentralized-ai-training", 2024),
+    ("nous-research", 2023),
+    ("actual-computer", 2026),
+    ("common-tools", 2023),
+];
+```
+
+```rust {#curated-threads}
+/// Curated idea-lane membership for every member (keyed by wiki slug). Each
+/// value is the set of idea-lanes (or a convergence band) the project advances.
+/// This is the idea taxonomy made spatial — a multi-idea project is one node
+/// transcluded into every lane it belongs to. A member absent here falls back
+/// to the first lane.
+pub const CURATED_THREADS: &[(&str, &[&str])] = &[
+    // index / entry — kept as a node in the founding-vision lane.
+    ("malleable-systems-lineage", &["founding-vision"]),
+    // 1 founding-vision
+    ("augmenting-intellect-foundations", &["founding-vision"]),
+    // 2 malleability (legibility sub-facet: literate-programming)
+    ("malleable-software-lineage", &["malleability"]),
+    ("hypercard", &["malleability"]),
+    ("dynamic-medium-bret-victor", &["malleability"]),
+    ("literate-programming", &["malleability"]),
+    // 3 data-ownership
+    ("local-first-and-crdt-lineage", &["data-ownership"]),
+    ("event-graph-crdts", &["data-ownership"]),
+    ("automerge", &["data-ownership"]),
+    ("loro", &["data-ownership"]),
+    // 4 networking
+    ("p2p-data-substrate-lineage", &["networking"]),
+    ("blake3-bao", &["networking"]),
+    ("iroh", &["networking"]),
+    ("range-based-set-reconciliation", &["networking"]),
+    ("dht", &["networking"]),
+    ("bittorrent", &["networking"]),
+    // 4 networking + 3 data-ownership
+    ("willow-protocol", &["networking", "data-ownership"]),
+    ("beelay", &["networking", "data-ownership"]),
+    // 5 authority-identity
+    ("capability-security-lineage", &["authority-identity"]),
+    ("ucan", &["authority-identity"]),
+    ("meadowcap", &["authority-identity"]),
+    // 5 authority-identity + 3 data-ownership
+    ("keyhive", &["authority-identity", "data-ownership"]),
+    // 6 privacy / surveillance-resistance
+    ("privacy-surveillance-resistance", &["privacy"]),
+    ("mix-networks", &["privacy"]),
+    ("pgp", &["privacy"]),
+    ("e2ee", &["privacy"]),
+    ("tee-confidential-computing", &["privacy"]),
+    // 6 privacy + 4 networking
+    ("freenet", &["privacy", "networking"]),
+    ("tor", &["privacy", "networking"]),
+    // 7 durable-execution
+    ("durable-execution-lineage", &["durable-execution"]),
+    // 7 durable-execution + 4 networking
+    ("plan-plunder", &["durable-execution", "networking"]),
+    // multi-lane sovereign systems
+    (
+        "urbit",
+        &["authority-identity", "networking", "durable-execution"],
+    ),
+    (
+        "spritely-goblins",
+        &["authority-identity", "networking", "durable-execution"],
+    ),
+    (
+        "ssb",
+        &["authority-identity", "networking", "data-ownership"],
+    ),
+    (
+        "p2panda",
+        &["data-ownership", "networking", "authority-identity"],
+    ),
+    (
+        "dfos",
+        &["data-ownership", "networking", "authority-identity"],
+    ),
+    // 8 sovereign-ai (own your intelligence)
+    ("sovereign-ai-lineage", &["sovereign-ai"]),
+    ("open-weights", &["sovereign-ai"]),
+    ("nous-research", &["sovereign-ai"]),
+    // 8 sovereign-ai + 7 durable-execution
+    ("local-inference", &["sovereign-ai", "durable-execution"]),
+    ("actual-computer", &["sovereign-ai", "durable-execution"]),
+    // 8 sovereign-ai + 4 networking
+    ("decentralized-ai-training", &["sovereign-ai", "networking"]),
+    // contemporary peer spanning malleability + data-ownership + sovereign-ai
+    (
+        "common-tools",
+        &["malleability", "data-ownership", "sovereign-ai"],
+    ),
+    // synthesis band (fuses the lanes into one system)
+    ("sovereign-computing-projects", &[SYNTHESIS_BAND]),
+    // capstone band (the contemporary umbrella-statement of the whole thesis)
+    ("resonant-computing-manifesto", &[CAPSTONE_BAND]),
+    // frontier band (open problems / current research)
+    ("local-first-field-guide", &[FRONTIER_BAND]),
+    ("crdt-formal-verification", &[FRONTIER_BAND]),
+    ("formal-method-tooling", &[FRONTIER_BAND]),
+    ("sync-engine-prior-art", &[FRONTIER_BAND]),
+];
+```
+
+## The atlas as data
+
+Every node records where its year came from, so a reader (or a test) can
+tell a curated placement from a mined one. `unresolved_years` on the atlas
+is the list of members that fell through every source; they are placed at
+`min_year` rather than dropped.
+
+```rust {#year-source}
+/// Where a node's year came from. Recorded per node so a publisher can audit
+/// coverage and see which members leaned on curated overrides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum YearSource {
+    /// Explicit `year:` frontmatter field.
+    Frontmatter,
+    /// Curated anchor-year table.
+    Curated,
+    /// Earliest 18xx/19xx/20xx year mined from the body.
+    BodyMine,
+    /// No member of the region resolved a year, so the whole region fell back
+    /// to authored reading order (ordinal, not a calendar year).
+    ReadingOrder,
+}
+```
+
+```rust {#node}
+/// One canonical node in the atlas — one per region member URI, regardless of
+/// how many lanes it belongs to. Its spatial copies are [`AtlasPlacement`]s.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AtlasNode {
+    /// The member's entity URI (`x0k:wiki/<slug>`).
+    pub uri: String,
+    /// Display title (first body H1, else the slug).
+    pub title: String,
+    /// The idea-lane(s) / convergence band(s) this node belongs to, ordered by
+    /// lane row (deterministic). A multi-idea project lists every lane it
+    /// advances — the renderer transcludes one glyph per lane.
+    pub threads: Vec<String>,
+    /// Resolved anchor year.
+    pub year: u32,
+    /// How `year` was resolved.
+    pub year_source: YearSource,
+    /// Horizontal position: shared across all of this node's placements.
+    pub x: f64,
+    /// Inbound-citation count within the region (one per node, not per lane).
+    pub mass: u32,
+}
+```
+
+A node is placed once per lane it belongs to. The placement carries the
+coordinates; the node carries the identity.
+
+```rust {#placement}
+/// One spatial copy of a node in one lane — the transcluded glyph. A node with
+/// N lanes yields N placements (same `uri` + `x`, one `y` per lane).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AtlasPlacement {
+    /// The canonical node URI this placement renders.
+    pub uri: String,
+    /// The idea-lane / convergence band this placement sits in.
+    pub thread: String,
+    /// Horizontal position (year-derived for lanes, right-edge for bands).
+    pub x: f64,
+    /// Vertical position: `row_index * LANE_HEIGHT`.
+    pub y: f64,
+}
+```
+
+```rust {#edge}
+/// One influence arc (a member citing an in-region member).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct AtlasEdge {
+    /// Citing member URI.
+    pub from: String,
+    /// Cited member URI.
+    pub to: String,
+}
+```
+
+```rust {#atlas}
+/// The atlas: every region member as one canonical node, transcluded into its
+/// idea-lane(s) as placements, plus the influence edges between nodes.
+#[derive(Debug, Clone, Serialize)]
+pub struct Atlas {
+    /// Canonical nodes, sorted by `(year, uri)` for deterministic output.
+    pub nodes: Vec<AtlasNode>,
+    /// Per-lane placements (transclusions), sorted by `(uri, thread)`.
+    pub placements: Vec<AtlasPlacement>,
+    /// Influence edges, sorted by `(from, to)`, deduplicated.
+    pub edges: Vec<AtlasEdge>,
+    /// The minimum resolved year (the x origin).
+    pub min_year: u32,
+    /// The distinct idea-lanes present, in lane order.
+    pub threads: Vec<String>,
+    /// The bands present (`synthesis` / `capstone` / `frontier`), in band order.
+    pub bands: Vec<String>,
+    /// URIs whose year could not be resolved from any source — flagged rather
+    /// than guessed. These are excluded from `nodes`.
+    pub unresolved_years: Vec<String>,
+}
+
+/// The artifact-relative path the atlas serializes to.
+pub const ATLAS_FILE: &str = "atlas.json";
+```
+
+Two small lookups translate a membership name into a row index and tell a
+band from a lane.
+
+```rust {#rows}
+/// Row index for a lane / band name (lane position, or a band's row below the
+/// eight lanes). Used both to order a node's `threads` and to place its `y`.
+fn membership_row(name: &str) -> usize {
+    if let Some(i) = THREAD_LANES.iter().position(|l| *l == name) {
+        return i;
+    }
+    match name {
+        SYNTHESIS_BAND => SYNTHESIS_ROW,
+        FRONTIER_BAND => FRONTIER_ROW,
+        CAPSTONE_BAND => CAPSTONE_ROW,
+        _ => 0,
+    }
+}
+
+/// True when a membership name is a convergence/capstone band (vs an idea-lane).
+fn is_band(name: &str) -> bool {
+    name == SYNTHESIS_BAND || name == FRONTIER_BAND || name == CAPSTONE_BAND
+}
+```
+
+## Building the atlas
+
+`build_atlas` runs the pipeline in numbered stages: influence edges, mass,
+year and lane resolution (with the reading-order fallback), then nodes and
+placements. It ends by sorting everything that reaches the output.
+
+```rust {#build-atlas}
+/// Build the atlas from a region's members and their content.
+///
+/// Deterministic: all intermediate collections are ordered (`BTreeMap`/
+/// `BTreeSet`) and outputs are explicitly sorted, so the same region always
+/// yields byte-identical `atlas.json`.
+pub fn build_atlas(input: &RegionInput) -> Atlas {
+    <<atlas-membership>>
+
+    <<atlas-edges>>
+
+    <<atlas-mass>>
+
+    <<atlas-resolve>>
+
+    <<atlas-reading-order>>
+
+    <<atlas-band-x>>
+
+    <<atlas-place>>
+    <<atlas-finish>>
+}
+```
+
+The membership boundary is the in-region URI set; a slug map lets body
+wikilinks resolve to whichever member carries that identifier.
+
+```rust {#atlas-membership}
+// In-region URI set (membership boundary for edges + citation derivation).
+let in_region: BTreeSet<&str> = input.members.iter().map(|m| m.uri.as_str()).collect();
+// Slug → member-URI, for resolving body `[[wikilink]]` targets to whichever
+// in-region member carries that identifier — class-agnostic, so a wikilink
+// resolves whether the target is a `x0k:genealogy/<slug>` chapter or a
+// `x0k:wiki/<slug>` reference. First member in authored order wins on the
+// rare cross-class identifier collision.
+let mut slug_to_uri: BTreeMap<String, &str> = BTreeMap::new();
+for m in &input.members {
+    if let Some(slug) = member_slug(&m.uri) {
+        slug_to_uri.entry(slug).or_insert(m.uri.as_str());
+    }
+}
+```
+
+Stage 1: an influence edge is a `cites` target or a body `[[wikilink]]` that
+resolves to another member. Self-edges are dropped; the set dedupes.
+
+```rust {#atlas-edges}
+// 1. Influence edges: cites + body wikilinks, restricted in-region, deduped.
+//    `cites` targets are full URIs (already class-correct in authored
+//    frontmatter); body-wikilink targets arrive as a raw `x0k:wiki/<slug>`
+//    marker and are resolved to the real member URI by slug.
+let mut edge_set: BTreeSet<(String, String)> = BTreeSet::new();
+for m in &input.members {
+    for target in scan_influence_targets(&m.content) {
+        // Resolve to an in-region member URI: prefer an exact URI match
+        // (cites), else fall back to a slug lookup (body wikilinks).
+        let resolved: Option<&str> = if in_region.contains(target.as_str()) {
+            in_region.get(target.as_str()).copied()
+        } else {
+            member_slug(&target).and_then(|s| slug_to_uri.get(&s).copied())
+        };
+        let Some(rt) = resolved else { continue };
+        if rt == m.uri {
+            continue; // no self-edges
+        }
+        edge_set.insert((m.uri.clone(), rt.to_string()));
+    }
+}
+```
+
+Stage 2: mass is the number of distinct in-region members citing a node.
+
+```rust {#atlas-mass}
+// 2. mass(node) = distinct in-region members citing it (one per node).
+let mut inbound: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+for (from, to) in &edge_set {
+    inbound
+        .entry(to.as_str())
+        .or_default()
+        .insert(from.as_str());
+}
+```
+
+Stage 3 resolves a year and a lane set for each member. The year sources are
+tried in order — frontmatter, the curated table, then body mining — and the
+lanes come from the curated table with the first lane as the fallback.
+
+```rust {#atlas-resolve}
+// 3. Resolve each member's year + lane membership.
+let curated_years: BTreeMap<&str, u32> = CURATED_YEARS.iter().copied().collect();
+let curated_threads: BTreeMap<&str, &[&str]> = CURATED_THREADS.iter().copied().collect();
+
+struct Resolved {
+    uri: String,
+    title: String,
+    threads: Vec<String>,
+    year: u32,
+    year_source: YearSource,
+    mass: u32,
+}
+
+let mut resolved: Vec<Resolved> = Vec::new();
+let mut unresolved_years: Vec<String> = Vec::new();
+
+for m in &input.members {
+    let slug = member_slug(&m.uri);
+    let (yaml, body) = split_frontmatter(&m.content).unwrap_or(("", m.content.as_str()));
+
+    // year precedence: frontmatter > curated > body-mine > flag.
+    let (year, year_source) = if let Some(y) = frontmatter_year(yaml) {
+        (y, YearSource::Frontmatter)
+    } else if let Some(&y) = slug.as_deref().and_then(|s| curated_years.get(s)) {
+        (y, YearSource::Curated)
+    } else if let Some(y) = body_mine_year(body) {
+        (y, YearSource::BodyMine)
+    } else {
+        unresolved_years.push(m.uri.clone());
+        continue;
+    };
+
+    // lane membership: curated idea-taxonomy; fall back to the first lane.
+    let mut threads: Vec<String> = slug
+        .as_deref()
+        .and_then(|s| curated_threads.get(s))
+        .map(|ts| ts.iter().map(|t| t.to_string()).collect())
+        .unwrap_or_else(|| vec![THREAD_LANES[0].to_string()]);
+    // Deterministic order: by lane row, ties broken by name.
+    threads.sort_by(|a, b| membership_row(a).cmp(&membership_row(b)).then(a.cmp(b)));
+    threads.dedup();
+
+    let title = first_h1(body).unwrap_or_else(|| slug.clone().unwrap_or_else(|| m.uri.clone()));
+    let mass = inbound
+        .get(m.uri.as_str())
+        .map(|s| s.len() as u32)
+        .unwrap_or(0);
+
+    resolved.push(Resolved {
+        uri: m.uri.clone(),
+        title,
+        threads,
+        year,
+        year_source,
+        mass,
+    });
+}
+```
+
+When no member resolves a year at all, the region is year-less by nature and
+reading order becomes the time axis.
+
+```rust {#atlas-reading-order}
+// Reading-order fallback: a region can be legitimately year-less (a
+// manuscript's movements, unlike the genealogy's wiki pages, carry no
+// anchor years). When NO member resolves a year the time axis is
+// meaningless anyway, so place every member by the region's authored
+// order (the `publishes:` list) instead of emitting an empty plane.
+// Mixed regions (some years resolve) keep the strict per-member flag.
+if resolved.is_empty() && !unresolved_years.is_empty() {
+    unresolved_years.clear();
+    for (i, m) in input.members.iter().enumerate() {
+        let slug = member_slug(&m.uri);
+        let (_, body) = split_frontmatter(&m.content).unwrap_or(("", m.content.as_str()));
+        let mut threads: Vec<String> = slug
+            .as_deref()
+            .and_then(|s| curated_threads.get(s))
+            .map(|ts| ts.iter().map(|t| t.to_string()).collect())
+            .unwrap_or_else(|| vec![THREAD_LANES[0].to_string()]);
+        threads.sort_by(|a, b| membership_row(a).cmp(&membership_row(b)).then(a.cmp(b)));
+        threads.dedup();
+        let title =
+            first_h1(body).unwrap_or_else(|| slug.clone().unwrap_or_else(|| m.uri.clone()));
+        let mass = inbound
+            .get(m.uri.as_str())
+            .map(|s| s.len() as u32)
+            .unwrap_or(0);
+        resolved.push(Resolved {
+            uri: m.uri.clone(),
+            title,
+            threads,
+            // ORDINAL_X_STEP_YEARS spaces reading-order nodes a few
+            // node-widths apart on the year→x axis (consecutive integers
+            // at X_SCALE would overlap the glyphs).
+            year: i as u32 * ORDINAL_X_STEP_YEARS,
+            year_source: YearSource::ReadingOrder,
+            mass,
+        });
+    }
+}
+```
+
+```rust {#atlas-band-x}
+let min_year = resolved.iter().map(|r| r.year).min().unwrap_or(0);
+let max_year = resolved.iter().map(|r| r.year).max().unwrap_or(min_year);
+// The convergence bands sit just to the right of the rightmost lane node.
+let band_x = (max_year as f64 - min_year as f64) * X_SCALE + BAND_X_OFFSET;
+```
+
+Stage 4 emits one node per member and one placement per node×membership;
+band members take `band_x`, lane members take their year.
+
+```rust {#atlas-place}
+// 4. Canonical nodes (one per member) + placements (one per node×lane).
+let mut nodes: Vec<AtlasNode> = Vec::with_capacity(resolved.len());
+let mut placements: Vec<AtlasPlacement> = Vec::new();
+for r in &resolved {
+    // A node is either all-lanes or a single band (bands are exclusive).
+    let banded = r.threads.iter().any(|t| is_band(t));
+    let x = if banded {
+        band_x
+    } else {
+        (r.year as f64 - min_year as f64) * X_SCALE
+    };
+    for t in &r.threads {
+        placements.push(AtlasPlacement {
+            uri: r.uri.clone(),
+            thread: t.clone(),
+            x,
+            y: membership_row(t) as f64 * LANE_HEIGHT,
+        });
+    }
+    nodes.push(AtlasNode {
+        x,
+        uri: r.uri.clone(),
+        title: r.title.clone(),
+        threads: r.threads.clone(),
+        year: r.year,
+        year_source: r.year_source,
+        mass: r.mass,
+    });
+}
+```
+
+Everything that reaches the output is sorted here — this is the whole of the
+determinism guarantee.
+
+```rust {#atlas-finish}
+// Deterministic: nodes x-ordered by year, ties by URI; placements by uri+lane.
+nodes.sort_by(|a, b| a.year.cmp(&b.year).then_with(|| a.uri.cmp(&b.uri)));
+placements.sort_by(|a, b| a.uri.cmp(&b.uri).then_with(|| a.thread.cmp(&b.thread)));
+
+// Distinct lanes + bands present, in canonical order.
+let present: BTreeSet<&str> = placements.iter().map(|p| p.thread.as_str()).collect();
+let threads: Vec<String> = THREAD_LANES
+    .iter()
+    .filter(|s| present.contains(*s))
+    .map(|s| s.to_string())
+    .collect();
+let bands: Vec<String> = [SYNTHESIS_BAND, CAPSTONE_BAND, FRONTIER_BAND]
+    .iter()
+    .filter(|s| present.contains(*s))
+    .map(|s| s.to_string())
+    .collect();
+
+let edges: Vec<AtlasEdge> = edge_set
+    .into_iter()
+    .map(|(from, to)| AtlasEdge { from, to })
+    .collect();
+
+unresolved_years.sort();
+Atlas {
+    nodes,
+    placements,
+    edges,
+    min_year,
+    threads,
+    bands,
+    unresolved_years,
+}
+```
+
+```rust {#atlas-json}
+/// Serialize the atlas to pretty JSON bytes (the `atlas.json` payload).
+pub fn atlas_json(atlas: &Atlas) -> Vec<u8> {
+    // `Atlas` is plain data; serialization cannot fail. Pretty for human diff.
+    serde_json::to_vec_pretty(atlas).expect("Atlas serializes")
+}
+```
+
+## Scanning the content
+
+The helpers below read members' content for the signals the pipeline needs:
+a slug from a URI, citation targets, wikilinks, a frontmatter year, a year
+mined from the body, and a title.
+
+```rust {#member-slug}
+/// `x0k:<class>/<slug>` → `Some(slug)` (the URI identifier, after the last
+/// `/`, minus any `@locator`); a URI with no `/` → `None`. Class-agnostic: a
+/// region's curated year/lane tables are slug-keyed, so an authored
+/// `x0k:genealogy/<slug>` chapter and a `x0k:wiki/<slug>` reference both resolve
+/// against the same tables.
+fn member_slug(uri: &str) -> Option<String> {
+    let (_, ident) = uri.rsplit_once('/')?;
+    let slug = ident.split('@').next().unwrap_or(ident);
+    (!slug.is_empty()).then(|| slug.to_string())
+}
+```
+
+`scan_influence_targets` mirrors the cites/wikilink scanning that the weaver
+does for its own purposes; the two stay separate because the weaver rewrites
+links while the atlas only counts them.
+
+```rust {#scan-targets}
+/// Collect a member's in-region influence targets: `edges.cites` targets plus
+/// body `[[wikilink]]` slugs (mapped to `x0k:wiki/<slug>`). Mirrors the
+/// wikilink/cites scanning used by `region_weave`; membership filtering is the
+/// caller's job.
+pub fn scan_influence_targets(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Ok((env, body)) = parse_envelope(content) {
+        if let Some(cites) = env.edges.get("cites") {
+            out.extend(cites.iter().cloned());
+        }
+        for slug in scan_body_wikilinks(&body) {
+            out.push(format!("x0k:wiki/{slug}"));
+        }
+    } else {
+        // No parseable envelope — still mine the whole content for wikilinks.
+        for slug in scan_body_wikilinks(content) {
+            out.push(format!("x0k:wiki/{slug}"));
+        }
+    }
+    out
+}
+
+/// Scan `[[slug]]` wikilinks (tight `[a-z0-9-]+` charset) from text.
+fn scan_body_wikilinks(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'[' && bytes[i + 1] == b'[' {
+            if let Some((slug, end)) = parse_wikilink_slug(bytes, i + 2) {
+                out.push(slug);
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Parse a tight wikilink slug `[a-z0-9-]+` requiring a closing `]]`.
+fn parse_wikilink_slug(bytes: &[u8], start: usize) -> Option<(String, usize)> {
+    let mut j = start;
+    while j < bytes.len() {
+        let b = bytes[j];
+        if b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' {
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    if j == start || j + 1 >= bytes.len() || bytes[j] != b']' || bytes[j + 1] != b']' {
+        return None;
+    }
+    let slug = std::str::from_utf8(&bytes[start..j]).ok()?.to_string();
+    Some((slug, j + 2))
+}
+```
+
+Year mining is two-tiered: an explicit `year:` in the frontmatter wins, else
+the body is scanned for a plausible four-digit year, preferring one that
+follows a cue word such as "founded" or "released".
+
+```rust {#years}
+/// Scan a frontmatter YAML block for a `year: NNNN` field (top level under the
+/// `x0k:` envelope; matched leniently by leading-whitespace + `year:`).
+fn frontmatter_year(yaml: &str) -> Option<u32> {
+    for line in yaml.lines() {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("year:") {
+            let v = rest.trim();
+            if let Ok(y) = v.parse::<u32>() {
+                if (1800..=2099).contains(&y) {
+                    return Some(y);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Mine the earliest 18xx/19xx/20xx year from body text (the smallest such
+/// value). Generic fallback for members absent from the curated table.
+fn body_mine_year(body: &str) -> Option<u32> {
+    let bytes = body.as_bytes();
+    let mut best: Option<u32> = None;
+    let mut i = 0;
+    while i + 4 <= bytes.len() {
+        // A 4-digit run not flanked by digits.
+        let is_digit = |b: u8| b.is_ascii_digit();
+        let prev_ok = i == 0 || !is_digit(bytes[i - 1]);
+        if prev_ok
+            && is_digit(bytes[i])
+            && is_digit(bytes[i + 1])
+            && is_digit(bytes[i + 2])
+            && is_digit(bytes[i + 3])
+            && (i + 4 == bytes.len() || !is_digit(bytes[i + 4]))
+        {
+            let y = (bytes[i] - b'0') as u32 * 1000
+                + (bytes[i + 1] - b'0') as u32 * 100
+                + (bytes[i + 2] - b'0') as u32 * 10
+                + (bytes[i + 3] - b'0') as u32;
+            if (1800..=2099).contains(&y) {
+                best = Some(best.map_or(y, |b| b.min(y)));
+            }
+            i += 4;
+            continue;
+        }
+        i += 1;
+    }
+    best
+}
+```
+
+`first_h1` here is the same cheap line scan the presentation shell carries;
+each module keeps its own copy rather than sharing one, and this chapter
+names that plainly.
+
+```rust {#first-h1}
+/// First markdown `# ` heading in body text (cheap line scan).
+fn first_h1(body: &str) -> Option<String> {
+    for line in body.lines() {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("# ") {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
+}
+```
+
+## Tests
+
+The tests cover the year sources in order, the multi-lane transclusion, the
+band placement, the reading-order fallback, and the determinism claim
+(building twice yields the same JSON).
+
+```rust {#tests}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::region_weave::RegionMember;
+    use std::path::PathBuf;
+
+    fn member(uri: &str, content: &str) -> RegionMember {
+        RegionMember {
+            uri: uri.to_string(),
+            content: content.to_string(),
+            source_path: PathBuf::from(format!("knowledge/wiki/{}.md", member_slug(uri).unwrap())),
+        }
+    }
+
+    /// Build a folio/v1 wiki page with optional `year:` and `cites:`.
+    fn wiki(slug: &str, year: Option<u32>, cites: &[&str], body: &str) -> String {
+        let mut fm = String::from("---\nx0k:\n  format: folio/v1\n  type: wiki\n");
+        fm.push_str(&format!("  id: x0k:wiki/{slug}\n"));
+        if let Some(y) = year {
+            fm.push_str(&format!("  year: {y}\n"));
+        }
+        if !cites.is_empty() {
+            fm.push_str("  edges:\n    cites:\n");
+            for c in cites {
+                fm.push_str(&format!("      - {c}\n"));
+            }
+        }
+        fm.push_str("---\n\n");
+        fm.push_str(body);
+        fm.push('\n');
+        fm
+    }
+
+    /// Placements for one node URI, by lane name.
+    fn lanes_of<'a>(atlas: &'a Atlas, uri: &str) -> Vec<&'a str> {
+        atlas
+            .placements
+            .iter()
+            .filter(|p| p.uri == uri)
+            .map(|p| p.thread.as_str())
+            .collect()
+    }
+
+    // (a) Year sourcing — frontmatter > curated > body-mine, with a fixture each.
+    #[test]
+    fn year_source_frontmatter_wins() {
+        // Slug absent from the curated table, frontmatter year set, body year too.
+        let c = wiki(
+            "made-up-node",
+            Some(1955),
+            &[],
+            "# Made Up\n\nReleased in 1999.",
+        );
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/made-up-node".into(),
+            members: vec![member("x0k:wiki/made-up-node", &c)],
+        };
+        let atlas = build_atlas(&input);
+        let n = &atlas.nodes[0];
+        assert_eq!(n.year, 1955);
+        assert_eq!(n.year_source, YearSource::Frontmatter);
+    }
+
+    #[test]
+    fn year_source_curated_overrides_body_mine() {
+        // HyperCard's body mentions 1979, but the curated anchor is 1987.
+        let c = wiki(
+            "hypercard",
+            None,
+            &[],
+            "# HyperCard\n\nAtkinson, QuickDraw 1979, released 1987.",
+        );
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/hypercard".into(),
+            members: vec![member("x0k:wiki/hypercard", &c)],
+        };
+        let atlas = build_atlas(&input);
+        let n = &atlas.nodes[0];
+        assert_eq!(n.year, 1987, "curated must override the earlier body year");
+        assert_eq!(n.year_source, YearSource::Curated);
+    }
+
+    #[test]
+    fn year_source_body_mine_fallback() {
+        // Slug absent from curated, no frontmatter year → earliest body year.
+        let c = wiki(
+            "made-up-node",
+            None,
+            &[],
+            "# X\n\nIdeas from 1989 and 1972 and 2001.",
+        );
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/made-up-node".into(),
+            members: vec![member("x0k:wiki/made-up-node", &c)],
+        };
+        let atlas = build_atlas(&input);
+        let n = &atlas.nodes[0];
+        assert_eq!(n.year, 1972, "earliest in-range body year");
+        assert_eq!(n.year_source, YearSource::BodyMine);
+    }
+
+    #[test]
+    fn unresolved_year_is_flagged_not_guessed() {
+        // In a region where years DO resolve (here: hypercard, curated), a
+        // member without one is flagged and excluded — never guessed.
+        let dated = wiki("hypercard", None, &[], "# HyperCard\n\nNo body years.");
+        let undated = wiki("made-up-node", None, &[], "# X\n\nNo years here at all.");
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/hypercard".into(),
+            members: vec![
+                member("x0k:wiki/hypercard", &dated),
+                member("x0k:wiki/made-up-node", &undated),
+            ],
+        };
+        let atlas = build_atlas(&input);
+        assert_eq!(atlas.nodes.len(), 1);
+        assert_eq!(atlas.nodes[0].uri, "x0k:wiki/hypercard");
+        assert_eq!(atlas.unresolved_years, vec!["x0k:wiki/made-up-node"]);
+    }
+
+    #[test]
+    fn yearless_region_falls_back_to_reading_order() {
+        // When NO member resolves a year (a manuscript region), the atlas
+        // places every member by authored order instead of emitting nothing.
+        let a = wiki("movement-one", None, &[], "# One\n\nNo years.");
+        let b = wiki("movement-two", None, &[], "# Two\n\nStill no years.");
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/movement-one".into(),
+            members: vec![
+                member("x0k:wiki/movement-one", &a),
+                member("x0k:wiki/movement-two", &b),
+            ],
+        };
+        let atlas = build_atlas(&input);
+        assert!(atlas.unresolved_years.is_empty());
+        assert_eq!(atlas.nodes.len(), 2);
+        assert!(atlas
+            .nodes
+            .iter()
+            .all(|n| n.year_source == YearSource::ReadingOrder));
+        let one = atlas.nodes.iter().find(|n| n.uri.ends_with("one")).unwrap();
+        let two = atlas.nodes.iter().find(|n| n.uri.ends_with("two")).unwrap();
+        assert!(one.x < two.x, "authored order maps to ascending x");
+    }
+
+    // (b) Deterministic positions — x ordered by year, y by lane row, one
+    // placement per (node, lane).
+    #[test]
+    fn positions_x_by_year_y_by_lane() {
+        // hypercard (malleability lane=1, 1987) and automerge (data-ownership
+        // lane=2, 2017): x ordered by year, placement y by lane row.
+        let hc = wiki("hypercard", None, &[], "# HyperCard\n\nbody");
+        let am = wiki("automerge", None, &[], "# Automerge\n\nbody");
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/hypercard".into(),
+            members: vec![
+                member("x0k:wiki/hypercard", &hc),
+                member("x0k:wiki/automerge", &am),
+            ],
+        };
+        let atlas = build_atlas(&input);
+        assert_eq!(atlas.min_year, 1987);
+        let hc = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/hypercard")
+            .unwrap();
+        let am = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/automerge")
+            .unwrap();
+        // x: hypercard at origin, automerge to its right.
+        assert_eq!(hc.x, 0.0);
+        assert_eq!(am.x, (2017.0 - 1987.0) * X_SCALE);
+        assert!(am.x > hc.x);
+        // single-lane membership each.
+        assert_eq!(hc.threads, vec!["malleability"]);
+        assert_eq!(am.threads, vec!["data-ownership"]);
+        // placement y: malleability row 1, data-ownership row 2.
+        let hp = atlas
+            .placements
+            .iter()
+            .find(|p| p.uri == "x0k:wiki/hypercard")
+            .unwrap();
+        let ap = atlas
+            .placements
+            .iter()
+            .find(|p| p.uri == "x0k:wiki/automerge")
+            .unwrap();
+        assert_eq!(hp.y, 1.0 * LANE_HEIGHT);
+        assert_eq!(ap.y, 2.0 * LANE_HEIGHT);
+        // Nodes are x-ordered (year, uri).
+        assert_eq!(atlas.nodes[0].uri, "x0k:wiki/hypercard");
+        // Deterministic: re-running yields identical bytes.
+        assert_eq!(atlas_json(&atlas), atlas_json(&build_atlas(&input)));
+    }
+
+    // (c) Mass == inbound citation count on a small fixture (one per node).
+    #[test]
+    fn mass_is_inbound_citation_count() {
+        // Two members cite `loro`; one cites `automerge`.
+        let lane = wiki(
+            "local-first-and-crdt-lineage",
+            None,
+            &["x0k:wiki/loro", "x0k:wiki/automerge"],
+            "# Local-First\n\nbody",
+        );
+        let am = wiki("automerge", None, &["x0k:wiki/loro"], "# Automerge\n\nbody");
+        let loro = wiki("loro", None, &[], "# Loro\n\nbody");
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/local-first-and-crdt-lineage".into(),
+            members: vec![
+                member("x0k:wiki/local-first-and-crdt-lineage", &lane),
+                member("x0k:wiki/automerge", &am),
+                member("x0k:wiki/loro", &loro),
+            ],
+        };
+        let atlas = build_atlas(&input);
+        let loro = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/loro")
+            .unwrap();
+        let am = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/automerge")
+            .unwrap();
+        assert_eq!(loro.mass, 2, "loro cited by lane page + automerge");
+        assert_eq!(am.mass, 1, "automerge cited by lane page only");
+    }
+
+    // (d) Edges restricted to in-region, deduped (cite + wikilink same target).
+    #[test]
+    fn edges_in_region_only_and_deduped() {
+        // `a` cites in-region `b` AND out-of-region `c`, and links `[[b]]` in
+        // body (duplicate edge a→b). Only a→b survives, once.
+        let a = wiki(
+            "augmenting-intellect-foundations",
+            None,
+            &["x0k:wiki/hypercard", "x0k:wiki/out-of-region"],
+            "# A\n\nSee [[hypercard]] and [[hypercard]] again, and [[also-absent]].",
+        );
+        let b = wiki("hypercard", None, &[], "# B\n\nbody");
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/augmenting-intellect-foundations".into(),
+            members: vec![
+                member("x0k:wiki/augmenting-intellect-foundations", &a),
+                member("x0k:wiki/hypercard", &b),
+            ],
+        };
+        let atlas = build_atlas(&input);
+        assert_eq!(
+            atlas.edges,
+            vec![AtlasEdge {
+                from: "x0k:wiki/augmenting-intellect-foundations".into(),
+                to: "x0k:wiki/hypercard".into(),
+            }],
+            "only the in-region edge, deduped across cites + wikilink"
+        );
+    }
+
+    // (e) Multi-lane membership: a project that advances several ideas is ONE
+    // node transcluded into EVERY lane (placements), with one mass.
+    #[test]
+    fn multi_lane_membership_transcludes() {
+        let urbit = wiki("urbit", None, &[], "# Urbit\n\nbody");
+        let p2panda = wiki("p2panda", None, &[], "# p2panda\n\nbody");
+        let willow = wiki(
+            "willow-protocol",
+            None,
+            &["x0k:wiki/urbit"],
+            "# Willow\n\nbody",
+        );
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/urbit".into(),
+            members: vec![
+                member("x0k:wiki/urbit", &urbit),
+                member("x0k:wiki/p2panda", &p2panda),
+                member("x0k:wiki/willow-protocol", &willow),
+            ],
+        };
+        let atlas = build_atlas(&input);
+
+        // urbit ∈ {authority-identity, networking, durable-execution}, ordered
+        // by lane row (networking=3, authority-identity=4, durable-execution=5).
+        let urbit_node = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/urbit")
+            .unwrap();
+        assert_eq!(
+            urbit_node.threads,
+            vec!["networking", "authority-identity", "durable-execution"]
+        );
+        let urbit_lanes = lanes_of(&atlas, "x0k:wiki/urbit");
+        assert_eq!(urbit_lanes.len(), 3, "urbit transcluded into 3 lanes");
+        assert!(urbit_lanes.contains(&"authority-identity"));
+        assert!(urbit_lanes.contains(&"networking"));
+        assert!(urbit_lanes.contains(&"durable-execution"));
+        // One canonical node, one mass (cited once by willow) — NOT 3 nodes.
+        assert_eq!(urbit_node.mass, 1);
+        assert_eq!(
+            atlas
+                .nodes
+                .iter()
+                .filter(|n| n.uri == "x0k:wiki/urbit")
+                .count(),
+            1
+        );
+        // All 3 placements share the same x (year), differ in y (lane row).
+        let xs: BTreeSet<u64> = atlas
+            .placements
+            .iter()
+            .filter(|p| p.uri == "x0k:wiki/urbit")
+            .map(|p| p.x.to_bits())
+            .collect();
+        assert_eq!(xs.len(), 1, "transclusion shares x");
+        let ys: BTreeSet<u64> = atlas
+            .placements
+            .iter()
+            .filter(|p| p.uri == "x0k:wiki/urbit")
+            .map(|p| p.y.to_bits())
+            .collect();
+        assert_eq!(ys.len(), 3, "one y per lane");
+
+        // p2panda in 3 lanes; willow in 2.
+        assert_eq!(lanes_of(&atlas, "x0k:wiki/p2panda").len(), 3);
+        assert_eq!(lanes_of(&atlas, "x0k:wiki/willow-protocol").len(), 2);
+    }
+
+    // (f) Synthesis + frontier sentinels sit in the right-edge convergence zone,
+    // not inside a lane.
+    #[test]
+    fn synthesis_and_frontier_bands() {
+        let aif = wiki(
+            "augmenting-intellect-foundations",
+            None,
+            &[],
+            "# AIF\n\nbody",
+        );
+        let sov = wiki(
+            "sovereign-computing-projects",
+            None,
+            &[],
+            "# Sovereign\n\nbody",
+        );
+        let fg = wiki("local-first-field-guide", None, &[], "# Guide\n\nbody");
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/augmenting-intellect-foundations".into(),
+            members: vec![
+                member("x0k:wiki/augmenting-intellect-foundations", &aif),
+                member("x0k:wiki/sovereign-computing-projects", &sov),
+                member("x0k:wiki/local-first-field-guide", &fg),
+            ],
+        };
+        let atlas = build_atlas(&input);
+
+        let sov_node = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/sovereign-computing-projects")
+            .unwrap();
+        assert_eq!(sov_node.threads, vec![SYNTHESIS_BAND]);
+        let fg_node = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/local-first-field-guide")
+            .unwrap();
+        assert_eq!(fg_node.threads, vec![FRONTIER_BAND]);
+
+        // Bands report present; they are NOT counted among the idea-lanes.
+        assert_eq!(atlas.bands, vec![SYNTHESIS_BAND, FRONTIER_BAND]);
+        assert!(!atlas.threads.iter().any(|t| t == SYNTHESIS_BAND));
+        assert!(!atlas.threads.iter().any(|t| t == FRONTIER_BAND));
+
+        // Band placements sit to the right of the lane node and in band rows.
+        let lane_p = atlas
+            .placements
+            .iter()
+            .find(|p| p.uri == "x0k:wiki/augmenting-intellect-foundations")
+            .unwrap();
+        let sov_p = atlas
+            .placements
+            .iter()
+            .find(|p| p.uri == "x0k:wiki/sovereign-computing-projects")
+            .unwrap();
+        let fg_p = atlas
+            .placements
+            .iter()
+            .find(|p| p.uri == "x0k:wiki/local-first-field-guide")
+            .unwrap();
+        assert!(
+            sov_p.x > lane_p.x,
+            "synthesis sits past the lanes (right edge)"
+        );
+        assert!(
+            fg_p.x > lane_p.x,
+            "frontier sits past the lanes (right edge)"
+        );
+        assert_eq!(sov_p.y, SYNTHESIS_ROW as f64 * LANE_HEIGHT);
+        assert_eq!(fg_p.y, FRONTIER_ROW as f64 * LANE_HEIGHT);
+    }
+
+    // (h) The privacy lane (7th idea-lane) is present and ordered between
+    // authority-identity and durable-execution.
+    #[test]
+    fn privacy_lane_present_and_ordered() {
+        let tor = wiki("tor", None, &[], "# Tor\n\nbody");
+        let pgp = wiki("pgp", None, &[], "# PGP\n\nbody");
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/tor".into(),
+            members: vec![member("x0k:wiki/tor", &tor), member("x0k:wiki/pgp", &pgp)],
+        };
+        let atlas = build_atlas(&input);
+        assert!(
+            atlas.threads.iter().any(|t| t == "privacy"),
+            "privacy lane present"
+        );
+        // Lane order: privacy after authority-identity, before durable-execution.
+        let ai = THREAD_LANES
+            .iter()
+            .position(|l| *l == "authority-identity")
+            .unwrap();
+        let pv = THREAD_LANES.iter().position(|l| *l == "privacy").unwrap();
+        let de = THREAD_LANES
+            .iter()
+            .position(|l| *l == "durable-execution")
+            .unwrap();
+        assert!(
+            ai < pv && pv < de,
+            "privacy sits between authority-identity and durable-execution"
+        );
+        // pgp is single-lane privacy at the privacy row.
+        let pgp_p = atlas
+            .placements
+            .iter()
+            .find(|p| p.uri == "x0k:wiki/pgp")
+            .unwrap();
+        assert_eq!(pgp_p.thread, "privacy");
+        assert_eq!(pgp_p.y, pv as f64 * LANE_HEIGHT);
+    }
+
+    // (i) The 12 new members' multi-lane membership.
+    #[test]
+    fn new_members_multi_lane_membership() {
+        let mk = |slug: &str| wiki(slug, None, &[], &format!("# {slug}\n\nbody"));
+        let slugs = [
+            "dht",
+            "bittorrent",
+            "privacy-surveillance-resistance",
+            "mix-networks",
+            "pgp",
+            "freenet",
+            "tor",
+            "e2ee",
+            "tee-confidential-computing",
+            "literate-programming",
+            "resonant-computing-manifesto",
+            "dfos",
+        ];
+        let bodies: Vec<String> = slugs.iter().map(|s| mk(s)).collect();
+        let members = slugs
+            .iter()
+            .zip(bodies.iter())
+            .map(|(s, b)| member(&format!("x0k:wiki/{s}"), b))
+            .collect();
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/dht".into(),
+            members,
+        };
+        let atlas = build_atlas(&input);
+
+        let lanes = |s: &str| -> Vec<&str> {
+            let mut v = lanes_of(&atlas, &format!("x0k:wiki/{s}"));
+            v.sort();
+            v
+        };
+        // single-lane
+        assert_eq!(lanes("dht"), vec!["networking"]);
+        assert_eq!(lanes("bittorrent"), vec!["networking"]);
+        assert_eq!(lanes("mix-networks"), vec!["privacy"]);
+        assert_eq!(lanes("pgp"), vec!["privacy"]);
+        assert_eq!(lanes("e2ee"), vec!["privacy"]);
+        assert_eq!(lanes("tee-confidential-computing"), vec!["privacy"]);
+        assert_eq!(lanes("privacy-surveillance-resistance"), vec!["privacy"]);
+        assert_eq!(lanes("literate-programming"), vec!["malleability"]);
+        // multi-lane: tor + freenet ∈ {networking, privacy}
+        assert_eq!(lanes("tor"), vec!["networking", "privacy"]);
+        assert_eq!(lanes("freenet"), vec!["networking", "privacy"]);
+        // dfos ∈ {data-ownership, networking, authority-identity}
+        assert_eq!(
+            lanes("dfos"),
+            vec!["authority-identity", "data-ownership", "networking"]
+        );
+        assert_eq!(
+            lanes_of(&atlas, "x0k:wiki/dfos").len(),
+            3,
+            "dfos in 3 lanes"
+        );
+
+        // resonant-computing-manifesto is the CAPSTONE band, not a lane.
+        let rcm = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/resonant-computing-manifesto")
+            .unwrap();
+        assert_eq!(rcm.threads, vec![CAPSTONE_BAND]);
+        assert!(
+            atlas.bands.iter().any(|b| b == CAPSTONE_BAND),
+            "capstone band present"
+        );
+        assert!(
+            !atlas.threads.iter().any(|t| t == CAPSTONE_BAND),
+            "capstone is a band, not a lane"
+        );
+        // The capstone placement sits past the lanes (right edge) and at its row.
+        let rcm_p = atlas
+            .placements
+            .iter()
+            .find(|p| p.uri == "x0k:wiki/resonant-computing-manifesto")
+            .unwrap();
+        let lane_p = atlas
+            .placements
+            .iter()
+            .find(|p| p.thread == "networking")
+            .unwrap();
+        assert!(
+            rcm_p.x > lane_p.x,
+            "capstone sits past the lanes (right edge)"
+        );
+        assert_eq!(rcm_p.y, CAPSTONE_ROW as f64 * LANE_HEIGHT);
+        const _: () = assert!(CAPSTONE_ROW > FRONTIER_ROW, "capstone row below frontier");
+    }
+
+    // (j) The sovereign-ai lane (8th idea-lane) is present, ordered last, and the
+    // 7 new members carry the right (multi-)lane membership.
+    #[test]
+    fn sovereign_ai_lane_and_new_members() {
+        let mk = |slug: &str| wiki(slug, None, &[], &format!("# {slug}\n\nbody"));
+        let slugs = [
+            "sovereign-ai-lineage",
+            "open-weights",
+            "local-inference",
+            "decentralized-ai-training",
+            "nous-research",
+            "actual-computer",
+            "common-tools",
+        ];
+        let bodies: Vec<String> = slugs.iter().map(|s| mk(s)).collect();
+        let members = slugs
+            .iter()
+            .zip(bodies.iter())
+            .map(|(s, b)| member(&format!("x0k:wiki/{s}"), b))
+            .collect();
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/sovereign-ai-lineage".into(),
+            members,
+        };
+        let atlas = build_atlas(&input);
+
+        // sovereign-ai is the LAST idea-lane (ordinal 8) in THREAD_LANES.
+        assert_eq!(
+            *THREAD_LANES.last().unwrap(),
+            "sovereign-ai",
+            "sovereign-ai is the last lane"
+        );
+        assert_eq!(THREAD_LANES.len(), 8, "eight idea-lanes");
+        assert!(
+            atlas.threads.iter().any(|t| t == "sovereign-ai"),
+            "sovereign-ai lane present"
+        );
+        // It is ordered AFTER durable-execution.
+        let de = THREAD_LANES
+            .iter()
+            .position(|l| *l == "durable-execution")
+            .unwrap();
+        let sa = THREAD_LANES
+            .iter()
+            .position(|l| *l == "sovereign-ai")
+            .unwrap();
+        assert!(de < sa, "sovereign-ai sits after durable-execution");
+        assert_eq!(sa, 7, "sovereign-ai is lane row 7 (the 8th, last)");
+
+        let lanes = |s: &str| -> Vec<&str> {
+            let mut v = lanes_of(&atlas, &format!("x0k:wiki/{s}"));
+            v.sort();
+            v
+        };
+        // single-lane sovereign-ai
+        assert_eq!(lanes("sovereign-ai-lineage"), vec!["sovereign-ai"]);
+        assert_eq!(lanes("open-weights"), vec!["sovereign-ai"]);
+        assert_eq!(lanes("nous-research"), vec!["sovereign-ai"]);
+        // multi-lane (sorted)
+        assert_eq!(
+            lanes("local-inference"),
+            vec!["durable-execution", "sovereign-ai"]
+        );
+        assert_eq!(
+            lanes("actual-computer"),
+            vec!["durable-execution", "sovereign-ai"]
+        );
+        assert_eq!(
+            lanes("decentralized-ai-training"),
+            vec!["networking", "sovereign-ai"]
+        );
+        assert_eq!(
+            lanes("common-tools"),
+            vec!["data-ownership", "malleability", "sovereign-ai"]
+        );
+        assert_eq!(
+            lanes_of(&atlas, "x0k:wiki/common-tools").len(),
+            3,
+            "common-tools transcluded into 3 lanes"
+        );
+
+        // A sovereign-ai placement sits at the sovereign-ai lane row (=7).
+        let ow_p = atlas
+            .placements
+            .iter()
+            .find(|p| p.uri == "x0k:wiki/open-weights")
+            .unwrap();
+        assert_eq!(ow_p.thread, "sovereign-ai");
+        assert_eq!(ow_p.y, sa as f64 * LANE_HEIGHT);
+
+        // actual-computer is anchored at 2026 (curated) — the right edge.
+        let ac = atlas
+            .nodes
+            .iter()
+            .find(|n| n.uri == "x0k:wiki/actual-computer")
+            .unwrap();
+        assert_eq!(ac.year, 2026);
+
+        // Deterministic: byte-identical re-runs.
+        assert_eq!(atlas_json(&atlas), atlas_json(&build_atlas(&input)));
+    }
+
+    // (g) Determinism across a multi-lane fixture — byte-identical re-runs.
+    #[test]
+    fn deterministic_multi_lane() {
+        let willow = wiki("willow-protocol", None, &[], "# Willow\n\nbody");
+        let keyhive = wiki("keyhive", None, &[], "# Keyhive\n\nbody");
+        let urbit = wiki("urbit", None, &[], "# Urbit\n\nbody");
+        let input = RegionInput {
+            entry_point_uri: "x0k:wiki/urbit".into(),
+            members: vec![
+                member("x0k:wiki/willow-protocol", &willow),
+                member("x0k:wiki/keyhive", &keyhive),
+                member("x0k:wiki/urbit", &urbit),
+            ],
+        };
+        assert_eq!(
+            atlas_json(&build_atlas(&input)),
+            atlas_json(&build_atlas(&input))
+        );
+    }
+}
+```
+
+```rust {#root}
+<<module-doc>>
+
+<<uses>>
+
+<<scale>>
+
+<<lanes>>
+
+<<bands>>
+
+<<curated-years>>
+
+<<curated-threads>>
+
+<<year-source>>
+
+<<node>>
+
+<<placement>>
+
+<<edge>>
+
+<<atlas>>
+
+<<rows>>
+
+<<build-atlas>>
+
+<<atlas-json>>
+
+<<member-slug>>
+
+<<scan-targets>>
+
+<<years>>
+
+<<first-h1>>
+
+<<tests>>
+```
+
+An atlas is a claim about a body of work — that it has a shape in time and
+idea — made checkable by writing the shape down as sorted data.

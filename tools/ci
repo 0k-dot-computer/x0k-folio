@@ -1,0 +1,51 @@
+#!/bin/sh
+# Forge-agnostic CI for this projected repo: build, test, and prove the
+# committed @generated code is byte-identical to a fresh tangle of the
+# literate sources. Any runner calls this script; nothing here is specific
+# to a hosting forge.
+set -eu
+# `--locked`: Cargo.lock is committed, and a lock cargo would rewrite is
+# drift the diff below must see, not silently absorb.
+cargo build --workspace --locked
+cargo test --workspace --locked
+# Lints, warnings denied. Two defect classes this closes. First, an item newer
+# than the `rust-version` the manifests declare: clippy's `incompatible_msrv`
+# is the only thing in this repository that checks that claim, so without this
+# step the MSRV is a comment. Second, ordinary lint rot in code a reader is
+# invited to read as documentation.
+cargo clippy --workspace --locked --all-targets -- -D warnings
+# The prose ships as the crate documentation, so a link in it that resolves to
+# nothing is a broken promise, not a cosmetic warning.
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --locked --no-deps
+# Supply-chain policy (deny.toml): advisories, licences, duplicate bans,
+# sources. cargo-deny is the ONLY check here that can see YANKED crates —
+# cargo-audit needs a git-format registry index and cargo has defaulted to the
+# sparse one since 1.70 — so this is the mechanized guard on both the yanked
+# check and the licence story of an MIT release, not belt-and-braces.
+#
+# Guarded twice, because neither failure mode is a policy finding: absent
+# tooling is a skip, and a failure to FETCH the advisory database is a skip
+# too. Somebody cloning this repo on a flaky network must not see a red CI run
+# that says nothing about the code. An actual finding IS a hard failure —
+# `check` runs `--offline` against the database `fetch` just proved it has.
+if command -v cargo-deny >/dev/null 2>&1; then
+  if cargo deny fetch; then
+    cargo deny --offline check
+  else
+    echo "note: skipping cargo-deny — could not fetch the advisory database" >&2
+  fi
+else
+  echo "note: skipping cargo-deny (install it: cargo install cargo-deny)" >&2
+fi
+# Re-tangle every literate document (the tangler discovers the ones with a
+# `tangle:` block). A tangle failure fails CI — it is never swallowed.
+# `cargo run` finds the binary wherever CARGO_TARGET_DIR put it.
+cargo run --locked -q -p x0k-tangle --bin x0k-tangle -- tangle knowledge/implementation --workspace .
+# The committed @generated code and .tangle-map.json sidecars must be exactly
+# what the tangler just wrote: any modified or untracked file is drift.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "error: re-tangling the literate sources changed the tree:" >&2
+  git status --porcelain >&2
+  git --no-pager diff >&2
+  exit 1
+fi

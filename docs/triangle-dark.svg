@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 268" width="760" height="268" role="img" aria-label="an implementation is constrained by an architecture and implements a design; architecture supports design">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#96b4dc"/></marker></defs>
+  <g font-family="ui-monospace,'IBM Plex Mono',Menlo,monospace">
+    <path d="M70,18 h54 l14,14 v74 h-68 z" fill="#1e1e2a" stroke="#3a3a4e" stroke-width="1.2"/>
+    <path d="M124,18 v14 h14" fill="none" stroke="#3a3a4e" stroke-width="1.2"/>
+    <line x1="80" y1="43" x2="126" y2="43" stroke="#2f2f42" stroke-width="2"/>
+    <line x1="80" y1="54" x2="126" y2="54" stroke="#2f2f42" stroke-width="2"/>
+    <line x1="80" y1="65" x2="126" y2="65" stroke="#2f2f42" stroke-width="2"/>
+    <text x="104" y="128" text-anchor="middle" font-size="15" fill="#e2e8f0">architecture</text>
+    <path d="M590,18 h54 l14,14 v74 h-68 z" fill="#1e1e2a" stroke="#3a3a4e" stroke-width="1.2"/>
+    <path d="M644,18 v14 h14" fill="none" stroke="#3a3a4e" stroke-width="1.2"/>
+    <line x1="600" y1="43" x2="646" y2="43" stroke="#2f2f42" stroke-width="2"/>
+    <line x1="600" y1="54" x2="646" y2="54" stroke="#2f2f42" stroke-width="2"/>
+    <line x1="600" y1="65" x2="646" y2="65" stroke="#2f2f42" stroke-width="2"/>
+    <text x="624" y="128" text-anchor="middle" font-size="15" fill="#e2e8f0">design</text>
+    <path d="M330,150 h54 l14,14 v74 h-68 z" fill="#1e1e2a" stroke="#3a3a4e" stroke-width="1.2"/>
+    <path d="M384,150 v14 h14" fill="none" stroke="#3a3a4e" stroke-width="1.2"/>
+    <line x1="340" y1="175" x2="386" y2="175" stroke="#2f2f42" stroke-width="2"/>
+    <rect x="340" y="180" width="41" height="10" fill="#2a2a3a"/>
+    <line x1="340" y1="201" x2="386" y2="201" stroke="#2f2f42" stroke-width="2"/>
+    <text x="364" y="260" text-anchor="middle" font-size="15" fill="#e2e8f0">implementation</text>
+    <line x1="146" y1="62" x2="582" y2="62" stroke="#96b4dc" stroke-width="1.2" marker-end="url(#a)"/>
+    <text x="364" y="52" text-anchor="middle" font-size="12" fill="#94a3b8">supports</text>
+    <line x1="344" y1="146" x2="150" y2="110" stroke="#96b4dc" stroke-width="1.2" marker-end="url(#a)"/>
+    <text x="215" y="142" text-anchor="middle" font-size="12" fill="#94a3b8">constrained by</text>
+    <line x1="392" y1="146" x2="584" y2="110" stroke="#96b4dc" stroke-width="1.2" marker-end="url(#a)"/>
+    <text x="516" y="142" text-anchor="middle" font-size="12" fill="#94a3b8">implements</text>
+  </g>
+</svg>

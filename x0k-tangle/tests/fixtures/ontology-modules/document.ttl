@@ -1,0 +1,19 @@
+# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.
+# Bootstrap source: this view seeds an empty region exactly once.
+# Module: document
+
+<https://0k.computer/ontology#Document> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#comment> "A folio/v1 document: an envelope, a body, and typed edges to other documents." .
+<https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#label> "Document" .
+<https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#comment> "The document refers to another document without depending on it." .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Document> .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#label> "mentions" .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Document> .
+<https://0k.computer/ontology/document> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#comment> "The document genus, its kinds, and the edges between documents." .
+<https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#label> "document" .
+<https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .

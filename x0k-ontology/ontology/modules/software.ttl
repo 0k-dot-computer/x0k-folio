@@ -1,0 +1,98 @@
+# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.
+# Bootstrap source: this view seeds an empty region exactly once.
+# Module: software
+
+<https://0k.computer/ontology#Affordance> <http://purl.org/dc/terms/references> "Gibson, J.J. (1979). The Ecological Approach to Visual Perception, ch. 8." .
+<https://0k.computer/ontology#Affordance> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Affordance> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Affordance> <http://www.w3.org/2000/01/rdf-schema#comment> "A relational property between an actor and the system: what the coupled actor+system can accomplish through the system's real surfaces. Gibsonian; actor-relative; eval-verified." .
+<https://0k.computer/ontology#Affordance> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#Affordance> <http://www.w3.org/2000/01/rdf-schema#label> "Affordance" .
+<https://0k.computer/ontology#Bundle> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Bundle> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Bundle> <http://www.w3.org/2000/01/rdf-schema#comment> "A curated, named package of Modules that realizes one or more Designs for a defined audience on defined surfaces. May compose other Bundles. The curatorial layer above the techne/affordance graph; not derivable from it. Affordances and signifiers reach a Bundle indirectly, through the Designs it realizes. As a Decision subtype, a Bundle records the curatorial rationale and edges to the designs and commitments that motivated it. Distinct from Publication: a Bundle records what is *shipped* (modules, whose affordances reach it through the Designs it realizes); a Publication records a *region of the graph published* to an audience. Affordances are Bundle's, not Publication's." .
+<https://0k.computer/ontology#Bundle> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#Bundle> <http://www.w3.org/2000/01/rdf-schema#label> "Bundle" .
+<https://0k.computer/ontology#Bundle> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#Signifier> <http://purl.org/dc/terms/references> "Norman, D. (2013). The Design of Everyday Things, revised ed., preface." .
+<https://0k.computer/ontology#Signifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Signifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#comment> "A perceivable cue on a specific surface that indicates to an actor that an action is available here: GUI button, palette entry, keybinding label, CLI --help text, hint, icon. The perceivable aspect of an affordance." .
+<https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#label> "Signifier" .
+<https://0k.computer/ontology#Surface> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Surface> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Surface> <http://www.w3.org/2000/01/rdf-schema#comment> "A protocol or interface through which actors and readers meet the system. Two directions share the word. INBOUND surfaces are the invocation faces through which an actor reaches the system to act — MCP, CLI, SDK, GUI, keyboard, voice, palette (the descriptor detail is operation-surface's). OUTBOUND surfaces are the faces onto which a Publication projects a region of the graph for readers (publishedOn -> Surface): x0k-native (the document/motif renderer) or an external protocol (DFOS, ActivityPub, ATProto, IndieWeb). An external outbound surface additionally carries a direction (one-way syndication, or two-way where inbound replies fold back into the graph as observations) and an identity face (the owner's did:key projected as that network's own identity). See decisions/architecture/surfaces/publication-projection.md." .
+<https://0k.computer/ontology#Surface> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#Surface> <http://www.w3.org/2000/01/rdf-schema#label> "Surface" .
+<https://0k.computer/ontology#composes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#composes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#composes> <http://www.w3.org/2000/01/rdf-schema#comment> "A Bundle composed inside this Bundle. Enables nesting: a distribution bundle composes a messaging bundle, an editor-integration bundle, and so on." .
+<https://0k.computer/ontology#composes> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Bundle> .
+<https://0k.computer/ontology#composes> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#composes> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Bundle> .
+<https://0k.computer/ontology#composesBundle> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#composesBundle> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#composesBundle> <http://www.w3.org/2000/01/rdf-schema#comment> "Bundle frontmatter form of the composes edge. Identical semantics to x0k:composes; the snake_case wire form `composes_bundle` exists for parser/corpus alignment." .
+<https://0k.computer/ontology#composesBundle> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Bundle> .
+<https://0k.computer/ontology#composesBundle> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#composesBundle> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Bundle> .
+<https://0k.computer/ontology#defines> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#defines> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#comment> "A Design defines the affordances that follow from its experience-shape decision. The affordance is then verified independently by its literate spec; the design is realized when a Bundle ships it." .
+<https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Design> .
+<https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
+<https://0k.computer/ontology#presentedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#presentedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#comment> "The specific surface on which a signifier is presented — a keybinding on an input surface, a button on a graphical one." .
+<https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Signifier> .
+<https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Surface> .
+<https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#comment> "A decision (design or bundle) declares that a signifier is presented as part of its experience contract." .
+<https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Signifier> .
+<https://0k.computer/ontology#publishedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#publishedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#comment> "The Surface on which this Publication is published: one runtime listener bound to one configuration." .
+<https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Surface> .
+<https://0k.computer/ontology#requires> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#requires> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#requires> <http://www.w3.org/2000/01/rdf-schema#comment> "Affordance requires Affordance: the second affordance must already hold for the first to hold. Affordance dependency graph; distinct from Techne dependsOn (substrate composition) and Decision dependsOn (decision rests on decision). Many-to-many; transitive at query time." .
+<https://0k.computer/ontology#requires> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Affordance> .
+<https://0k.computer/ontology#requires> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#requires> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
+<https://0k.computer/ontology#runsOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#runsOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#runsOn> <http://www.w3.org/2000/01/rdf-schema#comment> "The surfaces this Bundle is intended to be installed and run on." .
+<https://0k.computer/ontology#runsOn> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Bundle> .
+<https://0k.computer/ontology#runsOn> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#runsOn> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Surface> .
+<https://0k.computer/ontology#signifies> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#signifies> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#comment> "A signifier signifies an affordance — it is the perceivable cue (button, label, keybinding hint, default suggestion) that indicates to an actor that the affordance is available here. Techne realizes the affordance; signifier signifies it. The two together make the affordance both real and reachable; either alone is incomplete (techne without signifier is unreachable for perception-dependent actors; signifier without techne is a broken promise)." .
+<https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Signifier> .
+<https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
+<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "A literate eval spec that drives a real actor through real surfaces to a real outcome. The single source of evidence that an affordance holds. A Decision may also claim verifiedBy when the literate spec verifies the affordances it defines." .
+<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
+<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#LiterateSpec> .
+<https://0k.computer/ontology/software> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#comment> "The publishable slice of the infrastructure domain: Affordance, Signifier, Surface, Bundle, and the edges among them and the document genus. Split out of product (ontology-modules §2) so a publication that ships core and document can ship the affordance vocabulary its documents use without importing work or actor. Keeps the base namespace, like product. SoftwareModule stays in product: it is rdfs:subClassOf Artifact, which work defines." .
+<https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#label> "software" .
+<https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/software/0.1.0> .
+_:b0000n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0000n0001 .
+_:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Affordance> .
+_:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0000n0002 .
+_:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .

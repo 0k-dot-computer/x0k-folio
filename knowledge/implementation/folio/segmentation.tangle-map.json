@@ -1,0 +1,17 @@
+{
+  "source": "knowledge/implementation/folio/segmentation.md",
+  "source_hash": "3eb8442588825b2a",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "9127506cc8b6055a",
+      "outputs": [
+        {
+          "path": "x0k-folio/src/block_segment.rs",
+          "hash": "0716b514cf731c46"
+        }
+      ]
+    }
+  ]
+}

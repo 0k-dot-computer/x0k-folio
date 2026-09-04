@@ -1,0 +1,21 @@
+{
+  "source": "knowledge/implementation/tangle/receiving.md",
+  "source_hash": "f94c291c667243ad",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "28a9799be7dd2364",
+      "outputs": [
+        {
+          "path": "x0k-tangle/tests/receive_repo.rs",
+          "hash": "24206373da6a6c2e"
+        },
+        {
+          "path": "x0k-tangle/src/receive.rs",
+          "hash": "8f7ba9a79e5c4160"
+        }
+      ]
+    }
+  ]
+}

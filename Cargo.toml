@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "x0k-folio",
+    "x0k-ontology",
+    "x0k-syntax",
+    "x0k-tangle",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.89"
+
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"

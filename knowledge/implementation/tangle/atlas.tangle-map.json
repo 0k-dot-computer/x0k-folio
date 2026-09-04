@@ -1,0 +1,17 @@
+{
+  "source": "knowledge/implementation/tangle/atlas.md",
+  "source_hash": "c25ab3d0b0b53399",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "fcdacf6e97876a38",
+      "outputs": [
+        {
+          "path": "x0k-tangle/src/atlas.rs",
+          "hash": "8017944c3a032f2d"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "source": "knowledge/implementation/ontology/concept-facts.md",
+  "source_hash": "91d9112974b74276",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "e7a141592dab6fe4",
+      "outputs": [
+        {
+          "path": "x0k-ontology/src/concept_facts.rs",
+          "hash": "e1f745397882328c"
+        }
+      ]
+    }
+  ]
+}

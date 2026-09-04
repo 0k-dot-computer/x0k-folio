@@ -1,0 +1,24 @@
+name: ci
+on:
+  push:
+  pull_request:
+  schedule:
+    # A new advisory invalidates a dependency graph that nothing has changed,
+    # so supply-chain runs on a timer as well as on every push.
+    - cron: "0 6 * * 1"
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./tools/ci
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # `tools/ci` skips cargo-deny when it is not installed, so that a clone
+      # builds without it. CI is where the policy has to actually run, so this
+      # job installs it and fails on a finding. Separate job: it is slower than
+      # the build, and parallel means it costs the fast signal nothing.
+      - run: cargo install cargo-deny --locked
+      - run: cargo deny check

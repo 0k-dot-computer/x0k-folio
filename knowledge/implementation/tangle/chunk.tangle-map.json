@@ -1,0 +1,17 @@
+{
+  "source": "knowledge/implementation/tangle/chunk.md",
+  "source_hash": "0c763f740bdf38a5",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "122453fdfcaf73eb",
+      "outputs": [
+        {
+          "path": "x0k-tangle/src/chunk.rs",
+          "hash": "5e16c9fbb55abfa7"
+        }
+      ]
+    }
+  ]
+}

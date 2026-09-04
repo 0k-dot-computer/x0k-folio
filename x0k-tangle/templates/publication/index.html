@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>__C0K_PUB_TITLE__</title>
+  <!-- No-WebGPU detection. The render-vello canvas needs WebGPU; if the browser
+       lacks it, redirect to the woven semantic fallback (the woven pages under
+       pages/, entry pages/index.html) BEFORE the heavy wasm module loads. This
+       classic <script> runs synchronously, ahead of the deferred boot module. -->
+  <script>
+    (function () {
+      if (!('gpu' in navigator)) {
+        try { location.replace('pages/index.html'); }
+        catch (e) { location.href = 'pages/index.html'; }
+      }
+    })();
+  </script>
+  <!-- JS-disabled fallback: send the reader straight to the semantic pages. -->
+  <noscript>
+    <meta http-equiv="refresh" content="0; url=pages/index.html" />
+  </noscript>
+  <style>
+    :root {
+      /* Pansophia-leaning layer-1 tokens render-vello reads via getComputedStyle. */
+      --color-surface: #f7f3ea;
+      --color-dag-canvas: #efe9db;
+      --color-text: #2b2620;
+      --color-accent: #8a5a2b;
+      --color-border: #c9bfa8;
+      --color-error: #9c3b2e;
+      --color-edge-dependency: #6b7a8f;
+      --color-edge-hierarchy: #8a5a2b;
+      --color-edge-cyclic: #9c3b2e;
+      --color-role-structural: #6b7a8f;
+      --color-role-decision: #8a5a2b;
+      --color-role-lifecycle: #5a7a5a;
+      --color-role-actor: #9c3b2e;
+      --color-entity-seed: #8a5a2b;
+      --color-entity-intent: #5a7a5a;
+      --color-entity-doc: #b08d57;
+      --color-entity-decision: #8a5a2b;
+      --color-entity-affordance: #9c3b2e;
+      --color-entity-session: #6b7a8f;
+      /* Resting influence arcs read cool + quiet (render-vello also paints them
+         faint at rest — the de-hairball); per-thread arc hues are pushed
+         per-edge from boot.js. */
+      --color-edge-dependency: #8c93a0;
+      --font-family: "EB Garamond", Georgia, serif;
+      --font-mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      /* The idea-lane palette — the through-line shared with the glyphs, arcs,
+         lane labels, narrative captions, and the woven pages. Eight idea-lanes +
+         three bands (synthesis / capstone / frontier). (boot.js holds the
+         authoritative copy used for per-entity tints; these mirror it for DOM
+         chrome.) */
+      --thread-founding-vision:    #c89537;
+      --thread-malleability:       #c0562f;
+      --thread-data-ownership:     #2c8c78;
+      --thread-networking:         #3d6ea8;
+      --thread-authority-identity: #5b4b9e;
+      --thread-privacy:            #3f7d57;
+      --thread-durable-execution:  #a8446f;
+      --thread-sovereign-ai:       #8e3d9e;
+      --thread-synthesis:          #5d5470;
+      --thread-capstone:           #b03a52;
+      --thread-frontier:           #c98a2e;
+    }
+    html, body { margin: 0; height: 100%; background: var(--color-dag-canvas); }
+    #stage { position: fixed; inset: 0; overflow: hidden; }
+    #vello-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+    #vello-canvas:active { cursor: grabbing; }
+    /* World-anchored lane captions (the six threads). */
+    #lane-labels { position: absolute; inset: 0; pointer-events: none; }
+    .lane-label {
+      position: absolute; font-family: var(--font-family); font-size: 13px;
+      letter-spacing: 0.01em; color: var(--color-accent);
+      background: rgba(247,243,234,0.78); border: 1px solid var(--color-border);
+      border-radius: 4px; padding: 1px 8px; white-space: nowrap;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    /* The deep-doc DOM portal — the in-place document surface the live app
+       calls DocRendererPortal, here fed from bundled body text (no daemon). */
+    #doc-portal {
+      position: absolute; display: none; box-sizing: border-box;
+      background: var(--color-surface); color: var(--color-text);
+      border: 1px solid var(--color-accent); border-radius: 8px;
+      padding: 18px 22px; overflow: auto;
+      font-family: var(--font-family); box-shadow: 0 8px 40px rgba(0,0,0,0.18);
+    }
+    #doc-portal .badge {
+      display: inline-block; font-size: 11px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--color-accent);
+      border: 1px solid var(--color-border); border-radius: 4px; padding: 1px 6px; margin-bottom: 8px;
+    }
+    #doc-portal h1 { font-size: 26px; margin: 4px 0 6px; line-height: 1.18; letter-spacing: -0.01em; font-weight: 600; }
+    #doc-portal .lede { font-size: 15px; color: var(--color-accent); margin: 0 0 14px; font-style: italic; }
+    /* Deep-doc body: serif, generous measure (the history reads as an essay),
+       hyphenated for an even ragged edge. */
+    #doc-portal .doc-body { max-width: 38em; }
+    #doc-portal p { font-size: 16px; line-height: 1.62; margin: 0 0 12px; hyphens: auto; }
+    /* Technical terms / code in the deep-doc render in mono. */
+    #doc-portal code, #doc-portal .mono {
+      font-family: var(--font-mono); font-size: 0.88em;
+      background: rgba(138,90,43,0.08); padding: 0.06em 0.3em; border-radius: 3px;
+    }
+    #hud {
+      position: absolute; left: 12px; bottom: 12px; font-family: var(--font-family);
+      font-size: 12px; color: var(--color-text); opacity: 0.7; pointer-events: none;
+    }
+    /* ── Narrative layer (Phase 4) ──────────────────────────────────────── */
+    /* Edge overlay: key influence arcs of the current beat, drawn over the
+       GPU canvas in screen space (world_to_screen each frame). */
+    #edge-overlay { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+    #edge-overlay path { fill: none; stroke: var(--color-accent); stroke-width: 2.2;
+      opacity: 0.85; stroke-linecap: round; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.18)); }
+    #edge-overlay circle { fill: none; stroke: var(--color-accent); stroke-width: 2; opacity: 0.9; }
+    /* The station caption — the editorial heart: empower-move + extractive shadow. */
+    #narrative {
+      position: absolute; right: 22px; top: 22px; width: min(34vw, 420px);
+      box-sizing: border-box; font-family: var(--font-family); color: var(--color-text);
+      background: rgba(247,243,234,0.94); border: 1px solid var(--color-border);
+      border-radius: 10px; padding: 16px 18px 14px; box-shadow: 0 10px 44px rgba(0,0,0,0.18);
+      display: none;
+    }
+    #narrative.show { display: block; }
+    #narrative .eyebrow { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--color-accent); display: flex; justify-content: space-between; align-items: baseline; }
+    #narrative h2 { font-size: 21px; line-height: 1.2; margin: 6px 0 4px; }
+    #narrative .empower { font-size: 14px; line-height: 1.5; margin: 8px 0; }
+    #narrative .shadow {
+      font-size: 13px; line-height: 1.5; margin: 10px 0 4px; padding: 8px 10px;
+      border-left: 3px solid var(--color-error); background: rgba(156,59,46,0.06);
+      color: #6b4a3a; border-radius: 0 5px 5px 0;
+    }
+    #narrative .shadow b { color: var(--color-error); letter-spacing: 0.04em;
+      text-transform: uppercase; font-size: 10px; display: block; margin-bottom: 3px; }
+    #narrative .controls { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+    #narrative button {
+      font-family: var(--font-family); font-size: 13px; cursor: pointer;
+      background: var(--color-surface); color: var(--color-accent);
+      border: 1px solid var(--color-border); border-radius: 6px; padding: 4px 12px;
+    }
+    #narrative button:hover { background: #efe6d2; }
+    #narrative button:disabled { opacity: 0.4; cursor: default; }
+    #narrative .dots { display: flex; gap: 5px; margin-left: auto; }
+    #narrative .dots i { width: 8px; height: 8px; border-radius: 50%;
+      background: var(--color-border); display: inline-block; }
+    #narrative .dots i.on { background: var(--color-accent); }
+    #narrative .hint { font-size: 11px; opacity: 0.6; margin-top: 8px; }
+    /* "Begin the narrative" launcher (overview state). */
+    #narrative-launch {
+      position: absolute; right: 22px; top: 22px; font-family: var(--font-family);
+      font-size: 14px; cursor: pointer; color: var(--color-surface);
+      background: var(--color-accent); border: none; border-radius: 8px;
+      padding: 9px 16px; box-shadow: 0 6px 22px rgba(0,0,0,0.22);
+    }
+    /* Persistent escape hatch to the semantic fallback (a11y / SEO / no-WebGPU). */
+    #read-as-text {
+      position: absolute; left: 12px; top: 12px; font-family: var(--font-family);
+      font-size: 12px; color: var(--color-accent); text-decoration: none;
+      background: rgba(247,243,234,0.82); border: 1px solid var(--color-border);
+      border-radius: 6px; padding: 4px 10px;
+    }
+    #read-as-text:hover { background: #efe6d2; }
+    /* ── Node labels: key-node (persistent) + hovered (transient) captions ──── */
+    #node-labels { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+    .node-label {
+      position: absolute; font-family: var(--font-family); font-size: 12.5px;
+      line-height: 1.1; color: #2b2620; white-space: nowrap;
+      background: rgba(247,243,234,0.86); padding: 1px 6px; border-radius: 4px;
+      border-left: 2px solid var(--lbl, var(--color-accent));
+      box-shadow: 0 1px 4px rgba(0,0,0,0.10); transform: translateY(-50%);
+    }
+    .node-label.hover {
+      font-weight: 600; background: var(--color-surface); z-index: 4;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.20);
+    }
+    /* ── Persistent mini-map (the atlas at a glance, "you are here") ─────────── */
+    #minimap {
+      position: absolute; right: 14px; bottom: 40px; width: 188px; height: 132px;
+      background: rgba(247,243,234,0.9); border: 1px solid var(--color-border);
+      border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.16); cursor: pointer;
+      z-index: 5;
+    }
+    #minimap .mini-bg { fill: var(--color-dag-canvas); stroke: var(--color-border); }
+    #minimap circle { opacity: 0.92; }
+    #minimap .mini-view {
+      fill: rgba(138,90,43,0.12); stroke: var(--color-accent); stroke-width: 1.4; rx: 2;
+    }
+    /* The narrative caption picks up the active beat's thread hue via --beat. */
+    #narrative { border-top: 3px solid var(--color-accent); }
+    #narrative .eyebrow { color: var(--beat, var(--color-accent)); }
+    #narrative .dots i.on { background: var(--beat, var(--color-accent)); }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="vello-canvas"></canvas>
+    <svg id="edge-overlay"></svg>
+    <div id="lane-labels"></div>
+    <div id="node-labels"></div>
+    <div id="doc-portal"></div>
+    <svg id="minimap"></svg>
+    <button id="narrative-launch">▶ Walk the narrative</button>
+    <aside id="narrative"></aside>
+    <a id="read-as-text" href="pages/index.html">Read as text →</a>
+    <div id="hud"><b>__C0K_PUB_TITLE__</b> · __C0K_PUB_STATS__ · offline atlas</div>
+  </div>
+  <noscript>
+    <p style="font-family: Georgia, serif; padding: 2rem;">
+      This publication's interactive atlas needs JavaScript and WebGPU.
+      <a href="pages/index.html">Read it as text instead →</a>
+    </p>
+  </noscript>
+  <script type="module" src="./boot.js"></script>
+</body>
+</html>
