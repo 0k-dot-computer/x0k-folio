@@ -1060,6 +1060,7 @@ dependencies = [
  "tree-sitter-rust",
  "walkdir",
  "x0k-folio",
+ "x0k-ontology",
  "x0k-syntax",
 ]
 

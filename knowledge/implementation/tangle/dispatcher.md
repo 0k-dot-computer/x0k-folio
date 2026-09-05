@@ -480,7 +480,22 @@ same mistake wearing different clothes.
 
 ## tangle_document
 
-The single-doc entry point. Steps:
+The single-doc entry point, and the library face of tangling: a
+consumer holding the published crate reaches the affordance of turning
+a document into its source through this function's rustdoc, which is
+the cue the signifier below records.
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-tangle-tangle-document
+cue: tangle_document
+edges:
+  signifies:
+    - x0k:affordance/tangle_source_from_a_document
+  presentedOn:
+    - x0k:surface/sdk
+```
+
+Steps:
 
 1. Read + parse the source `.md`.
 2. Decide whether there's anything to do: a doc with neither

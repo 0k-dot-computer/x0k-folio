@@ -1,6 +1,6 @@
 {
-  "corpus_commit": "f43ef0c70c287f60433d6b893146a6d9a04ac705",
-  "corpus_rev": "ystywrmskuyyrknqqqpwrlumuztyoxln",
+  "corpus_commit": "30719526a1a959ad824e7b9c82852c60fa6928ef",
+  "corpus_rev": "xpnvqktqyttzynkwvvqlxnwnwszuwors",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
@@ -61,6 +61,7 @@
     "knowledge/implementation/tangle/atlas.md",
     "knowledge/implementation/tangle/chunk-refs.md",
     "knowledge/implementation/tangle/chunk.md",
+    "knowledge/implementation/tangle/cli-faces.md",
     "knowledge/implementation/tangle/crate.md",
     "knowledge/implementation/tangle/dispatcher.md",
     "knowledge/implementation/tangle/doc-index.md",
@@ -117,6 +118,7 @@
     "knowledge/implementation/tangle/atlas.md": "knowledge/implementation/tangle/atlas.md",
     "knowledge/implementation/tangle/chunk-refs.md": "knowledge/implementation/tangle/chunk-refs.md",
     "knowledge/implementation/tangle/chunk.md": "knowledge/implementation/tangle/chunk.md",
+    "knowledge/implementation/tangle/cli-faces.md": "knowledge/implementation/tangle/cli-faces.md",
     "knowledge/implementation/tangle/crate.md": "knowledge/implementation/tangle/crate.md",
     "knowledge/implementation/tangle/dispatcher.md": "knowledge/implementation/tangle/dispatcher.md",
     "knowledge/implementation/tangle/doc-index.md": "knowledge/implementation/tangle/doc-index.md",

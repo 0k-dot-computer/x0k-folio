@@ -48,7 +48,8 @@ The crate reads as chapters, each owning one idea:
   substrate's locator half deliberately absent.
 - [`checking.md`](checking.md) — reading an envelope against the
   vocabulary the bundle ships; a missing term and a missing target are
-  different answers.
+  different answers. Also the declaration check: a human claim with no
+  signifier is a defect.
 - [`inline-entities.md`](inline-entities.md) — entities authored inside
   prose: the section is the record, and the extractor does not resolve.
 - [`segmentation.md`](segmentation.md) — two identities per block: a
@@ -166,8 +167,9 @@ pub use block_provenance::{
 pub use block_segment::{hash_block, segment_body, BlockKind, BlockSegment};
 pub use entity_id::{EntityId, EntityIdError};
 pub use envelope_check::{
-    check_corpus, check_envelope, predicate_standing, CorpusReport, DanglingEdge, Defect,
-    EnvelopeReport, PredicateStanding,
+    check_corpus, check_declarations, check_envelope, predicate_standing, CorpusReport,
+    DanglingEdge, DeclarationDefect, DeclarationReport, Defect, EnvelopeReport,
+    PredicateStanding,
 };
 pub use inline_entity::{
     declared_facts, declared_facts_with, defined_in_fact, extract_from_markdown,

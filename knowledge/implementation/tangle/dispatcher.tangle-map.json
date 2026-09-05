@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/dispatcher.md",
-  "source_hash": "f5da072e12bec392",
+  "source_hash": "f3fb1b1c9f388ab3",
   "pipelines": [
     {
       "kind": "identity-tangle",

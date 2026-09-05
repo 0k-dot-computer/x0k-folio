@@ -18,9 +18,14 @@
 //!   sidecar next to the document that records what was produced.
 //! - **weave** — [`weave::weave_html`]: render the document, prose and
 //!   highlighted code together, as a single HTML page.
-//! - **check** — [`resolve::check_all_refs`]: verify every chunk
-//!   reference resolves and no reference cycle exists, without
-//!   writing anything.
+//! - **check** — [`resolve::check_all_refs`] and
+//!   [`faces::check_vocabulary`]: verify every chunk reference resolves
+//!   and no reference cycle exists, and read every folio/v1 envelope
+//!   against the vocabulary this build compiled, without writing
+//!   anything.
+//!
+//! A fourth, **affordances** — [`faces::declared_affordances`] — reads
+//! the affordance declarations out of a document as data.
 //!
 //! Everything else in the crate builds outward from those: the
 //! pipeline protocol that lets other generators ride the same
@@ -31,6 +36,7 @@
 pub mod atlas;
 pub mod chunk;
 pub mod chunk_refs;
+pub mod faces;
 pub mod identity_pipeline;
 pub mod index;
 pub mod multi_doc_resolve;

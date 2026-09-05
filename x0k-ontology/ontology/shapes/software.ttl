@@ -1,0 +1,5 @@
+# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.
+# Bootstrap source: this view seeds an empty region exactly once.
+# Shapes: software
+
+<https://0k.computer/ontology#claimedFor> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Actor> .

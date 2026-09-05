@@ -58,7 +58,11 @@ not authored**: the chunk carries a marker naming the concepts the book
 is organized into, and the projector writes every shipped document there
 under the group that claims it, each described by the `summary:` its own
 envelope declares. Membership is exhaustive, so a chapter added to the
-corpus cannot go unlisted in the public face.
+corpus cannot go unlisted in the public face. Nor are its **affordance
+figures** authored: a second marker asks for one figure per affordance
+the publication publishes, drawn from the extracted declaration and the
+signifiers that point at it, so the picture cannot show a face nobody
+declared or a module the repository does not ship.
 
 The carried example is the publication that publishes this very crate,
 `decisions/publications/x0k-folio.md`: three crates
@@ -90,7 +94,10 @@ the two from drifting apart afterwards.
 //! workspace, so `root: README.md` lands at the repo root; chunks routed to
 //! declared `overlay:` paths seed those files once, and the README's
 //! `<!-- x0k:contents -->` marker is replaced by the generated contents
-//! page, grouped by the concepts that marker names), a committed
+//! page, grouped by the concepts that marker names, and its
+//! `<!-- x0k:affordances -->` marker by one figure per affordance declaration
+//! the publication publishes, drawn from the extracted record into
+//! `affordances/`), a committed
 //! `Cargo.lock`, and a forge-agnostic `tools/ci` that re-tangles and diffs
 //! against the committed generated files. It realizes
 //! `x0k:design/publish-a-region-as-a-repository`.
@@ -140,7 +147,7 @@ use std::path::{Path, PathBuf};
 
 use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
 use x0k_folio::transclusion::extract_section;
-use x0k_folio::EntityId;
+use x0k_folio::{EntityId, InlineEntity};
 
 use crate::pipeline::PipelineRegistry;
 use crate::pipeline_runner::{tangle_document, TangleSidecar};
@@ -346,6 +353,13 @@ pub struct RepoProjectReport {
     /// published, `ontology/modules` when it is not (`modules_rel_dir`).
     /// `None` when no module ships.
     pub modules_dir: Option<String>,
+    /// The affordance figures drawn where the README's
+    /// `<!-- x0k:affordances -->` marker stood: affordance id → the
+    /// projection-relative path of its light figure, the dark twin beside
+    /// it as `-dark.svg`. Empty when the README carries no marker. Not in
+    /// `PROVENANCE.json`'s `path_map`: a figure has no corpus source to
+    /// route an edit back to.
+    pub figures: BTreeMap<String, String>,
 }
 ```
 
@@ -782,7 +796,14 @@ and a refusal must land before the output directory is touched.
 ```rust {#select-documents}
 let projected_docs = project_named_documents(workspace, &documents)?;
 affordance_closure(&projected_docs, &published, &excluded)?;
+let affordances = affordance_records(&projected_docs, workspace, &literate, &published)?;
 ```
+
+The records the README's affordance figures are drawn from are read
+here too, while the named documents and the literate set are both in
+hand — the declarations from the former, the signifiers from both
+(§ "Each affordance, as a figure"). Nothing is drawn yet; whether the
+README asked for figures is known only once it is tangled.
 
 ### Projecting into an existing repository
 
@@ -918,7 +939,10 @@ seeds, tangled from the publication doc into a projection that already
 names its provenance — the dispatcher admits a publication document
 only into a root carrying `PROVENANCE.json`
 ([`dispatcher.md`](dispatcher.md) § "tangle_document"), so the order
-here is the guard being satisfied, not a coincidence.
+here is the guard being satisfied, not a coincidence. Last of all, if
+the README asked for them, the affordance figures: one themed pair per
+published declaration under `affordances/`, standing where the
+README's marker was.
 
 The lockfile is committed, not ignored: the workspace ships a binary,
 and `tools/ci` diffs the whole tree after a build, so an ignored lock
@@ -950,6 +974,7 @@ emit_provenance(
 )?;
 tangle_publication_doc(region_doc, workspace, output_dir, &overlay)?;
 write_readme_contents(output_dir, &literate, &vocab_modules, &modules_rel)?;
+write_readme_affordances(output_dir, &affordances, &mut report)?;
 ```
 
 The README is authored, not templated — with one section the
@@ -1981,13 +2006,20 @@ if let Some(pkg) = doc.get_mut("package").and_then(|p| p.as_table_mut()) {
 `cargo publish` strips `path` from a dependency and falls back to its
 version requirement, so an in-bundle path dependency without a
 `version` is unpublishable. The version comes from the target's own
-vendored manifest, collected during the guard pass.
+vendored manifest, collected during the guard pass. A dev-dependency is
+the same case — `cargo deny` reads it as a wildcard just the same, and
+the published tarball carries it — so all three dependency tables are
+walked (2026-09-05: a test-only path to `x0k-ontology` was the first).
 
 ```rust {#rewrite-in-bundle-versions}
 // In-bundle path deps gain a `version` (from the target's vendored
 // manifest) so the crate is publishable: cargo strips `path` on publish
-// and falls back to the version requirement.
-if let Some(deps) = doc.get_mut("dependencies").and_then(|d| d.as_table_mut()) {
+// and falls back to the version requirement. Every dependency table,
+// because a dev-dependency without one is a wildcard too.
+for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
+    let Some(deps) = doc.get_mut(table).and_then(|d| d.as_table_mut()) else {
+        continue;
+    };
     let keys: Vec<String> = deps.iter().map(|(k, _)| k.to_string()).collect();
     for key in keys {
         let Some(t) = deps.get_mut(&key).and_then(|it| it.as_table_like_mut()) else {
@@ -2836,6 +2868,683 @@ fn affordance_closure(
         msg.push('\n');
     }
     bail!(msg);
+}
+```
+
+## Each affordance, as a figure
+
+The contents page answers *what is here*. The question a reader actually
+arrives with is *what can I do with it*, and the corpus already holds
+that answer as data: the affordance declarations the publication names
+under `publishes`, each claimed for an actor and `enabledBy` modules,
+and — since a face declares its signifier where the face lives — pointed
+at by `signifier` blocks in the chapters that hold the faces. So the
+README may carry a second marker, `<!-- x0k:affordances -->`, and the
+projector replaces it with one figure per published declaration, drawn
+from that record and nothing else. That is the whole point of drawing
+it: a figure rendered from the record cannot show a face nobody declared
+or a module the publication does not ship, so the picture is honest by
+construction where prose would be honest by discipline.
+
+The record is small. The declaration gives the identity, the title (its
+section's heading), the status, and the actors it is claimed for — read
+in both spellings the extractor has used, the vocabulary's `claimedFor →
+x0k:actor/<kind>` and the older bare `actors` list, because the figure
+should not care which extractor drew the facts. The modules `enabledBy`
+names are each marked shipped or not; the closure guard above has
+already refused any third state, so "not shipped" here means "excluded
+by name". The surfaces come from signifiers: a signifier `signifies` the
+affordance and is `presentedOn` a surface, and the heading it was
+declared under is the cue's own name — a CLI verb's, a library
+function's.
+
+```rust {#affordance-record}
+/// One affordance the publication publishes, as the figure sees it: the
+/// declaration's own fields, the modules it names each marked shipped or
+/// not, and the surfaces the signifiers pointing at it are presented on.
+/// Nothing a figure draws is outside this record.
+struct AffordanceRecord {
+    /// The declared `id:`, e.g. `x0k:affordance/read_a_line`.
+    id: String,
+    /// The identifier, hyphenated: the stem of the figure files.
+    slug: String,
+    /// The heading of the section that declares it.
+    title: String,
+    /// The declared `status:`, when there is one.
+    status: Option<String>,
+    /// Actor kinds it is claimed for (`human`, `ai_agent`), in declaration
+    /// order.
+    actors: Vec<String>,
+    /// Each module `enabledBy` names, with whether this publication ships
+    /// it. The closure guard has refused any module that is neither
+    /// published nor excluded, so `false` means excluded by name.
+    modules: Vec<(String, bool)>,
+    /// `(surface, cue)` per signifier that signifies it: the surface named
+    /// by `presentedOn`, and the heading the signifier was declared under.
+    surfaces: Vec<(String, String)>,
+}
+
+/// A signifier, as far as the figure needs it.
+struct Signifier {
+    signifies: Vec<String>,
+    surfaces: Vec<String>,
+    cue: String,
+}
+
+/// The `entity:` targets of `predicate` among an entity's facts, with
+/// `prefix` stripped — a bare crate, surface or actor name.
+fn entity_targets(facts: &[(String, String)], predicate: &str, prefix: &str) -> Vec<String> {
+    facts
+        .iter()
+        .filter(|(p, _)| p == predicate)
+        .filter_map(|(_, v)| v.strip_prefix("entity:"))
+        .filter_map(|v| v.strip_prefix(prefix))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The record of one declaration. Actors are read in both spellings the
+/// extractor has used — `claimedFor → x0k:actor/<kind>`, the vocabulary's
+/// word, and the older bare `actors` list — so the figure does not care
+/// which extractor drew the facts.
+fn affordance_record(entity: &InlineEntity, published: &BTreeSet<String>) -> AffordanceRecord {
+    let facts = x0k_folio::declared_facts(entity);
+    let mut actors: Vec<String> = Vec::new();
+    for (predicate, value) in &facts {
+        let kind = match predicate.as_str() {
+            "claimedFor" => value.strip_prefix("entity:x0k:actor/"),
+            "actors" | "x0k:affordance/actors" => value.strip_prefix("string:"),
+            _ => None,
+        };
+        if let Some(kind) = kind.filter(|k| !actors.iter().any(|a| a == k)) {
+            actors.push(kind.to_string());
+        }
+    }
+    let status = facts
+        .iter()
+        .find(|(p, _)| p == "status" || p == "x0k:affordance/status")
+        .and_then(|(_, v)| v.strip_prefix("string:"))
+        .map(str::to_string);
+    let modules = entity_targets(&facts, "enabledBy", SOFTWARE_MODULE_PREFIX)
+        .into_iter()
+        .map(|m| {
+            let shipped = published.contains(&m);
+            (m, shipped)
+        })
+        .collect();
+    AffordanceRecord {
+        id: entity.uri.to_string(),
+        slug: entity.uri.identifier.replace('_', "-"),
+        title: entity.title.clone(),
+        status,
+        actors,
+        modules,
+        surfaces: Vec::new(),
+    }
+}
+```
+
+Where signifiers are looked for is the one decision with reach.
+Affordances come from the named documents alone: they are what the
+publication chose to publish, in the order it named them. Signifiers
+come from those documents *and* from every literate chapter in the
+projection, because the cue for a face is declared in the chapter that
+holds the face — a tangler verb is signified in the chapter that defines
+it — and that chapter ships with its crate, not by name. A signifier in
+a chapter the projection does not carry is a cue the audience cannot
+see, and so it is not drawn.
+
+```rust {#affordance-records}
+/// Read the declarations in one body: affordances when `declarations` is
+/// on, signifiers always. A malformed block is the extractor's report, not
+/// the figure's, and is skipped here as the closure guard skips it.
+fn read_declarations(
+    body: &str,
+    declarations: bool,
+    published: &BTreeSet<String>,
+    records: &mut Vec<AffordanceRecord>,
+    signifiers: &mut Vec<Signifier>,
+) {
+    let classes: HashSet<String> =
+        HashSet::from(["affordance".to_string(), "signifier".to_string()]);
+    for record in x0k_folio::extract_from_markdown(body, &classes) {
+        let Ok(entity) = record else { continue };
+        match entity.marker_class.as_str() {
+            "affordance" if declarations => records.push(affordance_record(&entity, published)),
+            "signifier" => {
+                let facts = x0k_folio::declared_facts(&entity);
+                // The cue is the heading the block sits under, unless the
+                // block names it: a chapter's heading is often a sentence
+                // about the function, and the cue a person reaches for is
+                // the function's name.
+                let cue = facts
+                    .iter()
+                    .find(|(p, _)| p == "x0k:signifier/cue")
+                    .and_then(|(_, v)| v.strip_prefix("string:"))
+                    .map(str::to_string)
+                    .unwrap_or_else(|| entity.title.clone());
+                signifiers.push(Signifier {
+                    signifies: entity_targets(&facts, "signifies", ""),
+                    surfaces: entity_targets(&facts, "presentedOn", "x0k:surface/"),
+                    cue,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The affordance records the figures are drawn from: the declarations in
+/// the named documents, in `publishes` order, each joined to the
+/// signifiers — from those documents and from every literate chapter —
+/// that point at it. Two declarations with one id would draw over each
+/// other's files, so that refuses.
+fn affordance_records(
+    docs: &[ProjectedDoc],
+    workspace: &Path,
+    literate: &[LiterateDoc],
+    published: &BTreeSet<String>,
+) -> Result<Vec<AffordanceRecord>> {
+    let mut records: Vec<AffordanceRecord> = Vec::new();
+    let mut signifiers: Vec<Signifier> = Vec::new();
+    for doc in docs {
+        let (_, body) = parse_envelope(&doc.text)
+            .map_err(|e| anyhow!("projected document `{}` lost its envelope: {e:?}", doc.reference))?;
+        read_declarations(&body, true, published, &mut records, &mut signifiers);
+    }
+    for doc in literate {
+        let text = std::fs::read_to_string(workspace.join(&doc.rel))
+            .with_context(|| format!("reading literate doc {}", doc.rel.display()))?;
+        if let Some((_, body)) = split_frontmatter(&text) {
+            read_declarations(body, false, published, &mut records, &mut signifiers);
+        }
+    }
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for record in &records {
+        if !seen.insert(record.id.as_str()) {
+            bail!(
+                "affordance `{}` is declared twice among the published documents — one id, \
+                 one figure",
+                record.id
+            );
+        }
+    }
+    for s in &signifiers {
+        for record in records.iter_mut().filter(|r| s.signifies.contains(&r.id)) {
+            for surface in &s.surfaces {
+                record.surfaces.push((surface.clone(), s.cue.clone()));
+            }
+        }
+    }
+    Ok(records)
+}
+```
+
+The caption is written twice from the same sentence — once as Markdown
+under the picture, once as plain text for the image's `alt` and the
+SVG's `aria-label` — so a reader who cannot see the figure is told
+exactly what it shows, and told it in the order the figure reads: who it
+is for, how they reach it, what makes it true, and how far along it is.
+
+```rust {#affordance-caption}
+/// What an actor kind is called in the caption: the two the corpus
+/// declares by name, and any other as itself.
+fn actor_phrase(kind: &str) -> String {
+    match kind {
+        "human" => "a person".to_string(),
+        "ai_agent" => "an agent".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// The caption, from the record and nothing else. `markdown` sets the
+/// title bold and the names in code spans for the line under the picture;
+/// plain, it is the image's `alt` and the SVG's `aria-label`.
+fn affordance_caption(rec: &AffordanceRecord, markdown: bool) -> String {
+    let code = |s: &str| if markdown { format!("`{s}`") } else { s.to_string() };
+    let title = if markdown { format!("**{}**", rec.title) } else { rec.title.clone() };
+    let actors = if rec.actors.is_empty() {
+        "claimed for no actor".to_string()
+    } else {
+        let each: Vec<String> = rec.actors.iter().map(|k| format!("for {}", actor_phrase(k))).collect();
+        each.join(", ")
+    };
+    let surfaces = if rec.surfaces.is_empty() {
+        "no signifier declared".to_string()
+    } else {
+        let each: Vec<String> = rec
+            .surfaces
+            .iter()
+            .map(|(surface, cue)| format!("{} as {}", code(surface), code(cue)))
+            .collect();
+        format!("reachable on {}", each.join(", "))
+    };
+    let modules = if rec.modules.is_empty() {
+        "enabled by no named module".to_string()
+    } else {
+        let each: Vec<String> = rec
+            .modules
+            .iter()
+            .map(|(name, shipped)| {
+                if *shipped {
+                    code(name)
+                } else {
+                    format!("{} (excluded here)", code(name))
+                }
+            })
+            .collect();
+        format!("enabled by {}", each.join(", "))
+    };
+    let status = rec.status.as_deref().unwrap_or("undeclared");
+    format!("{title} — {actors}; {surfaces}; {modules}; status {status}.")
+}
+```
+
+The figure borrows the README's own plates: their two palettes (paper,
+gold and ink under a serif; a dark surface, cyan and slate under a
+monospace) and their three glyphs — the eye for a person, the machine
+for an agent, the sheet with a folded corner for a module. Three
+columns, left to right, read as the caption does: the actors the
+affordance is claimed for, the surfaces it is reachable through (one
+pill per signifier, the surface bold and the cue after it — set in a `text`
+element told to preserve its spaces, because a renderer otherwise folds the
+space at a `tspan`'s edge and the cue runs into the surface — measured
+with librsvg, where a non-breaking space folded the same way), and the
+modules that enable it, an excluded one drawn dashed and said so. An
+affordance no signifier points at gets a dashed pill saying so, because
+an undeclared path is a fact about the record — and, for a human claim,
+the defect the shipped checker reports.
+
+```rust {#affordance-palette}
+/// One of the two palettes the README's plates set. `label_style` is the
+/// attribute the plates give their small labels — italic on paper,
+/// upright in monospace.
+struct Palette {
+    font: &'static str,
+    ink: &'static str,
+    sheet: &'static str,
+    stroke: &'static str,
+    rule: &'static str,
+    fill: &'static str,
+    iris: &'static str,
+    arrow: &'static str,
+    label: &'static str,
+    label_style: &'static str,
+    accent: &'static str,
+}
+
+/// Paper, gold and ink, under a serif: the light plates.
+const LIGHT: Palette = Palette {
+    font: "Georgia,'Palatino Linotype',Palatino,serif",
+    ink: "#111111",
+    sheet: "#fffff8",
+    stroke: "#b88e44",
+    rule: "#d9d0b6",
+    fill: "#ede4c6",
+    iris: "#f6efd8",
+    arrow: "#8e6a30",
+    label: "#8e6a30",
+    label_style: " font-style=\"italic\"",
+    accent: "#b22222",
+};
+
+/// A dark surface, cyan and slate, under a monospace: the dark plates.
+const DARK: Palette = Palette {
+    font: "ui-monospace,'IBM Plex Mono',Menlo,monospace",
+    ink: "#e2e8f0",
+    sheet: "#1e1e2a",
+    stroke: "#3a3a4e",
+    rule: "#2f2f42",
+    fill: "#2a2a3a",
+    iris: "#2a2a3a",
+    arrow: "#96b4dc",
+    label: "#94a3b8",
+    label_style: "",
+    accent: "#22d3ee",
+};
+
+/// Escape text for an XML attribute or text node.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The eye from the plates, centred at `(cx, cy)`: a person.
+fn eye_glyph(cx: f64, cy: f64, p: &Palette) -> String {
+    format!(
+        "<path d=\"M{x0},{cy} C{x1},{yt} {x2},{yt} {x3},{cy} C{x2},{yb} {x1},{yb} {x0},{cy} Z\" \
+         fill=\"{sheet}\" stroke=\"{stroke}\" stroke-width=\"1.3\"/>\n\
+         <circle cx=\"{cx}\" cy=\"{cy}\" r=\"10\" fill=\"{iris}\" stroke=\"{stroke}\" stroke-width=\"1.1\"/>\n\
+         <circle cx=\"{cx}\" cy=\"{cy}\" r=\"4\" fill=\"{ink}\"/>\n\
+         <circle cx=\"{hx}\" cy=\"{hy}\" r=\"1.4\" fill=\"{sheet}\"/>\n",
+        x0 = cx - 32.0,
+        x1 = cx - 16.0,
+        x2 = cx + 16.0,
+        x3 = cx + 32.0,
+        yt = cy - 20.0,
+        yb = cy + 20.0,
+        hx = cx + 3.6,
+        hy = cy - 3.6,
+        sheet = p.sheet,
+        stroke = p.stroke,
+        iris = p.iris,
+        ink = p.ink,
+    )
+}
+
+/// The machine from the plates — a row of chips with a token stepping
+/// across them — centred at `(cx, cy)`: an agent, or any structured actor.
+fn machine_glyph(cx: f64, cy: f64, p: &Palette) -> String {
+    let mut s = String::new();
+    let x0 = cx - 35.0;
+    for i in 0..4 {
+        let x = x0 + 18.0 * i as f64;
+        s.push_str(&format!(
+            "<rect x=\"{x}\" y=\"{y}\" width=\"16\" height=\"16\" fill=\"{sheet}\" stroke=\"{stroke}\" stroke-width=\"1.1\"/>\n",
+            y = cy - 6.0,
+            sheet = p.sheet,
+            stroke = p.stroke,
+        ));
+        if i != 1 {
+            s.push_str(&format!(
+                "<rect x=\"{x}\" y=\"{cy}\" width=\"8\" height=\"3\" fill=\"{fill}\"/>\n",
+                x = x + 4.0,
+                fill = p.fill,
+            ));
+        }
+    }
+    s.push_str(&format!(
+        "<g><path d=\"M{x},{y} h10 v5 l-5,5 l-5,-5 z\" fill=\"{accent}\" opacity=\"0.85\"/>\
+         <animateTransform attributeName=\"transform\" type=\"translate\" calcMode=\"discrete\" \
+         values=\"0,0;18,0;36,0;54,0;36,0;18,0\" dur=\"4s\" repeatCount=\"indefinite\"/></g>\n",
+        x = x0 + 3.0,
+        y = cy - 22.0,
+        accent = p.accent,
+    ));
+    s
+}
+
+/// The sheet with a folded corner from the plates, top-left at `(x, y)`,
+/// 40 by 56: a module. Dashed when the publication excludes it.
+fn sheet_glyph(x: f64, y: f64, p: &Palette, dashed: bool) -> String {
+    let dash = if dashed { " stroke-dasharray=\"4 3\"" } else { "" };
+    let inner = if dashed {
+        format!("fill=\"none\" stroke=\"{}\" stroke-dasharray=\"3 2\"", p.rule)
+    } else {
+        format!("fill=\"{}\"", p.fill)
+    };
+    format!(
+        "<path d=\"M{x},{y} h30 l10,10 v46 h-40 z\" fill=\"{sheet}\" stroke=\"{stroke}\" stroke-width=\"1.2\"{dash}/>\n\
+         <path d=\"M{fx},{y} v10 h10\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1.2\"{dash}/>\n\
+         <rect x=\"{ix}\" y=\"{y1}\" width=\"24\" height=\"6\" {inner}/>\n\
+         <line x1=\"{ix}\" y1=\"{y2}\" x2=\"{ex}\" y2=\"{y2}\" stroke=\"{rule}\" stroke-width=\"2\"/>\n\
+         <rect x=\"{ix}\" y=\"{y3}\" width=\"24\" height=\"6\" {inner}/>\n",
+        fx = x + 30.0,
+        ix = x + 8.0,
+        ex = x + 32.0,
+        y1 = y + 20.0,
+        y2 = y + 32.0,
+        y3 = y + 38.0,
+        sheet = p.sheet,
+        stroke = p.stroke,
+        rule = p.rule,
+    )
+}
+```
+
+Each column is spread evenly down one band whose height is set by the
+longest of the three, so a claim for two actors reachable through one
+verb and enabled by three crates reads as two, one and three items
+centred against each other rather than as a ragged table. Arrows run
+from every actor to every pill and from every pill to every sheet; with
+the small numbers a declaration carries that is a fan, not a thicket,
+and it is dashed through a pill that stands for no signifier, because
+that path is exactly the one nobody has declared.
+
+```rust {#affordance-figure}
+/// Draw one affordance's figure in one palette: 880 wide, as tall as its
+/// longest column needs. Title and id across the top; then three columns
+/// — actor glyphs, one surface pill per signifier, one module sheet per
+/// `enabledBy` — each spread evenly down the band and joined left to
+/// right by the plates' arrows; the status bottom right.
+fn affordance_figure(rec: &AffordanceRecord, p: &Palette) -> String {
+    const W: f64 = 880.0;
+    const BAND_Y: f64 = 92.0;
+    const ROW_H: f64 = 76.0;
+    let surfaces: Vec<Option<&(String, String)>> = if rec.surfaces.is_empty() {
+        vec![None]
+    } else {
+        rec.surfaces.iter().map(Some).collect()
+    };
+    let rows = rec.actors.len().max(surfaces.len()).max(rec.modules.len()).max(1);
+    let band = rows as f64 * ROW_H;
+    let height = BAND_Y + band + 34.0;
+    // The centre line of item `i` in a column of `n`, spread down the band.
+    let centre = |i: usize, n: usize| BAND_Y + band * (i as f64 + 0.5) / n as f64;
+    let caption = xml_escape(&affordance_caption(rec, false));
+    let label = format!("font-size=\"12\" fill=\"{}\"{}", p.label, p.label_style);
+
+    let mut s = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {W} {height}\" width=\"{W}\" \
+         height=\"{height}\" role=\"img\" aria-label=\"{caption}\">\n\
+         <defs><marker id=\"a\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" \
+         markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" \
+         fill=\"{arrow}\"/></marker></defs>\n\
+         <g font-family=\"{font}\">\n",
+        arrow = p.arrow,
+        font = p.font,
+    );
+    // Title, id, and a rule under both; then the column headings.
+    s.push_str(&format!(
+        "<text x=\"24\" y=\"34\" font-size=\"20\" fill=\"{}\">{}</text>\n",
+        p.ink,
+        xml_escape(&rec.title)
+    ));
+    s.push_str(&format!("<text x=\"24\" y=\"52\" {label}>{}</text>\n", xml_escape(&rec.id)));
+    s.push_str(&format!(
+        "<line x1=\"24\" y1=\"62\" x2=\"{}\" y2=\"62\" stroke=\"{}\" stroke-width=\"0.8\"/>\n",
+        W - 24.0,
+        p.stroke
+    ));
+    s.push_str(&format!("<text x=\"40\" y=\"80\" {label}>claimed for</text>\n"));
+    s.push_str(&format!(
+        "<text x=\"430\" y=\"80\" text-anchor=\"middle\" {label}>reachable through</text>\n"
+    ));
+    s.push_str(&format!("<text x=\"636\" y=\"80\" {label}>enabled by</text>\n"));
+
+    // Actors: a glyph and its name.
+    let mut actor_ys: Vec<f64> = Vec::new();
+    for (i, kind) in rec.actors.iter().enumerate() {
+        let cy = centre(i, rec.actors.len());
+        actor_ys.push(cy);
+        s.push_str(&if kind == "human" {
+            eye_glyph(72.0, cy, p)
+        } else {
+            machine_glyph(72.0, cy, p)
+        });
+        s.push_str(&format!(
+            "<text x=\"116\" y=\"{}\" font-size=\"14\" fill=\"{}\">{}</text>\n",
+            cy + 5.0,
+            p.ink,
+            xml_escape(&actor_phrase(kind))
+        ));
+    }
+    // Surfaces: one pill per signifier, or one dashed pill saying there is none.
+    let mut pills: Vec<(f64, f64, f64, &str)> = Vec::new();
+    for (i, surface) in surfaces.iter().enumerate() {
+        let cy = centre(i, surfaces.len());
+        let (text, chars, dash) = match surface {
+            Some((name, cue)) => (
+                format!(
+                    "<tspan font-weight=\"bold\">{}</tspan><tspan fill=\"{}\">  ·  {}</tspan>",
+                    xml_escape(name),
+                    p.label,
+                    xml_escape(cue)
+                ),
+                name.chars().count() + cue.chars().count() + 3,
+                "",
+            ),
+            None => (
+                format!("<tspan fill=\"{}\"{}>no signifier declared</tspan>", p.label, p.label_style),
+                21,
+                " stroke-dasharray=\"4 3\"",
+            ),
+        };
+        let w = (chars as f64 * 8.4 + 28.0).clamp(140.0, 260.0);
+        let x = 430.0 - w / 2.0;
+        pills.push((x, x + w, cy, dash));
+        s.push_str(&format!(
+            "<rect x=\"{x}\" y=\"{}\" width=\"{w}\" height=\"34\" rx=\"17\" fill=\"{}\" stroke=\"{}\" stroke-width=\"1.2\"{dash}/>\n",
+            cy - 17.0,
+            p.sheet,
+            p.stroke
+        ));
+        s.push_str(&format!(
+            "<text xml:space=\"preserve\" x=\"430\" y=\"{}\" text-anchor=\"middle\" font-size=\"14\" fill=\"{}\">{text}</text>\n",
+            cy + 5.0,
+            p.ink
+        ));
+    }
+    // Modules: a sheet and the crate name; an excluded one dashed and said so.
+    let mut module_ys: Vec<f64> = Vec::new();
+    for (i, (name, shipped)) in rec.modules.iter().enumerate() {
+        let cy = centre(i, rec.modules.len());
+        module_ys.push(cy);
+        s.push_str(&sheet_glyph(636.0, cy - 28.0, p, !shipped));
+        s.push_str(&format!(
+            "<text x=\"690\" y=\"{}\" font-size=\"14\" fill=\"{}\">{}</text>\n",
+            cy + 5.0,
+            p.ink,
+            xml_escape(name)
+        ));
+        if !shipped {
+            s.push_str(&format!("<text x=\"690\" y=\"{}\" {label}>excluded here</text>\n", cy + 22.0));
+        }
+    }
+    // Arrows: every actor to every pill, every pill to every sheet.
+    for &ay in &actor_ys {
+        for &(px, _, py, dash) in &pills {
+            s.push_str(&format!(
+                "<line x1=\"200\" y1=\"{ay}\" x2=\"{}\" y2=\"{py}\" stroke=\"{}\" stroke-width=\"1.2\"{dash} marker-end=\"url(#a)\"/>\n",
+                px - 6.0,
+                p.arrow
+            ));
+        }
+    }
+    for &(_, px, py, dash) in &pills {
+        for &my in &module_ys {
+            s.push_str(&format!(
+                "<line x1=\"{}\" y1=\"{py}\" x2=\"628\" y2=\"{my}\" stroke=\"{}\" stroke-width=\"1.2\"{dash} marker-end=\"url(#a)\"/>\n",
+                px + 6.0,
+                p.arrow
+            ));
+        }
+    }
+    s.push_str(&format!(
+        "<text x=\"{}\" y=\"{}\" text-anchor=\"end\" {label}>status: {}</text>\n",
+        W - 24.0,
+        height - 14.0,
+        xml_escape(rec.status.as_deref().unwrap_or("undeclared"))
+    ));
+    s.push_str("</g>\n</svg>\n");
+    s
+}
+```
+
+The marker is opt-in, as the contents marker is, and refused on the same
+principle when it would render nothing: a README asking for figures in a
+publication that names no declaration is the marker that silently says
+less than it promises. The figures are written under `affordances/` at
+the projection root — not `docs/`, where the carried example keeps its
+plates, because `docs` is an overlay path the public side owns and the
+projector never regenerates, and a generated figure is precisely the
+kind of file that must be regenerated on every publish. Each figure is
+recorded in the report by affordance id; none goes in
+`PROVENANCE.json`'s `path_map`, which routes edits back to corpus
+sources, and a figure has none.
+
+```rust {#write-readme-affordances}
+/// The marker a README carries where its affordance figures go. Bare, on
+/// its own line; opt-in like the contents marker, and refused when it
+/// would render nothing.
+const AFFORDANCES_MARKER: &str = "<!-- x0k:affordances -->";
+/// Projection-relative directory the figures are written to. Not `docs/`:
+/// in the carried example that is an overlay path the public side owns
+/// and the projector never regenerates, and a generated figure is the
+/// opposite kind of file.
+const AFFORDANCES_DIR: &str = "affordances";
+
+/// The README line the affordances marker occupies, if any. Two refuse:
+/// the figures have one home.
+fn find_affordances_marker(lines: &[&str]) -> Result<Option<usize>> {
+    let hits: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.trim() == AFFORDANCES_MARKER)
+        .map(|(i, _)| i)
+        .collect();
+    match hits[..] {
+        [] => Ok(None),
+        [at] => Ok(Some(at)),
+        _ => bail!(
+            "the README carries {} `{AFFORDANCES_MARKER}` markers; the affordance figures \
+             have exactly one home",
+            hits.len()
+        ),
+    }
+}
+
+/// Draw the figures and replace the README's affordances marker with them:
+/// per affordance, a `<picture>` choosing the dark or light figure by the
+/// reader's colour scheme, then the caption. No marker draws nothing; a
+/// marker with nothing to draw refuses, naming itself.
+fn write_readme_affordances(
+    output_dir: &Path,
+    records: &[AffordanceRecord],
+    report: &mut RepoProjectReport,
+) -> Result<()> {
+    let path = output_dir.join("README.md");
+    let text = std::fs::read_to_string(&path).context("reading the tangled README")?;
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let Some(at) = find_affordances_marker(&lines)? else {
+        return Ok(());
+    };
+    if records.is_empty() {
+        bail!(
+            "the README carries `{AFFORDANCES_MARKER}`, and the publication names no \
+             affordance declaration to draw there — a marker that renders nothing is the \
+             defect; name the sections that declare them under `publishes`, or drop the marker"
+        );
+    }
+    std::fs::create_dir_all(output_dir.join(AFFORDANCES_DIR))?;
+    let mut section = String::new();
+    for (i, rec) in records.iter().enumerate() {
+        let light = format!("{AFFORDANCES_DIR}/{}-light.svg", rec.slug);
+        let dark = format!("{AFFORDANCES_DIR}/{}-dark.svg", rec.slug);
+        std::fs::write(output_dir.join(&light), affordance_figure(rec, &LIGHT))
+            .with_context(|| format!("writing affordance figure {light}"))?;
+        std::fs::write(output_dir.join(&dark), affordance_figure(rec, &DARK))
+            .with_context(|| format!("writing affordance figure {dark}"))?;
+        report.figures.insert(rec.id.clone(), light.clone());
+        tracing::info!(affordance = %rec.id, figure = %light, "region_repo.figure.written");
+        if i > 0 {
+            section.push('\n');
+        }
+        section.push_str(&format!(
+            "<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"{dark}\">\n  \
+             <img alt=\"{}\" src=\"{light}\">\n</picture>\n\n{}\n",
+            xml_escape(&affordance_caption(rec, false)),
+            affordance_caption(rec, true)
+        ));
+    }
+    let mut out = String::new();
+    out.extend(lines[..at].iter().copied());
+    out.push_str(&section);
+    out.extend(lines[at + 1..].iter().copied());
+    std::fs::write(&path, out).context("writing the README with its affordance figures")?;
+    Ok(())
 }
 ```
 
@@ -4337,15 +5046,16 @@ one that expects a report and one that expects an error message to read.
 
 ```rust {#modules-project-helpers file="tests/region_repo_modules.rs"}
 /// The decision-document fixture: a design whose `## Affordances` heading
-/// holds two `###` sections. Built rather than kept as a constant so the
-/// affordance fences read as themselves.
+/// holds two `###` sections, the shippable one claimed for a human. Built
+/// rather than kept as a constant so the affordance fences read as
+/// themselves.
 fn demo_design() -> String {
     let mut d = String::new();
     d.push_str("---\nx0k:\n  format: folio/v1\n  id: x0k:design/demo-design\n  type: design\n  status: proposed\n---\n");
     d.push_str("# The demo design\n\nContext this repository has no use for.\n\n");
     d.push_str("### Affordances\n\n");
     d.push_str("### Read a line out of a document\n\nI read the first line, and the shipped crate is what lets me.\n\n");
-    d.push_str("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nstatus: wip\nedges:\n  enabledBy:\n    - x0k:software-module/demo-crate\n```\n\n");
+    d.push_str("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nstatus: wip\nactors: [human]\nedges:\n  enabledBy:\n    - x0k:software-module/demo-crate\n```\n\n");
     d.push_str("### Run the whole fleet\n\nI do a thing this bundle cannot do.\n\n");
     d.push_str("```yaml x0k:affordance\nid: x0k:affordance/run_the_whole_fleet\nstatus: wip\nedges:\n  enabledBy:\n    - x0k:software-module/unshipped-crate\n```\n");
     d
@@ -4405,6 +5115,27 @@ fn project_err_with_marker(marker: &str) -> String {
     )
     .unwrap();
     project_err(ws.path())
+}
+
+/// The fixture's README with a `## What you can do here` section carrying
+/// the affordances marker, ahead of the afterword.
+fn with_affordances_marker(publication: &str) -> String {
+    publication.replace(
+        "## Afterwards\n",
+        "## What you can do here\n\n<!-- x0k:affordances -->\n\n## Afterwards\n",
+    )
+}
+
+/// A prose-only chapter in the demo crate's area declaring a signifier: the
+/// `demo-line` verb, presented on the CLI, signifying the shippable
+/// affordance. It ships because its area does, not by name — which is how
+/// a face's cue reaches the projection.
+fn declare_signifier(ws: &Path) {
+    std::fs::write(
+        ws.join("knowledge/implementation/demo/verbs.md"),
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/demo/verbs\n  type: implementation\n  status: draft\n  summary: The demo crate's one verb, and the cue that reaches it.\n---\n# The demo verbs\n\n## demo-line\n\nPrints the first line of a file.\n\n```yaml x0k:signifier\nid: x0k:signifier/demo-line\nedges:\n  signifies:\n    - x0k:affordance/read_a_line\n  presentedOn:\n    - x0k:surface/cli\n```\n",
+    )
+    .unwrap();
 }
 ```
 
@@ -5304,6 +6035,141 @@ fn a_document_without_a_summary_is_refused_naming_it() {
 }
 ```
 
+
+### The affordance figures
+
+The README's second marker asks for a figure per affordance the publication
+publishes. The shippable section of the demo design is one declaration —
+claimed for a human, enabled by the demo crate, with no signifier anywhere
+in the fixture — so the projection draws one pair, light and dark, under
+`affordances/`, and the README carries a `<picture>` choosing between them
+with the caption under it. The caption is the record in a sentence: the
+title, who it is for, that no cue has been declared, what enables it, and
+its status. The figure files are named in the report, not in the provenance
+seam: nothing in the corpus produced them.
+
+```rust {#modules-affordance-figure file="tests/region_repo_modules.rs"}
+#[test]
+fn the_affordances_marker_draws_one_figure_pair_per_published_declaration() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_affordances_marker(&publication_publishing(&["demo-crate"], &[reference.as_str()])),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+
+    let light = std::fs::read_to_string(out.path().join("affordances/read-a-line-light.svg"))
+        .expect("the light figure is drawn");
+    let dark = std::fs::read_to_string(out.path().join("affordances/read-a-line-dark.svg"))
+        .expect("the dark figure is drawn");
+    for svg in [&light, &dark] {
+        assert!(svg.contains("role=\"img\""), "{svg}");
+        assert!(svg.contains(">Read a line out of a document<"), "the title is drawn: {svg}");
+        assert!(svg.contains(">a person<"), "the claimed actor is drawn: {svg}");
+        assert!(svg.contains(">demo-crate<"), "the enabling crate is drawn: {svg}");
+        assert!(svg.contains("no signifier declared"), "an undeclared cue is drawn as such: {svg}");
+        assert!(svg.contains(">status: wip<"), "{svg}");
+    }
+    // The README's own two palettes, not a third.
+    assert!(light.contains("Georgia") && light.contains("#b88e44"), "paper and gold:\n{light}");
+    assert!(dark.contains("monospace") && dark.contains("#e2e8f0"), "surface and slate:\n{dark}");
+
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    let expected = "\
+## What you can do here
+
+<picture>
+  <source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/read-a-line-dark.svg\">
+  <img alt=\"Read a line out of a document — for a person; no signifier declared; enabled by demo-crate; status wip.\" src=\"affordances/read-a-line-light.svg\">
+</picture>
+
+**Read a line out of a document** — for a person; no signifier declared; enabled by `demo-crate`; status wip.
+
+## Afterwards
+";
+    assert!(readme.contains(expected), "the figure and its caption stand where the marker was:\n{readme}");
+    assert_eq!(
+        report.figures.get("x0k:affordance/read_a_line").map(String::as_str),
+        Some("affordances/read-a-line-light.svg")
+    );
+    let prov = std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap();
+    assert!(!prov.contains("affordances/"), "a figure has no corpus source to record: {prov}");
+}
+```
+
+A signifier is declared where its face lives. The fixture's verb chapter is a
+prose-only document in the demo crate's area — it ships because its area
+does, never by name — and the signifier in it says `demo-line` on the CLI
+signifies the shippable affordance. That is enough for the figure to grow a
+surface pill and the caption a clause, and for the "no signifier" note to go.
+
+```rust {#modules-affordance-signifier file="tests/region_repo_modules.rs"}
+#[test]
+fn a_signifier_in_a_shipped_chapter_puts_its_surface_on_the_figure() {
+    let ws = workspace(&[], true);
+    declare_signifier(ws.path());
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_affordances_marker(&publication_publishing(&["demo-crate"], &[reference.as_str()])),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(
+        readme.contains("for a person; reachable on `cli` as `demo-line`; enabled by `demo-crate`"),
+        "the caption names the surface and the cue:\n{readme}"
+    );
+    assert!(!readme.contains("no signifier declared"), "{readme}");
+
+    let svg = std::fs::read_to_string(out.path().join("affordances/read-a-line-light.svg")).unwrap();
+    assert!(svg.contains(">cli</tspan>"), "the surface heads the pill: {svg}");
+    assert!(svg.contains("demo-line</tspan>"), "the cue follows it: {svg}");
+    assert!(!svg.contains("no signifier declared"), "{svg}");
+}
+```
+
+The marker is opt-in, and a marker that renders nothing is refused on the
+rule the contents marker set: a README asking for figures in a publication
+that names no declaration would silently say less than it promises. Without
+the marker nothing is drawn — no directory, no report line, no `<picture>`.
+
+```rust {#modules-affordance-marker-empty file="tests/region_repo_modules.rs"}
+#[test]
+fn an_affordances_marker_with_nothing_to_draw_is_refused_naming_it() {
+    let ws = workspace(&[], true);
+    let doc = std::fs::read_to_string(ws.path().join(PUB_REL)).unwrap();
+    std::fs::write(ws.path().join(PUB_REL), with_affordances_marker(&doc)).unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("<!-- x0k:affordances -->"), "names the marker: {err}");
+    assert!(err.contains("no affordance declaration"), "{err}");
+}
+```
+
+```rust {#modules-affordance-no-marker file="tests/region_repo_modules.rs"}
+#[test]
+fn without_the_marker_no_figure_is_drawn() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+    assert!(!out.path().join("affordances").exists(), "no marker, no directory");
+    assert!(report.figures.is_empty(), "{:?}", report.figures);
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(!readme.contains("<picture"), "{readme}");
+}
+```
+
 ```rust {#modules-root file="tests/region_repo_modules.rs"}
 <<modules-doc>>
 
@@ -5382,6 +6248,14 @@ fn a_document_without_a_summary_is_refused_naming_it() {
 <<modules-no-contents-marker>>
 
 <<modules-document-without-summary>>
+
+<<modules-affordance-figure>>
+
+<<modules-affordance-signifier>>
+
+<<modules-affordance-marker-empty>>
+
+<<modules-affordance-no-marker>>
 ```
 
 ## Composing the module
@@ -5449,6 +6323,16 @@ fn a_document_without_a_summary_is_refused_naming_it() {
 
 <<affordance-closure>>
 
+<<affordance-record>>
+
+<<affordance-records>>
+
+<<affordance-caption>>
+
+<<affordance-palette>>
+
+<<affordance-figure>>
+
 <<emit-workspace-manifest>>
 
 <<license-files>>
@@ -5460,6 +6344,8 @@ fn a_document_without_a_summary_is_refused_naming_it() {
 <<tangle-readme>>
 
 <<write-readme-contents>>
+
+<<write-readme-affordances>>
 
 <<emit-ci-and-guard>>
 
@@ -5516,8 +6402,8 @@ anywhere else refuses; the CI contract is forge-agnostic with GitHub
 optional; a re-projection appends to the existing history; overlay
 paths survive re-projection while other hand edits do not; and an
 overlay entry must be a plain relative path.
-The shipped set — the vocabulary modules, the severed document, and the
-contents page — is pinned above against the fixture under
+The shipped set — the vocabulary modules, the severed document, the
+contents page, and the affordance figures — is pinned above against the fixture under
 `tests/fixtures/ontology-modules/`, over projections this chapter's own
 projector makes.
 `tests/integration/tests/publication_self_tangle.rs` closes the circle

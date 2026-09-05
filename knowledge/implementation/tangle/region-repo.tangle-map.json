@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/region-repo.md",
-  "source_hash": "577cd1d5a0010a75",
+  "source_hash": "6b07fc0cd28070ef",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,11 +9,11 @@
       "outputs": [
         {
           "path": "x0k-tangle/tests/region_repo_modules.rs",
-          "hash": "527f5d60817f3194"
+          "hash": "5b4ee08a675d1128"
         },
         {
           "path": "x0k-tangle/src/region_repo.rs",
-          "hash": "57d4e91cf92e885e"
+          "hash": "dd538334ed6b0143"
         }
       ]
     }

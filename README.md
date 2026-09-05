@@ -53,6 +53,39 @@ slice of itself, using itself.
 The generated code is committed beside the documents, which is what breaks the
 bootstrap circle: a fresh clone has no `x0k-tangle` until it builds one.
 
+## What you can do here
+
+Each capability this repository claims, drawn from its own declaration: who it
+is for, the cue that reaches it, and the crates that make it true.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="affordances/tangle-source-from-a-document-dark.svg">
+  <img alt="Project source code out of a document — for a person, for an agent; reachable on cli as x0k-tangle tangle, sdk as tangle_document; enabled by x0k-tangle, x0k-folio; status wip." src="affordances/tangle-source-from-a-document-light.svg">
+</picture>
+
+**Project source code out of a document** — for a person, for an agent; reachable on `cli` as `x0k-tangle tangle`, `sdk` as `tangle_document`; enabled by `x0k-tangle`, `x0k-folio`; status wip.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="affordances/weave-a-document-dark.svg">
+  <img alt="Read a document as the woven artifact — for a person; reachable on cli as x0k-tangle weave, sdk as weave_html; enabled by x0k-tangle, x0k-syntax, x0k-folio; status wip." src="affordances/weave-a-document-light.svg">
+</picture>
+
+**Read a document as the woven artifact** — for a person; reachable on `cli` as `x0k-tangle weave`, `sdk` as `weave_html`; enabled by `x0k-tangle`, `x0k-syntax`, `x0k-folio`; status wip.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="affordances/check-a-document-against-shipped-vocabulary-dark.svg">
+  <img alt="Check a document against its vocabulary — for a person, for an agent; reachable on sdk as check_envelope, cli as x0k-tangle check; enabled by x0k-folio, x0k-ontology; status wip." src="affordances/check-a-document-against-shipped-vocabulary-light.svg">
+</picture>
+
+**Check a document against its vocabulary** — for a person, for an agent; reachable on `sdk` as `check_envelope`, `cli` as `x0k-tangle check`; enabled by `x0k-folio`, `x0k-ontology`; status wip.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="affordances/read-declared-affordances-dark.svg">
+  <img alt="Read an affordance out of a document — for a person, for an agent; reachable on sdk as extract_from_markdown, cli as x0k-tangle affordances; enabled by x0k-folio; status wip." src="affordances/read-declared-affordances-light.svg">
+</picture>
+
+**Read an affordance out of a document** — for a person, for an agent; reachable on `sdk` as `extract_from_markdown`, `cli` as `x0k-tangle affordances`; enabled by `x0k-folio`; status wip.
+
 None of these ideas is new. Tangling and weaving are Knuth's words from 1984, and
 the shape here — named chunks, one document producing many files — is noweb's,
 which Org-mode Babel and Entangled carry into editors and Markdown. That a
@@ -135,12 +168,13 @@ Named blocks of code, the references between them, and the recursive expansion t
 
 ### One loop, many pipelines
 
-The plugin contract every projection goes through, identity tangling as one plugin among them, the dispatcher that runs them over a workspace, and the verbs the crate puts in a shell.
+The plugin contract every projection goes through, identity tangling as one plugin among them, the dispatcher that runs them over a workspace, the verbs the crate puts in a shell, and the two faces behind the verbs that read a document rather than tangle it.
 
 - [The pipeline protocol](knowledge/implementation/tangle/pipeline.md) — The plugin contract — the trait, the typed input and output surfaces, the error shape, the registry — pure data and no I/O, which is what lets identity tangling be one plugin among others.
 - [Identity tangling as a plugin](knowledge/implementation/tangle/identity-pipeline.md) — The plugin that makes the `tangle:` block ordinary: a synthesized declaration routed through the same loop as every other codegen, so identity tangling keeps no private code path.
 - [The pipeline dispatcher](knowledge/implementation/tangle/dispatcher.md) — The three entry points — one document, a directory, the whole workspace — and the loop between them that resolves inputs, runs each declared pipeline, writes outputs and records the sidecar.
 - [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md) — The crate's contract rather than a mechanism — the module list and re-exports that say what a consumer may name, and the plugin-less CLI that puts those verbs in a shell.
+- [The faces behind `check` and `affordances`](knowledge/implementation/tangle/cli-faces.md) — The two verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, and an affordance declaration read out as data — each proven by running the binary the repository ships.
 
 ### Back the other way
 

@@ -581,6 +581,10 @@ where
         ) {
             continue;
         }
+        if key_str == "actors" {
+            claimed_for_facts(value, &mut out);
+            continue;
+        }
         let name = match predicate(key_str) {
             Some(camel) => camel.to_string(),
             None => format!("x0k:{}/{}", entity.marker_class, key_str),
@@ -657,6 +661,23 @@ fn emit_value(predicate: &str, value: &serde_norway::Value, out: &mut Vec<(Strin
     }
 }
 
+/// The `actors:` list as the `claimedFor` relation: one fact per actor
+/// kind, each target an `x0k:actor/<kind>` id. Anything that is not a
+/// bare word (or a list of them) declares no claim.
+fn claimed_for_facts(value: &serde_norway::Value, out: &mut Vec<(String, String)>) {
+    match value {
+        serde_norway::Value::String(kind) => {
+            out.push(("claimedFor".to_string(), format!("entity:x0k:actor/{kind}")));
+        }
+        serde_norway::Value::Sequence(seq) => {
+            for item in seq {
+                claimed_for_facts(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -708,10 +729,12 @@ repository.
         assert!(facts
             .iter()
             .any(|(p, v)| p == "x0k:affordance/status" && v == "string:wip"));
-        // A sequence under a scalar key flattens per element.
+        // `actors:` is the `claimedFor` relation, with an actor-class
+        // target rather than a bare word.
         assert!(facts
             .iter()
-            .any(|(p, v)| p == "x0k:affordance/actors" && v == "string:human"));
+            .any(|(p, v)| p == "claimedFor" && v == "entity:x0k:actor/human"));
+        assert!(!facts.iter().any(|(p, _)| p == "x0k:affordance/actors"));
         // `requires` is already camelCase and not in the compiled slice,
         // so it passes through verbatim.
         assert!(facts
@@ -723,6 +746,29 @@ repository.
                 "definedIn".to_string(),
                 "entity:x0k:design/publish-a-region-as-a-repository".to_string()
             ))
+        );
+    }
+
+    // Two actor kinds are two claims, each one the vocabulary can
+    // range-check against `Actor`.
+    #[test]
+    fn each_actor_is_its_own_claimed_for_fact() {
+        let body = r#"### Check a document against its vocabulary
+
+```yaml x0k:affordance
+id: x0k:affordance/check_a_document_against_shipped_vocabulary
+status: wip
+actors: [human, ai_agent]
+```
+"#;
+        let claims: Vec<String> = declared_facts(&one(body))
+            .into_iter()
+            .filter(|(p, _)| p == "claimedFor")
+            .map(|(_, v)| v)
+            .collect();
+        assert_eq!(
+            claims,
+            vec!["entity:x0k:actor/human", "entity:x0k:actor/ai_agent"]
         );
     }
 

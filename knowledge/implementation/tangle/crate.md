@@ -24,6 +24,7 @@ x0k:
       - x0k:implementation/tangle/region-repo
       - x0k:implementation/tangle/publishing
       - x0k:implementation/tangle/receiving
+      - x0k:implementation/tangle/cli-faces
       - x0k:implementation/tangle/bundle
 ---
 # x0k-tangle: the crate and its CLI
@@ -66,6 +67,9 @@ newcomer is [`protocol.md`](protocol.md) first, then inward to outward:
 - [`region-repo.md`](region-repo.md), [`publishing.md`](publishing.md),
   [`receiving.md`](receiving.md) — the repository projector, the
   irreversible publish step, and the inbound contribution.
+- [`cli-faces.md`](cli-faces.md) — the vocabulary check and the
+  affordance read-out behind the `check` and `affordances` verbs, the
+  two that make a shipped human claim true from a shell.
 
 One document threads through those chapters: the publication manifest
 `decisions/publications/x0k-folio.md`, which names this
@@ -120,9 +124,14 @@ user needs, and where the document format is specified.
 //!   sidecar next to the document that records what was produced.
 //! - **weave** — [`weave::weave_html`]: render the document, prose and
 //!   highlighted code together, as a single HTML page.
-//! - **check** — [`resolve::check_all_refs`]: verify every chunk
-//!   reference resolves and no reference cycle exists, without
-//!   writing anything.
+//! - **check** — [`resolve::check_all_refs`] and
+//!   [`faces::check_vocabulary`]: verify every chunk reference resolves
+//!   and no reference cycle exists, and read every folio/v1 envelope
+//!   against the vocabulary this build compiled, without writing
+//!   anything.
+//!
+//! A fourth, **affordances** — [`faces::declared_affordances`] — reads
+//! the affordance declarations out of a document as data.
 //!
 //! Everything else in the crate builds outward from those: the
 //! pipeline protocol that lets other generators ride the same
@@ -135,6 +144,7 @@ user needs, and where the document format is specified.
 pub mod atlas;
 pub mod chunk;
 pub mod chunk_refs;
+pub mod faces;
 pub mod identity_pipeline;
 pub mod index;
 pub mod multi_doc_resolve;
@@ -205,7 +215,7 @@ Four of the verbs read the publication corpus itself — the
 `decisions/publications/` manifests and the decision documents they
 name — and so need a corpus checkout. A projected repository carries
 only the literate documents under `knowledge/implementation/`, which is
-all the literate verbs need; the other seven verbs, `workspace`
+all the literate verbs need; the other eight verbs, `workspace`
 included, run there unchanged.
 
 Those four are marked `[corpus-only]` in the *first* line of their help,
@@ -221,6 +231,12 @@ chapters describing commands the binary does not have, which is a worse
 lie than a command that names its own precondition: one is a sentence a
 reader can act on, the other is a discrepancy they can only be confused
 by.
+
+```rust {#bin-doc file="src/main.rs"}
+//! The protocol-only `x0k-tangle` CLI: the crate's verbs in a shell,
+//! with the built-in registry and no plugins. The binary a projected
+//! repository ships and builds.
+```
 
 ```rust {#cli-imports file="src/main.rs"}
 use anyhow::{Context, Result};
@@ -245,17 +261,23 @@ struct Cli {
 ```
 
 The subcommands fall into two groups. The literate verbs operate on
-documents in place: `tangle`, `check`, `sync`, `index`, `weave`, `list`,
-and `workspace`. The publication verbs operate on a region: `weave-region`
-and `project-repo` are the two projection backends, `publish-repo` the
-pipeline that makes a projection public, and `receive-repo` the inbound
-door. Each variant's doc comment is its `--help` text, so the clap
-derive below is also the user-facing contract.
+documents in place: `tangle`, `check`, `affordances`, `sync`, `index`,
+`weave`, `list`, and `workspace`. The publication verbs operate on a
+region: `weave-region` and `project-repo` are the two projection
+backends, `publish-repo` the pipeline that makes a projection public,
+and `receive-repo` the inbound door. Each variant's doc comment is its
+`--help` text, so the clap derive below is also the user-facing
+contract.
 
 ```rust {#command-enum file="src/main.rs"}
 #[derive(Subcommand)]
 enum Command {
-    <<literate-commands>>
+    <<tangle-command>>
+    <<check-command>>
+    <<affordances-command>>
+    <<sync-command>>
+    <<index-command>>
+    <<weave-command>>
     <<weave-region-command>>
     <<project-repo-command>>
     <<publish-repo-command>>
@@ -265,8 +287,32 @@ enum Command {
 }
 ```
 
-```rust {#literate-commands file="src/main.rs"}
-/// Tangle .md → .rs (writes .tangle-map.json sidecars)
+Four of the verbs are the perceivable cue for an affordance a
+publication of this crate claims for a human, and each declares that
+under its own heading: a signifier is recorded where the face lives,
+so the chapter that ships carries the cue with it
+(`x0k:design/publish-a-region-as-a-repository`). The heading and the
+prose around the block are the cue's own text, and the `///` line on
+the variant — the line `--help` prints — says the same thing in the
+same words.
+
+### `x0k-tangle tangle`
+
+Tangle `.md` documents to their source files, writing a
+`.tangle-map.json` sidecar beside each: the affordance of turning a
+literate document into the code it describes, from a shell.
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-tangle-tangle
+edges:
+  signifies:
+    - x0k:affordance/tangle_source_from_a_document
+  presentedOn:
+    - x0k:surface/cli
+```
+
+```rust {#tangle-command file="src/main.rs"}
+/// Tangle .md documents to their source files (writes .tangle-map.json sidecars)
 Tangle {
     /// Paths to scan for documents with tangle: frontmatter
     paths: Vec<PathBuf>,
@@ -274,11 +320,86 @@ Tangle {
     #[arg(long)]
     workspace: Option<PathBuf>,
 },
-/// Verify chunk references resolve and no cycles exist
+```
+
+### `x0k-tangle check`
+
+Verify chunk references resolve and no cycles exist, and read every
+folio/v1 envelope under the paths against the vocabulary this build
+compiled. The second half is the affordance of checking a document
+against the vocabulary that shipped beside it, and its help text names
+the two outcomes the affordance promises to tell apart: a predicate no
+shipped module declares is a defect and fails the check; a target
+naming no document here is an edge into the corpus the repository was
+projected from, noted and expected.
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-tangle-check
+edges:
+  signifies:
+    - x0k:affordance/check_a_document_against_shipped_vocabulary
+  presentedOn:
+    - x0k:surface/cli
+```
+
+```rust {#check-command file="src/main.rs"}
+/// Verify chunk references resolve and no cycles exist, and read every
+/// folio/v1 envelope against the vocabulary this build compiled.
+///
+/// Two things can go wrong with an envelope, and they are reported
+/// apart. A defect — a malformed id or edge target, a predicate no
+/// shipped ontology module declares, an envelope that does not parse —
+/// is a gap in what this publication selected, and fails the check. An
+/// edge whose target names no document under the paths is an edge into
+/// the corpus this was projected from: expected, printed as a note,
+/// never a failure. A third thing is checked across the set: an
+/// affordance claimed for a human that no signifier signifies is a
+/// defect, because the audience has nothing to perceive.
 Check {
     /// Paths to scan
     paths: Vec<PathBuf>,
 },
+```
+
+### `x0k-tangle affordances`
+
+Print every affordance the documents under the paths declare, as a
+JSON array on stdout: one record per `yaml x0k:affordance` block, with
+its id, title, description, the document it is defined in, and its
+declared facts grouped by predicate. What a declaration says becomes
+data a reader's own tooling can consume, which is the affordance of
+reading an affordance out of a document rather than trusting the
+document's summary of itself. A block the extractor refuses is
+reported on stderr and skipped.
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-tangle-affordances
+edges:
+  signifies:
+    - x0k:affordance/read_declared_affordances
+  presentedOn:
+    - x0k:surface/cli
+```
+
+```rust {#affordances-command file="src/main.rs"}
+/// Print every affordance the folio/v1 documents under the paths
+/// declare, as a JSON array on stdout.
+///
+/// One record per `yaml x0k:affordance` block: `id`, `title` (the
+/// enclosing heading), `description` (the prose under it), `defined_in`
+/// (the parent document's id), and `facts` — every other declared fact
+/// grouped by predicate, each value tagged `{"entity": …}` for an id or
+/// `{"string": …}` for a literal. A block the extractor refuses is
+/// reported on stderr and skipped.
+Affordances {
+    /// Paths to scan for folio/v1 documents
+    paths: Vec<PathBuf>,
+},
+```
+
+### `x0k-tangle sync`
+
+```rust {#sync-command file="src/main.rs"}
 /// Sync from= chunks: populate code blocks from source files
 Sync {
     /// Paths to scan for documents with from= chunks
@@ -287,6 +408,11 @@ Sync {
     #[arg(long)]
     workspace: Option<PathBuf>,
 },
+```
+
+### `x0k-tangle index`
+
+```rust {#index-command file="src/main.rs"}
 /// Build a JSON index of all folio/v1 files
 Index {
     /// Paths to scan for folio/v1 documents
@@ -298,6 +424,24 @@ Index {
     #[arg(short, long)]
     output: Option<PathBuf>,
 },
+```
+
+### `x0k-tangle weave`
+
+Weave one literate document into HTML — prose and highlighted code
+together as a single page, to a directory or to stdout: the affordance
+of reading a document as the woven page it describes, from a shell.
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-tangle-weave
+edges:
+  signifies:
+    - x0k:affordance/weave_a_document
+  presentedOn:
+    - x0k:surface/cli
+```
+
+```rust {#weave-command file="src/main.rs"}
 /// Weave a literate document into HTML
 Weave {
     /// Path to a literate document
@@ -307,6 +451,8 @@ Weave {
     output_dir: Option<PathBuf>,
 },
 ```
+
+### The publication verbs
 
 ```rust {#weave-region-command file="src/main.rs"}
 /// [corpus-only] Project a publication region into a self-contained,
@@ -490,8 +636,8 @@ Workspace {
 
 `main` is one `match` over the command; every arm resolves its
 workspace root, calls the library, and prints a report to stderr; stdout
-is reserved for data (`index` and `weave` without an output path, and
-`list`). Exit codes carry the verdicts: `check` and
+is reserved for data (`index` and `weave` without an output path,
+`list`, and `affordances`). Exit codes carry the verdicts: `check` and
 `workspace` exit non-zero on any error, `publish-repo` when the
 projection fails to build or test, `receive-repo` when any change was
 refused.
@@ -506,6 +652,8 @@ fn main() -> Result<()> {
         <<dispatch-sync>>
 
         <<dispatch-check>>
+
+        <<dispatch-affordances>>
 
         <<dispatch-index>>
 
@@ -599,6 +747,16 @@ Command::Sync { paths, workspace } => {
 }
 ```
 
+`check` has two halves. The first walks the tangling documents and
+verifies their chunk references, as it always did. The second reads
+every folio/v1 envelope under the same paths against the shipped
+vocabulary ([`cli-faces.md`](cli-faces.md)) and prints what it found
+in the affordance's own two categories: a defect as `<path>: <defect>`,
+which fails the run, and a dangling edge as a `note:` that names the
+target and says why it is expected. The summary line counts both, so a
+clean run still says how many envelopes were read and how many edges
+left the set.
+
 ```rust {#dispatch-check file="src/main.rs"}
 Command::Check { paths } => {
     let docs = discover_documents(&paths)?;
@@ -615,11 +773,50 @@ Command::Check { paths } => {
         }
     }
 
+    let vocabulary = x0k_tangle::faces::check_vocabulary(&paths)?;
+    for (path, reason) in &vocabulary.unparsed {
+        eprintln!("{path}: envelope does not parse: {reason}");
+        has_errors = true;
+    }
+    for (path, defect) in &vocabulary.corpus.defects {
+        eprintln!("{path}: {defect}");
+        has_errors = true;
+    }
+    for defect in &vocabulary.declarations.defects {
+        eprintln!("{defect}");
+        has_errors = true;
+    }
+    for edge in &vocabulary.corpus.dangling {
+        eprintln!(
+            "{}: note: edge `{}` → `{}` names no document here (an edge into the corpus this was projected from; expected)",
+            edge.source, edge.predicate, edge.target
+        );
+    }
+
     if has_errors {
         std::process::exit(1);
     } else {
-        eprintln!("all references OK");
+        eprintln!(
+            "all references OK; {} envelope(s) read against the shipped vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
+            vocabulary.corpus.checked,
+            vocabulary.declarations.checked,
+            vocabulary.corpus.dangling.len()
+        );
     }
+}
+```
+
+`affordances` is the one literate verb whose whole product is data, so
+its records go to stdout as pretty JSON and only the extractor's
+refusals go to stderr.
+
+```rust {#dispatch-affordances file="src/main.rs"}
+Command::Affordances { paths } => {
+    let report = x0k_tangle::faces::declared_affordances(&paths)?;
+    for (path, reason) in &report.skipped {
+        eprintln!("{path}: skipped: {reason}");
+    }
+    println!("{}", serde_json::to_string_pretty(&report.records)?);
 }
 ```
 
@@ -1095,6 +1292,8 @@ fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 ```
 
 ```rust {#bin-root file="src/main.rs"}
+<<bin-doc>>
+
 <<cli-imports>>
 
 <<cli-struct>>

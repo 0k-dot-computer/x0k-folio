@@ -346,7 +346,29 @@ fn parse_info_string(info: &str) -> Option<String> {
 }
 ```
 
-## Two passes over the body
+## `extract_from_markdown`: two passes over the body
+
+`extract_from_markdown` is what a caller reaches for. Hand it a body and
+the set of classes its parent may host, and it returns one `Result` per
+attempted record: the affordances a document declares, read back as
+data. Its rustdoc is the whole of the cue — a reader of this library
+finds the function by its name and its doc line, and nothing else
+announces that the affordance is reachable here. That is what the
+declaration below records. A human claim on
+`read_declared_affordances` is only true because this face exists, and
+the record of *via what* lives beside the face rather than on the
+affordance (`x0k:design/publish-a-region-as-a-repository`, "a face
+declares its signifier where the face lives"):
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-folio-extract-from-markdown
+cue: extract_from_markdown
+edges:
+  signifies:
+    - x0k:affordance/read_declared_affordances
+  presentedOn:
+    - x0k:surface/sdk
+```
 
 The description is "everything under the heading except the block", and
 that phrasing is why the walk is two passes rather than one. A streaming
@@ -732,6 +754,18 @@ with a structural predicate. And the `definedIn` edge is appended
 unconditionally, from the embedding location — the source never
 declares it, so the fact is minted rather than copied.
 
+One key is neither unknown nor an edge, and is read as the relation it
+is. `actors:` is the `claimedFor` relation written as a list of actor
+kinds, and it flattens to one `claimedFor` fact per element with an
+`x0k:actor/<kind>` target — `actors: [human, ai_agent]` is two claims,
+one for `x0k:actor/human` and one for `x0k:actor/ai_agent`. It used to
+flatten as `x0k:affordance/actors` over bare strings, which was a
+spelling only this corpus knew: a publication shipping the `software`
+module shipped `claimedFor` and could not say that any of its
+affordances claimed a human. Emitting the vocabulary's own word, with
+an entity target the vocabulary's range names, is what lets the shipped
+checker read the claim at all.
+
 The predicate mapping is a parameter because a host may know more terms
 than the compiled vocabulary does. The default answers from
 `x0k-ontology` alone, which is the right answer for a consumer holding
@@ -766,6 +800,10 @@ where
             key_str.as_str(),
             "id" | "edges" | "title" | "requires_resources" | "requiresResources"
         ) {
+            continue;
+        }
+        if key_str == "actors" {
+            claimed_for_facts(value, &mut out);
             continue;
         }
         let name = match predicate(key_str) {
@@ -823,10 +861,10 @@ pub fn inline_entity_facts(entity: &InlineEntity, parent_uri: &str) -> Vec<(Stri
 
 A sequence under a scalar key flattens to one fact per element rather
 than one fact holding a list, because the fact store's value is a scalar
-and `actors: [human, ai_agent]` means two claims. Nested mappings under
-a scalar key are skipped: `edges:` is the only mapping with an agreed
-flattening, and guessing at the others would invent structure the
-document did not state.
+and a list of three tags is three facts. Nested mappings under a scalar
+key are skipped: `edges:` is the only mapping with an agreed flattening,
+and guessing at the others would invent structure the document did not
+state.
 
 ```rust {#emit-value}
 /// One fact per scalar; one per element for a sequence; nothing for a
@@ -850,6 +888,29 @@ fn emit_value(predicate: &str, value: &serde_norway::Value, out: &mut Vec<(Strin
         serde_norway::Value::Mapping(_)
         | serde_norway::Value::Null
         | serde_norway::Value::Tagged(_) => {}
+    }
+}
+```
+
+The `claimedFor` emitter takes the same shape — a scalar or a list of
+them — and differs only in what it makes of the word: an entity target
+in the `actor` class, not a string.
+
+```rust {#claimed-for}
+/// The `actors:` list as the `claimedFor` relation: one fact per actor
+/// kind, each target an `x0k:actor/<kind>` id. Anything that is not a
+/// bare word (or a list of them) declares no claim.
+fn claimed_for_facts(value: &serde_norway::Value, out: &mut Vec<(String, String)>) {
+    match value {
+        serde_norway::Value::String(kind) => {
+            out.push(("claimedFor".to_string(), format!("entity:x0k:actor/{kind}")));
+        }
+        serde_norway::Value::Sequence(seq) => {
+            for item in seq {
+                claimed_for_facts(item, out);
+            }
+        }
+        _ => {}
     }
 }
 ```
@@ -912,10 +973,12 @@ repository.
         assert!(facts
             .iter()
             .any(|(p, v)| p == "x0k:affordance/status" && v == "string:wip"));
-        // A sequence under a scalar key flattens per element.
+        // `actors:` is the `claimedFor` relation, with an actor-class
+        // target rather than a bare word.
         assert!(facts
             .iter()
-            .any(|(p, v)| p == "x0k:affordance/actors" && v == "string:human"));
+            .any(|(p, v)| p == "claimedFor" && v == "entity:x0k:actor/human"));
+        assert!(!facts.iter().any(|(p, _)| p == "x0k:affordance/actors"));
         // `requires` is already camelCase and not in the compiled slice,
         // so it passes through verbatim.
         assert!(facts
@@ -927,6 +990,29 @@ repository.
                 "definedIn".to_string(),
                 "entity:x0k:design/publish-a-region-as-a-repository".to_string()
             ))
+        );
+    }
+
+    // Two actor kinds are two claims, each one the vocabulary can
+    // range-check against `Actor`.
+    #[test]
+    fn each_actor_is_its_own_claimed_for_fact() {
+        let body = r#"### Check a document against its vocabulary
+
+```yaml x0k:affordance
+id: x0k:affordance/check_a_document_against_shipped_vocabulary
+status: wip
+actors: [human, ai_agent]
+```
+"#;
+        let claims: Vec<String> = declared_facts(&one(body))
+            .into_iter()
+            .filter(|(p, _)| p == "claimedFor")
+            .map(|(_, v)| v)
+            .collect();
+        assert_eq!(
+            claims,
+            vec!["entity:x0k:actor/human", "entity:x0k:actor/ai_agent"]
         );
     }
 
@@ -1254,6 +1340,8 @@ edges:
 <<facts>>
 
 <<emit-value>>
+
+<<claimed-for>>
 
 <<tests>>
 ```

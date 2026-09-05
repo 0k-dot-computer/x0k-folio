@@ -65,7 +65,22 @@ body.
 
 ## The main weave function
 
-`weave_html` is the entry point. It scans the body twice: once just
+`weave_html` is the entry point, and the library face of weaving: a
+consumer holding the published crate reaches the affordance of
+rendering a document as its woven page through this function's
+rustdoc, which is the cue the signifier below records.
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-tangle-weave-document
+cue: weave_html
+edges:
+  signifies:
+    - x0k:affordance/weave_a_document
+  presentedOn:
+    - x0k:surface/sdk
+```
+
+It scans the body twice: once just
 to extract the title (the first text node after the first H1), then
 again to render. The two-pass approach is simple and fast enough —
 the document is already in memory.

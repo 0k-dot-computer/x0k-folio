@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/crate.md",
-  "source_hash": "fd78fd184456d650",
+  "source_hash": "1a12260c2e2226d8",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,11 +9,11 @@
       "outputs": [
         {
           "path": "x0k-tangle/src/lib.rs",
-          "hash": "56d9f3b4cff92fd9"
+          "hash": "8169fe1aff919c8b"
         },
         {
           "path": "x0k-tangle/src/main.rs",
-          "hash": "fb0997cc86c67aac"
+          "hash": "9e0c7666a1554746"
         }
       ]
     }

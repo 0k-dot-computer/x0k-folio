@@ -61,3 +61,7 @@ tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"
+# The CLI-face tests (tests/cli_faces.rs, from cli-faces.md) take their
+# well-formed edge predicate from the compiled vocabulary slice so they
+# measure the face and not the module selection.
+x0k-ontology = { path = "../x0k-ontology" , version = "0.1.0" }

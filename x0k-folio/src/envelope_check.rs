@@ -19,11 +19,19 @@
 //! the same document checks differently in the monorepo and in a
 //! published bundle. That is the point: the check measures the bundle,
 //! not the corpus.
+//!
+//! A third question is asked of the entities declared *inside* the
+//! documents rather than of their envelopes — **does every claim made
+//! to a human have a cue a human could perceive?** A `no` is a
+//! [`DeclarationDefect`]: an affordance `claimedFor` a human that no
+//! signifier signifies, which is a promise to a perception-dependent
+//! actor with nothing to perceive.
 
 use std::collections::BTreeSet;
 
 use crate::colophon::Colophon;
 use crate::entity_id::EntityId;
+use crate::inline_entity::{declared_facts, InlineEntity};
 
 /// What the shipped ontology modules have to say about an `edges:`
 /// predicate, in its snake_case frontmatter form.
@@ -252,6 +260,85 @@ where
     out
 }
 
+/// A declaration the shipped vocabulary expresses but that does not
+/// hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclarationDefect {
+    /// An affordance `claimedFor` `x0k:actor/human` that no signifier
+    /// signifies. A human reaches an affordance through a perceivable
+    /// cue; with none declared, the claim cannot be kept.
+    HumanClaimWithoutSignifier { affordance: EntityId },
+}
+
+impl std::fmt::Display for DeclarationDefect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HumanClaimWithoutSignifier { affordance } => write!(
+                f,
+                "affordance `{affordance}` is claimed for a human but no signifier signifies it; \
+                 declare a `yaml x0k:signifier` block beside the face that presents it, or \
+                 drop `human` from its actors"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DeclarationDefect {}
+
+/// What checking a set of inline declarations against each other found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeclarationReport {
+    /// How many inline entities were examined, of every class.
+    pub checked: usize,
+    /// Faults, in the order the affordances were given.
+    pub defects: Vec<DeclarationDefect>,
+}
+
+impl DeclarationReport {
+    /// True when every human claim has a cue.
+    pub fn is_clean(&self) -> bool {
+        self.defects.is_empty()
+    }
+}
+
+/// Check a set of inline declarations. Pure: reads the `claimedFor` facts
+/// of each `affordance` and the `signifies` facts of each `signifier`,
+/// and resolves nothing beyond the set it was given.
+pub fn check_declarations<'a, I>(entities: I) -> DeclarationReport
+where
+    I: IntoIterator<Item = &'a InlineEntity>,
+{
+    let entities: Vec<&InlineEntity> = entities.into_iter().collect();
+
+    let signified: BTreeSet<EntityId> = entities
+        .iter()
+        .filter(|e| e.marker_class == "signifier")
+        .flat_map(|e| declared_facts(e))
+        .filter(|(predicate, _)| predicate == "signifies")
+        .filter_map(|(_, value)| value.strip_prefix("entity:")?.parse().ok())
+        .collect();
+
+    let mut report = DeclarationReport {
+        checked: entities.len(),
+        ..DeclarationReport::default()
+    };
+    for entity in entities {
+        if entity.marker_class != "affordance" {
+            continue;
+        }
+        let claims_human = declared_facts(entity)
+            .iter()
+            .any(|(p, v)| p == "claimedFor" && v == "entity:x0k:actor/human");
+        if claims_human && !signified.contains(&entity.uri) {
+            report.defects.push(DeclarationDefect::HumanClaimWithoutSignifier {
+                affordance: entity.uri.clone(),
+            });
+        }
+    }
+
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +495,69 @@ mod tests {
             .map(|e| e.target.to_string())
             .collect();
         assert_eq!(targets, vec!["x0k:commitment/local-first"]);
+    }
+
+    /// Inline declarations as a chapter would carry them: an affordance
+    /// under one heading, optionally a signifier under another.
+    fn declarations(body: &str) -> Vec<InlineEntity> {
+        let classes = ["affordance", "signifier"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        crate::inline_entity::extract_from_markdown(body, &classes)
+            .into_iter()
+            .map(|r| r.expect("fixture declares well-formed entities"))
+            .collect()
+    }
+
+    const HUMAN_CLAIM: &str = r#"### Read an affordance out of a document
+
+```yaml x0k:affordance
+id: x0k:affordance/read_declared_affordances
+status: wip
+actors: [human, ai_agent]
+```
+"#;
+
+    #[test]
+    fn a_human_claim_with_no_signifier_is_a_defect() {
+        let entities = declarations(HUMAN_CLAIM);
+        let report = check_declarations(&entities);
+        assert_eq!(report.checked, 1);
+        match report.defects.as_slice() {
+            [DeclarationDefect::HumanClaimWithoutSignifier { affordance }] => {
+                assert_eq!(affordance.to_string(), "x0k:affordance/read_declared_affordances");
+            }
+            other => panic!("expected one HumanClaimWithoutSignifier, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_human_claim_with_a_signifier_is_clean() {
+        let body = format!(
+            "{HUMAN_CLAIM}
+### `extract_from_markdown`
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-folio-extract-from-markdown
+edges:
+  signifies:
+    - x0k:affordance/read_declared_affordances
+  presentedOn:
+    - x0k:surface/sdk
+```
+"
+        );
+        let entities = declarations(&body);
+        let report = check_declarations(&entities);
+        assert_eq!(report.checked, 2);
+        assert!(report.is_clean(), "unexpected defects: {:?}", report.defects);
+    }
+
+    #[test]
+    fn an_agent_only_claim_needs_no_signifier() {
+        let body = HUMAN_CLAIM.replace("actors: [human, ai_agent]", "actors: [ai_agent]");
+        let entities = declarations(&body);
+        assert!(check_declarations(&entities).is_clean());
     }
 }

@@ -148,15 +148,16 @@ fn workspace(modules: &[&str], entry_point: bool) -> tempfile::TempDir {
 }
 
 /// The decision-document fixture: a design whose `## Affordances` heading
-/// holds two `###` sections. Built rather than kept as a constant so the
-/// affordance fences read as themselves.
+/// holds two `###` sections, the shippable one claimed for a human. Built
+/// rather than kept as a constant so the affordance fences read as
+/// themselves.
 fn demo_design() -> String {
     let mut d = String::new();
     d.push_str("---\nx0k:\n  format: folio/v1\n  id: x0k:design/demo-design\n  type: design\n  status: proposed\n---\n");
     d.push_str("# The demo design\n\nContext this repository has no use for.\n\n");
     d.push_str("### Affordances\n\n");
     d.push_str("### Read a line out of a document\n\nI read the first line, and the shipped crate is what lets me.\n\n");
-    d.push_str("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nstatus: wip\nedges:\n  enabledBy:\n    - x0k:software-module/demo-crate\n```\n\n");
+    d.push_str("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nstatus: wip\nactors: [human]\nedges:\n  enabledBy:\n    - x0k:software-module/demo-crate\n```\n\n");
     d.push_str("### Run the whole fleet\n\nI do a thing this bundle cannot do.\n\n");
     d.push_str("```yaml x0k:affordance\nid: x0k:affordance/run_the_whole_fleet\nstatus: wip\nedges:\n  enabledBy:\n    - x0k:software-module/unshipped-crate\n```\n");
     d
@@ -216,6 +217,27 @@ fn project_err_with_marker(marker: &str) -> String {
     )
     .unwrap();
     project_err(ws.path())
+}
+
+/// The fixture's README with a `## What you can do here` section carrying
+/// the affordances marker, ahead of the afterword.
+fn with_affordances_marker(publication: &str) -> String {
+    publication.replace(
+        "## Afterwards\n",
+        "## What you can do here\n\n<!-- x0k:affordances -->\n\n## Afterwards\n",
+    )
+}
+
+/// A prose-only chapter in the demo crate's area declaring a signifier: the
+/// `demo-line` verb, presented on the CLI, signifying the shippable
+/// affordance. It ships because its area does, not by name — which is how
+/// a face's cue reaches the projection.
+fn declare_signifier(ws: &Path) {
+    std::fs::write(
+        ws.join("knowledge/implementation/demo/verbs.md"),
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/demo/verbs\n  type: implementation\n  status: draft\n  summary: The demo crate's one verb, and the cue that reaches it.\n---\n# The demo verbs\n\n## demo-line\n\nPrints the first line of a file.\n\n```yaml x0k:signifier\nid: x0k:signifier/demo-line\nedges:\n  signifies:\n    - x0k:affordance/read_a_line\n  presentedOn:\n    - x0k:surface/cli\n```\n",
+    )
+    .unwrap();
 }
 
 #[test]
@@ -899,4 +921,107 @@ fn a_document_without_a_summary_is_refused_naming_it() {
         err.contains("demo/extra.md") && err.contains("summary"),
         "names the undescribed document: {err}"
     );
+}
+
+#[test]
+fn the_affordances_marker_draws_one_figure_pair_per_published_declaration() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_affordances_marker(&publication_publishing(&["demo-crate"], &[reference.as_str()])),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+
+    let light = std::fs::read_to_string(out.path().join("affordances/read-a-line-light.svg"))
+        .expect("the light figure is drawn");
+    let dark = std::fs::read_to_string(out.path().join("affordances/read-a-line-dark.svg"))
+        .expect("the dark figure is drawn");
+    for svg in [&light, &dark] {
+        assert!(svg.contains("role=\"img\""), "{svg}");
+        assert!(svg.contains(">Read a line out of a document<"), "the title is drawn: {svg}");
+        assert!(svg.contains(">a person<"), "the claimed actor is drawn: {svg}");
+        assert!(svg.contains(">demo-crate<"), "the enabling crate is drawn: {svg}");
+        assert!(svg.contains("no signifier declared"), "an undeclared cue is drawn as such: {svg}");
+        assert!(svg.contains(">status: wip<"), "{svg}");
+    }
+    // The README's own two palettes, not a third.
+    assert!(light.contains("Georgia") && light.contains("#b88e44"), "paper and gold:\n{light}");
+    assert!(dark.contains("monospace") && dark.contains("#e2e8f0"), "surface and slate:\n{dark}");
+
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    let expected = "\
+## What you can do here
+
+<picture>
+  <source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/read-a-line-dark.svg\">
+  <img alt=\"Read a line out of a document — for a person; no signifier declared; enabled by demo-crate; status wip.\" src=\"affordances/read-a-line-light.svg\">
+</picture>
+
+**Read a line out of a document** — for a person; no signifier declared; enabled by `demo-crate`; status wip.
+
+## Afterwards
+";
+    assert!(readme.contains(expected), "the figure and its caption stand where the marker was:\n{readme}");
+    assert_eq!(
+        report.figures.get("x0k:affordance/read_a_line").map(String::as_str),
+        Some("affordances/read-a-line-light.svg")
+    );
+    let prov = std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap();
+    assert!(!prov.contains("affordances/"), "a figure has no corpus source to record: {prov}");
+}
+
+#[test]
+fn a_signifier_in_a_shipped_chapter_puts_its_surface_on_the_figure() {
+    let ws = workspace(&[], true);
+    declare_signifier(ws.path());
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_affordances_marker(&publication_publishing(&["demo-crate"], &[reference.as_str()])),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(
+        readme.contains("for a person; reachable on `cli` as `demo-line`; enabled by `demo-crate`"),
+        "the caption names the surface and the cue:\n{readme}"
+    );
+    assert!(!readme.contains("no signifier declared"), "{readme}");
+
+    let svg = std::fs::read_to_string(out.path().join("affordances/read-a-line-light.svg")).unwrap();
+    assert!(svg.contains(">cli</tspan>"), "the surface heads the pill: {svg}");
+    assert!(svg.contains("demo-line</tspan>"), "the cue follows it: {svg}");
+    assert!(!svg.contains("no signifier declared"), "{svg}");
+}
+
+#[test]
+fn an_affordances_marker_with_nothing_to_draw_is_refused_naming_it() {
+    let ws = workspace(&[], true);
+    let doc = std::fs::read_to_string(ws.path().join(PUB_REL)).unwrap();
+    std::fs::write(ws.path().join(PUB_REL), with_affordances_marker(&doc)).unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("<!-- x0k:affordances -->"), "names the marker: {err}");
+    assert!(err.contains("no affordance declaration"), "{err}");
+}
+
+#[test]
+fn without_the_marker_no_figure_is_drawn() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+    assert!(!out.path().join("affordances").exists(), "no marker, no directory");
+    assert!(report.figures.is_empty(), "{:?}", report.figures);
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(!readme.contains("<picture"), "{readme}");
 }

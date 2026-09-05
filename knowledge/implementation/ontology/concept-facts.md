@@ -459,9 +459,9 @@ fn visit_module(
 
 Each compatibility view has a per-module form that is the same view filtered
 by declared membership. The Decision-domain test still runs over the whole
-model — a `product` property whose domain is `Bundle` is a Decision edge
-because `Bundle` subclasses `Decision` in `document` — and only the answer
-is partitioned:
+model — `software`'s `publishedOn`, whose domain is `Publication`, is a
+Decision edge because `Publication` subclasses `Decision` in `document` —
+and only the answer is partitioned:
 
 ```rust {#module-views}
 impl OntologyModel {

@@ -84,11 +84,19 @@ than a term filed in the wrong house.
 //! the same document checks differently in the monorepo and in a
 //! published bundle. That is the point: the check measures the bundle,
 //! not the corpus.
+//!
+//! A third question is asked of the entities declared *inside* the
+//! documents rather than of their envelopes — **does every claim made
+//! to a human have a cue a human could perceive?** A `no` is a
+//! [`DeclarationDefect`]: an affordance `claimedFor` a human that no
+//! signifier signifies, which is a promise to a perception-dependent
+//! actor with nothing to perceive.
 
 use std::collections::BTreeSet;
 
 use crate::colophon::Colophon;
 use crate::entity_id::EntityId;
+use crate::inline_entity::{declared_facts, InlineEntity};
 ```
 
 ## Standing: what a shipped module has to say about a predicate
@@ -219,7 +227,26 @@ impl std::fmt::Display for Defect {
 impl std::error::Error for Defect {}
 ```
 
-## One document
+## `check_envelope`: one document
+
+`check_envelope` is the face of this check. A caller holding one parsed
+envelope reaches for it and gets back a report: the document's id, its
+well-formed edges, and the defects, in the order found. That is all the
+cue there is — a reader of this library learns the check is here from
+the function's name and its rustdoc — so it is declared as the cue
+below, beside the function it describes rather than on the affordance
+it makes reachable (`x0k:design/publish-a-region-as-a-repository`, "a
+face declares its signifier where the face lives"):
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-folio-check-envelope
+cue: check_envelope
+edges:
+  signifies:
+    - x0k:affordance/check_a_document_against_shipped_vocabulary
+  presentedOn:
+    - x0k:surface/sdk
+```
 
 The report keeps the well-formed edges as well as the faults, because
 the corpus pass needs them and a caller checking a single document
@@ -377,6 +404,115 @@ where
 }
 ```
 
+## Declarations: a human claim needs a cue
+
+The envelope check reads what a document says about itself. The
+entities declared inside a document say something more, and one of the
+things they say can be false in a way the vocabulary alone cannot
+catch. An affordance `claimedFor` a human is a claim that a person can
+reach it, and by the `Actor` definition a person reaches an affordance
+through a perceivable cue — a `Signifier` `presentedOn` a `Surface`. An
+affordance claimed for a human that no signifier signifies is therefore
+a claim with nothing behind it: the audience is told they can do
+something and given no way to find where.
+
+An agent claim carries no such obligation. A structured actor reads
+the descriptor, and the published library is one, so `actors:
+[ai_agent]` alone is clean by construction. The check is only ever
+about the human.
+
+The check runs over extracted [`InlineEntity`](inline-entities.md)
+records, whichever documents they came from, and it does not resolve
+anything: it reads the `claimedFor` facts of every `affordance` and the
+`signifies` facts of every `signifier`, and reports the affordances
+that claim a human and are named by no signifier. What it measured
+when first run over this publication: two of its four affordances —
+`check_a_document_against_shipped_vocabulary` and
+`read_declared_affordances` — claimed a human and were reachable only
+through Rust, with nothing declared to say so. The two signifiers in
+this crate's chapters are what made those claims true.
+
+```rust {#check-declarations}
+/// A declaration the shipped vocabulary expresses but that does not
+/// hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclarationDefect {
+    /// An affordance `claimedFor` `x0k:actor/human` that no signifier
+    /// signifies. A human reaches an affordance through a perceivable
+    /// cue; with none declared, the claim cannot be kept.
+    HumanClaimWithoutSignifier { affordance: EntityId },
+}
+
+impl std::fmt::Display for DeclarationDefect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HumanClaimWithoutSignifier { affordance } => write!(
+                f,
+                "affordance `{affordance}` is claimed for a human but no signifier signifies it; \
+                 declare a `yaml x0k:signifier` block beside the face that presents it, or \
+                 drop `human` from its actors"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DeclarationDefect {}
+
+/// What checking a set of inline declarations against each other found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeclarationReport {
+    /// How many inline entities were examined, of every class.
+    pub checked: usize,
+    /// Faults, in the order the affordances were given.
+    pub defects: Vec<DeclarationDefect>,
+}
+
+impl DeclarationReport {
+    /// True when every human claim has a cue.
+    pub fn is_clean(&self) -> bool {
+        self.defects.is_empty()
+    }
+}
+
+/// Check a set of inline declarations. Pure: reads the `claimedFor` facts
+/// of each `affordance` and the `signifies` facts of each `signifier`,
+/// and resolves nothing beyond the set it was given.
+pub fn check_declarations<'a, I>(entities: I) -> DeclarationReport
+where
+    I: IntoIterator<Item = &'a InlineEntity>,
+{
+    let entities: Vec<&InlineEntity> = entities.into_iter().collect();
+
+    let signified: BTreeSet<EntityId> = entities
+        .iter()
+        .filter(|e| e.marker_class == "signifier")
+        .flat_map(|e| declared_facts(e))
+        .filter(|(predicate, _)| predicate == "signifies")
+        .filter_map(|(_, value)| value.strip_prefix("entity:")?.parse().ok())
+        .collect();
+
+    let mut report = DeclarationReport {
+        checked: entities.len(),
+        ..DeclarationReport::default()
+    };
+    for entity in entities {
+        if entity.marker_class != "affordance" {
+            continue;
+        }
+        let claims_human = declared_facts(entity)
+            .iter()
+            .any(|(p, v)| p == "claimedFor" && v == "entity:x0k:actor/human");
+        if claims_human && !signified.contains(&entity.uri) {
+            report.defects.push(DeclarationDefect::HumanClaimWithoutSignifier {
+                affordance: entity.uri.clone(),
+            });
+        }
+    }
+
+    report
+}
+```
+
 ## What this deliberately does not check
 
 The domain and range a shipped module declares are *carried* by
@@ -405,7 +541,7 @@ the first version of these tests, and it passed in the monorepo and
 failed in the published bundle — correctly, which is the point, but a
 test that measures the module selection is not measuring the checker.
 
-```rust {#tests}
+`````rust {#tests}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,8 +699,72 @@ mod tests {
             .collect();
         assert_eq!(targets, vec!["x0k:commitment/local-first"]);
     }
-}
+
+    /// Inline declarations as a chapter would carry them: an affordance
+    /// under one heading, optionally a signifier under another.
+    fn declarations(body: &str) -> Vec<InlineEntity> {
+        let classes = ["affordance", "signifier"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        crate::inline_entity::extract_from_markdown(body, &classes)
+            .into_iter()
+            .map(|r| r.expect("fixture declares well-formed entities"))
+            .collect()
+    }
+
+    const HUMAN_CLAIM: &str = r#"### Read an affordance out of a document
+
+```yaml x0k:affordance
+id: x0k:affordance/read_declared_affordances
+status: wip
+actors: [human, ai_agent]
 ```
+"#;
+
+    #[test]
+    fn a_human_claim_with_no_signifier_is_a_defect() {
+        let entities = declarations(HUMAN_CLAIM);
+        let report = check_declarations(&entities);
+        assert_eq!(report.checked, 1);
+        match report.defects.as_slice() {
+            [DeclarationDefect::HumanClaimWithoutSignifier { affordance }] => {
+                assert_eq!(affordance.to_string(), "x0k:affordance/read_declared_affordances");
+            }
+            other => panic!("expected one HumanClaimWithoutSignifier, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_human_claim_with_a_signifier_is_clean() {
+        let body = format!(
+            "{HUMAN_CLAIM}
+### `extract_from_markdown`
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-folio-extract-from-markdown
+edges:
+  signifies:
+    - x0k:affordance/read_declared_affordances
+  presentedOn:
+    - x0k:surface/sdk
+```
+"
+        );
+        let entities = declarations(&body);
+        let report = check_declarations(&entities);
+        assert_eq!(report.checked, 2);
+        assert!(report.is_clean(), "unexpected defects: {:?}", report.defects);
+    }
+
+    #[test]
+    fn an_agent_only_claim_needs_no_signifier() {
+        let body = HUMAN_CLAIM.replace("actors: [human, ai_agent]", "actors: [ai_agent]");
+        let entities = declarations(&body);
+        assert!(check_declarations(&entities).is_clean());
+    }
+}
+`````
 
 ## Composing the module
 
@@ -580,6 +780,8 @@ mod tests {
 <<check-envelope>>
 
 <<check-corpus>>
+
+<<check-declarations>>
 
 <<tests>>
 ```

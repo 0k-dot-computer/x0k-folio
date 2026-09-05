@@ -44,8 +44,9 @@ pub use block_provenance::{
 pub use block_segment::{hash_block, segment_body, BlockKind, BlockSegment};
 pub use entity_id::{EntityId, EntityIdError};
 pub use envelope_check::{
-    check_corpus, check_envelope, predicate_standing, CorpusReport, DanglingEdge, Defect,
-    EnvelopeReport, PredicateStanding,
+    check_corpus, check_declarations, check_envelope, predicate_standing, CorpusReport,
+    DanglingEdge, DeclarationDefect, DeclarationReport, Defect, EnvelopeReport,
+    PredicateStanding,
 };
 pub use inline_entity::{
     declared_facts, declared_facts_with, defined_in_fact, extract_from_markdown,
