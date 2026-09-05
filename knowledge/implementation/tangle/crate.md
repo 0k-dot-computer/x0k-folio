@@ -26,6 +26,8 @@ x0k:
       - x0k:implementation/tangle/receiving
       - x0k:implementation/tangle/cli-faces
       - x0k:implementation/tangle/bundle
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # x0k-tangle: the crate and its CLI
 

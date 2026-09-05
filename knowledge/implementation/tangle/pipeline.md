@@ -17,6 +17,8 @@ x0k:
       - x0k:implementation/tangle/chunk
     realizes:
       - x0k:design/literate-pipelines
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # The pipeline protocol
 

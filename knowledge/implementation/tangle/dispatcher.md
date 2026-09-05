@@ -16,6 +16,8 @@ x0k:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/pipeline
       - x0k:implementation/tangle/identity-pipeline
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # The pipeline dispatcher
 
@@ -1383,7 +1385,7 @@ Three more cover the write path rather than the dispatch: a reader
 thread racing `write_atomic` and never seeing a partial file, the
 staging file not surviving the call, and the lock's re-entrancy.
 
-`````rust {#tests}
+`````rust {#tests proves="x0k:affordance/tangle_source_from_a_document"}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1668,7 +1670,15 @@ let main = body
         assert!(gls.contains("let body = 0"), "gls ref resolved to gls variant: {gls}");
         assert!(!gls.contains("fn body"), "no rust leaked into gallowglass: {gls}");
     }
+`````
 
+That group is the proof that source tangles out of a document — the
+`EchoPipeline` fixture and the `tangle_document` cases — and the chunk
+carries `proves=` for the affordance it makes true. The rest is the
+machinery around that act: containment, sidecars and freshness,
+workspace aggregation, the write path and the lock.
+
+`````rust {#tests-machinery}
     /// `absolutize` collapses `.` and `..` and lands on an absolute
     /// path whether or not the target exists yet.
     /// A publication document's `tangle:` block names its projected
@@ -2654,4 +2664,6 @@ from b
 <<hash-fns>>
 
 <<tests>>
+
+<<tests-machinery>>
 ```

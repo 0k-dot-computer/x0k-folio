@@ -13,6 +13,8 @@ x0k:
     cites:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/chunk
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # Symbol extraction for `from=` chunks
 

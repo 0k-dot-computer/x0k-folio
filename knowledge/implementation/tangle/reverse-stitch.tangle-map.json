@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/reverse-stitch.md",
-  "source_hash": "e763a59c37edad2a",
+  "source_hash": "565981f56929fc19",
   "pipelines": [
     {
       "kind": "identity-tangle",

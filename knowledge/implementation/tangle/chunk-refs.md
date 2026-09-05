@@ -14,6 +14,8 @@ x0k:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/chunk
       - x0k:implementation/tangle/resolution
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # Language-aware chunk reference extraction
 

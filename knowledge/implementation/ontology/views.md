@@ -17,6 +17,8 @@ x0k:
       - x0k:implementation/ontology/module-bootstrap
       - x0k:implementation/ontology/concept-region
       - x0k:implementation/ontology/declaration
+    presupposes:
+      - x0k:wiki/rdf-and-owl
 ---
 
 # The crate root is a compatibility view

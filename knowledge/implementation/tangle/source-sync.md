@@ -16,6 +16,8 @@ x0k:
       - x0k:implementation/tangle/source-refs
       - x0k:implementation/tangle/parsing
       - x0k:implementation/tangle/reverse-stitch
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 
 # Pulling code back into the document

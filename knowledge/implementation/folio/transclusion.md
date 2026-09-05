@@ -15,6 +15,8 @@ x0k:
     cites:
       - x0k:implementation/folio/segmentation
       - x0k:implementation/folio/structural
+    presupposes:
+      - x0k:wiki/dependency-resolution
 ---
 # Transclusion: include, don't copy
 

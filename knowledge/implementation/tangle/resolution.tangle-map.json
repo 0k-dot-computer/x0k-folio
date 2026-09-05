@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/resolution.md",
-  "source_hash": "e3e4216a89e6bfb7",
+  "source_hash": "4c836be3143e38f8",
   "pipelines": [
     {
       "kind": "identity-tangle",

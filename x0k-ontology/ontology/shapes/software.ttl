@@ -3,3 +3,5 @@
 # Shapes: software
 
 <https://0k.computer/ontology#claimedFor> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Actor> .
+<https://0k.computer/ontology#verifiedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Implementation> .
+<https://0k.computer/ontology#verifiedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#LiterateSpec> .

@@ -20,7 +20,6 @@ private corpus this was projected from and is expected.
 
 ```yaml x0k:affordance
 id: x0k:affordance/check_a_document_against_shipped_vocabulary
-status: wip
 actors: [human, ai_agent]
 edges:
   enabledBy:

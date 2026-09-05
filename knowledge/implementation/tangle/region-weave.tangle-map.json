@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/region-weave.md",
-  "source_hash": "cdbafe607b86213e",
+  "source_hash": "69c2172a8c793699",
   "pipelines": [
     {
       "kind": "identity-tangle",

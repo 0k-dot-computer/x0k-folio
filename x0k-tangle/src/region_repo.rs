@@ -59,12 +59,16 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
 use x0k_folio::transclusion::extract_section;
 use x0k_folio::{EntityId, InlineEntity};
 
+use crate::faces::proving_chunks;
+use crate::parser::parse_document;
 use crate::pipeline::PipelineRegistry;
 use crate::pipeline_runner::{tangle_document, TangleSidecar};
 
@@ -85,6 +89,9 @@ const SHAPES_DIR: &str = "ontology/shapes";
 /// Where the corpus keeps decision documents. A named document is looked
 /// up under here by its class and stem; nothing enumerates the directory.
 const DECISIONS_ROOT: &str = "decisions";
+/// Where the corpus keeps concept pages: `x0k:wiki/<stem>` is the one
+/// class whose file is at one fixed path, `knowledge/wiki/<stem>.md`.
+const WIKI_ROOT: &str = "knowledge/wiki";
 /// The crate that compiles the module files. When a publication ships it, the
 /// modules travel *inside* the package — see [`modules_rel_dir`].
 const ONTOLOGY_CRATE: &str = "x0k-ontology";
@@ -235,8 +242,28 @@ pub struct RepoProjectReport {
     /// → the projection-relative path of its light file, the dark twin
     /// beside it as `-dark.svg`. Empty when the publication names no
     /// affordance. Not in `PROVENANCE.json`'s `path_map`: a glyph has no
-    /// corpus source to route an edit back to.
+    /// corpus source to route an edit back to. The status marks beside
+    /// them (`status-proven`, `status-declared`, `status-claimed`) are
+    /// recorded the same way.
     pub figures: BTreeMap<String, String>,
+    /// Every proof test run this projection, by its id
+    /// (`x0k:test/<crate>/<file>::<fn>`) → what it did. Recorded in
+    /// `PROVENANCE.json` under `proofs`, because the README's status
+    /// marks are claims the provenance should back. Empty when no
+    /// published affordance names a proof, or when proofs were skipped.
+    pub proofs: BTreeMap<String, ProofOutcome>,
+    /// Whether the proofs were run at all — false under [`Proofs::Skip`],
+    /// when every row reads at most `declared`.
+    pub proofs_run: bool,
+    /// Chunks that say `proves=` an affordance this publication does not
+    /// publish (`<chapter id>#<chunk> proves <id>`). A note, not a
+    /// refusal: the proof stays in its chapter, the audience just does
+    /// not see the claim it backs.
+    pub unpublished_proof_targets: Vec<String>,
+    /// Concept pages a shipped chapter `presupposes` and the publication
+    /// does not publish, once each. The *rests on* line prints these as
+    /// plain text; this list is the wiki's writing queue.
+    pub unpublished_concepts: Vec<String>,
 }
 
 /// Where the version stamped into shipped modules' `owl:versionIRI` came from.
@@ -269,13 +296,91 @@ pub enum LicenseSource {
     Override,
 }
 
+/// How the proofs the published affordances name are run at projection.
+#[derive(Clone, Default)]
+pub enum Proofs {
+    /// `cargo test` in the projected workspace, under the cargo on PATH
+    /// (or the one `$CARGO` names) — the default, and what the publish
+    /// pipeline runs.
+    #[default]
+    Cargo,
+    /// Run nothing. A proof that did not run is still listed on its row
+    /// and counts for nothing: the table cannot say `proven` over a test
+    /// nobody ran.
+    Skip,
+    /// A caller-supplied runner. The projector's own tests use one, so
+    /// the derivation is exercised without a shell-out.
+    With(ProofRunner),
+}
+
+/// A runner: given the projected repository and one target, the outcome
+/// of every test the harness reported, by the name it printed.
+pub type ProofRunner =
+    Arc<dyn Fn(&Path, &ProofTarget) -> Result<Vec<(String, ProofOutcome)>> + Send + Sync>;
+
+impl fmt::Debug for Proofs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Proofs::Cargo => "Cargo",
+            Proofs::Skip => "Skip",
+            Proofs::With(_) => "With(..)",
+        })
+    }
+}
+
+/// One `cargo test` invocation: a crate, the target inside it, and the
+/// test functions asked for by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofTarget {
+    pub crate_name: String,
+    pub target: TestTarget,
+    pub tests: Vec<String>,
+}
+
+/// Where a proving chunk's tests compile: the crate's library (a chunk
+/// under `src/`) or one integration-test binary (`tests/<stem>.rs`).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TestTarget {
+    Lib,
+    Test(String),
+}
+
+/// What one proof test did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofOutcome {
+    Passed,
+    Failed,
+}
+
+impl ProofOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProofOutcome::Passed => "passed",
+            ProofOutcome::Failed => "failed",
+        }
+    }
+}
+
 /// Project the publication decision doc at `region_doc` into a standalone repo
-/// under `output_dir`, resolving crate sources against `workspace`.
+/// under `output_dir`, resolving crate sources against `workspace`. The
+/// proofs the published affordances name run under `cargo`.
 pub fn project_publication_repo(
     region_doc: &Path,
     output_dir: &Path,
     workspace: &Path,
     opts: &RepoProjectOptions,
+) -> Result<RepoProjectReport> {
+    project_publication_repo_with(region_doc, output_dir, workspace, opts, &Proofs::Cargo)
+}
+
+/// As [`project_publication_repo`], with the proof runner chosen by the
+/// caller.
+pub fn project_publication_repo_with(
+    region_doc: &Path,
+    output_dir: &Path,
+    workspace: &Path,
+    opts: &RepoProjectOptions,
+    proofs: &Proofs,
 ) -> Result<RepoProjectReport> {
     let content = std::fs::read_to_string(region_doc)
         .with_context(|| format!("reading publication doc {}", region_doc.display()))?;
@@ -480,7 +585,7 @@ pub fn project_publication_repo(
 
     let projected_docs = project_named_documents(workspace, &documents)?;
     affordance_closure(&projected_docs, &published, &excluded)?;
-    let affordances = affordance_records(&projected_docs, workspace, &literate)?;
+    let mut affordances = affordance_records(&projected_docs, workspace, &literate, &mut report)?;
 
     // A prior projection (a `.git`, or a PROVENANCE.json) is projected INTO,
     // not beside: the overlay paths are stashed, the regenerated region is
@@ -542,6 +647,7 @@ pub fn project_publication_repo(
     // reports it as drift to anyone running CI from a direnv checkout.
     std::fs::write(output_dir.join(".gitignore"), "/target\n**/target\n.direnv/\n")?;
     generate_lockfile(output_dir)?;
+    run_proofs(output_dir, &mut affordances, proofs, &mut report)?;
     emit_provenance(
         output_dir,
         &env.id,
@@ -552,7 +658,15 @@ pub fn project_publication_repo(
         &source_licenses,
     )?;
     tangle_publication_doc(region_doc, workspace, output_dir, &overlay)?;
-    write_readme_contents(output_dir, &literate, &vocab_modules, &modules_rel, &affordances, &mut report)?;
+    write_readme_contents(
+        output_dir,
+        &literate,
+        &vocab_modules,
+        &modules_rel,
+        &affordances,
+        &projected_docs,
+        &mut report,
+    )?;
 
     if let Some(stash) = stash {
         restore_overlay(output_dir, &stash)?;
@@ -1310,6 +1424,12 @@ struct LiterateDoc {
     crate_name: Option<String>,
     title: String,
     summary: Option<String>,
+    /// The `id:` its envelope declares — how a proof names its chapter.
+    id: String,
+    /// The concept pages its envelope `presupposes`, in declaration
+    /// order: what a reader needs before this chapter makes sense, and
+    /// what its contents group *rests on*.
+    presupposes: Vec<String>,
 }
 
 /// A document's area — the `knowledge/implementation/<area>/` directory it
@@ -1385,6 +1505,8 @@ fn discover_literate_docs(
             title: heading_title(body, &rel),
             crate_name: env.tangle.as_ref().and_then(|t| t.crate_name.clone()),
             summary: env.summary.clone(),
+            id: env.id.clone(),
+            presupposes: env.edges.get("presupposes").cloned().unwrap_or_default(),
             tangled: false,
             rel,
         };
@@ -1502,12 +1624,33 @@ struct DocSelection {
 /// name the publication wrote: the class picks the directory under
 /// `decisions/`, the identifier is the stem, and the topic subdirectory a
 /// decision may have moved into is searched for that stem — ids survive a
-/// move, paths do not. Nothing here enumerates what `decisions/` holds; a
-/// document nobody named is never opened.
+/// move, paths do not. A `wiki` id is the one class at a fixed path,
+/// `knowledge/wiki/<stem>.md`. Nothing here enumerates what either
+/// directory holds; a document nobody named is never opened.
 fn resolve_named_document(workspace: &Path, sel: &DocSelection) -> Result<PathBuf> {
     let want = sel.id.without_fragment().to_string();
     let stem = format!("{}.md", sel.id.identifier);
     let class = &sel.id.class;
+    if class == "wiki" {
+        let path = workspace.join(WIKI_ROOT).join(&stem);
+        if !path.is_file() {
+            bail!(
+                "`publishes` names `{}`, and there is no {WIKI_ROOT}/{stem} — a name that \
+                 selects nothing is the defect",
+                sel.reference
+            );
+        }
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading concept page {}", path.display()))?;
+        if !parse_envelope(&text).map(|(env, _)| env.id == want).unwrap_or(false) {
+            bail!(
+                "`publishes` names `{}`, and {} does not declare `{want}` as its `id:`",
+                sel.reference,
+                path.display()
+            );
+        }
+        return Ok(path);
+    }
     let mut hits: Vec<PathBuf> = Vec::new();
     // The corpus directory for a class is its name, or its plural.
     for dir in [
@@ -1568,6 +1711,14 @@ fn project_named_documents(
 ) -> Result<Vec<ProjectedDoc>> {
     let mut out = Vec::new();
     for sel in selections {
+        if sel.id.class == "wiki" && sel.id.fragment.is_some() {
+            bail!(
+                "`publishes` names `{}` — a concept page crosses whole, never by section; \
+                 name `{}` instead",
+                sel.reference,
+                sel.id.without_fragment()
+            );
+        }
         let path = resolve_named_document(workspace, sel)?;
         let source_rel = path.strip_prefix(workspace).unwrap_or(&path).to_path_buf();
         let content = std::fs::read_to_string(&path)
@@ -1738,6 +1889,107 @@ struct AffordanceRecord {
     /// `(title, projection-relative path)` of each chapter holding a
     /// signifier that signifies it, once each, in the order met.
     chapters: Vec<(String, String)>,
+    /// The chunks that tangle tests for it (`proves=`), in the order the
+    /// chapters were walked.
+    proofs: Vec<Proof>,
+    /// What each proof test did, by test id, once the proofs have run.
+    outcomes: BTreeMap<String, ProofOutcome>,
+}
+
+/// One chunk that tangles tests for an affordance: the chapter it is in
+/// (title and projected path — the row links there), the chunk's name,
+/// the crate and crate-relative file it tangles to, and the `#[test]`
+/// functions in its bodies. Together the chapter's id and the chunk's
+/// name are the edge's address, `<chapter id>#<chunk>`.
+struct Proof {
+    chapter: (String, String),
+    chunk: String,
+    crate_name: String,
+    file: String,
+    tests: Vec<String>,
+}
+
+impl Proof {
+    /// The cargo target the file compiles into, or `None` for a file
+    /// cargo has no test target for (an example, a benchmark).
+    fn target(&self) -> Option<TestTarget> {
+        proof_target(&self.file)
+    }
+
+    /// The id a test is recorded under, `x0k:test/<crate>/<file>::<fn>`
+    /// — the address the corpus already uses for a plain Rust test.
+    fn test_id(&self, test: &str) -> String {
+        format!("x0k:test/{}/{}::{test}", self.crate_name, self.file)
+    }
+}
+
+/// `tests/<stem>.rs` is an integration-test target and anything under
+/// `src/` is the library; nothing else holds a test cargo can be asked
+/// for by target.
+fn proof_target(file: &str) -> Option<TestTarget> {
+    let path = Path::new(file);
+    if path.starts_with("src") {
+        return Some(TestTarget::Lib);
+    }
+    let is_test_file = path.starts_with("tests")
+        && path.components().count() == 2
+        && path.extension().is_some_and(|e| e == "rs");
+    if is_test_file {
+        return path
+            .file_stem()
+            .map(|s| TestTarget::Test(s.to_string_lossy().to_string()));
+    }
+    None
+}
+
+/// The three things a row can say about an affordance. Derived, never
+/// typed: a `status:` scalar in the declaration is not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AffordanceStatus {
+    /// At least one proof test ran green at projection, and none ran red.
+    Proven,
+    /// A signifier reaches it; no proof stands.
+    Declared,
+    /// Neither.
+    Claimed,
+}
+
+impl AffordanceStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            AffordanceStatus::Proven => "proven",
+            AffordanceStatus::Declared => "declared",
+            AffordanceStatus::Claimed => "claimed",
+        }
+    }
+}
+
+impl AffordanceRecord {
+    /// Every proof test's id, in proof order.
+    fn test_ids(&self) -> Vec<String> {
+        self.proofs
+            .iter()
+            .flat_map(|p| p.tests.iter().map(move |t| p.test_id(t)))
+            .collect()
+    }
+
+    /// The status the row shows. A listed proof whose tests did not run
+    /// counts for nothing — `proven` is a fact about a run, not about a
+    /// declaration.
+    fn status(&self) -> AffordanceStatus {
+        let ran: Vec<ProofOutcome> = self
+            .test_ids()
+            .iter()
+            .filter_map(|id| self.outcomes.get(id).copied())
+            .collect();
+        if !ran.is_empty() && ran.iter().all(|o| *o == ProofOutcome::Passed) {
+            AffordanceStatus::Proven
+        } else if !self.surfaces.is_empty() {
+            AffordanceStatus::Declared
+        } else {
+            AffordanceStatus::Claimed
+        }
+    }
 }
 
 /// A signifier, as far as the contents page needs it: what it signifies,
@@ -1786,6 +2038,8 @@ fn affordance_record(entity: &InlineEntity, document: &str) -> AffordanceRecord 
         actors,
         surfaces: Vec::new(),
         chapters: Vec::new(),
+        proofs: Vec::new(),
+        outcomes: BTreeMap::new(),
     }
 }
 
@@ -1835,15 +2089,20 @@ fn read_declarations(
 /// The affordance records the contents page opens with: the declarations
 /// in the named documents, in `publishes` order, each joined to the
 /// signifiers — from those documents and from every literate chapter —
-/// that point at it. Two declarations with one id would be one row
-/// printed twice under one name, so that refuses.
+/// that point at it, and to the proofs the tangled chapters declare for
+/// it. Two declarations with one id would be one row printed twice under
+/// one name, so that refuses.
 fn affordance_records(
     docs: &[ProjectedDoc],
     workspace: &Path,
     literate: &[LiterateDoc],
+    report: &mut RepoProjectReport,
 ) -> Result<Vec<AffordanceRecord>> {
     let mut records: Vec<AffordanceRecord> = Vec::new();
     let mut signifiers: Vec<Signifier> = Vec::new();
+    // `(chapter, chunk, crate, file, tests)` per `proves=` target, joined
+    // to the records once they are all known.
+    let mut proofs: Vec<(String, Proof)> = Vec::new();
     for doc in docs {
         let (_, body) = parse_envelope(&doc.text)
             .map_err(|e| anyhow!("projected document `{}` lost its envelope: {e:?}", doc.reference))?;
@@ -1856,10 +2115,39 @@ fn affordance_records(
     for doc in literate {
         let text = std::fs::read_to_string(workspace.join(&doc.rel))
             .with_context(|| format!("reading literate doc {}", doc.rel.display()))?;
+        let rel = doc.rel.to_string_lossy().to_string();
+        let chapter = (doc.title.clone(), rel.clone());
         if let Some((_, body)) = split_frontmatter(&text) {
-            let rel = doc.rel.to_string_lossy().to_string();
-            let chapter = (doc.title.clone(), rel.clone());
             read_declarations(body, false, &rel, &chapter, &mut records, &mut signifiers);
+        }
+        // The proofs, read with the tangler's own parser so the chunk's
+        // file target and bodies are the ones the tangle used.
+        let (Some(crate_name), true) = (doc.crate_name.as_deref(), doc.tangled) else {
+            continue;
+        };
+        let parsed = parse_document(&text)
+            .with_context(|| format!("parsing literate doc {}", doc.rel.display()))?;
+        for chunk in proving_chunks(&parsed) {
+            let Some(file) = chunk.file else {
+                bail!(
+                    "chunk `{}` in {} says `proves=` and tangles to no file — a proof that \
+                     is not projected proves nothing",
+                    chunk.chunk,
+                    doc.rel.display()
+                );
+            };
+            for target in &chunk.proves {
+                proofs.push((
+                    target.clone(),
+                    Proof {
+                        chapter: chapter.clone(),
+                        chunk: chunk.chunk.clone(),
+                        crate_name: crate_name.to_string(),
+                        file: file.to_string_lossy().to_string(),
+                        tests: chunk.tests.clone(),
+                    },
+                ));
+            }
         }
     }
     let mut seen: BTreeSet<&str> = BTreeSet::new();
@@ -1870,6 +2158,25 @@ fn affordance_records(
                  one row",
                 record.id
             );
+        }
+    }
+    for (target, proof) in proofs {
+        match records.iter_mut().find(|r| r.id == target) {
+            Some(record) => record.proofs.push(proof),
+            // The proof stays in its chapter; the audience just does not
+            // see the claim it backs. Noted, not refused.
+            None => {
+                let chapter_id = literate
+                    .iter()
+                    .find(|d| d.rel.to_string_lossy() == proof.chapter.1)
+                    .map(|d| d.id.as_str())
+                    .unwrap_or(proof.chapter.1.as_str());
+                let note = format!("{chapter_id}#{} proves {target}", proof.chunk);
+                if !report.unpublished_proof_targets.contains(&note) {
+                    tracing::info!(proof = %note, "region_repo.proof.unpublished_target");
+                    report.unpublished_proof_targets.push(note);
+                }
+            }
         }
     }
     for s in &signifiers {
@@ -1906,6 +2213,170 @@ fn heading_title_any(body: &str) -> Option<String> {
     })
 }
 
+/// Run the proofs the records name, in the projected workspace, and
+/// record each test's outcome on its record and in the report. A red
+/// test, or a named test the run never reported, refuses the projection.
+fn run_proofs(
+    output_dir: &Path,
+    records: &mut [AffordanceRecord],
+    proofs: &Proofs,
+    report: &mut RepoProjectReport,
+) -> Result<()> {
+    let runner: ProofRunner = match proofs {
+        Proofs::Cargo => Arc::new(cargo_proof_runner),
+        Proofs::With(runner) => runner.clone(),
+        Proofs::Skip => {
+            let listed: usize = records.iter().map(|r| r.proofs.len()).sum();
+            if listed > 0 {
+                tracing::warn!(proofs = listed, "region_repo.proofs.skipped");
+            }
+            return Ok(());
+        }
+    };
+    // One invocation per (crate, target), asking for every test the
+    // proofs in that file name, once each.
+    let mut targets: BTreeMap<(String, TestTarget), Vec<String>> = BTreeMap::new();
+    for record in records.iter() {
+        for proof in &record.proofs {
+            let Some(target) = proof.target() else {
+                bail!(
+                    "chunk `{}` in {} proves `{}` but tangles to `{}`, which is neither \
+                     `tests/<stem>.rs` nor under `src/` — cargo has no test target for it",
+                    proof.chunk,
+                    proof.chapter.1,
+                    record.id,
+                    proof.file
+                );
+            };
+            let tests = targets.entry((proof.crate_name.clone(), target)).or_default();
+            for test in &proof.tests {
+                if !tests.contains(test) {
+                    tests.push(test.clone());
+                }
+            }
+        }
+    }
+    report.proofs_run = true;
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let mut ran: BTreeMap<(String, TestTarget, String), ProofOutcome> = BTreeMap::new();
+    for ((crate_name, target), tests) in targets {
+        let asked = ProofTarget {
+            crate_name: crate_name.clone(),
+            target: target.clone(),
+            tests: tests.clone(),
+        };
+        tracing::info!(krate = %crate_name, target = ?target, tests = tests.len(), "region_repo.proofs.run");
+        for (printed, outcome) in runner(output_dir, &asked)? {
+            // A library test is printed with its module path; an
+            // integration test bare.
+            let named = tests
+                .iter()
+                .find(|t| printed == **t || printed.ends_with(&format!("::{t}")));
+            if let Some(test) = named {
+                ran.insert((crate_name.clone(), target.clone(), test.clone()), outcome);
+            }
+        }
+    }
+    let mut failed: Vec<String> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for record in records.iter_mut() {
+        for proof in &record.proofs {
+            let target = proof.target().expect("every proof's target was resolved above");
+            for test in &proof.tests {
+                let id = proof.test_id(test);
+                let key = (proof.crate_name.clone(), target.clone(), test.clone());
+                let outcome = match ran.get(&key) {
+                    Some(ProofOutcome::Passed) => ProofOutcome::Passed,
+                    Some(ProofOutcome::Failed) => {
+                        failed.push(id.clone());
+                        ProofOutcome::Failed
+                    }
+                    None => {
+                        missing.push(id.clone());
+                        ProofOutcome::Failed
+                    }
+                };
+                record.outcomes.insert(id.clone(), outcome);
+                report.proofs.insert(id, outcome);
+            }
+        }
+    }
+    if failed.is_empty() && missing.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::from("repository projection refused — a proof did not hold:\n");
+    for id in &failed {
+        msg.push_str(&format!("  - {id} failed\n"));
+    }
+    for id in &missing {
+        msg.push_str(&format!(
+            "  - {id} never ran: no test of that name in its target\n"
+        ));
+    }
+    bail!(msg);
+}
+
+/// The default runner: `cargo test -p <crate> --lib|--test <stem> --
+/// <names…>` in the projected repository, with the target directory
+/// inside it (gitignored, and kept across re-projections like `.git`).
+fn cargo_proof_runner(repo: &Path, target: &ProofTarget) -> Result<Vec<(String, ProofOutcome)>> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let mut cmd = std::process::Command::new(&cargo);
+    cmd.arg("test")
+        .arg("-p")
+        .arg(&target.crate_name)
+        .current_dir(repo)
+        .env("CARGO_TARGET_DIR", repo.join("target"));
+    match &target.target {
+        TestTarget::Lib => {
+            cmd.arg("--lib");
+        }
+        TestTarget::Test(stem) => {
+            cmd.arg("--test").arg(stem);
+        }
+    }
+    cmd.arg("--").args(&target.tests);
+    let out = cmd.output().with_context(|| {
+        format!(
+            "running `{} test` in {} (cargo must be on PATH or named by $CARGO)",
+            cargo.to_string_lossy(),
+            repo.display()
+        )
+    })?;
+    let outcomes = cargo_test_outcomes(&String::from_utf8_lossy(&out.stdout));
+    if outcomes.is_empty() && !out.status.success() {
+        bail!(
+            "`cargo test -p {} …` in {} failed before running a test:\n{}",
+            target.crate_name,
+            repo.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(outcomes)
+}
+
+/// The harness's own lines — `test <name> ... ok`, `... FAILED` — read
+/// back. An ignored test prints neither, and so counts as not run.
+fn cargo_test_outcomes(stdout: &str) -> Vec<(String, ProofOutcome)> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("test ")?;
+            let (name, status) = rest.rsplit_once(" ... ")?;
+            let outcome = if status.starts_with("ok") {
+                ProofOutcome::Passed
+            } else if status.starts_with("FAILED") {
+                ProofOutcome::Failed
+            } else {
+                return None;
+            };
+            Some((name.trim().to_string(), outcome))
+        })
+        .collect()
+}
+
 /// What an actor kind is called in the table: the two the corpus
 /// declares by name, and any other as itself.
 fn actor_phrase(kind: &str) -> String {
@@ -1916,29 +2387,59 @@ fn actor_phrase(kind: &str) -> String {
     }
 }
 
-/// The lead line over the table: one sentence, so the rows carry the page.
-const AFFORDANCES_LEAD: &str =
-    "What this repository affords, each declared in a design and presented by the chapters below:";
+/// The lead over the table: one bold phrase and one sentence, so the rows
+/// carry the page.
+const AFFORDANCES_LEAD: &str = "**What it can do.** Each capability is declared once, in the design \
+that owns it, and read back here from that declaration: who it is for, the cue that reaches it, \
+what proves it, and the chapters that present it.";
 
-/// The affordance table: the lead line, a header, and one row per record
-/// in `publishes` order. Empty when there is no record, so a publication
+/// The lead over the chapter groups, and the clause added when any group
+/// has a *rests on* line.
+const SHIPS_LEAD: &str = "**What it ships.** Every chapter, grouped by what it is about rather than \
+which crate its code lands in";
+const SHIPS_LEAD_RESTS_ON: &str =
+    "; under a group, *rests on* names the concepts a reader needs first.";
+
+/// The `<picture>` a glyph is shown through: the dark file under the
+/// dark scheme, the light one otherwise, `alt` saying what it means.
+fn glyph_picture(stem: &str, alt: &str, height: u32) -> String {
+    format!(
+        "<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{stem}-dark.svg\">\
+         <img alt=\"{alt}\" src=\"{dir}/{stem}-light.svg\" height=\"{height}\"></picture>",
+        dir = AFFORDANCES_DIR,
+        alt = xml_escape(alt),
+    )
+}
+
+/// The affordance table: the lead, a header, and one row per record in
+/// `publishes` order. Empty when there is no record, so a publication
 /// that names no declaration gets exactly the contents page it always had.
 fn render_affordances(records: &[AffordanceRecord]) -> String {
     if records.is_empty() {
         return String::new();
     }
     let mut out = format!(
-        "{AFFORDANCES_LEAD}\n\n|  | affordance | for | reachable through | chapters |\n|---|---|---|---|---|\n"
+        "{AFFORDANCES_LEAD}\n\n|  | affordance | for | reachable through | proven by | chapters |\n|---|---|---|---|---|---|\n"
     );
     for rec in records {
-        let glyph = match glyph_stem(&rec.actors) {
-            Some(stem) => format!(
-                "<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{stem}-dark.svg\">\
-                 <img alt=\"{alt}\" src=\"{dir}/{stem}-light.svg\" height=\"16\"></picture>",
-                dir = AFFORDANCES_DIR,
-                alt = xml_escape(&glyph_label(stem)),
-            ),
+        let status = rec.status();
+        let mut glyph = match glyph_stem(&rec.actors) {
+            Some(stem) => format!("{} ", glyph_picture(stem, &glyph_label(stem), ACTOR_GLYPH_HEIGHT)),
             None => String::new(),
+        };
+        glyph.push_str(&glyph_picture(
+            &status_glyph_stem(status),
+            status.as_str(),
+            STATUS_GLYPH_HEIGHT,
+        ));
+        let proven_by = if rec.proofs.iter().all(|p| p.tests.is_empty()) {
+            "—".to_string()
+        } else {
+            rec.proofs
+                .iter()
+                .flat_map(|p| p.tests.iter().map(move |t| format!("[`{t}`]({})", p.chapter.1)))
+                .collect::<Vec<_>>()
+                .join(" · ")
         };
         let actors = if rec.actors.is_empty() {
             "—".to_string()
@@ -1964,7 +2465,7 @@ fn render_affordances(records: &[AffordanceRecord]) -> String {
                 .join(", ")
         };
         out.push_str(&format!(
-            "| {glyph} | **[{}]({})** | {actors} | {cues} | {chapters} |\n",
+            "| {glyph} | **[{}]({})** | {actors} | {cues} | {proven_by} | {chapters} |\n",
             rec.title, rec.document
         ));
     }
@@ -1977,6 +2478,10 @@ fn render_affordances(records: &[AffordanceRecord]) -> String {
 /// and the projector never regenerates, and a generated glyph is the
 /// opposite kind of file.
 const AFFORDANCES_DIR: &str = "affordances";
+/// The height an actor mark is shown at, and drawn at.
+const ACTOR_GLYPH_HEIGHT: u32 = 20;
+/// The height a status ring is shown at, and drawn at.
+const STATUS_GLYPH_HEIGHT: u32 = 16;
 
 /// The stem of the glyph file for an actor set: a person, an agent, or
 /// both. Any actor kind that is not `human` is drawn as the machine, as a
@@ -1990,6 +2495,12 @@ fn glyph_stem(actors: &[String]) -> Option<&'static str> {
         (false, true) => Some("for-an-agent"),
         (false, false) => None,
     }
+}
+
+/// The stem of the glyph file for a status: `status-proven`,
+/// `status-declared`, `status-claimed`.
+fn status_glyph_stem(status: AffordanceStatus) -> String {
+    format!("status-{}", status.as_str())
 }
 
 /// What a glyph says it is — its `aria-label`, and the `alt` of the image
@@ -2017,39 +2528,50 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// The eye from the plates, 24 wide by 16 tall with its left edge at `x`:
-/// a person.
+/// The eye from the plates, 30 wide by 20 tall with its left edge at `x`:
+/// a person. One closed curve for the lid at the plates' line weight, a
+/// ring for the iris, the pupil in ink, and a catchlight the size of the
+/// stroke.
 fn eye_mark(x: f64, p: &GlyphPalette) -> String {
-    let cx = x + 12.0;
+    let cx = x + 15.0;
     format!(
-        "<path d=\"M{x0},8 C{x1},1.5 {x2},1.5 {x3},8 C{x2},14.5 {x1},14.5 {x0},8 Z\" \
-         fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1.2\"/>\
-         <circle cx=\"{cx}\" cy=\"8\" r=\"3.6\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1\"/>\
-         <circle cx=\"{cx}\" cy=\"8\" r=\"1.5\" fill=\"{ink}\"/>",
-        x0 = x + 1.0,
-        x1 = x + 7.0,
-        x2 = x + 17.0,
-        x3 = x + 23.0,
+        "<path d=\"M{x0},10 C{x1},2.6 {x2},2.6 {x3},10 C{x2},17.4 {x1},17.4 {x0},10 Z\" \
+         fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1.3\" stroke-linejoin=\"round\"/>\
+         <circle cx=\"{cx}\" cy=\"10\" r=\"4.6\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1.1\"/>\
+         <circle cx=\"{cx}\" cy=\"10\" r=\"2.1\" fill=\"{ink}\"/>\
+         <circle cx=\"{hx}\" cy=\"8.6\" r=\"0.65\" fill=\"{stroke}\"/>",
+        x0 = x + 1.5,
+        x1 = x + 8.5,
+        x2 = x + 21.5,
+        x3 = x + 28.5,
+        hx = cx + 1.3,
         stroke = p.stroke,
         ink = p.ink,
     )
 }
 
-/// The machine from the plates — a row of four chips, one of them
-/// carrying its token — 26 wide by 16 tall with its left edge at `x`: an
-/// agent.
+/// The machine from the plates — a row of four chips on a trace, one of
+/// them carrying its token — 32 wide by 20 tall with its left edge at
+/// `x`: an agent.
 fn machine_mark(x: f64, p: &GlyphPalette) -> String {
-    let mut s = String::new();
+    let mut s = format!(
+        "<line x1=\"{x0}\" y1=\"15.4\" x2=\"{x1}\" y2=\"15.4\" stroke=\"{stroke}\" \
+         stroke-width=\"0.8\" stroke-dasharray=\"2 1.6\" stroke-linecap=\"round\"/>",
+        x0 = x + 1.5,
+        x1 = x + 30.5,
+        stroke = p.stroke,
+    );
     for i in 0..4 {
-        let cx = x + 1.0 + 6.5 * i as f64;
+        let cx = x + 1.0 + 7.6 * i as f64;
         s.push_str(&format!(
-            "<rect x=\"{cx}\" y=\"5.5\" width=\"5\" height=\"5\" fill=\"none\" stroke=\"{}\" stroke-width=\"1\"/>",
+            "<rect x=\"{cx}\" y=\"6.4\" width=\"6.2\" height=\"6.2\" rx=\"1\" fill=\"none\" \
+             stroke=\"{}\" stroke-width=\"1.1\"/>",
             p.stroke
         ));
         if i == 1 {
             s.push_str(&format!(
-                "<rect x=\"{}\" y=\"7\" width=\"2\" height=\"2\" fill=\"{}\"/>",
-                cx + 1.5,
+                "<rect x=\"{}\" y=\"8.3\" width=\"2.4\" height=\"2.4\" fill=\"{}\"/>",
+                cx + 1.9,
                 p.ink
             ));
         }
@@ -2057,43 +2579,87 @@ fn machine_mark(x: f64, p: &GlyphPalette) -> String {
     s
 }
 
-/// One glyph, in one palette: the eye, the machine, or the two side by
-/// side, on a transparent ground, 16 tall.
+/// One actor glyph, in one palette: the eye, the machine, or the two
+/// side by side, on a transparent ground, 20 tall.
 fn actor_glyph(stem: &str, p: &GlyphPalette) -> String {
     let (width, marks) = match stem {
-        "for-a-person" => (24.0, eye_mark(0.0, p)),
-        "for-an-agent" => (26.0, machine_mark(0.0, p)),
-        _ => (56.0, format!("{}{}", eye_mark(0.0, p), machine_mark(30.0, p))),
+        "for-a-person" => (30.0, eye_mark(0.0, p)),
+        "for-an-agent" => (32.0, machine_mark(0.0, p)),
+        _ => (68.0, format!("{}{}", eye_mark(0.0, p), machine_mark(36.0, p))),
     };
     format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width} 16\" width=\"{width}\" \
-         height=\"16\" role=\"img\" aria-label=\"{}\">{marks}</svg>\n",
-        xml_escape(&glyph_label(stem))
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width} {h}\" width=\"{width}\" \
+         height=\"{h}\" role=\"img\" aria-label=\"{}\">{marks}</svg>\n",
+        xml_escape(&glyph_label(stem)),
+        h = ACTOR_GLYPH_HEIGHT,
     )
 }
 
-/// Write the glyphs the table's rows use, once each, and record them in
-/// the report by stem. Nothing is written for a publication that names no
-/// affordance — no directory, no report line.
+/// One status ring, in one palette, 16 square: a ring with its centre
+/// filled for `proven`, an open ring for `declared`, a dotted ring for
+/// `claimed`. The same radius and weight in all three, so the eye reads
+/// the difference as a change of state and not of mark; the dotted ring's
+/// period divides its circumference into twelve, so the dots close evenly.
+fn status_glyph(status: AffordanceStatus, p: &GlyphPalette) -> String {
+    let ring = "cx=\"8\" cy=\"8\" r=\"5.4\" fill=\"none\" stroke-width=\"1.2\"";
+    let marks = match status {
+        AffordanceStatus::Proven => format!(
+            "<circle {ring} stroke=\"{s}\"/><circle cx=\"8\" cy=\"8\" r=\"2.7\" fill=\"{s}\"/>",
+            s = p.stroke
+        ),
+        AffordanceStatus::Declared => format!("<circle {ring} stroke=\"{}\"/>", p.stroke),
+        AffordanceStatus::Claimed => format!(
+            "<circle {ring} stroke=\"{}\" stroke-dasharray=\"0.1 2.7274\" stroke-linecap=\"round\"/>",
+            p.stroke
+        ),
+    };
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {h} {h}\" width=\"{h}\" \
+         height=\"{h}\" role=\"img\" aria-label=\"{}\">{marks}</svg>\n",
+        status.as_str(),
+        h = STATUS_GLYPH_HEIGHT,
+    )
+}
+
+/// Write one glyph in both palettes and record it in the report by stem.
+fn write_glyph_pair(
+    output_dir: &Path,
+    stem: &str,
+    draw: impl Fn(&GlyphPalette) -> String,
+    report: &mut RepoProjectReport,
+) -> Result<()> {
+    let light = format!("{AFFORDANCES_DIR}/{stem}-light.svg");
+    let dark = format!("{AFFORDANCES_DIR}/{stem}-dark.svg");
+    std::fs::write(output_dir.join(&light), draw(&GLYPH_LIGHT))
+        .with_context(|| format!("writing glyph {light}"))?;
+    std::fs::write(output_dir.join(&dark), draw(&GLYPH_DARK))
+        .with_context(|| format!("writing glyph {dark}"))?;
+    report.figures.insert(stem.to_string(), light.clone());
+    tracing::info!(glyph = %stem, figure = %light, "region_repo.glyph.written");
+    Ok(())
+}
+
+/// Write the glyphs the table's rows use — actor marks and status rings
+/// — once each. Nothing is written for a publication that names no
+/// affordance: no directory, no report line.
 fn write_actor_glyphs(
     output_dir: &Path,
     records: &[AffordanceRecord],
     report: &mut RepoProjectReport,
 ) -> Result<()> {
-    let stems: BTreeSet<&str> = records.iter().filter_map(|r| glyph_stem(&r.actors)).collect();
-    if stems.is_empty() {
+    if records.is_empty() {
         return Ok(());
     }
     std::fs::create_dir_all(output_dir.join(AFFORDANCES_DIR))?;
+    let stems: BTreeSet<&str> = records.iter().filter_map(|r| glyph_stem(&r.actors)).collect();
     for stem in stems {
-        let light = format!("{AFFORDANCES_DIR}/{stem}-light.svg");
-        let dark = format!("{AFFORDANCES_DIR}/{stem}-dark.svg");
-        std::fs::write(output_dir.join(&light), actor_glyph(stem, &GLYPH_LIGHT))
-            .with_context(|| format!("writing actor glyph {light}"))?;
-        std::fs::write(output_dir.join(&dark), actor_glyph(stem, &GLYPH_DARK))
-            .with_context(|| format!("writing actor glyph {dark}"))?;
-        report.figures.insert(stem.to_string(), light.clone());
-        tracing::info!(glyph = %stem, figure = %light, "region_repo.glyph.written");
+        write_glyph_pair(output_dir, stem, |p| actor_glyph(stem, p), report)?;
+    }
+    let mut statuses: Vec<AffordanceStatus> = records.iter().map(|r| r.status()).collect();
+    statuses.sort_by_key(|s| s.as_str());
+    statuses.dedup();
+    for status in statuses {
+        write_glyph_pair(output_dir, &status_glyph_stem(status), |p| status_glyph(status, p), report)?;
     }
     Ok(())
 }
@@ -2575,23 +3141,94 @@ fn contents_entry(doc: &LiterateDoc) -> Result<String> {
     ))
 }
 
+/// The concept pages the publication ships, by id → (title, projected
+/// path): what a *rests on* line links. The title is the page's own `#`
+/// heading, since the page is a projected document with one.
+fn concept_pages(projected: &[ProjectedDoc]) -> BTreeMap<String, (String, String)> {
+    projected
+        .iter()
+        .filter(|d| d.reference.starts_with("x0k:wiki/"))
+        .map(|d| {
+            let title = split_frontmatter(&d.text)
+                .map(|(_, body)| heading_title(body, &d.rel))
+                .unwrap_or_else(|| doc_stem(&d.rel));
+            (d.reference.clone(), (title, d.rel.to_string_lossy().to_string()))
+        })
+        .collect()
+}
+
+/// The *rests on* line under a group's blurb: the concept pages its
+/// chapters `presuppose`, once each in first-seen order, linked at their
+/// own titles when the publication ships them and named by their stem
+/// when it does not — the second kind is noted in `unpublished`, once.
+/// `None` when no chapter of the group presupposes anything.
+fn rests_on_line(
+    members: &[&LiterateDoc],
+    concepts: &BTreeMap<String, (String, String)>,
+    unpublished: &mut Vec<String>,
+) -> Option<String> {
+    let mut ids: Vec<&str> = Vec::new();
+    for doc in members {
+        for id in &doc.presupposes {
+            if !ids.contains(&id.as_str()) {
+                ids.push(id);
+            }
+        }
+    }
+    if ids.is_empty() {
+        return None;
+    }
+    let items: Vec<String> = ids
+        .iter()
+        .map(|id| match concepts.get(*id) {
+            Some((title, rel)) => format!("[{title}]({rel})"),
+            None => {
+                if !unpublished.iter().any(|u| u == id) {
+                    unpublished.push(id.to_string());
+                }
+                id.rsplit('/').next().unwrap_or(id).to_string()
+            }
+        })
+        .collect();
+    Some(format!("*rests on:* {}\n\n", items.join(" · ")))
+}
+
 /// Render the concept groups the marker names. The heading is the group's,
 /// verbatim — the crate a chapter backs stays visible in the link's own path,
 /// and is no longer what the page is organized by. Membership is exhaustive
 /// in both directions: a member the publication does not ship refuses, a
 /// shipped document no group names refuses, and a document two groups claim
 /// refuses. A contents page either accounts for every chapter or it does not
-/// render.
-fn render_by_group(docs: &[LiterateDoc], groups: &[ContentsGroup]) -> Result<String> {
+/// render. Under each group's blurb, what its chapters *rest on*; the lead
+/// over the groups says so only when some group does.
+fn render_by_group(
+    docs: &[LiterateDoc],
+    groups: &[ContentsGroup],
+    concepts: &BTreeMap<String, (String, String)>,
+    unpublished: &mut Vec<String>,
+) -> Result<String> {
     let shipped: BTreeMap<String, &LiterateDoc> =
         docs.iter().map(|d| (doc_member_key(&d.rel), d)).collect();
     let mut claimed: BTreeMap<&str, &str> = BTreeMap::new();
-    let mut out = String::new();
+    let any_rests_on = groups.iter().any(|g| {
+        g.members
+            .iter()
+            .any(|m| shipped.get(m.as_str()).is_some_and(|d| !d.presupposes.is_empty()))
+    });
+    let mut out = format!(
+        "{SHIPS_LEAD}{}\n\n",
+        if any_rests_on { SHIPS_LEAD_RESTS_ON } else { "." }
+    );
     for group in groups {
         out.push_str(&format!("### {}\n\n", group.heading));
         if let Some(blurb) = group.blurb.as_deref() {
             out.push_str(blurb);
             out.push_str("\n\n");
+        }
+        let members: Vec<&LiterateDoc> =
+            group.members.iter().filter_map(|m| shipped.get(m.as_str()).copied()).collect();
+        if let Some(line) = rests_on_line(&members, concepts, unpublished) {
+            out.push_str(&line);
         }
         for member in &group.members {
             let Some(doc) = shipped.get(member.as_str()) else {
@@ -2691,19 +3328,23 @@ fn render_by_area(docs: &[LiterateDoc], order: &[(String, Vec<String>)]) -> Resu
 
 /// Render the contents page: what the repository affords, when the
 /// publication names any affordance (§ "Each affordance, as a row of the
-/// contents page"); the documents under whichever plan the marker declared;
-/// then the shipped vocabulary modules, each described by its own module
-/// fact's `rdfs:comment`.
+/// contents page"); the documents under whichever plan the marker declared,
+/// each group resting on the concept pages in `concepts` (ids the
+/// publication does not ship are collected in `unpublished`); then the
+/// shipped vocabulary modules, each described by its own module fact's
+/// `rdfs:comment`.
 fn render_contents(
     docs: &[LiterateDoc],
     plan: &ContentsPlan,
     modules: &[VocabModule],
     modules_rel: &Path,
     affordances: &[AffordanceRecord],
+    concepts: &BTreeMap<String, (String, String)>,
+    unpublished: &mut Vec<String>,
 ) -> Result<String> {
     let mut out = render_affordances(affordances);
     out.push_str(&match plan {
-        ContentsPlan::Groups(groups) => render_by_group(docs, groups)?,
+        ContentsPlan::Groups(groups) => render_by_group(docs, groups, concepts, unpublished)?,
         ContentsPlan::Spine(order) => render_by_area(docs, order)?,
     });
 
@@ -2744,6 +3385,7 @@ fn write_readme_contents(
     modules: &[VocabModule],
     modules_rel: &Path,
     affordances: &[AffordanceRecord],
+    projected: &[ProjectedDoc],
     report: &mut RepoProjectReport,
 ) -> Result<()> {
     let path = output_dir.join("README.md");
@@ -2762,7 +3404,21 @@ fn write_readme_contents(
             affordances.len()
         );
     };
-    let contents = render_contents(docs, &marker.plan, modules, modules_rel, affordances)?;
+    let concepts = concept_pages(projected);
+    let mut unpublished = Vec::new();
+    let contents = render_contents(
+        docs,
+        &marker.plan,
+        modules,
+        modules_rel,
+        affordances,
+        &concepts,
+        &mut unpublished,
+    )?;
+    for id in &unpublished {
+        tracing::info!(concept = %id, "region_repo.concept.unpublished");
+    }
+    report.unpublished_concepts = unpublished;
     write_actor_glyphs(output_dir, affordances, report)?;
     let mut out = String::new();
     out.extend(lines[..marker.start].iter().copied());
@@ -2872,6 +3528,16 @@ fn emit_provenance(
         "modules_dir": report.modules_dir,
         "module_version": report.module_version.as_ref().map(|(v, _)| v.as_str()),
         "module_version_source": report.module_version.as_ref().map(|(_, s)| s.as_str()),
+        // The proofs the README's status marks rest on: every test the
+        // published affordances name, by id, and what it did in this
+        // projection. `proofs_run` is false when the caller skipped them,
+        // in which case no row could have read `proven`.
+        "proofs": report
+            .proofs
+            .iter()
+            .map(|(id, outcome)| (id.as_str(), outcome.as_str()))
+            .collect::<BTreeMap<_, _>>(),
+        "proofs_run": report.proofs_run,
         // The relicense act, recorded: what this projection is released
         // under, where that decision came from, and what each crate declared
         // in the source tree it was projected from. The last one needs its
@@ -3363,13 +4029,22 @@ mod tests {
 
     /// A document just complete enough to be rendered into the contents page.
     fn doc(rel: &str, title: &str, summary: Option<&str>) -> LiterateDoc {
+        let rel = PathBuf::from(rel);
         LiterateDoc {
-            rel: PathBuf::from(rel),
+            id: format!("x0k:implementation/{}", doc_member_key(&rel)),
+            rel,
             tangled: true,
             crate_name: Some("demo-crate".to_string()),
             title: title.to_string(),
             summary: summary.map(str::to_string),
+            presupposes: Vec::new(),
         }
+    }
+
+    /// The page for `docs` under `plan`, with no modules, no affordances,
+    /// and no concept pages shipped.
+    fn render(docs: &[LiterateDoc], plan: &ContentsPlan) -> Result<String> {
+        render_contents(docs, plan, &[], Path::new("ontology/modules"), &[], &BTreeMap::new(), &mut Vec::new())
     }
 
     fn marker_of(text: &str) -> Result<Option<ContentsMarker>> {
@@ -3465,7 +4140,7 @@ mod tests {
             doc("knowledge/implementation/demo/c.md", "C", Some("The third.")),
         ];
         let plan = ContentsPlan::Spine(vec![("demo".to_string(), vec!["c".to_string()])]);
-        let page = render_contents(&docs, &plan, &[], Path::new("ontology/modules"), &[]).unwrap();
+        let page = render(&docs, &plan).unwrap();
         let expected = [
             "### `demo-crate`",
             "",
@@ -3496,8 +4171,10 @@ mod tests {
             group("What a document is", Some("The envelope and the tree."), &["other/b"]),
             group("Chunks", None, &["demo/a"]),
         ]);
-        let page = render_contents(&docs, &plan, &[], Path::new("ontology/modules"), &[]).unwrap();
+        let page = render(&docs, &plan).unwrap();
         let expected = [
+            "**What it ships.** Every chapter, grouped by what it is about rather than which crate its code lands in.",
+            "",
             "### What a document is",
             "",
             "The envelope and the tree.",
@@ -3517,7 +4194,7 @@ mod tests {
     fn a_group_naming_an_unshipped_document_refuses() {
         let docs = vec![doc("knowledge/implementation/demo/a.md", "A", Some("The first."))];
         let plan = ContentsPlan::Groups(vec![group("Concept", None, &["demo/a", "demo/renamed-away"])]);
-        let err = render_contents(&docs, &plan, &[], Path::new("ontology/modules"), &[])
+        let err = render(&docs, &plan)
             .unwrap_err()
             .to_string();
         assert!(
@@ -3533,7 +4210,7 @@ mod tests {
             doc("knowledge/implementation/demo/b.md", "B", Some("The second.")),
         ];
         let plan = ContentsPlan::Groups(vec![group("Concept", None, &["demo/a"])]);
-        let err = render_contents(&docs, &plan, &[], Path::new("ontology/modules"), &[])
+        let err = render(&docs, &plan)
             .unwrap_err()
             .to_string();
         assert!(err.contains("demo/b"), "names the chapter with no place: {err}");
@@ -3547,7 +4224,7 @@ mod tests {
             group("First", None, &["demo/a"]),
             group("Second", None, &["demo/a"]),
         ]);
-        let err = render_contents(&docs, &plan, &[], Path::new("ontology/modules"), &[])
+        let err = render(&docs, &plan)
             .unwrap_err()
             .to_string();
         assert!(
@@ -3560,15 +4237,119 @@ mod tests {
     fn a_document_with_no_summary_refuses_rather_than_printing_its_title_twice() {
         let docs = vec![doc("knowledge/implementation/demo/a.md", "A", None)];
         let bare = ContentsPlan::Spine(Vec::new());
-        let err = render_contents(&docs, &bare, &[], Path::new("ontology/modules"), &[])
+        let err = render(&docs, &bare)
             .unwrap_err()
             .to_string();
         assert!(err.contains("demo/a.md") && err.contains("summary"), "{err}");
         // An empty summary is the same silence as an absent one.
         let docs = vec![doc("knowledge/implementation/demo/a.md", "A", Some("  "))];
-        assert!(render_contents(&docs, &bare, &[], Path::new("ontology/modules"), &[]).is_err());
+        assert!(render(&docs, &bare).is_err());
         // And a grouped page is no more forgiving than an ungrouped one.
         let grouped = ContentsPlan::Groups(vec![group("Concept", None, &["demo/a"])]);
-        assert!(render_contents(&docs, &grouped, &[], Path::new("ontology/modules"), &[]).is_err());
+        assert!(render(&docs, &grouped).is_err());
+    }
+
+    #[test]
+    fn a_group_rests_on_what_its_chapters_presuppose_linked_when_shipped_and_bare_when_not() {
+        let mut a = doc("knowledge/implementation/demo/a.md", "A", Some("The first."));
+        a.presupposes = vec!["x0k:wiki/first-lines".to_string(), "x0k:wiki/newlines".to_string()];
+        let mut b = doc("knowledge/implementation/demo/b.md", "B", Some("The second."));
+        b.presupposes = vec!["x0k:wiki/first-lines".to_string()];
+        let c = doc("knowledge/implementation/demo/c.md", "C", Some("The third."));
+        let plan = ContentsPlan::Groups(vec![
+            group("Lines", Some("Where a line ends."), &["demo/a", "demo/b"]),
+            group("Nothing presupposed", None, &["demo/c"]),
+        ]);
+        let concepts = BTreeMap::from([(
+            "x0k:wiki/first-lines".to_string(),
+            ("First lines".to_string(), "knowledge/wiki/first-lines.md".to_string()),
+        )]);
+        let mut unpublished = Vec::new();
+        let page = render_contents(&[a, b, c], &plan, &[], Path::new("ontology/modules"), &[], &concepts, &mut unpublished).unwrap();
+        let expected = [
+            "**What it ships.** Every chapter, grouped by what it is about rather than which crate its code lands in; under a group, *rests on* names the concepts a reader needs first.",
+            "",
+            "### Lines",
+            "",
+            "Where a line ends.",
+            "",
+            "*rests on:* [First lines](knowledge/wiki/first-lines.md) · newlines",
+            "",
+            "- [A](knowledge/implementation/demo/a.md) — The first.",
+            "- [B](knowledge/implementation/demo/b.md) — The second.",
+            "",
+            "### Nothing presupposed",
+            "",
+            "- [C](knowledge/implementation/demo/c.md) — The third.",
+        ]
+        .join("\n");
+        assert_eq!(page, expected, "{page}");
+        // Once each, in the order first met; the unshipped one is the queue.
+        assert_eq!(unpublished, vec!["x0k:wiki/newlines"]);
+    }
+
+    #[test]
+    fn test_fn_names_and_cargo_outcomes_are_read_back_by_name() {
+        let body = "#[test]\nfn one() {}\n\n#[test]\n#[ignore]\nfn two_ignored() {}\n\nfn helper() {}\n\n#[test]\npub async fn three<T>() {}\n";
+        assert_eq!(crate::faces::test_fn_names(body), vec!["one", "two_ignored", "three"]);
+
+        let stdout = "running 3 tests\ntest one ... ok\ntest tests::nested ... FAILED\ntest two_ignored ... ignored\n\ntest result: FAILED.\n";
+        assert_eq!(
+            cargo_test_outcomes(stdout),
+            vec![
+                ("one".to_string(), ProofOutcome::Passed),
+                ("tests::nested".to_string(), ProofOutcome::Failed),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_proof_file_maps_to_a_cargo_target_or_to_nothing() {
+        assert_eq!(proof_target("tests/proof.rs"), Some(TestTarget::Test("proof".to_string())));
+        assert_eq!(proof_target("src/lib.rs"), Some(TestTarget::Lib));
+        assert_eq!(proof_target("src/deep/module.rs"), Some(TestTarget::Lib));
+        assert_eq!(proof_target("tests/common/mod.rs"), None, "a helper module is no target");
+        assert_eq!(proof_target("examples/demo.rs"), None);
+    }
+
+    /// A record with the given cues, proofs and outcomes, and nothing else.
+    fn record(surfaces: &[&str], tests: &[&str], outcomes: &[(&str, ProofOutcome)]) -> AffordanceRecord {
+        let proof = Proof {
+            chapter: ("Proof".to_string(), "knowledge/implementation/demo/proof.md".to_string()),
+            chunk: "root".to_string(),
+            crate_name: "demo-crate".to_string(),
+            file: "tests/proof.rs".to_string(),
+            tests: tests.iter().map(|t| t.to_string()).collect(),
+        };
+        AffordanceRecord {
+            id: "x0k:affordance/read_a_line".to_string(),
+            title: "Read a line".to_string(),
+            document: "d.md".to_string(),
+            actors: vec!["human".to_string()],
+            surfaces: surfaces.iter().map(|s| ("cli".to_string(), s.to_string())).collect(),
+            chapters: Vec::new(),
+            outcomes: outcomes.iter().map(|(t, o)| (proof.test_id(t), *o)).collect(),
+            proofs: if tests.is_empty() { Vec::new() } else { vec![proof] },
+        }
+    }
+
+    #[test]
+    fn status_is_derived_from_the_record_and_never_typed() {
+        use AffordanceStatus::*;
+        assert_eq!(record(&[], &[], &[]).status(), Claimed);
+        assert_eq!(record(&["demo-line"], &[], &[]).status(), Declared);
+        // A proof listed but not run counts for nothing.
+        assert_eq!(record(&["demo-line"], &["one"], &[]).status(), Declared);
+        assert_eq!(record(&[], &["one"], &[]).status(), Claimed);
+        assert_eq!(record(&[], &["one"], &[("one", ProofOutcome::Passed)]).status(), Proven);
+        assert_eq!(
+            record(&["demo-line"], &["one", "two"], &[("one", ProofOutcome::Passed), ("two", ProofOutcome::Failed)]).status(),
+            Declared,
+            "one red test and the row cannot say proven"
+        );
+        assert_eq!(
+            record(&[], &["one"], &[("one", ProofOutcome::Passed)]).test_ids(),
+            vec!["x0k:test/demo-crate/tests/proof.rs::one"]
+        );
     }
 }

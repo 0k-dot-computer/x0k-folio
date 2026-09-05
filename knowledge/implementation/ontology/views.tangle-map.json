@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/ontology/views.md",
-  "source_hash": "08b974019accf2f6",
+  "source_hash": "38b2d884127cd302",
   "pipelines": [
     {
       "kind": "identity-tangle",

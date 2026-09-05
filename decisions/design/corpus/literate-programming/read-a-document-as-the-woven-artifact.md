@@ -18,7 +18,6 @@ the one the author chose, not the one the compiler needs.
 
 ```yaml x0k:affordance
 id: x0k:affordance/weave_a_document
-status: wip
 actors: [human]
 edges:
   enabledBy:

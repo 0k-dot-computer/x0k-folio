@@ -42,6 +42,12 @@
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Signifier> .
+<https://0k.computer/ontology#proves> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#proves> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#proves> <http://www.w3.org/2000/01/rdf-schema#comment> "The chunk that tangles a test proves an affordance: authored as the proves= attribute on the code block declaring the test, addressed as <implementation id>#<chunk name>, so the proof lives on the code and a renamed or deleted test is a dangling edge the checker reports. The affordance's verifiedBy is the derived dual; nothing on a design names a test. Status is derived from it: proven when a proving chunk's tests ran green at projection, declared when the affordance has a face and no proof, claimed when it has neither." .
+<https://0k.computer/ontology#proves> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Implementation> .
+<https://0k.computer/ontology#proves> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#proves> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#comment> "The Surface on which this Publication is published: wherever the region meets its audience — a runtime listener bound to one configuration, a repository host, a package registry, a release channel, an operating system its modules are built to run on." .
@@ -62,10 +68,9 @@
 <https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "A literate eval spec that drives a real actor through real surfaces to a real outcome. The single source of evidence that an affordance holds. A Decision may also claim verifiedBy when the literate spec verifies the affordances it defines." .
+<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "What proves an affordance holds: an executable spec at any rung - a LiterateSpec the eval harness drives, or a chunk of an Implementation that tangles a test and declares proves= for it (the derived dual of proves). The admissible targets are a shape on software; the term itself has no range, because the two classes live in document and the constraint is contextual (vocabulary-shapes §3)." .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
-<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#LiterateSpec> .
 <https://0k.computer/ontology/software> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
 <https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#comment> "The publishable slice of the infrastructure domain: Affordance, Signifier, Surface, and the edges among them and the document genus. Split out of product (ontology-modules §2) so a publication that ships core and document can ship the affordance vocabulary its documents use without importing work or actor. Keeps the base namespace, like product. SoftwareModule stays in product: it is rdfs:subClassOf Artifact, which work defines." .
 <https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#label> "software" .

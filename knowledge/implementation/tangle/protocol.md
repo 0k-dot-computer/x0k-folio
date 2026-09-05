@@ -20,6 +20,8 @@ x0k:
     realizes:
       - x0k:design/literate-programming
       - x0k:design/literate-pipelines
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # The Tangle Protocol
 

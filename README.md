@@ -74,27 +74,43 @@ pays immediately instead of paying at the end or never. On top of that,
 enforcement: CI re-derives every generated file on each run and fails if what is
 committed is not byte-for-byte what the document says.
 
-## Reading the implementation
+## How to read the implementation
 
-What follows opens with what this repository affords, each drawn from its own
-declaration, then the substrate chapter by chapter, grouped by what each document
-is about rather than which crate its code ends up in. It is implementation
-detail, and none of it is required reading: pointing an agent at this repository
-is a first-class way in, and the typed envelopes and the shipped vocabulary are
-much of what makes that work.
+Nobody reads this front to back. You come to it to change one thing — fix how
+a chunk resolves, add a surface the checker should report on, teach the
+projector a new kind of member — or to understand one, and either way you want
+the chapter that owns that thing, enough of its neighbours to work on it
+safely, and the ideas it rests on. The rest of this section is built for that:
+first what the repository can do and where each capability lives, with what
+proves it; then every chapter it ships, grouped by what the chapter is about
+rather than which crate its code lands in, each group naming the concepts a
+reader needs first — so the whole of the implementation is on this page and
+the part you need is one link away.
 
-What this repository affords, each declared in a design and presented by the chapters below:
+Each chapter is a literate document. Its code is generated from it and
+committed beside it, so what you read is what runs, and a change is a change
+to the document; its tests are tangled the same way, and a test that proves a
+capability says so on the block that declares it. Pointing an agent at the
+repository is a first-class way in — the typed envelopes and the shipped
+vocabulary are much of what makes that work — but the map below is for a
+person deciding where to look.
 
-|  | affordance | for | reachable through | chapters |
-|---|---|---|---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="16"></picture> | **[Project source code out of a document](decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)** | a person, an agent | `cli` `x0k-tangle tangle` · `sdk` `tangle_document` | [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md), [The pipeline dispatcher](knowledge/implementation/tangle/dispatcher.md) |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-dark.svg"><img alt="for a person" src="affordances/for-a-person-light.svg" height="16"></picture> | **[Read a document as the woven artifact](decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)** | a person | `cli` `x0k-tangle weave` · `sdk` `weave_html` | [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md), [Weaving literate documents into HTML](knowledge/implementation/tangle/weave.md) |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="16"></picture> | **[Check a document against its vocabulary](decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)** | a person, an agent | `cli` `x0k-tangle check` · `sdk` `check_envelope` | [Checking a document against what shipped with it](knowledge/implementation/folio/checking.md), [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md) |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="16"></picture> | **[Read an affordance out of a document](decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md)** | a person, an agent | `cli` `x0k-tangle affordances` · `sdk` `extract_from_markdown` | [Entities authored inside prose](knowledge/implementation/folio/inline-entities.md), [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md) |
+**What it can do.** Each capability is declared once, in the design that owns it, and read back here from that declaration: who it is for, the cue that reaches it, what proves it, and the chapters that present it.
+
+|  | affordance | for | reachable through | proven by | chapters |
+|---|---|---|---|---|---|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/status-proven-dark.svg"><img alt="proven" src="affordances/status-proven-light.svg" height="16"></picture> | **[Project source code out of a document](decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)** | a person, an agent | `cli` `x0k-tangle tangle` · `sdk` `tangle_document` | [`tangle_document_runs_registered_pipeline`](knowledge/implementation/tangle/dispatcher.md) · [`tangle_document_errors_on_unknown_kind`](knowledge/implementation/tangle/dispatcher.md) · [`tangle_document_passes_through_when_no_blocks`](knowledge/implementation/tangle/dispatcher.md) · [`identity_pipeline_registered_in_default_registry`](knowledge/implementation/tangle/dispatcher.md) · [`tangle_document_routes_tangle_block_through_identity_plugin`](knowledge/implementation/tangle/dispatcher.md) · [`tangle_document_routes_per_language_roots`](knowledge/implementation/tangle/dispatcher.md) | [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md), [The pipeline dispatcher](knowledge/implementation/tangle/dispatcher.md) |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-dark.svg"><img alt="for a person" src="affordances/for-a-person-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/status-proven-dark.svg"><img alt="proven" src="affordances/status-proven-light.svg" height="16"></picture> | **[Read a document as the woven artifact](decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)** | a person | `cli` `x0k-tangle weave` · `sdk` `weave_html` | [`single_language_chunk_renders_without_tabs`](knowledge/implementation/tangle/weave.md) · [`multi_language_chunk_renders_tabs`](knowledge/implementation/tangle/weave.md) · [`mixed_single_and_multi_lang_chunks`](knowledge/implementation/tangle/weave.md) · [`params_block_renders_data_div`](knowledge/implementation/tangle/weave.md) · [`tab_buttons_have_onclick`](knowledge/implementation/tangle/weave.md) · [`rust_chunk_emits_highlight_spans`](knowledge/implementation/tangle/weave.md) · [`classify_comment_kinds`](knowledge/implementation/tangle/weave.md) · [`comment_run_grouping_wraps_and_classifies`](knowledge/implementation/tangle/weave.md) · [`render_doc_markdown_strips_markers_and_renders`](knowledge/implementation/tangle/weave.md) · [`math_renders_to_mathml`](knowledge/implementation/tangle/weave.md) · [`bad_math_falls_back_to_raw_tex`](knowledge/implementation/tangle/weave.md) · [`doc_comment_lifts_to_symbol_and_card`](knowledge/implementation/tangle/weave.md) · [`doc_comment_skips_attribute_to_reach_symbol`](knowledge/implementation/tangle/weave.md) · [`inner_doc_anchors_to_chunk_header`](knowledge/implementation/tangle/weave.md) · [`doc_comment_without_symbol_falls_back_inline`](knowledge/implementation/tangle/weave.md) · [`comment_run_preserves_indentation_bytes`](knowledge/implementation/tangle/weave.md) · [`ref_line_is_not_highlighted`](knowledge/implementation/tangle/weave.md) · [`escaped_ref_line_renders_as_the_literal_without_an_anchor`](knowledge/implementation/tangle/weave.md) · [`headings_get_slug_ids`](knowledge/implementation/tangle/weave.md) · [`duplicate_headings_get_deduped_ids`](knowledge/implementation/tangle/weave.md) · [`heading_with_inline_markup_slugs_and_preserves_markup`](knowledge/implementation/tangle/weave.md) | [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md), [Weaving literate documents into HTML](knowledge/implementation/tangle/weave.md) |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/status-proven-dark.svg"><img alt="proven" src="affordances/status-proven-light.svg" height="16"></picture> | **[Check a document against its vocabulary](decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)** | a person, an agent | `cli` `x0k-tangle check` · `sdk` `check_envelope` | [`check_notes_an_edge_out_of_the_set_and_passes`](knowledge/implementation/tangle/cli-faces.md) · [`check_names_an_undeclared_predicate_and_fails`](knowledge/implementation/tangle/cli-faces.md) · [`check_reports_an_envelope_that_does_not_parse`](knowledge/implementation/tangle/cli-faces.md) · [`check_names_a_human_claim_no_signifier_signifies_and_fails`](knowledge/implementation/tangle/cli-faces.md) · [`check_passes_an_agent_only_claim_with_no_signifier`](knowledge/implementation/tangle/cli-faces.md) | [Checking a document against what shipped with it](knowledge/implementation/folio/checking.md), [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md) |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/status-proven-dark.svg"><img alt="proven" src="affordances/status-proven-light.svg" height="16"></picture> | **[Read an affordance out of a document](decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md)** | a person, an agent | `cli` `x0k-tangle affordances` · `sdk` `extract_from_markdown` | [`affordances_prints_each_declaration_as_a_record`](knowledge/implementation/tangle/cli-faces.md) · [`affordances_reports_a_malformed_block_and_keeps_going`](knowledge/implementation/tangle/cli-faces.md) | [Entities authored inside prose](knowledge/implementation/folio/inline-entities.md), [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md) |
+
+**What it ships.** Every chapter, grouped by what it is about rather than which crate its code lands in; under a group, *rests on* names the concepts a reader needs first.
 
 ### What a document is
 
 The envelope at the top, the identity it declares, and the block tree beneath it.
+
+*rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](knowledge/wiki/literate-programming.md)
 
 - [x0k-folio: the format library](knowledge/implementation/folio/format.md) — The crate root — its chapter map, and the one feature flag that severs the substrate-facing half so a standalone build is pure functions over strings.
 - [The colophon: one envelope, one parser, one renderer](knowledge/implementation/folio/colophon.md) — The envelope's single parser and renderer, permissive about keys it does not own and closed about the keywords it does, consumed by every crate that touches a folio file.
@@ -105,6 +121,8 @@ The envelope at the top, the identity it declares, and the block tree beneath it
 
 Where the terms an envelope uses come from, how they reach the code as tables, and what it means for a document to check against them.
 
+*rests on:* rdf-and-owl · open-world-assumption
+
 - [Concepts Are Facts](knowledge/implementation/ontology/concept-facts.md) — Why the vocabulary lives as facts in the concept region rather than compiled from a schema file, and how the module files are materialized back out of it.
 - [The vocabulary, parsed once, at build time](knowledge/implementation/ontology/module-bootstrap.md) — The build script that reads the checked vocabulary modules, refuses a set whose imports do not close, and emits the constant tables the crate root re-exports — so nothing at runtime carries a Turtle parser.
 - [The crate root is a compatibility view](knowledge/implementation/ontology/views.md) — How the crate root turns whichever module set is present into the class, property, and edge-predicate tables other crates check a document against.
@@ -113,6 +131,8 @@ Where the terms an envelope uses come from, how they reach the code as tables, a
 ### A document that reaches beyond itself
 
 Inclusion by reference instead of copying, and entities authored inside prose and read back out of it.
+
+*rests on:* dependency-resolution
 
 - [Transclusion: include, don't copy](knowledge/implementation/folio/transclusion.md) — The shared resolution core for inclusion by reference — spines, section addressing, cycle and depth limits, degrade-to-link on any failure — driven identically by the weaver and by the native document viewer.
 - [Entities authored inside prose](knowledge/implementation/folio/inline-entities.md) — Pulling an entity that was authored inside a document's prose back out of it — the section is the record, the heading is the title, and the extractor reads declarations without resolving them.
@@ -128,6 +148,8 @@ The single serialization a body is stored in, and the structural patch grammar a
 
 Block identity that survives an edit, the log of who has answered for a block as it now stands, and the round trip through a live CRDT.
 
+*rests on:* event-sourcing · [Event-Graph CRDTs (Eg-walker / Replayable Event Graph)](knowledge/wiki/event-graph-crdts.md) · [Loro](knowledge/wiki/loro.md)
+
 - [Segmentation: two identities for every block](knowledge/implementation/folio/segmentation.md) — Why a block needs both an identifier that survives edits and a hash that does not, and how the pair makes an acceptance go stale rather than orphaned or silently migrated onto someone else's paragraph.
 - [Provenance: an append-only log and a fold](knowledge/implementation/folio/provenance.md) — Per-block provenance as event sourcing: events appended and never deleted, folded to current state and then to a viewer-relative display, answering whether a human has taken responsibility for a block as it now stands.
 - [The folio/v1 projection plugin](knowledge/implementation/folio/projection.md) — The Loro round trip — document projected to a file, a human's file edit parsed back into ops — behind the `plugins` feature; the one chapter whose module a standalone build never compiles.
@@ -135,6 +157,8 @@ Block identity that survives an edit, the log of who has answered for a block as
 ### Chunks, and resolving them
 
 Named blocks of code, the references between them, and the recursive expansion that assembles a file.
+
+*rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](knowledge/wiki/literate-programming.md) · dependency-resolution
 
 - [The Tangle Protocol](knowledge/implementation/tangle/protocol.md) — The area's overview: what a literate document is, how one dispatch loop services `tangle:` and `pipelines:` alike, and which chapter projects which module of the crate.
 - [Parsing a literate document](knowledge/implementation/tangle/parsing.md) — Markdown to a `ParsedDocument` — a frontmatter splitter that needs no YAML parser, the chunk info-string grammar, and the append-and-variant rules for a chunk name that appears more than once.
@@ -147,6 +171,8 @@ Named blocks of code, the references between them, and the recursive expansion t
 
 The plugin contract every projection goes through, identity tangling as one plugin among them, the dispatcher that runs them over a workspace, the verbs the crate puts in a shell, and the two faces behind the verbs that read a document rather than tangle it.
 
+*rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](knowledge/wiki/literate-programming.md)
+
 - [The pipeline protocol](knowledge/implementation/tangle/pipeline.md) — The plugin contract — the trait, the typed input and output surfaces, the error shape, the registry — pure data and no I/O, which is what lets identity tangling be one plugin among others.
 - [Identity tangling as a plugin](knowledge/implementation/tangle/identity-pipeline.md) — The plugin that makes the `tangle:` block ordinary: a synthesized declaration routed through the same loop as every other codegen, so identity tangling keeps no private code path.
 - [The pipeline dispatcher](knowledge/implementation/tangle/dispatcher.md) — The three entry points — one document, a directory, the whole workspace — and the loop between them that resolves inputs, runs each declared pipeline, writes outputs and records the sidecar.
@@ -157,6 +183,8 @@ The plugin contract every projection goes through, identity tangling as one plug
 
 The tangle run in reverse: a symbol lifted out of a source file, a chunk body written back, and an edited output turned into a patch against its document.
 
+*rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](knowledge/wiki/literate-programming.md)
+
 - [Symbol extraction for `from=` chunks](knowledge/implementation/tangle/source-refs.md) — Tree-sitter symbol extraction for a `from=` chunk — the syntax tree decides where a symbol's body begins and ends, with no regex and no brace counting — and the symbol listing the doc browser reads.
 - [Pulling code back into the document](knowledge/implementation/tangle/source-sync.md) — The two paths that run against the tangle: filling a `from=` chunk's body from the file it names, and replacing a named chunk's body programmatically so a host can write a value back and re-tangle in lockstep.
 - [Reading an edited output back through the sidecar](knowledge/implementation/tangle/reverse-stitch.md) — Lifting an edited generated file back through the sidecar's line ranges into a patch against its document. Exported and tested but unwired: nothing in the tree calls it today.
@@ -164,6 +192,8 @@ The tangle run in reverse: a symbol lifted out of a source file, a chunk body wr
 ### Weaving a document into something to read
 
 The second output channel — HTML with chunk-headed code — the classification it is coloured by, the index a browser navigates it through, and the shell around the pages.
+
+*rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](knowledge/wiki/literate-programming.md)
 
 - [Weaving literate documents into HTML](knowledge/implementation/tangle/weave.md) — The other output channel from the same parsed document: self-contained HTML with chunk-headed code, language-tabbed variants, media mount points and parameter panels, consumed directly by the doc browser.
 - [Tokens are not colors](knowledge/implementation/syntax/tokenizer.md) — Source text to a flat list of (byte range, kind) spans and nothing further, so a native presenter and a web presenter share one classification and disagree only about presentation.
@@ -173,6 +203,8 @@ The second output channel — HTML with chunk-headed code — the classification
 ### Publishing a region
 
 A publication names a region of the graph; these chapters turn one into a reader site, into this repository, and back into the corpus when the world answers.
+
+*rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](knowledge/wiki/literate-programming.md)
 
 - [Region projection: the filesystem side](knowledge/implementation/tangle/region-project.md) — The filesystem half the pure region weaver leaves out — resolving a publication's members with nothing but the envelope parser and a small table of corpus layout, shared by the CLI and the MCP tool so the two cannot drift.
 - [Region weave: many documents, one artifact, no I/O](knowledge/implementation/tangle/region-weave.md) — Region weaving as pure post-processing over the single-document weaver — cross-document links, the site nav, the URI-to-file map — computed without reading or writing a file, which is what makes every rule testable with strings.

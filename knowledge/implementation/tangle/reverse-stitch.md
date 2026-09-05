@@ -15,6 +15,8 @@ x0k:
     cites:
       - x0k:implementation/tangle/source-sync
       - x0k:implementation/tangle/identity-pipeline
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 
 # Reading an edited output back through the sidecar

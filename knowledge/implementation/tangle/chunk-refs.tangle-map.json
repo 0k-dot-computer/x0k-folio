@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/chunk-refs.md",
-  "source_hash": "03c47bd6ad5daff3",
+  "source_hash": "9f537d3c6d23e95d",
   "pipelines": [
     {
       "kind": "identity-tangle",

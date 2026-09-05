@@ -18,7 +18,6 @@ them is authored.
 
 ```yaml x0k:affordance
 id: x0k:affordance/tangle_source_from_a_document
-status: wip
 actors: [human, ai_agent]
 edges:
   enabledBy:

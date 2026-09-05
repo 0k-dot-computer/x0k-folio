@@ -15,6 +15,9 @@ x0k:
       - x0k:implementation/tangle/chunk
       - x0k:implementation/tangle/chunk-refs
       - x0k:implementation/tangle/parsing
+    presupposes:
+      - x0k:wiki/literate-programming
+      - x0k:wiki/dependency-resolution
 ---
 # Resolving `<<chunk-ref>>` expansion
 

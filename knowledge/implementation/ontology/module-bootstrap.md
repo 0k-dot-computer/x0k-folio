@@ -16,6 +16,8 @@ x0k:
       - x0k:architecture/ontology-modules
       - x0k:implementation/ontology/concept-facts
       - x0k:implementation/ontology/views
+    presupposes:
+      - x0k:wiki/rdf-and-owl
 ---
 
 # The vocabulary, parsed once, at build time

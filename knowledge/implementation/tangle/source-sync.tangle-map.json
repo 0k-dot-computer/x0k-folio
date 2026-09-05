@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/source-sync.md",
-  "source_hash": "ac3670c282258d44",
+  "source_hash": "16f5e0d84c82b41d",
   "pipelines": [
     {
       "kind": "identity-tangle",

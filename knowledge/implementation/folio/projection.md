@@ -17,6 +17,9 @@ x0k:
       - x0k:implementation/folio/colophon
       - x0k:implementation/folio/html-canonical
       - x0k:implementation/folio/format
+    presupposes:
+      - x0k:wiki/event-graph-crdts
+      - x0k:wiki/loro
 ---
 # The folio/v1 projection plugin
 

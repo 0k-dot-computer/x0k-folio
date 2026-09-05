@@ -17,6 +17,8 @@ x0k:
       - x0k:implementation/tangle/atlas
       - x0k:implementation/tangle/presentation
       - x0k:implementation/folio/transclusion
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 
 # Region weave: many documents, one artifact, no I/O

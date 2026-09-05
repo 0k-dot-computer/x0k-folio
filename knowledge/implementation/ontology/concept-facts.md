@@ -16,6 +16,9 @@ x0k:
       - x0k:implementation/entry-spine/spine
     motivated_by:
       - x0k:intent/ba2f3043-cb4f-4ec6-87c5-d58b5d71e30b
+    presupposes:
+      - x0k:wiki/rdf-and-owl
+      - x0k:wiki/open-world-assumption
 ---
 # Concepts Are Facts
 

@@ -10,6 +10,8 @@ pub struct Chunk {
     pub symbol: Option<String>,
     pub from: Option<PathBuf>,
     pub is_media: bool,
+    /// Affordance ids this chunk's tests are evidence for (`proves=`).
+    pub proves: Vec<String>,
 }
 
 pub fn lang_matches_extension(lang: Option<&str>, ext: &str) -> bool {

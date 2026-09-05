@@ -25,6 +25,8 @@ x0k:
       - x0k:implementation/folio/html-canonical
       - x0k:implementation/folio/canonical-patch
       - x0k:implementation/folio/projection
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # x0k-folio: the format library
 

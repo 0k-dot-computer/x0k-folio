@@ -11,7 +11,7 @@ x0k:
 
 ### Read an affordance out of a document
 
-I extract the affordances a document declares — their identity, status, actors
+I extract the affordances a document declares — their identity, actors
 and edges — as data rather than as prose I have to interpret. What the
 declaration says is available to my own tooling, so "what can I do with this"
 is a question I can answer by reading the corpus rather than by trusting its
@@ -19,7 +19,6 @@ summary of itself.
 
 ```yaml x0k:affordance
 id: x0k:affordance/read_declared_affordances
-status: wip
 actors: [human, ai_agent]
 edges:
   enabledBy:

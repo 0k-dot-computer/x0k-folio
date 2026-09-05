@@ -16,6 +16,8 @@ x0k:
       - x0k:implementation/tangle/parsing
       - x0k:implementation/tangle/source-refs
       - x0k:implementation/folio/colophon
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 
 # An index is the document seen from outside

@@ -57,10 +57,92 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use x0k_folio::colophon::{is_colophon, parse_envelope, Colophon};
+use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::{
     check_corpus, check_declarations, declared_facts, extract_from_markdown, CorpusReport,
     DeclarationReport, InlineEntity,
 };
+
+use crate::parser::{parse_document, ParsedDocument};
+```
+
+## The proving chunks
+
+A third thing a document can say about an affordance lives in neither
+the envelope nor a `yaml` block: a code fence that tangles a test may
+carry `proves="<affordance id>"` ([`parsing.md`](parsing.md)), which
+makes the test the evidence for the claim. All three faces here — the
+check, the `affordances` verb, and the repository projector — read that
+the same way, so the reader is one function: every chunk of a parsed
+document with a non-empty `proves`, with the file it tangles to and the
+`#[test]` functions in its bodies. A test function is the `fn` directly
+after a `#[test]` line, other attributes between them allowed; nothing
+subtler, because the projector asks cargo for these names and cargo's
+own filter is no subtler either.
+
+```rust {#proving-chunks}
+/// One chunk of a tangled document that says what it proves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvingChunk {
+    /// The chunk's `#name` — with the document's id, the address of
+    /// the edge: `<document id>#<chunk>`.
+    pub chunk: String,
+    /// The crate-relative file the chunk tangles to: its own `file=`,
+    /// else the document's `root:`. `None` when the document declares
+    /// neither.
+    pub file: Option<PathBuf>,
+    /// The affordance ids it proves, as written.
+    pub proves: Vec<String>,
+    /// The `#[test]` functions in its bodies, in order.
+    pub tests: Vec<String>,
+}
+
+/// Every chunk of `parsed` carrying `proves=`, in declaration order.
+pub fn proving_chunks(parsed: &ParsedDocument) -> Vec<ProvingChunk> {
+    let mut out = Vec::new();
+    for name in &parsed.chunk_order {
+        for chunk in parsed.chunk_variants(name).unwrap_or_default() {
+            if chunk.proves.is_empty() {
+                continue;
+            }
+            out.push(ProvingChunk {
+                chunk: name.clone(),
+                file: chunk.file_target.clone().or_else(|| parsed.tangle_root.clone()),
+                proves: chunk.proves.clone(),
+                tests: test_fn_names(&chunk.combined_body()),
+            });
+        }
+    }
+    out
+}
+
+/// The `#[test]` functions in a body: each `fn <name>` after a
+/// `#[test]` line, with any further attributes between them skipped.
+pub fn test_fn_names(body: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut armed = false;
+    for line in body.lines() {
+        let t = line.trim();
+        if t.starts_with("#[test]") {
+            armed = true;
+            continue;
+        }
+        if !armed || t.starts_with("#[") {
+            continue;
+        }
+        armed = false;
+        if let Some(i) = t.find("fn ") {
+            let name: String = t[i + 3..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
 ```
 
 ## Which documents
@@ -132,6 +214,16 @@ It has to be the set, because the signifier is declared where the face
 lives — the CLI chapter, the library function's section — and never
 beside the claim.
 
+And so is the fourth, which is the second outcome again from the code's
+side. A chunk's `proves=` is an edge from the chapter to an affordance,
+and one naming no affordance declared in the set is a dangling edge —
+reported beside the envelope ones, as `proves`, with the chunk's
+document as its source. Expected when the set is a projection and the
+design stayed home; the thing to read when a test was renamed or a
+declaration deleted, since the edge on the chunk outlives both. A
+`proves=` value that is not an id at all is a defect, the same one a
+malformed edge target is.
+
 ```rust {#vocabulary-report}
 /// What `check` found reading a set of envelopes against the shipped
 /// vocabulary.
@@ -172,6 +264,9 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
     let classes: HashSet<String> =
         HashSet::from(["affordance".to_string(), "signifier".to_string()]);
     let mut entities: Vec<InlineEntity> = Vec::new();
+    // `(document name, document id, proving chunk)` for every tangled
+    // document, judged once the set's affordances are all known.
+    let mut proofs: Vec<(String, String, ProvingChunk)> = Vec::new();
     for path in discover_folio_documents(paths)? {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
@@ -181,13 +276,55 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
                 // A block the extractor refuses is the `affordances` verb's
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());
+                if envelope.tangle.is_some() {
+                    if let Ok(parsed) = parse_document(&content) {
+                        for chunk in proving_chunks(&parsed) {
+                            proofs.push((name.clone(), envelope.id.clone(), chunk));
+                        }
+                    }
+                }
                 envelopes.push((name, envelope));
             }
             Err(e) => unparsed.push((name, e.to_string())),
         }
     }
-    let corpus = check_corpus(envelopes.iter().map(|(name, env)| (name.as_str(), env)));
+    let mut corpus = check_corpus(envelopes.iter().map(|(name, env)| (name.as_str(), env)));
     let declarations = check_declarations(entities.iter());
+    let declared: HashSet<String> = entities
+        .iter()
+        .filter(|e| e.marker_class == "affordance")
+        .map(|e| e.uri.to_string())
+        .collect();
+    for (name, doc_id, chunk) in proofs {
+        for target in chunk.proves {
+            if declared.contains(&target) {
+                continue;
+            }
+            match (doc_id.parse(), target.parse()) {
+                (Ok(subject), Ok(target)) => corpus.dangling.push(DanglingEdge {
+                    source: name.clone(),
+                    subject,
+                    predicate: "proves".to_string(),
+                    target,
+                }),
+                (_, Err(e)) => corpus.defects.push((
+                    name.clone(),
+                    Defect::MalformedTarget {
+                        predicate: format!("proves (chunk `{}`)", chunk.chunk),
+                        value: target,
+                        reason: e.to_string(),
+                    },
+                )),
+                (Err(e), _) => corpus.defects.push((
+                    name.clone(),
+                    Defect::MalformedId {
+                        value: doc_id.clone(),
+                        reason: e.to_string(),
+                    },
+                )),
+            }
+        }
+    }
     Ok(VocabularyReport {
         unparsed,
         corpus,
@@ -253,6 +390,20 @@ pub struct AffordanceRecord {
     /// Every other declared fact, grouped by predicate in the order the
     /// extractor emitted them.
     pub facts: BTreeMap<String, Vec<FactValue>>,
+    /// The chunks under the paths that tangle tests for it (`proves=`),
+    /// in the order met. The relation the verb relays, not derives:
+    /// whether the tests pass is the projector's business, at projection.
+    pub proofs: Vec<ProofRecord>,
+}
+
+/// One proof of an affordance, as the `affordances` verb prints it: the
+/// chapter's id and the chunk's name — the edge's address,
+/// `<chapter>#<chunk>` — and the `#[test]` functions in the chunk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProofRecord {
+    pub chapter: String,
+    pub chunk: String,
+    pub tests: Vec<String>,
 }
 
 /// What `affordances` found under a set of paths.
@@ -263,18 +414,29 @@ pub struct AffordanceReport {
     /// each with its path and the reason. Reported and skipped, per the
     /// extractor's contract; never fatal to the batch.
     pub skipped: Vec<(String, String)>,
+    /// Proving chunks naming an affordance no document under the paths
+    /// declares, as `<chapter>#<chunk>` → the id named. The check reports
+    /// these as dangling edges; this verb only relays what it read.
+    pub unmatched_proofs: Vec<(String, String)>,
 }
 ```
 
 A malformed block is the extractor's error, not the batch's: the
 extractor returns one `Result` per attempted record so a caller can
 report per error without dropping the rest, and this keeps that shape.
+The record also carries the affordance's **proofs** — the proving
+chunks under the same paths that name it, each as its chapter's id, its
+chunk's name and its test functions — so the relation reaches a
+reader's tooling as data. Relayed, not judged: this verb reads what a
+chunk says it proves; whether the test passes is settled where the
+tests run, at projection ([`region-repo.md`](region-repo.md)).
 
 ```rust {#declared-affordances}
 /// Read every inline affordance declaration under `paths`.
 pub fn declared_affordances(paths: &[PathBuf]) -> Result<AffordanceReport> {
     let classes: HashSet<String> = HashSet::from(["affordance".to_string()]);
     let mut report = AffordanceReport::default();
+    let mut proofs: Vec<(String, ProofRecord)> = Vec::new();
     for path in discover_folio_documents(paths)? {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
@@ -291,6 +453,30 @@ pub fn declared_affordances(paths: &[PathBuf]) -> Result<AffordanceReport> {
                 Ok(entity) => report.records.push(record_of(&entity, &envelope.id)),
                 Err(e) => report.skipped.push((name.clone(), e.to_string())),
             }
+        }
+        if envelope.tangle.is_some() {
+            if let Ok(parsed) = parse_document(&content) {
+                for chunk in proving_chunks(&parsed) {
+                    let record = ProofRecord {
+                        chapter: envelope.id.clone(),
+                        chunk: chunk.chunk,
+                        tests: chunk.tests,
+                    };
+                    for target in chunk.proves {
+                        proofs.push((target, record.clone()));
+                    }
+                }
+            }
+        }
+    }
+    // Joined once every declaration under the paths is known, so a proof
+    // that precedes its affordance in the walk still finds it.
+    for (target, proof) in proofs {
+        match report.records.iter_mut().find(|r| r.id == target) {
+            Some(record) => record.proofs.push(proof),
+            None => report
+                .unmatched_proofs
+                .push((format!("{}#{}", proof.chapter, proof.chunk), target)),
         }
     }
     Ok(report)
@@ -313,6 +499,7 @@ fn record_of(entity: &InlineEntity, defined_in: &str) -> AffordanceRecord {
         description: entity.description.clone(),
         defined_in: defined_in.to_string(),
         facts,
+        proofs: Vec::new(),
     }
 }
 ```
@@ -323,6 +510,8 @@ fn record_of(entity: &InlineEntity, defined_in: &str) -> AffordanceRecord {
 <<doc>>
 
 <<imports>>
+
+<<proving-chunks>>
 
 <<discover>>
 
@@ -411,7 +600,7 @@ The check's two outcomes, each on its own fixture: an edge into the
 private corpus is noted and passes; a predicate no module declares is
 named and fails.
 
-```rust {#tests-check file="tests/cli_faces.rs"}
+```rust {#tests-check file="tests/cli_faces.rs" proves="x0k:affordance/check_a_document_against_shipped_vocabulary"}
 #[test]
 fn check_notes_an_edge_out_of_the_set_and_passes() {
     let tmp = TempDir::new().unwrap();
@@ -501,7 +690,7 @@ to decide (it is moving from a bare `x0k:affordance/actors` string to a
 The test asks only that the human claim survived into the record under
 some predicate.
 
-```rust {#tests-affordances file="tests/cli_faces.rs"}
+```rust {#tests-affordances file="tests/cli_faces.rs" proves="x0k:affordance/read_declared_affordances"}
 #[test]
 fn affordances_prints_each_declaration_as_a_record() {
     let tmp = TempDir::new().unwrap();
@@ -558,6 +747,60 @@ fn affordances_reports_a_malformed_block_and_keeps_going() {
 }
 ```
 
+The proofs, from both faces. A chapter whose one chunk tangles a test and
+says what it proves is relayed by `affordances` as the record's `proofs`
+— chapter, chunk, test names — and, when the id it names is declared by
+no document under the paths, noted by `check` as a dangling `proves` edge
+that fails nothing.
+
+```rust {#tests-proofs file="tests/cli_faces.rs"}
+/// A tangled chapter whose one chunk tangles a test and says it proves
+/// `proves`. Nothing here tangles it: both faces read the document.
+fn proof_doc(proves: &str) -> String {
+    format!(
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/fixture/proof\n  \
+         type: implementation\n  status: draft\n  tangle:\n    crate: fixture\n    \
+         root: tests/proof.rs\n---\n# Proof\n\n```rust {{#root proves=\"{proves}\"}}\n\
+         #[test]\nfn the_widget_frobs() {{}}\n```\n"
+    )
+}
+
+#[test]
+fn affordances_relays_the_proofs_a_chunk_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/proof.md", &proof_doc("x0k:affordance/frob_the_widget"));
+
+    let out = run(&["affordances"], tmp.path());
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let records: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        records[0]["proofs"],
+        serde_json::json!([{
+            "chapter": "x0k:implementation/fixture/proof",
+            "chunk": "root",
+            "tests": ["the_widget_frobs"],
+        }]),
+        "the relation, relayed: {records}"
+    );
+}
+
+#[test]
+fn check_notes_a_proof_naming_no_affordance_here_and_passes() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/proof.md", &proof_doc("x0k:affordance/absent"));
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "a dangling proof is a note: {stderr}");
+    assert!(
+        stderr.contains("note:") && stderr.contains("`proves`") && stderr.contains("x0k:affordance/absent"),
+        "the edge is named as such: {stderr}"
+    );
+}
+```
+
 ```rust {#tests-root file="tests/cli_faces.rs"}
 <<tests-doc>>
 
@@ -568,6 +811,8 @@ fn affordances_reports_a_malformed_block_and_keeps_going() {
 <<tests-check>>
 
 <<tests-affordances>>
+
+<<tests-proofs>>
 ```
 
 What this chapter deliberately leaves to the binaries is the wording.

@@ -14,6 +14,8 @@ x0k:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/parsing
       - x0k:implementation/tangle/chunk
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # Weaving literate documents into HTML
 
@@ -2145,7 +2147,7 @@ attribute is present — the doc-browser injects the rendered HTML via
 innerHTML, and an event listener bound at registration time would
 fail; the inline onclick is the cheapest portable solution.
 
-`````rust {#tests}
+`````rust {#tests proves="x0k:affordance/weave_a_document"}
 #[cfg(test)]
 mod tests {
     use super::*;

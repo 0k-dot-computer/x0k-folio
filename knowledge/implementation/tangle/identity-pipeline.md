@@ -15,6 +15,8 @@ x0k:
       - x0k:implementation/tangle/pipeline
       - x0k:implementation/tangle/dispatcher
       - x0k:implementation/tangle/chunk-refs
+    presupposes:
+      - x0k:wiki/literate-programming
 ---
 # Identity tangling as a plugin
 

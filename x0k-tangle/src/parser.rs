@@ -56,6 +56,8 @@ pub struct ChunkAttrs {
     pub file: Option<PathBuf>,
     pub symbol: Option<String>,
     pub from: Option<PathBuf>,
+    /// Affordance ids from `proves=`, in the order written.
+    pub proves: Vec<String>,
     pub is_media: bool,
     pub lang: Option<String>,
 }
@@ -113,6 +115,15 @@ fn parse_brace_attrs(attr_str: &str, attrs: &mut ChunkAttrs) {
         } else if let Some(after) = rest.strip_prefix("from=") {
             let (val, r) = extract_quoted_or_bare(after);
             attrs.from = Some(PathBuf::from(val));
+            rest = r;
+        } else if let Some(after) = rest.strip_prefix("proves=") {
+            let (val, r) = extract_quoted_or_bare(after);
+            attrs.proves.extend(
+                val.split(',')
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string),
+            );
             rest = r;
         } else if rest.starts_with(',') {
             rest = &rest[1..];
@@ -230,6 +241,13 @@ pub fn parse_document(content: &str) -> Result<ParsedDocument> {
                         if attrs.from.is_some() && existing.from.is_none() {
                             existing.from = attrs.from;
                         }
+                        // Every fence of a chunk may name what it proves;
+                        // the chunk carries the union, once each.
+                        for id in attrs.proves {
+                            if !existing.proves.contains(&id) {
+                                existing.proves.push(id);
+                            }
+                        }
                     } else {
                         // New language variant for this chunk name
                         variants.push(Chunk {
@@ -240,6 +258,7 @@ pub fn parse_document(content: &str) -> Result<ParsedDocument> {
                             symbol: attrs.symbol,
                             from: attrs.from,
                             is_media: attrs.is_media,
+                            proves: attrs.proves,
                         });
                     }
 
@@ -374,6 +393,40 @@ mod tests {
         let attrs = parse_info_string("rust x0k:media {#viz}");
         assert!(attrs.is_media);
         assert_eq!(attrs.name.as_deref(), Some("viz"));
+    }
+
+    #[test]
+    fn parse_info_string_proves_one_or_a_list() {
+        let attrs = parse_info_string("rust {#pin proves=\"x0k:affordance/a\"}");
+        assert_eq!(attrs.name.as_deref(), Some("pin"));
+        assert_eq!(attrs.proves, vec!["x0k:affordance/a"]);
+
+        let attrs = parse_info_string(
+            "rust {#pin file=\"tests/pin.rs\" proves=\"x0k:affordance/a, x0k:affordance/b\"}",
+        );
+        assert_eq!(attrs.file.as_ref().unwrap().to_str(), Some("tests/pin.rs"));
+        assert_eq!(attrs.proves, vec!["x0k:affordance/a", "x0k:affordance/b"]);
+
+        // A bare value is one id; the comma after it separates attributes.
+        let attrs = parse_info_string("rust {#pin proves=x0k:affordance/a, file=\"t.rs\"}");
+        assert_eq!(attrs.proves, vec!["x0k:affordance/a"]);
+        assert_eq!(attrs.file.as_ref().unwrap().to_str(), Some("t.rs"));
+
+        // An attribute this parser does not know is skipped, not fatal.
+        let attrs = parse_info_string("rust {#pin frobs=\"x\" proves=\"x0k:affordance/a\"}");
+        assert_eq!(attrs.name.as_deref(), Some("pin"));
+        assert_eq!(attrs.proves, vec!["x0k:affordance/a"]);
+    }
+
+    #[test]
+    fn a_proving_chunk_carries_its_edge_and_is_otherwise_ordinary() {
+        let doc = "```rust {#pin file=\"tests/pin.rs\" proves=\"x0k:affordance/a\"}\n#[test]\nfn one() {}\n```\n\n```rust {#pin proves=\"x0k:affordance/b, x0k:affordance/a\"}\n#[test]\nfn two() {}\n```\n";
+        let parsed = parse_document(doc).unwrap();
+        let pin = parsed.chunk("pin").unwrap();
+        assert_eq!(pin.bodies.len(), 2, "append semantics are untouched");
+        assert_eq!(pin.file_target.as_ref().unwrap().to_str(), Some("tests/pin.rs"));
+        assert_eq!(pin.proves, vec!["x0k:affordance/a", "x0k:affordance/b"], "the union, once each");
+        assert!(parsed.chunk("pin").unwrap().combined_body().contains("fn two"));
     }
 
     #[test]

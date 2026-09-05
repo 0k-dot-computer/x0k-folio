@@ -10,6 +10,8 @@ x0k:
     crate: x0k-tangle
     root: src/chunk.rs
   edges:
+    presupposes:
+      - x0k:wiki/literate-programming
     cites:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/resolution
@@ -49,6 +51,13 @@ A `Chunk` carries:
   file via `from=` (read-only reference, not an owned chunk).
 - `is_media` — set when the info-string carried `x0k:media`, marking
   the block as a viz embed rather than code.
+- `proves` — the affordance ids a `proves=` attribute named. A chunk
+  that tangles a test may say which affordance the test is evidence
+  for; the edge lives on the code block declaring the test, so it is
+  addressed as `<document id>#<chunk name>` and a renamed or deleted
+  test is a dangling edge rather than a stale claim somewhere else.
+  Empty for the ordinary chunk. Tangling ignores it entirely: a proving
+  chunk is projected exactly as one that proves nothing.
 
 ```rust {#chunk-types}
 #[derive(Debug, Clone)]
@@ -60,6 +69,8 @@ pub struct Chunk {
     pub symbol: Option<String>,
     pub from: Option<PathBuf>,
     pub is_media: bool,
+    /// Affordance ids this chunk's tests are evidence for (`proves=`).
+    pub proves: Vec<String>,
 }
 
 pub fn lang_matches_extension(lang: Option<&str>, ext: &str) -> bool {

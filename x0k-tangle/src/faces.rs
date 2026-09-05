@@ -11,10 +11,76 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use x0k_folio::colophon::{is_colophon, parse_envelope, Colophon};
+use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::{
     check_corpus, check_declarations, declared_facts, extract_from_markdown, CorpusReport,
     DeclarationReport, InlineEntity,
 };
+
+use crate::parser::{parse_document, ParsedDocument};
+
+/// One chunk of a tangled document that says what it proves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvingChunk {
+    /// The chunk's `#name` — with the document's id, the address of
+    /// the edge: `<document id>#<chunk>`.
+    pub chunk: String,
+    /// The crate-relative file the chunk tangles to: its own `file=`,
+    /// else the document's `root:`. `None` when the document declares
+    /// neither.
+    pub file: Option<PathBuf>,
+    /// The affordance ids it proves, as written.
+    pub proves: Vec<String>,
+    /// The `#[test]` functions in its bodies, in order.
+    pub tests: Vec<String>,
+}
+
+/// Every chunk of `parsed` carrying `proves=`, in declaration order.
+pub fn proving_chunks(parsed: &ParsedDocument) -> Vec<ProvingChunk> {
+    let mut out = Vec::new();
+    for name in &parsed.chunk_order {
+        for chunk in parsed.chunk_variants(name).unwrap_or_default() {
+            if chunk.proves.is_empty() {
+                continue;
+            }
+            out.push(ProvingChunk {
+                chunk: name.clone(),
+                file: chunk.file_target.clone().or_else(|| parsed.tangle_root.clone()),
+                proves: chunk.proves.clone(),
+                tests: test_fn_names(&chunk.combined_body()),
+            });
+        }
+    }
+    out
+}
+
+/// The `#[test]` functions in a body: each `fn <name>` after a
+/// `#[test]` line, with any further attributes between them skipped.
+pub fn test_fn_names(body: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut armed = false;
+    for line in body.lines() {
+        let t = line.trim();
+        if t.starts_with("#[test]") {
+            armed = true;
+            continue;
+        }
+        if !armed || t.starts_with("#[") {
+            continue;
+        }
+        armed = false;
+        if let Some(i) = t.find("fn ") {
+            let name: String = t[i + 3..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
 
 /// Every `.md` under `paths` whose frontmatter claims folio/v1, sorted.
 /// A path that is a file is taken as given; a directory is walked.
@@ -84,6 +150,9 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
     let classes: HashSet<String> =
         HashSet::from(["affordance".to_string(), "signifier".to_string()]);
     let mut entities: Vec<InlineEntity> = Vec::new();
+    // `(document name, document id, proving chunk)` for every tangled
+    // document, judged once the set's affordances are all known.
+    let mut proofs: Vec<(String, String, ProvingChunk)> = Vec::new();
     for path in discover_folio_documents(paths)? {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
@@ -93,13 +162,55 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
                 // A block the extractor refuses is the `affordances` verb's
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());
+                if envelope.tangle.is_some() {
+                    if let Ok(parsed) = parse_document(&content) {
+                        for chunk in proving_chunks(&parsed) {
+                            proofs.push((name.clone(), envelope.id.clone(), chunk));
+                        }
+                    }
+                }
                 envelopes.push((name, envelope));
             }
             Err(e) => unparsed.push((name, e.to_string())),
         }
     }
-    let corpus = check_corpus(envelopes.iter().map(|(name, env)| (name.as_str(), env)));
+    let mut corpus = check_corpus(envelopes.iter().map(|(name, env)| (name.as_str(), env)));
     let declarations = check_declarations(entities.iter());
+    let declared: HashSet<String> = entities
+        .iter()
+        .filter(|e| e.marker_class == "affordance")
+        .map(|e| e.uri.to_string())
+        .collect();
+    for (name, doc_id, chunk) in proofs {
+        for target in chunk.proves {
+            if declared.contains(&target) {
+                continue;
+            }
+            match (doc_id.parse(), target.parse()) {
+                (Ok(subject), Ok(target)) => corpus.dangling.push(DanglingEdge {
+                    source: name.clone(),
+                    subject,
+                    predicate: "proves".to_string(),
+                    target,
+                }),
+                (_, Err(e)) => corpus.defects.push((
+                    name.clone(),
+                    Defect::MalformedTarget {
+                        predicate: format!("proves (chunk `{}`)", chunk.chunk),
+                        value: target,
+                        reason: e.to_string(),
+                    },
+                )),
+                (Err(e), _) => corpus.defects.push((
+                    name.clone(),
+                    Defect::MalformedId {
+                        value: doc_id.clone(),
+                        reason: e.to_string(),
+                    },
+                )),
+            }
+        }
+    }
     Ok(VocabularyReport {
         unparsed,
         corpus,
@@ -142,6 +253,20 @@ pub struct AffordanceRecord {
     /// Every other declared fact, grouped by predicate in the order the
     /// extractor emitted them.
     pub facts: BTreeMap<String, Vec<FactValue>>,
+    /// The chunks under the paths that tangle tests for it (`proves=`),
+    /// in the order met. The relation the verb relays, not derives:
+    /// whether the tests pass is the projector's business, at projection.
+    pub proofs: Vec<ProofRecord>,
+}
+
+/// One proof of an affordance, as the `affordances` verb prints it: the
+/// chapter's id and the chunk's name — the edge's address,
+/// `<chapter>#<chunk>` — and the `#[test]` functions in the chunk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProofRecord {
+    pub chapter: String,
+    pub chunk: String,
+    pub tests: Vec<String>,
 }
 
 /// What `affordances` found under a set of paths.
@@ -152,12 +277,17 @@ pub struct AffordanceReport {
     /// each with its path and the reason. Reported and skipped, per the
     /// extractor's contract; never fatal to the batch.
     pub skipped: Vec<(String, String)>,
+    /// Proving chunks naming an affordance no document under the paths
+    /// declares, as `<chapter>#<chunk>` → the id named. The check reports
+    /// these as dangling edges; this verb only relays what it read.
+    pub unmatched_proofs: Vec<(String, String)>,
 }
 
 /// Read every inline affordance declaration under `paths`.
 pub fn declared_affordances(paths: &[PathBuf]) -> Result<AffordanceReport> {
     let classes: HashSet<String> = HashSet::from(["affordance".to_string()]);
     let mut report = AffordanceReport::default();
+    let mut proofs: Vec<(String, ProofRecord)> = Vec::new();
     for path in discover_folio_documents(paths)? {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
@@ -174,6 +304,30 @@ pub fn declared_affordances(paths: &[PathBuf]) -> Result<AffordanceReport> {
                 Ok(entity) => report.records.push(record_of(&entity, &envelope.id)),
                 Err(e) => report.skipped.push((name.clone(), e.to_string())),
             }
+        }
+        if envelope.tangle.is_some() {
+            if let Ok(parsed) = parse_document(&content) {
+                for chunk in proving_chunks(&parsed) {
+                    let record = ProofRecord {
+                        chapter: envelope.id.clone(),
+                        chunk: chunk.chunk,
+                        tests: chunk.tests,
+                    };
+                    for target in chunk.proves {
+                        proofs.push((target, record.clone()));
+                    }
+                }
+            }
+        }
+    }
+    // Joined once every declaration under the paths is known, so a proof
+    // that precedes its affordance in the walk still finds it.
+    for (target, proof) in proofs {
+        match report.records.iter_mut().find(|r| r.id == target) {
+            Some(record) => record.proofs.push(proof),
+            None => report
+                .unmatched_proofs
+                .push((format!("{}#{}", proof.chapter, proof.chunk), target)),
         }
     }
     Ok(report)
@@ -196,5 +350,6 @@ fn record_of(entity: &InlineEntity, defined_in: &str) -> AffordanceRecord {
         description: entity.description.clone(),
         defined_in: defined_in.to_string(),
         facts,
+        proofs: Vec::new(),
     }
 }

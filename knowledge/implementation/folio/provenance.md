@@ -14,6 +14,8 @@ x0k:
       - x0k:design/prose-provenance-and-underwriting
     cites:
       - x0k:implementation/folio/segmentation
+    presupposes:
+      - x0k:wiki/event-sourcing
 ---
 # Provenance: an append-only log and a fold
 

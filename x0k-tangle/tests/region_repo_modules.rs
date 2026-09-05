@@ -9,8 +9,10 @@
 //! (imports a module the tree does not hold).
 
 use std::path::Path;
+use std::sync::Arc;
 
-use x0k_tangle::{project_publication_repo, tangle_document, PipelineRegistry, RepoProjectOptions};
+use x0k_tangle::region_repo::{project_publication_repo_with, ProofOutcome, ProofTarget, Proofs};
+use x0k_tangle::{tangle_document, PipelineRegistry, RepoProjectOptions};
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-modules");
 /// Shapes for those fixtures: `document` constrains one predicate, `core`
@@ -186,7 +188,19 @@ fn tree_carries(dir: &Path, needle: &str) -> bool {
 }
 
 fn project(ws: &Path, out: &Path) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
-    project_publication_repo(
+    project_with(ws, out, &runner_reporting(ProofOutcome::Passed))
+}
+
+/// A runner that reports every test it is asked for as `outcome`, and
+/// never runs cargo.
+fn runner_reporting(outcome: ProofOutcome) -> Proofs {
+    Proofs::With(Arc::new(move |_repo: &Path, target: &ProofTarget| {
+        Ok(target.tests.iter().map(|t| (t.clone(), outcome)).collect())
+    }))
+}
+
+fn project_with(ws: &Path, out: &Path, proofs: &Proofs) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
+    project_publication_repo_with(
         &ws.join(PUB_REL),
         out,
         ws,
@@ -196,6 +210,7 @@ fn project(ws: &Path, out: &Path) -> anyhow::Result<x0k_tangle::RepoProjectRepor
             allow_dirty: false,
             emit_github: false,
         },
+        proofs,
     )
 }
 
@@ -941,11 +956,11 @@ fn the_contents_page_opens_with_the_affordances_the_publication_publishes() {
     let expected = "\
 ## What is here
 
-What this repository affords, each declared in a design and presented by the chapters below:
+**What it can do.** Each capability is declared once, in the design that owns it, and read back here from that declaration: who it is for, the cue that reaches it, what proves it, and the chapters that present it.
 
-|  | affordance | for | reachable through | chapters |
-|---|---|---|---|---|
-| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person | `cli` `demo-line` | [The demo verbs](knowledge/implementation/demo/verbs.md) |
+|  | affordance | for | reachable through | proven by | chapters |
+|---|---|---|---|---|---|
+| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-declared-dark.svg\"><img alt=\"declared\" src=\"affordances/status-declared-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person | `cli` `demo-line` | — | [The demo verbs](knowledge/implementation/demo/verbs.md) |
 
 ### `demo-crate`
 ";
@@ -957,18 +972,28 @@ What this repository affords, each declared in a design and presented by the cha
         .expect("the dark glyph is written");
     for svg in [&light, &dark] {
         assert!(svg.contains("role=\"img\" aria-label=\"for a person\""), "{svg}");
-        assert!(svg.contains("height=\"16\""), "text height: {svg}");
+        assert!(svg.contains("height=\"20\""), "a little over text height: {svg}");
         assert!(svg.contains("<path") && !svg.contains("<rect"), "the eye alone: {svg}");
     }
     // The README's own two palettes, on a transparent ground.
     assert!(light.contains("#b88e44") && light.contains("#111111"), "gold and ink:\n{light}");
     assert!(dark.contains("#96b4dc") && dark.contains("#e2e8f0"), "blue and slate:\n{dark}");
     assert!(!out.path().join("affordances/for-an-agent-light.svg").exists(), "only the glyphs used");
+    // A signifier and no proof: the open ring, and only that ring.
+    let ring = std::fs::read_to_string(out.path().join("affordances/status-declared-light.svg"))
+        .expect("the status ring is written");
+    assert!(ring.contains("aria-label=\"declared\"") && ring.contains("height=\"16\""), "{ring}");
+    assert_eq!(ring.matches("<circle").count(), 1, "an open ring: {ring}");
+    assert!(!out.path().join("affordances/status-claimed-light.svg").exists());
 
     assert_eq!(
         report.figures,
-        std::collections::BTreeMap::from([("for-a-person".to_string(), "affordances/for-a-person-light.svg".to_string())])
+        std::collections::BTreeMap::from([
+            ("for-a-person".to_string(), "affordances/for-a-person-light.svg".to_string()),
+            ("status-declared".to_string(), "affordances/status-declared-light.svg".to_string()),
+        ])
     );
+    assert!(report.proofs.is_empty() && report.proofs_run, "nothing to run, and nothing skipped");
     let prov = std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap();
     assert!(!prov.contains("affordances/"), "a glyph has no corpus source to record: {prov}");
 }
@@ -992,13 +1017,17 @@ fn a_claim_on_both_actors_gets_both_marks_and_an_unreached_face_a_dash() {
     let report = project(ws.path(), out.path()).expect("projection");
 
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    let row = "| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-and-an-agent-dark.svg\"><img alt=\"for a person and an agent\" src=\"affordances/for-a-person-and-an-agent-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person, an agent | — | — |\n";
+    let row = "| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-and-an-agent-dark.svg\"><img alt=\"for a person and an agent\" src=\"affordances/for-a-person-and-an-agent-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-claimed-dark.svg\"><img alt=\"claimed\" src=\"affordances/status-claimed-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person, an agent | — | — | — |\n";
     assert!(readme.contains(row), "both actors, and dashes where nothing is declared:\n{readme}");
 
     let svg = std::fs::read_to_string(out.path().join("affordances/for-a-person-and-an-agent-light.svg"))
         .expect("the glyph for both is written");
     assert!(svg.contains("<path") && svg.contains("<rect"), "the eye and the machine: {svg}");
-    assert_eq!(report.figures.len(), 1, "one glyph, for the one actor set used: {:?}", report.figures);
+    // Neither signifier nor proof: the dotted ring.
+    let ring = std::fs::read_to_string(out.path().join("affordances/status-claimed-light.svg"))
+        .expect("the status ring is written");
+    assert!(ring.contains("aria-label=\"claimed\"") && ring.contains("stroke-dasharray"), "{ring}");
+    assert_eq!(report.figures.len(), 2, "one actor glyph and one status ring: {:?}", report.figures);
     assert!(!out.path().join("affordances/for-a-person-light.svg").exists());
 }
 
@@ -1030,4 +1059,223 @@ fn the_retired_affordances_marker_is_left_verbatim() {
         "left as written:\n{readme}"
     );
     assert!(!out.path().join("affordances").exists());
+}
+
+const PROOF_REL: &str = "knowledge/implementation/demo/proof.md";
+const PROOF_ID: &str = "x0k:implementation/demo/proof";
+const CONCEPT_ID: &str = "x0k:wiki/first-lines";
+const CONCEPT_REL: &str = "knowledge/wiki/first-lines.md";
+const PROOF_TEST: &str = "x0k:test/demo-crate/tests/proof.rs::a_line_is_read";
+
+/// A tangled chapter of the demo crate whose one chunk tangles a test and
+/// says it proves `proves`, and which presupposes the concept page.
+fn declare_proof(ws: &Path, proves: &str) {
+    std::fs::write(
+        ws.join(PROOF_REL),
+        format!(
+            "---\nx0k:\n  format: folio/v1\n  id: {PROOF_ID}\n  type: implementation\n  status: draft\n  summary: The test that proves a line is read.\n  tangle:\n    crate: demo-crate\n    root: tests/proof.rs\n  edges:\n    presupposes:\n      - {CONCEPT_ID}\n---\n# Proving the demo\n\n```rust {{#root proves=\"{proves}\"}}\n#[test]\nfn a_line_is_read() {{\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}}\n```\n"
+        ),
+    )
+    .unwrap();
+    tangle_document(&ws.join(PROOF_REL), ws, &PipelineRegistry::default()).expect("tangle proof");
+}
+
+/// The concept page the proof chapter presupposes, carrying a review card.
+fn write_concept(ws: &Path) {
+    std::fs::create_dir_all(ws.join("knowledge/wiki")).unwrap();
+    std::fs::write(
+        ws.join(CONCEPT_REL),
+        format!(
+            "---\nx0k:\n  format: folio/v1\n  id: {CONCEPT_ID}\n  type: wiki\n  status: draft\n  summary: What the first line of a text is.\n---\n# First lines\n\nThe first line is the text up to its first newline.\n\n```yaml x0k:prompt\nid: x0k:prompt/first-lines-definition\ntype: qa\nq: What is the first line?\na: The text up to the first newline.\n```\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// A publication naming the shippable section and `documents` besides,
+/// its contents marker in the group form claiming every demo chapter.
+fn grouped_publication(documents: &[&str]) -> String {
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    let mut named = vec![reference.as_str()];
+    named.extend_from_slice(documents);
+    publication_publishing(&["demo-crate"], &named).replace(
+        "<!-- x0k:contents -->",
+        "<!-- x0k:contents\n# What the demo is\n> Two chapters, and the test that proves them.\n  demo/colophon\n  demo/extra\n  demo/proof\n-->",
+    )
+}
+
+#[test]
+fn a_proving_chunk_lists_its_test_and_the_row_reads_proven() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    let row = "| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-proven-dark.svg\"><img alt=\"proven\" src=\"affordances/status-proven-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person | — | [`a_line_is_read`](knowledge/implementation/demo/proof.md) | — |\n";
+    assert!(readme.contains(row), "the test under proven by, and the filled ring:\n{readme}");
+
+    assert!(report.proofs_run);
+    assert_eq!(report.proofs.get(PROOF_TEST), Some(&ProofOutcome::Passed), "{:?}", report.proofs);
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    assert_eq!(prov["proofs"][PROOF_TEST], serde_json::json!("passed"));
+    assert_eq!(prov["proofs_run"], serde_json::json!(true));
+
+    let ring = std::fs::read_to_string(out.path().join("affordances/status-proven-light.svg"))
+        .expect("the status ring is written");
+    assert!(ring.contains("aria-label=\"proven\""), "{ring}");
+    assert_eq!(ring.matches("<circle").count(), 2, "a ring with its centre filled: {ring}");
+    assert_eq!(report.figures.get("status-proven").map(String::as_str), Some("affordances/status-proven-light.svg"));
+    assert!(!out.path().join("affordances/status-declared-light.svg").exists(), "only the rings used");
+    // The test crossed with its chapter, as any tangled output does.
+    assert!(out.path().join("demo-crate/tests/proof.rs").exists());
+    assert!(report.unpublished_proof_targets.is_empty());
+}
+
+#[test]
+fn a_red_proof_refuses_the_projection_naming_the_test() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let err = project_with(ws.path(), out.path(), &runner_reporting(ProofOutcome::Failed))
+        .expect_err("a red proof refuses");
+    let err = format!("{err:#}");
+    assert!(err.contains(PROOF_TEST) && err.contains("failed"), "names the test: {err}");
+    assert!(!out.path().join("README.md").exists(), "no page claims what the run refused");
+    assert!(!out.path().join("PROVENANCE.json").exists());
+}
+
+#[test]
+fn skipped_proofs_are_listed_and_prove_nothing() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project_with(ws.path(), out.path(), &Proofs::Skip).expect("projection");
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(readme.contains("[`a_line_is_read`](knowledge/implementation/demo/proof.md)"), "{readme}");
+    assert!(readme.contains("alt=\"claimed\"") && !readme.contains("alt=\"proven\""), "{readme}");
+    assert!(!report.proofs_run && report.proofs.is_empty());
+}
+
+#[test]
+fn the_real_cargo_runs_the_demo_proof_when_it_is_on_path() {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let available = std::process::Command::new(&cargo)
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !available {
+        eprintln!("skipped: no cargo on PATH or in $CARGO to run the demo proof with");
+        return;
+    }
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project_with(ws.path(), out.path(), &Proofs::Cargo).expect("projection");
+    assert_eq!(report.proofs.get(PROOF_TEST), Some(&ProofOutcome::Passed), "{:?}", report.proofs);
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(readme.contains("alt=\"proven\""), "{readme}");
+}
+
+#[test]
+fn a_proof_of_an_unpublished_affordance_is_noted_and_the_row_unchanged() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/run_the_whole_fleet");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+    assert_eq!(
+        report.unpublished_proof_targets,
+        vec![format!("{PROOF_ID}#root proves x0k:affordance/run_the_whole_fleet")]
+    );
+    assert!(report.proofs.is_empty(), "nothing was asked for: {:?}", report.proofs);
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(readme.contains("| a person | — | — | — |") && readme.contains("alt=\"claimed\""), "{readme}");
+}
+
+#[test]
+fn a_group_rests_on_the_concept_pages_its_chapters_presuppose() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    write_concept(ws.path());
+    std::fs::write(ws.path().join(PUB_REL), grouped_publication(&[CONCEPT_ID])).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    let expected = "\
+**What it ships.** Every chapter, grouped by what it is about rather than which crate its code lands in; under a group, *rests on* names the concepts a reader needs first.
+
+### What the demo is
+
+Two chapters, and the test that proves them.
+
+*rests on:* [First lines](knowledge/wiki/first-lines.md)
+
+- [The demo colophon](knowledge/implementation/demo/colophon.md)";
+    assert!(readme.contains(expected), "the group rests on the page, linked at its title:\n{readme}");
+
+    let page = std::fs::read_to_string(out.path().join(CONCEPT_REL)).expect("the concept page crossed");
+    assert!(page.contains("```yaml x0k:prompt\nid: x0k:prompt/first-lines-definition\n"), "the review card travels verbatim: {page}");
+    assert_eq!(report.documents.get(CONCEPT_ID).map(String::as_str), Some(CONCEPT_REL));
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    assert_eq!(prov["path_map"][CONCEPT_REL], serde_json::json!(CONCEPT_REL));
+    assert!(report.unpublished_concepts.is_empty());
+}
+
+#[test]
+fn an_unpublished_concept_is_plain_text_and_noted() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    std::fs::write(ws.path().join(PUB_REL), grouped_publication(&[])).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(readme.contains("\n\n*rests on:* first-lines\n\n- [The demo colophon]"), "{readme}");
+    assert_eq!(report.unpublished_concepts, vec![CONCEPT_ID.to_string()]);
+    assert!(!out.path().join("knowledge/wiki").exists());
+
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        grouped_publication(&[&format!("{CONCEPT_ID}#first-lines")]),
+    )
+    .unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("crosses whole"), "a concept page is not sectioned: {err}");
+    std::fs::write(ws.path().join(PUB_REL), grouped_publication(&[CONCEPT_ID])).unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("knowledge/wiki/first-lines.md"), "names the path that is not there: {err}");
 }

@@ -120,6 +120,12 @@
 <https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#comment> "An authored presentation of an entity: the Manuscript (or Decision-genus doc) that renders this entity's neighbourhood as a composed telling. Range is left open (mirroring `publishes`): any presentable entity may be presented — a Seed's bloom, the ontology world, a population chart. The presentation view-mode lens keys on this edge — an entity with an inbound `presents` link offers the curation lens (raw bloom <-> composed presentation). Distinct from `publishes` (region membership): `presents` binds one presentation doc to the one entity it is experienced over." .
 <https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
 <https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#presupposes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#presupposes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#presupposes> <http://www.w3.org/2000/01/rdf-schema#comment> "A concept a reader needs before this chapter makes sense: an Implementation presupposes a Wiki page. Not a citation - cites is a source the text draws on; presupposes is what to understand first. A publication's overview derives each chapter group's \"rests on\" line from these edges, and a target naming no page is the wiki's writing queue, measured." .
+<https://0k.computer/ontology#presupposes> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Implementation> .
+<https://0k.computer/ontology#presupposes> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#presupposes> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Wiki> .
 <https://0k.computer/ontology#publishedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#publishedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#publishedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "The Profile that publishes this Publication. Each Publication is owned by exactly one Profile." .

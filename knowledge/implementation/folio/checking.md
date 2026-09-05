@@ -17,6 +17,9 @@ x0k:
       - x0k:architecture/ontology-modules
       - x0k:implementation/folio/colophon
       - x0k:implementation/folio/identity
+    presupposes:
+      - x0k:wiki/rdf-and-owl
+      - x0k:wiki/open-world-assumption
 ---
 # Checking a document against what shipped with it
 

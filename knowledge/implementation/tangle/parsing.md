@@ -10,6 +10,8 @@ x0k:
     crate: x0k-tangle
     root: src/parser.rs
   edges:
+    presupposes:
+      - x0k:wiki/literate-programming
     cites:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/chunk
@@ -28,8 +30,8 @@ adds:
   (we only need `tangle.crate` and `tangle.root`; the rest is
   handled by `x0k-folio::colophon::parse_envelope`).
 - An info-string parser that recognizes the x0k chunk attributes
-  (`{#name}`, `file=`, `symbol=`, `from=`, `x0k:media`) and the
-  language token in front of the brace.
+  (`{#name}`, `file=`, `symbol=`, `from=`, `proves=`, `x0k:media`)
+  and the language token in front of the brace.
 - A code-block iterator that buckets chunk bodies by name, with
   multi-body append semantics for repeated `#name` fences and
   multi-language variants when the same `#name` appears with
@@ -147,8 +149,18 @@ The fence info-string is the substrate's keyhole into chunk
 metadata. The shape:
 
 ```
-<lang>? x0k:media? {#name file="…" symbol="…" from="…"}
+<lang>? x0k:media? {#name file="…" symbol="…" from="…" proves="…"}
 ```
+
+`proves=` is the one attribute that says nothing about *where* the
+chunk goes. It names the affordance — or, comma-separated, the
+affordances — that the tests in this chunk are evidence for:
+`proves="x0k:affordance/read_a_line"`. The edge is authored on the
+block that declares the test because that is the only place it cannot
+go stale silently: rename the test and the chunk still says what it
+proves; delete the chunk and the edge is gone with it, which a checker
+can see. The projector reads it back to derive an affordance's status,
+and the tangler itself never looks at it.
 
 `ChunkAttrs` is the intermediate parsed shape; the parser drains
 this into the `Chunk` fields once a fence's body is read.
@@ -160,6 +172,8 @@ pub struct ChunkAttrs {
     pub file: Option<PathBuf>,
     pub symbol: Option<String>,
     pub from: Option<PathBuf>,
+    /// Affordance ids from `proves=`, in the order written.
+    pub proves: Vec<String>,
     pub is_media: bool,
     pub lang: Option<String>,
 }
@@ -214,9 +228,14 @@ non-media path.
 
 Inside `{...}` we have a tiny attribute language: `#name` for the
 chunk identifier, `file=`, `symbol=`, `from=` for the typed
-attributes, optional commas as separators. Anything unrecognized
-is skipped (we err toward "tolerate unknown tokens" so future
-attribute additions don't break old code paths).
+attributes, `proves=` for a comma-separated list of affordance ids,
+optional commas as separators. Anything unrecognized is skipped (we
+err toward "tolerate unknown tokens" so future attribute additions
+don't break old code paths — an older tangler reading a `proves=`
+chunk tangles it exactly as before, which is what let the attribute
+arrive in the corpus ahead of the code that reads it). The list form
+needs the quotes: a bare value stops at the first comma, because a
+comma is also the separator between attributes.
 
 ```rust {#parse-brace-attrs-fn}
 fn parse_brace_attrs(attr_str: &str, attrs: &mut ChunkAttrs) {
@@ -242,6 +261,15 @@ fn parse_brace_attrs(attr_str: &str, attrs: &mut ChunkAttrs) {
         } else if let Some(after) = rest.strip_prefix("from=") {
             let (val, r) = extract_quoted_or_bare(after);
             attrs.from = Some(PathBuf::from(val));
+            rest = r;
+        } else if let Some(after) = rest.strip_prefix("proves=") {
+            let (val, r) = extract_quoted_or_bare(after);
+            attrs.proves.extend(
+                val.split(',')
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string),
+            );
             rest = r;
         } else if rest.starts_with(',') {
             rest = &rest[1..];
@@ -389,6 +417,13 @@ pub fn parse_document(content: &str) -> Result<ParsedDocument> {
                         if attrs.from.is_some() && existing.from.is_none() {
                             existing.from = attrs.from;
                         }
+                        // Every fence of a chunk may name what it proves;
+                        // the chunk carries the union, once each.
+                        for id in attrs.proves {
+                            if !existing.proves.contains(&id) {
+                                existing.proves.push(id);
+                            }
+                        }
                     } else {
                         // New language variant for this chunk name
                         variants.push(Chunk {
@@ -399,6 +434,7 @@ pub fn parse_document(content: &str) -> Result<ParsedDocument> {
                             symbol: attrs.symbol,
                             from: attrs.from,
                             is_media: attrs.is_media,
+                            proves: attrs.proves,
                         });
                     }
 
@@ -562,6 +598,40 @@ mod tests {
         let attrs = parse_info_string("rust x0k:media {#viz}");
         assert!(attrs.is_media);
         assert_eq!(attrs.name.as_deref(), Some("viz"));
+    }
+
+    #[test]
+    fn parse_info_string_proves_one_or_a_list() {
+        let attrs = parse_info_string("rust {#pin proves=\"x0k:affordance/a\"}");
+        assert_eq!(attrs.name.as_deref(), Some("pin"));
+        assert_eq!(attrs.proves, vec!["x0k:affordance/a"]);
+
+        let attrs = parse_info_string(
+            "rust {#pin file=\"tests/pin.rs\" proves=\"x0k:affordance/a, x0k:affordance/b\"}",
+        );
+        assert_eq!(attrs.file.as_ref().unwrap().to_str(), Some("tests/pin.rs"));
+        assert_eq!(attrs.proves, vec!["x0k:affordance/a", "x0k:affordance/b"]);
+
+        // A bare value is one id; the comma after it separates attributes.
+        let attrs = parse_info_string("rust {#pin proves=x0k:affordance/a, file=\"t.rs\"}");
+        assert_eq!(attrs.proves, vec!["x0k:affordance/a"]);
+        assert_eq!(attrs.file.as_ref().unwrap().to_str(), Some("t.rs"));
+
+        // An attribute this parser does not know is skipped, not fatal.
+        let attrs = parse_info_string("rust {#pin frobs=\"x\" proves=\"x0k:affordance/a\"}");
+        assert_eq!(attrs.name.as_deref(), Some("pin"));
+        assert_eq!(attrs.proves, vec!["x0k:affordance/a"]);
+    }
+
+    #[test]
+    fn a_proving_chunk_carries_its_edge_and_is_otherwise_ordinary() {
+        let doc = "```rust {#pin file=\"tests/pin.rs\" proves=\"x0k:affordance/a\"}\n#[test]\nfn one() {}\n```\n\n```rust {#pin proves=\"x0k:affordance/b, x0k:affordance/a\"}\n#[test]\nfn two() {}\n```\n";
+        let parsed = parse_document(doc).unwrap();
+        let pin = parsed.chunk("pin").unwrap();
+        assert_eq!(pin.bodies.len(), 2, "append semantics are untouched");
+        assert_eq!(pin.file_target.as_ref().unwrap().to_str(), Some("tests/pin.rs"));
+        assert_eq!(pin.proves, vec!["x0k:affordance/a", "x0k:affordance/b"], "the union, once each");
+        assert!(parsed.chunk("pin").unwrap().combined_body().contains("fn two"));
     }
 
     #[test]

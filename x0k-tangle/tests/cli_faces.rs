@@ -182,3 +182,49 @@ fn affordances_reports_a_malformed_block_and_keeps_going() {
     let records: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(records.as_array().unwrap().len(), 1, "the good record survives");
 }
+
+/// A tangled chapter whose one chunk tangles a test and says it proves
+/// `proves`. Nothing here tangles it: both faces read the document.
+fn proof_doc(proves: &str) -> String {
+    format!(
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/fixture/proof\n  \
+         type: implementation\n  status: draft\n  tangle:\n    crate: fixture\n    \
+         root: tests/proof.rs\n---\n# Proof\n\n```rust {{#root proves=\"{proves}\"}}\n\
+         #[test]\nfn the_widget_frobs() {{}}\n```\n"
+    )
+}
+
+#[test]
+fn affordances_relays_the_proofs_a_chunk_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/proof.md", &proof_doc("x0k:affordance/frob_the_widget"));
+
+    let out = run(&["affordances"], tmp.path());
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let records: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        records[0]["proofs"],
+        serde_json::json!([{
+            "chapter": "x0k:implementation/fixture/proof",
+            "chunk": "root",
+            "tests": ["the_widget_frobs"],
+        }]),
+        "the relation, relayed: {records}"
+    );
+}
+
+#[test]
+fn check_notes_a_proof_naming_no_affordance_here_and_passes() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/proof.md", &proof_doc("x0k:affordance/absent"));
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "a dangling proof is a note: {stderr}");
+    assert!(
+        stderr.contains("note:") && stderr.contains("`proves`") && stderr.contains("x0k:affordance/absent"),
+        "the edge is named as such: {stderr}"
+    );
+}
