@@ -15,13 +15,11 @@ x0k:
       - x0k:implementation/tangle/pipeline
       - x0k:implementation/tangle/dispatcher
       - x0k:implementation/tangle/chunk-refs
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 # Identity tangling as a plugin
 
-The architectural payoff of the pipeline protocol is that *identity
-tangling stops being a special case*. Before, `tangle:` and
+The architectural payoff of the pipeline protocol is that *[identity
+tangling](../../wiki/literate-programming.md "x0k:wiki/literate-programming") stops being a special case*. Before, `tangle:` and
 `pipelines:` had separate code paths — separate parsers, separate
 file writers, separate sidecar shapes. Now both flow through the same
 dispatch loop because identity tangling is just one more plugin
@@ -37,6 +35,8 @@ and any future pipeline.
 The doc-comment captures the synthesis trick so future readers don't
 have to re-derive it: the `tangle:` block isn't a separate concept,
 it's the shorthand for "run the identity-tangle pipeline."
+
+<a name="chunk-module-header"></a><sub>[`src/identity_pipeline.rs`](../../../x0k-tangle/src/identity_pipeline.rs) · `#module-header`</sub>
 
 ```rust {#module-header}
 //! Identity tangling expressed as a [`TanglePipeline`].
@@ -82,6 +82,8 @@ it's the shorthand for "run the identity-tangle pipeline."
 
 ## Imports
 
+<a name="chunk-imports"></a><sub>[`src/identity_pipeline.rs`](../../../x0k-tangle/src/identity_pipeline.rs) · `#imports`</sub>
+
 ```rust {#imports}
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -103,6 +105,8 @@ use crate::resolve::{expand_chunk, expand_chunk_lang};
 registry. Everything that surfaces the kind to operators (sidecar
 records, `@generated` headers, error messages) goes through this
 constant, so the operator-visible name is single-sourced.
+
+<a name="chunk-kind-and-config"></a><sub>[`src/identity_pipeline.rs`](../../../x0k-tangle/src/identity_pipeline.rs) · `#kind-and-config`</sub>
 
 ```rust {#kind-and-config}
 /// Sentinel kind for the identity-tangle pipeline. Surfaced in
@@ -135,6 +139,8 @@ the map's sorting never shows up in emitted bytes.
 `IdentityPipeline` is stateless — every method is pure-functional
 over its arguments. One instance gets registered in
 `PipelineRegistry::default()`; that's the only one that ever exists.
+
+<a name="chunk-plugin-struct"></a><sub>[`src/identity_pipeline.rs`](../../../x0k-tangle/src/identity_pipeline.rs) · `#plugin-struct`</sub>
 
 ```rust {#plugin-struct}
 /// The identity-tangle plugin instance. Stateless; lives in
@@ -173,6 +179,8 @@ their recorded output hashes.
 
 The two `literate_roots` entries and the long match in
 `comment_style_for_path` round out the trait impl.
+
+<a name="chunk-transform-impl"></a><sub>[`src/identity_pipeline.rs`](../../../x0k-tangle/src/identity_pipeline.rs) · `#transform-impl`</sub>
 
 ```rust {#transform-impl}
 impl TanglePipeline for IdentityPipeline {
@@ -340,6 +348,8 @@ Two non-obvious choices deserve naming:
 
 ## Helpers
 
+<a name="chunk-helpers"></a><sub>[`src/identity_pipeline.rs`](../../../x0k-tangle/src/identity_pipeline.rs) · `#helpers`</sub>
+
 ```rust {#helpers}
 /// Build a [`ParsedDocument`] from the chunk graph + declaration
 /// order. Identity tangling does not need frontmatter; `expand_chunk`
@@ -412,6 +422,8 @@ roots claim. End-to-end identity-tangling behavior is exercised in
 [`dispatcher.md`](dispatcher.md)'s tests where the dispatcher and
 plugin run together.
 
+<a name="chunk-tests"></a><sub>[`src/identity_pipeline.rs`](../../../x0k-tangle/src/identity_pipeline.rs) · `#tests`</sub>
+
 ```rust {#tests}
 #[cfg(test)]
 mod tests {
@@ -477,6 +489,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/identity_pipeline.rs`](../../../x0k-tangle/src/identity_pipeline.rs) · `#root` · assembles [module-header](#chunk-module-header) · [imports](#chunk-imports) · [kind-and-config](#chunk-kind-and-config) · [plugin-struct](#chunk-plugin-struct) · [transform-impl](#chunk-transform-impl) · [helpers](#chunk-helpers) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-header>>

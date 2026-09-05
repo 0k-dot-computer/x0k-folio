@@ -62,6 +62,8 @@ decision document is edited in place, the edit arrives as "replace this
 visible text span" or "set this attribute" against canonical addresses
 — never as string surgery on markup.
 
+<a name="chunk-module-doc"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Canonical HTML normalizer for folio/v1 HTML bodies.
 //!
@@ -107,6 +109,8 @@ pub use crate::canonical_patch::{
 
 The three policy sets, as data. Keeping them as `const` slices (rather
 than inline matches) makes the security surface reviewable at a glance:
+
+<a name="chunk-policy-sets"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#policy-sets`</sub>
 
 ```rust {#policy-sets}
 /// Elements removed entirely (open tag, content, close tag) on normalize.
@@ -161,6 +165,8 @@ first (they cannot invalidate text addresses), then text patches, and
 re-serializes canonically — so the output of an edit is by construction
 in canonical form, and the attribute filter runs on patched values too
 (you cannot patch `onclick` back in through the API).
+
+<a name="chunk-apply-patches"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#apply-patches`</sub>
 
 ```rust {#apply-patches}
 /// Apply canonical HTML patches, attributes first, and return a canonical
@@ -291,6 +297,8 @@ direct text children in document order; `find_element` walks a path back
 down. The two must agree on the path grammar — they are the encoder and
 decoder of the same little language.
 
+<a name="chunk-parse-and-walk"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#parse-and-walk`</sub>
+
 ```rust {#parse-and-walk}
 fn parse_body_fragment(input: &str) -> RcDom {
     let opts = ParseOpts {
@@ -420,6 +428,8 @@ through the same filter the serializer uses — a `SetAttribute` of
 endpoints, normalizes their order, and splices: one run in the simple
 case; for a span crossing runs, the start run keeps its head plus the
 replacement, interior runs empty, the end run keeps its tail.
+
+<a name="chunk-apply-patch-impls"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#apply-patch-impls`</sub>
 
 ```rust {#apply-patch-impls}
 fn apply_attribute_patch(dom: &RcDom, patch: &CanonicalPatch) -> Result<(), CanonicalPatchError> {
@@ -556,6 +566,8 @@ dropped — the body is canonical prose, not a place for embedded
 annotations. For a non-preserve element, the trick for edge-trimming is
 positional: capture the output length before the children, emit, then
 trim the slice in place.
+
+<a name="chunk-serializer"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#serializer`</sub>
 
 ```rust {#serializer}
 struct SerializeCtx<'a> {
@@ -696,6 +708,8 @@ the escaping asymmetry, straight from the HTML spec: text context
 escapes `<`, `>`, `&`; attribute-value context (double-quoted) needs
 only `&` and `"`:
 
+<a name="chunk-text-helpers"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#text-helpers`</sub>
+
 ```rust {#text-helpers}
 /// Append `raw` to `out`, collapsing runs of whitespace (ASCII whitespace
 /// per HTML spec) into a single space. A leading space is suppressed if
@@ -803,6 +817,8 @@ The battery leans hardest on idempotence — the invariant everything else
 rides on — including a combined stress case exercising reordering, void
 shapes, whitespace, and stripping in one input. The rest pin each policy
 line by line, plus the inner-HTML extraction round-trip.
+
+<a name="chunk-tests"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -1010,6 +1026,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/html_canonical.rs`](../../../x0k-folio/src/html_canonical.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [policy-sets](#chunk-policy-sets) · [apply-patches](#chunk-apply-patches) · [parse-and-walk](#chunk-parse-and-walk) · [apply-patch-impls](#chunk-apply-patch-impls) · [serializer](#chunk-serializer) · [text-helpers](#chunk-text-helpers) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

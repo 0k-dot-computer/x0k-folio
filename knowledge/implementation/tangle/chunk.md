@@ -10,8 +10,6 @@ x0k:
     crate: x0k-tangle
     root: src/chunk.rs
   edges:
-    presupposes:
-      - x0k:wiki/literate-programming
     cites:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/resolution
@@ -20,7 +18,7 @@ x0k:
 ---
 # The chunk shape
 
-`chunk.rs` defines what a "chunk" is in the literate substrate — the
+`chunk.rs` defines what a "chunk" is in the [literate substrate](../../wiki/literate-programming.md "x0k:wiki/literate-programming") — the
 in-memory shape that the parser produces, the resolver consumes, and
 the weaver renders. Keeping this module tight (one type per concept,
 no traversal logic) means resolve / weave / identity-pipeline can all
@@ -30,6 +28,8 @@ import the same types without acquiring extra deps.
 
 The module needs only `PathBuf` for the `file_target` / `from`
 attributes; everything else is plain types.
+
+<a name="chunk-imports"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#imports`</sub>
 
 ```rust {#imports}
 use std::path::PathBuf;
@@ -58,6 +58,8 @@ A `Chunk` carries:
   test is a dangling edge rather than a stale claim somewhere else.
   Empty for the ordinary chunk. Tangling ignores it entirely: a proving
   chunk is projected exactly as one that proves nothing.
+
+<a name="chunk-chunk-types"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#chunk-types`</sub>
 
 ```rust {#chunk-types}
 #[derive(Debug, Clone)]
@@ -95,6 +97,8 @@ goes into a `.rs` vs a `.ts` output target.
 A single fence's body, plus the line number in the source `.md` for
 diagnostics and stitch-back round-trips.
 
+<a name="chunk-chunk-body"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#chunk-body`</sub>
+
 ```rust {#chunk-body}
 #[derive(Debug, Clone)]
 pub struct ChunkBody {
@@ -126,6 +130,8 @@ the line through the same scanner: the resolver emits it verbatim
 weaver renders it without an anchor. Nothing after the `!` is
 interpreted; `doc_uri` is always `None` on an escaped ref.
 
+<a name="chunk-chunk-ref"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#chunk-ref`</sub>
+
 ```rust {#chunk-ref}
 #[derive(Debug, Clone)]
 pub struct ChunkRef {
@@ -151,6 +157,8 @@ Two small affordances:
 - `combined_body()` — join all body sections with `\n`. Multi-body
   chunks (multiple `#name` fences in the same doc) become one
   continuous string.
+
+<a name="chunk-chunk-methods"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#chunk-methods`</sub>
 
 ```rust {#chunk-methods}
 impl Chunk {
@@ -199,6 +207,8 @@ that `!` was already impossible. What makes it safe is that no chunk
 in the corpus is named with a leading `!`, and from here on none can
 be reached by reference: `<<!x>>` always means the literal `<<x>>`.
 
+<a name="chunk-find-chunk-refs"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#find-chunk-refs`</sub>
+
 ```rust {#find-chunk-refs}
 pub fn find_chunk_refs(text: &str) -> Vec<ChunkRef> {
     let mut refs = Vec::new();
@@ -236,6 +246,8 @@ It uses `rsplit_once("::")` so the chunk name is the final segment and
 the doc URI is everything before the last `::`. An empty doc URI side
 (a ref written `<<::name>>`) is treated as no URI, falling back to
 within-doc resolution.
+
+<a name="chunk-split-ref-target"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#split-ref-target`</sub>
 
 ```rust {#split-ref-target}
 fn split_ref_target(inner: &str) -> (Option<String>, &str) {
@@ -276,6 +288,8 @@ that mentions `<<x>>` inline, which must NOT be detected as a ref,
 because the literate syntax is structural; the cross-doc split; and
 the escape, which is reported as a ref with `escaped` set, keeps its
 indent, and takes no `::` split even when the literal contains one.
+
+<a name="chunk-tests"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -340,6 +354,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/chunk.rs`](../../../x0k-tangle/src/chunk.rs) · `#root` · assembles [imports](#chunk-imports) · [chunk-types](#chunk-chunk-types) · [chunk-body](#chunk-chunk-body) · [chunk-ref](#chunk-chunk-ref) · [chunk-methods](#chunk-chunk-methods) · [find-chunk-refs](#chunk-find-chunk-refs) · [split-ref-target](#chunk-split-ref-target) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>

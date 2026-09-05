@@ -85,6 +85,8 @@ The shape is still checked, because shape is grammar: `requires_resources`
 must be a mapping or a list of mappings, and a document that writes a
 bare string there is malformed in a way any reader can see.
 
+<a name="chunk-module-doc"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Inline-entity extraction for folio/v1 bodies.
 //!
@@ -132,7 +134,7 @@ bare string there is malformed in a way any reader can see.
 //! uninterpreted — because turning a placement demand into typed fleet
 //! values is the host's judgment, not the document's meaning.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use tracing::warn;
@@ -148,6 +150,8 @@ the YAML `id:`; `marker_class` comes from the fence's info string. They
 must agree — the marker is the routing key and the id carries the
 identity — and keeping both is what lets the extractor say *which* of
 them was wrong.
+
+<a name="chunk-inline-entity"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#inline-entity`</sub>
 
 ```rust {#inline-entity}
 /// A single inline entity extracted from a parent document's body.
@@ -180,6 +184,8 @@ affordance in a design does not cost the document its other seven. So
 extraction returns a `Result` per attempted record rather than a
 `Result` over the batch, and every variant carries enough to name the
 offending section in a log line.
+
+<a name="chunk-error"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#error`</sub>
 
 ```rust {#error}
 /// Extraction error. Non-fatal at the document level: the caller logs
@@ -331,6 +337,8 @@ it is `None` for the same reason a fence with no marker at all is, which
 is the point: there is one question, asked one way, with no flag beside
 it for this module to forget.
 
+<a name="chunk-info-string"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#info-string`</sub>
+
 ```rust {#info-string}
 /// Parse a fence info string into `Some(marker_class)` when it matches
 /// `yaml x0k:<type>`, else `None`. Whitespace-insensitive between the
@@ -350,8 +358,8 @@ fn parse_info_string(info: &str) -> Option<String> {
 
 `extract_from_markdown` is what a caller reaches for. Hand it a body and
 the set of classes its parent may host, and it returns one `Result` per
-attempted record: the affordances a document declares, read back as
-data. Its rustdoc is the whole of the cue — a reader of this library
+attempted record: [the affordances a document declares, read back as
+data](../../../decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md "x0k:affordance/read_declared_affordances"). Its rustdoc is the whole of the cue — a reader of this library
 finds the function by its name and its doc line, and nothing else
 announces that the affordance is reachable here. That is what the
 declaration below records. A human claim on
@@ -382,6 +390,8 @@ next heading's start, minus the block's own span.
 Byte offsets are available because `into_offset_iter` gives each event
 its source range, which is also what makes the excision exact rather
 than a re-serialization of parsed events.
+
+<a name="chunk-extract"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#extract`</sub>
 
 ```rust {#extract}
 /// Walk a markdown body and return one `Result` per attempted record, so
@@ -537,6 +547,8 @@ comparison. Two of them are prohibitions rather than validations —
 document state something the embedding already says, and two sources for
 one fact is how they come to disagree.
 
+<a name="chunk-finalize"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#finalize`</sub>
+
 ```rust {#finalize}
 /// Convert one captured block plus its section state into a record, or
 /// the error that disqualifies it. `None` is the skip-after-warn branch.
@@ -663,6 +675,8 @@ The description is the section with a hole in it, and the two remaining
 fragments are joined by a blank line so the result reads as markdown
 rather than as two paragraphs run together.
 
+<a name="chunk-description"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#description`</sub>
+
 ```rust {#description}
 /// Section prose with the YAML block's span excised. Prose before and
 /// after the block are both kept — the corpus writes it both ways — and
@@ -695,6 +709,8 @@ Both spellings are accepted because both appear in the corpus, and a
 single mapping is accepted where a list would be because a one-element
 list is a papercut nobody should have to remember. Beyond that the
 mapping is passed through untouched.
+
+<a name="chunk-resources"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#resources`</sub>
 
 ```rust {#resources}
 /// Read `requires_resources:` as declared. Shape only: each entry must
@@ -770,6 +786,8 @@ The predicate mapping is a parameter because a host may know more terms
 than the compiled vocabulary does. The default answers from
 `x0k-ontology` alone, which is the right answer for a consumer holding
 only what this bundle ships.
+
+<a name="chunk-facts"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#facts`</sub>
 
 ```rust {#facts}
 /// The declared half of an entity's facts: title, description, scalar
@@ -866,6 +884,8 @@ key are skipped: `edges:` is the only mapping with an agreed flattening,
 and guessing at the others would invent structure the document did not
 state.
 
+<a name="chunk-emit-value"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#emit-value`</sub>
+
 ```rust {#emit-value}
 /// One fact per scalar; one per element for a sequence; nothing for a
 /// nested mapping, whose flattening this layer does not get to invent.
@@ -896,6 +916,8 @@ The `claimedFor` emitter takes the same shape — a scalar or a list of
 them — and differs only in what it makes of the word: an entity target
 in the `actor` class, not a string.
 
+<a name="chunk-claimed-for"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#claimed-for`</sub>
+
 ```rust {#claimed-for}
 /// The `actors:` list as the `claimedFor` relation: one fact per actor
 /// kind, each target an `x0k:actor/<kind>` id. Anything that is not a
@@ -915,11 +937,146 @@ fn claimed_for_facts(value: &serde_norway::Value, out: &mut Vec<(String, String)
 }
 ```
 
+## Links authored inside prose
+
+An affordance is not the only thing a document declares in its own
+prose. A chapter that says *the parser reads the fence grammar
+[literate programming](../../wiki/literate-programming.md "x0k:wiki/literate-programming") fixed* has named
+the concept a reader needs first, and a chapter that says *this is the
+[check](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary") the
+CLI puts in a shell* has said which affordance it realizes. Each of those
+links is an edge of the graph, written in the sentence that needs it —
+the same rule that puts `proves=` on the fence tangling the test rather
+than in a design that names the test. The envelope's `edges:` block still
+admits both predicates; it is not where they live.
+
+Two link classes are edges and no other. A link whose target is a wiki
+page is `presupposes`; one whose target is an affordance is `realizes`.
+A link to an implementation or a design is a link — the corpus holds
+hundreds, and `cites` is a declaration the author makes, not a count of
+mentions. A wiki target loses its fragment, because a concept page
+crosses whole. Fenced code and inline code are not prose: a chapter
+showing the grammar is not presupposing what its example names.
+
+<a name="chunk-prose-edges"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#prose-edges`</sub>
+
+```rust {#prose-edges}
+/// The edges a body's prose links declare: `(predicate, target id)`, once
+/// each in first-seen order. A markdown link `[…](x0k:wiki/<stem>)` is a
+/// `presupposes` edge and `[…](x0k:affordance/<slug>)` a `realizes` edge;
+/// every other link is a link. Text inside a fenced block or an inline
+/// code span is not read.
+pub fn prose_edges(body: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        let fence_run = trimmed
+            .chars()
+            .next()
+            .filter(|c| *c == '`' || *c == '~')
+            .map(|c| (c, trimmed.chars().take_while(|x| *x == c).count()))
+            .filter(|(_, n)| *n >= 3);
+        match (fence, fence_run) {
+            (Some((c, n)), Some((c2, n2))) if c == c2 && n2 >= n => {
+                fence = None;
+                continue;
+            }
+            (Some(_), _) => continue,
+            (None, Some(open)) => {
+                fence = Some(open);
+                continue;
+            }
+            (None, None) => {}
+        }
+        for target in link_targets_outside_code(line) {
+            let edge = if let Some(rest) = target.strip_prefix("x0k:wiki/") {
+                let stem = rest.split('#').next().unwrap_or(rest);
+                Some(("presupposes", format!("x0k:wiki/{stem}")))
+            } else if target.starts_with("x0k:affordance/") {
+                Some(("realizes", target.to_string()))
+            } else {
+                None
+            };
+            if let Some((predicate, id)) = edge {
+                if !out.iter().any(|(p, t)| p == predicate && *t == id) {
+                    out.push((predicate.to_string(), id));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The `x0k:` link targets on one line of prose, with inline code spans
+/// (a run of backticks closed by a run of the same length) skipped. A
+/// target ends at `)` or at the space before a link title.
+fn link_targets_outside_code(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while !rest.is_empty() {
+        let next_code = rest.find('`');
+        let next_link = rest.find("](x0k:");
+        match (next_code, next_link) {
+            (Some(c), Some(l)) if c < l => rest = skip_code_span(&rest[c..]),
+            (Some(c), None) => rest = skip_code_span(&rest[c..]),
+            (_, Some(l)) => {
+                let after = &rest[l + 2..];
+                let end = after.find(|ch: char| ch == ')' || ch.is_whitespace()).unwrap_or(after.len());
+                out.push(&after[..end]);
+                rest = &after[end..];
+            }
+            (None, None) => break,
+        }
+    }
+    out
+}
+
+/// `s` starts with a backtick run; return what follows the matching
+/// closing run, or nothing when the span never closes.
+fn skip_code_span(s: &str) -> &str {
+    let n = s.chars().take_while(|c| *c == '`').count();
+    let body = &s[n..];
+    let mut i = 0;
+    while i < body.len() {
+        if body[i..].starts_with('`') {
+            let m = body[i..].chars().take_while(|c| *c == '`').count();
+            if m == n {
+                return &body[i + m..];
+            }
+            i += m;
+        } else {
+            i += body[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+        }
+    }
+    ""
+}
+
+/// The document's edges as one map: the envelope's `edges:` block and
+/// the edges its prose links declare, each target once per predicate,
+/// the envelope's first.
+pub fn document_edges(
+    envelope_edges: &BTreeMap<String, Vec<String>>,
+    body: &str,
+) -> BTreeMap<String, Vec<String>> {
+    let mut edges = envelope_edges.clone();
+    for (predicate, target) in prose_edges(body) {
+        let targets = edges.entry(predicate).or_default();
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    edges
+}
+```
+
 ## Tests
 
 The carried example is the affordance at the top of this document; the
 rest pin one refusal each, and one pins the boundary — that a declared
 resource comes back as a mapping and not as an interpretation.
+
+<a name="chunk-tests"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
@@ -1315,10 +1472,42 @@ edges:
         });
         assert!(facts.iter().any(|(p, _)| p == "refinedFrom"));
     }
+    #[test]
+    fn prose_links_to_wiki_and_affordance_are_edges_and_nothing_else_is() {
+        let body = "Reads [literate programming](x0k:wiki/literate-programming#history) and\n\
+                    [the design](x0k:design/some-design); it is the\n\
+                    [check](x0k:affordance/check_it \"the check\") face.\n\
+                    Again [lp](x0k:wiki/literate-programming).\n";
+        assert_eq!(
+            prose_edges(body),
+            vec![
+                ("presupposes".to_string(), "x0k:wiki/literate-programming".to_string()),
+                ("realizes".to_string(), "x0k:affordance/check_it".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_links_inside_code_are_not_read() {
+        let body = "Write `[x](x0k:wiki/in-span)` like so:\n\n\
+                    ````markdown\n```\n[y](x0k:wiki/in-fence)\n```\n````\n\n\
+                    but [z](x0k:wiki/real) counts.\n";
+        assert_eq!(prose_edges(body), vec![("presupposes".to_string(), "x0k:wiki/real".to_string())]);
+    }
+
+    #[test]
+    fn document_edges_unions_the_envelope_and_the_prose_once_each() {
+        let mut envelope = BTreeMap::new();
+        envelope.insert("presupposes".to_string(), vec!["x0k:wiki/a".to_string()]);
+        let edges = document_edges(&envelope, "See [a](x0k:wiki/a) and [b](x0k:wiki/b).");
+        assert_eq!(edges["presupposes"], vec!["x0k:wiki/a".to_string(), "x0k:wiki/b".to_string()]);
+    }
 }
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [inline-entity](#chunk-inline-entity) · [error](#chunk-error) · [info-string](#chunk-info-string) · [extract](#chunk-extract) · [finalize](#chunk-finalize) · [description](#chunk-description) · [resources](#chunk-resources) · [facts](#chunk-facts) · [emit-value](#chunk-emit-value) · [claimed-for](#chunk-claimed-for) · [prose-edges](#chunk-prose-edges) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -1342,6 +1531,8 @@ edges:
 <<emit-value>>
 
 <<claimed-for>>
+
+<<prose-edges>>
 
 <<tests>>
 ```

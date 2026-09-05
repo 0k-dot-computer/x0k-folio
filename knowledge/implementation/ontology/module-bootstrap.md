@@ -16,15 +16,14 @@ x0k:
       - x0k:architecture/ontology-modules
       - x0k:implementation/ontology/concept-facts
       - x0k:implementation/ontology/views
-    presupposes:
-      - x0k:wiki/rdf-and-owl
 ---
 
 # The vocabulary, parsed once, at build time
 
 Nearly every crate in the tree spells an ontology predicate at some point,
 and none of them should link a Turtle parser to do it. That is the whole reason
-this build script exists. The vocabulary lives in the fact plane and is
+this build script exists. The vocabulary — [RDF and
+OWL](x0k:wiki/rdf-and-owl), written as Turtle — lives in the fact plane and is
 materialized out to `ontology/modules/*.ttl`
 ([`concept-facts.md`](concept-facts.md)); consumers want `&[&str]` and a
 `match` ([`views.md`](views.md)). This script is the one place the two meet: it
@@ -54,6 +53,8 @@ script reads the module directory, writes exactly one file, panics on anything
 it cannot account for, and touches nothing else — no network, no clock, no state
 between runs.
 
+<a name="chunk-module-doc"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Bootstrap `ontology/modules/*.ttl` into concept facts, fold the
 //! compatibility registry views from those facts, and emit them into
@@ -78,6 +79,8 @@ compiling one copy of it into the build script is what keeps them from drifting
 into two. `dead_code` is allowed because the build script uses a proper subset
 of what the runtime module offers.
 
+<a name="chunk-imports"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#imports`</sub>
+
 ```rust {#imports}
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -85,6 +88,8 @@ use std::path::{Path, PathBuf};
 
 use oxttl::TurtleParser;
 ```
+
+<a name="chunk-concept-facts-by-path"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#concept-facts-by-path`</sub>
 
 ```rust {#concept-facts-by-path}
 #[path = "src/concept_facts.rs"]
@@ -98,6 +103,8 @@ Turtle carries typed literals, and the fact plane at present carries only
 text. Rather than lose the distinction silently, the parser below refuses
 anything that is not a plain `xsd:string`:
 
+<a name="chunk-xsd-string"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#xsd-string`</sub>
+
 ```rust {#xsd-string}
 const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
 ```
@@ -107,6 +114,8 @@ The parse has its own vocabulary, deliberately separate from
 a blank node, because blank-node labels are file-scoped and have to be
 namespaced before the files are unioned; an `OntologyFact` has already lost that
 distinction, and should have.
+
+<a name="chunk-raw-terms"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#raw-terms`</sub>
 
 ```rust {#raw-terms}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -134,6 +143,8 @@ struct RawTriple {
 `main` reads as the outline of the whole script: find the modules, tell
 cargo what to watch, fold, check, emit.
 
+<a name="chunk-main"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#main` · assembles [locate-modules](#chunk-locate-modules) · [declare-reruns](#chunk-declare-reruns) · [collect-module-paths](#chunk-collect-module-paths) · [fold-and-check](#chunk-fold-and-check) · [write-generated](#chunk-write-generated)</sub>
+
 ```rust {#main}
 fn main() {
     <<locate-modules>>
@@ -154,6 +165,8 @@ inside the crate ([`region-repo.md`](../tangle/region-repo.md)) and a published
 tarball builds from that. The monorepo has no in-crate copy and reads the
 canonical directory one level up. The in-crate copy wins when it exists, which
 is the only rule that makes both builds work without a feature flag:
+
+<a name="chunk-locate-modules"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#locate-modules`</sub>
 
 ```rust {#locate-modules}
 let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
@@ -181,12 +194,16 @@ The rerun declarations name the directory *and* every file in it. The
 directory alone would miss an edit to a file already present; the files alone
 would miss a module being added:
 
+<a name="chunk-declare-reruns"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#declare-reruns`</sub>
+
 ```rust {#declare-reruns}
 println!("cargo:rerun-if-changed={}", modules_dir.display());
 println!("cargo:rerun-if-changed={}", shapes_dir.display());
 println!("cargo:rerun-if-changed=build.rs");
 println!("cargo:rerun-if-changed=src/concept_facts.rs");
 ```
+
+<a name="chunk-collect-module-paths"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#collect-module-paths`</sub>
 
 ```rust {#collect-module-paths}
 let module_paths = module_file_paths(&modules_dir);
@@ -204,6 +221,8 @@ materialization the tree did not receive in full. `check_shape_files` asks the
 weaker question a shape file admits: a shape belongs to a module, so its file
 must name one of the set, but a module owing no shapes owes no file.
 
+<a name="chunk-fold-and-check"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#fold-and-check`</sub>
+
 ```rust {#fold-and-check}
 let model = parse_bootstrap_model(&module_paths, &shape_paths);
 let modules = model.import_order().unwrap_or_else(|error| panic!("ontology module set under {}: {error}", modules_dir.display()));
@@ -211,6 +230,8 @@ check_module_files(&modules, &module_paths, &modules_dir);
 check_shape_files(&modules, &shape_paths, &shapes_dir);
 let out = emit_generated(&model, &module_paths, &shape_paths);
 ```
+
+<a name="chunk-write-generated"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#write-generated`</sub>
 
 ```rust {#write-generated}
 let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
@@ -225,6 +246,8 @@ The module files are read in sorted order and unioned into one fact set.
 Sorting is what makes the emitted file reproducible: `read_dir` order is a
 filesystem detail, and a table whose row order follows it would produce a
 different `generated.rs` on two machines holding identical trees.
+
+<a name="chunk-module-file-paths"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#module-file-paths`</sub>
 
 ```rust {#module-file-paths}
 /// Every `<name>.ttl` under the module directory, sorted by name.
@@ -259,6 +282,8 @@ fn shape_file_paths(shapes_dir: &Path) -> Vec<PathBuf> {
     paths
 }
 ```
+
+<a name="chunk-check-module-files"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#check-module-files`</sub>
 
 ```rust {#check-module-files}
 /// The module set the facts declare must be exactly the set of files: a file
@@ -297,6 +322,8 @@ files may each hand out `_:b0000n0000`. Namespacing every label by its module
 before the union keeps them apart even when a materializer bug hands out the
 same label twice:
 
+<a name="chunk-parse-bootstrap-model"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#parse-bootstrap-model`</sub>
+
 ```rust {#parse-bootstrap-model}
 fn parse_bootstrap_model(module_paths: &[PathBuf], shape_paths: &[PathBuf]) -> OntologyModel {
     let mut triples = Vec::new();
@@ -324,6 +351,8 @@ fn parse_bootstrap_model(module_paths: &[PathBuf], shape_paths: &[PathBuf]) -> O
     OntologyModel::new(facts).with_fact_plane_root()
 }
 ```
+
+<a name="chunk-parse-module-file"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#parse-module-file`</sub>
 
 ```rust {#parse-module-file}
 fn parse_module_file(bytes: &[u8], path: &Path, scope: &str, triples: &mut Vec<RawTriple>) {
@@ -374,6 +403,8 @@ the vocabulary rather than the parse. Any blank node the roots did not reach —
 one reachable only from another blank node, which a well-formed file should not
 produce — is numbered after them rather than left unassigned.
 
+<a name="chunk-assign-structural-uris"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#assign-structural-uris`</sub>
+
 ```rust {#assign-structural-uris}
 /// Blank nodes are Turtle syntax, not durable identities. Give every
 /// connected blank-node component a deterministic skolem URI while it is in
@@ -419,6 +450,8 @@ fn assign_structural_uris(triples: &[RawTriple]) -> BTreeMap<String, String> {
 Within a component the walk is breadth-first with sorted children, for the
 same reason: node numbering must not depend on triple order in the file.
 
+<a name="chunk-assign-blank-component"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#assign-blank-component`</sub>
+
 ```rust {#assign-blank-component}
 fn assign_blank_component(
     triples: &[RawTriple],
@@ -459,6 +492,8 @@ fn assign_blank_component(
 }
 ```
 
+<a name="chunk-node-entity"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#node-entity`</sub>
+
 ```rust {#node-entity}
 /// A blank-node namespace unique per file: `<parent>/<stem>`.
 fn file_scope(path: &Path) -> String {
@@ -486,6 +521,8 @@ fn node_entity(node: &RawNode, blank_uris: &BTreeMap<String, String>) -> String 
 What comes out is one Rust file, built by string concatenation. This is
 plumbing, and the chapter says so rather than deriving it: `emit_generated`
 names the sections in order, and each `emit_*` below pushes one of them.
+
+<a name="chunk-emit-generated"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#emit-generated`</sub>
 
 ```rust {#emit-generated}
 fn emit_generated(model: &OntologyModel, module_paths: &[PathBuf], shape_paths: &[PathBuf]) -> String {
@@ -518,6 +555,8 @@ was built from and a consumer can compare them against the tree. And `MODULE_TAB
 the shipped set without naming a member: which modules a build ships is a
 per-publication choice, and nothing compiled in may assume a particular one
 beyond `core`.
+
+<a name="chunk-emit-module-set"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#emit-module-set`</sub>
 
 ```rust {#emit-module-set}
 fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[PathBuf], shape_paths: &[PathBuf]) {
@@ -591,6 +630,8 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
 Each module's own tables are emitted whether or not they are empty, so
 `MODULE_TABLES` can name every field of every member uniformly:
 
+<a name="chunk-emit-module"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#emit-module`</sub>
+
 ```rust {#emit-module}
 fn emit_module(out: &mut String, model: &OntologyModel, module: &ModuleRecord) {
     let rust_name = module.name.replace('-', "_");
@@ -655,6 +696,8 @@ The rest is the same shape, once per table — the bootstrap facts that seed
 an empty concept region, the Decision-domain predicates in both spellings, and
 the class and property records:
 
+<a name="chunk-emit-bootstrap-facts"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#emit-bootstrap-facts`</sub>
+
 ```rust {#emit-bootstrap-facts}
 fn emit_bootstrap_facts(out: &mut String, facts: &[OntologyFact]) {
     out.push_str(
@@ -703,6 +746,8 @@ fn emit_decision_predicates(out: &mut String, predicates: &[(String, String)]) {
     out.push_str("        _ => return None,\n    })\n}\n\n");
 }
 ```
+
+<a name="chunk-emit-classes"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#emit-classes`</sub>
 
 ```rust {#emit-classes}
 fn emit_classes(out: &mut String, classes: &[concept_facts::ClassRecord]) {
@@ -753,6 +798,8 @@ fn option_literal(value: Option<&str>) -> String {
 ```
 
 ## Composing the file
+
+<a name="chunk-root"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [xsd-string](#chunk-xsd-string) · [raw-terms](#chunk-raw-terms) · [main](#chunk-main) · [module-file-paths](#chunk-module-file-paths) · [check-module-files](#chunk-check-module-files) · [parse-bootstrap-model](#chunk-parse-bootstrap-model) · [parse-module-file](#chunk-parse-module-file) · [assign-structural-uris](#chunk-assign-structural-uris) · [assign-blank-component](#chunk-assign-blank-component) · [node-entity](#chunk-node-entity) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [emit-module](#chunk-emit-module) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes)</sub>
 
 ```rust {#root}
 <<module-doc>>

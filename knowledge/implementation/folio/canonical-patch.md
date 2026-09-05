@@ -85,6 +85,8 @@ canonical serializer on the way out. Markdown output is
 *source-stable*: bytes the patch did not address are the bytes the
 author wrote.
 
+<a name="chunk-module-doc"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Canonical structural patches shared by markdown and HTML folio bodies.
 //!
@@ -110,6 +112,8 @@ one element. The run ordinal counts direct text children of the
 element; the offset is into the *decoded* text (entities resolved,
 escapes removed), which is what an editor sees. The type derives serde
 because it rides the editor bridge's wire:
+
+<a name="chunk-text-point"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#text-point`</sub>
 
 ```rust {#text-point}
 /// A point in one decoded visible-text run of a canonical structural body.
@@ -139,6 +143,8 @@ no "replace source bytes" on purpose. The `op` tag gives the wire form
 the bridge's `Patch` message carries: `{"op": "set_attribute", ...}`
 and `{"op": "replace_visible_text", ...}`.
 
+<a name="chunk-patch-vocabulary"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#patch-vocabulary`</sub>
+
 ```rust {#patch-vocabulary}
 /// The one mutation vocabulary for canonical folio body structure.
 ///
@@ -164,6 +170,8 @@ pub enum CanonicalPatch {
 HTML-side callers spell the same type under a dialect-flavored name;
 [`html-canonical.md`](html-canonical.md) re-exports it:
 
+<a name="chunk-html-patch-alias"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#html-patch-alias`</sub>
+
 ```rust {#html-patch-alias}
 /// The HTML-side spelling of [`CanonicalPatch`]; the same type.
 pub type CanonicalHtmlPatch = CanonicalPatch;
@@ -176,6 +184,8 @@ allowlist, an attribute value the dialect cannot carry, a replacement
 that would break a fence, and a document whose envelope will not parse.
 `ReversedRange` stays in the vocabulary although neither projection
 raises it today: both normalize a reversed range by swapping.
+
+<a name="chunk-patch-errors"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#patch-errors`</sub>
 
 ```rust {#patch-errors}
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -205,6 +215,8 @@ pub enum CanonicalPatchError {
     InvalidFolio(String),
 }
 ```
+
+<a name="chunk-error-display"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#error-display`</sub>
 
 ```rust {#error-display}
 impl fmt::Display for CanonicalPatchError {
@@ -257,6 +269,8 @@ the markdown arm is the rest of this chapter. Any other format is an
 `InvalidFolio` error rather than a silent pass-through — a patch that
 cannot be applied must not report success.
 
+<a name="chunk-dispatch-by-dialect"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#dispatch-by-dialect`</sub>
+
 ```rust {#dispatch-by-dialect}
 /// Apply canonical patches to a body in either supported folio dialect.
 pub fn apply_body_patches(
@@ -280,6 +294,8 @@ root, and the envelope bytes are copied through untouched. The one
 assumption made explicit is that the body is a suffix of the file —
 `parse_envelope` returns the body as such, and the length subtraction
 that recovers its start is checked rather than trusted.
+
+<a name="chunk-patch-folio-document"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#patch-folio-document`</sub>
 
 ```rust {#patch-folio-document}
 /// Apply canonical body patches to a complete folio/v1 document.
@@ -316,6 +332,8 @@ normalizer as the HTML overlay; a folio markdown body is left alone,
 because the source file *is* the projection of record and nothing here
 reformats it.
 
+<a name="chunk-canonicalize-folio-content"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#canonicalize-folio-content`</sub>
+
 ```rust {#canonicalize-folio-content}
 /// Canonicalize a bridge-produced document value without making the merge
 /// engine or its identity part of the document contract.
@@ -351,6 +369,8 @@ while a generic non-folio document keeps its pass-through behavior,
 including the case where an edit first turns it into a valid folio
 document (that edit canonicalizes, by the first arm).
 
+<a name="chunk-canonicalize-edited-content"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#canonicalize-edited-content`</sub>
+
 ```rust {#canonicalize-edited-content}
 /// Canonicalize the result of a source-level compatibility edit.
 ///
@@ -380,6 +400,8 @@ text. Each patch re-indexes the current source before it resolves,
 because a patch shifts every byte range after it and re-parsing is the
 simple correct answer. The cost is one parse per patch; patch batches
 are small, and a stale-range bug would be worse than the parse.
+
+<a name="chunk-apply-markdown-patches"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#apply-markdown-patches`</sub>
 
 ```rust {#apply-markdown-patches}
 /// Apply canonical patches to a markdown body and emit a source-stable
@@ -415,6 +437,8 @@ in-place editing possible. A text run also keeps its decoded text and a
 where the run sits: plain text is escaped, a code span is re-fenced, a
 fenced block is emitted verbatim. Frames are the walk's stack; each
 mints paths for its children by counting siblings per tag.
+
+<a name="chunk-markdown-index-types"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#markdown-index-types`</sub>
 
 ```rust {#markdown-index-types}
 #[derive(Clone, Debug)]
@@ -485,6 +509,8 @@ so a code span is addressable as `/p[1]/code[1]` just as it is in the
 HTML. The events that mint nothing are the honest edge of the grammar:
 breaks, rules, and raw HTML islands are complement matter, and the
 design makes no claim to edit their internals.
+
+<a name="chunk-markdown-index"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#markdown-index`</sub>
 
 ```rust {#markdown-index}
 fn markdown_index(input: &str) -> MarkdownIndex {
@@ -585,6 +611,8 @@ Paths are minted exactly as the HTML walk mints them — 1-based sibling
 ordinal per tag under the parent, joined by `/` — which is the whole
 reason the two dialects agree on `/p[1]/strong[1]`:
 
+<a name="chunk-push-markdown-frame"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#push-markdown-frame`</sub>
+
 ```rust {#push-markdown-frame}
 fn push_markdown_frame(frames: &mut Vec<MarkdownFrame>, tag: String) {
     let parent = frames.last_mut().expect("markdown root frame");
@@ -607,6 +635,8 @@ fn push_markdown_frame(frames: &mut Vec<MarkdownFrame>, tag: String) {
 A run's identity is (element, ordinal); the point stored on it carries
 offset 0 and exists so `find_markdown_text_run` can compare identities
 without a second type:
+
+<a name="chunk-push-markdown-text-run"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#push-markdown-text-run`</sub>
 
 ```rust {#push-markdown-text-run}
 fn push_markdown_text_run(
@@ -635,6 +665,8 @@ children (if any) address through them. One candid mismatch: definition
 lists are minted here (`dl`, `dt`, `dd`) although the design places
 them outside `H_md`; a markdown patch can address them, but nothing on
 the HTML side promises to agree.
+
+<a name="chunk-markdown-element-tags"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#markdown-element-tags`</sub>
 
 ```rust {#markdown-element-tags}
 fn markdown_element_tags(tag: &Tag<'_>, frames: &[MarkdownFrame]) -> Vec<String> {
@@ -690,6 +722,8 @@ overlay can set `class` on a paragraph, but that paragraph is then
 designed matter, not shared structure, and a markdown body has nowhere
 to put it.
 
+<a name="chunk-apply-markdown-attribute-patch"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#apply-markdown-attribute-patch`</sub>
+
 ```rust {#apply-markdown-attribute-patch}
 fn apply_markdown_attribute_patch(
     input: &str,
@@ -732,6 +766,8 @@ fn apply_markdown_attribute_patch(
 The name check is the HTML side's rule, repeated here so a markdown
 patch cannot smuggle a name the HTML projection would refuse:
 
+<a name="chunk-validate-attribute-name"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#validate-attribute-name`</sub>
+
 ```rust {#validate-attribute-name}
 fn validate_attribute_name(name: &str) -> Result<(), CanonicalPatchError> {
     if name.is_empty()
@@ -758,6 +794,8 @@ when the author escaped parentheses. A miss surfaces as
 `InvalidMarkdownAttribute`, never as a silent splice into the wrong
 bytes. The new value is escaped on the way in so it cannot close the
 link early.
+
+<a name="chunk-replace-link-destination"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#replace-link-destination`</sub>
 
 ```rust {#replace-link-destination}
 fn replace_markdown_link_destination(
@@ -817,6 +855,8 @@ backticks or tildes, the info string), swap one component, and re-emit
 the canonical carrier. `class` must be `language-<lang>` with a
 non-empty language, or `None` to clear it; the `unreachable!` is
 justified by the caller's match arm.
+
+<a name="chunk-replace-fence-attribute"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#replace-fence-attribute`</sub>
 
 ```rust {#replace-fence-attribute}
 fn replace_markdown_fence_attribute(
@@ -881,6 +921,8 @@ fn replace_markdown_fence_attribute(
 A task marker is the simplest carrier: the event's source range is the
 `[ ]` or `[x]` itself, and the value vocabulary is closed.
 
+<a name="chunk-replace-task-marker"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#replace-task-marker`</sub>
+
 ```rust {#replace-task-marker}
 fn replace_markdown_task_marker(
     input: &str,
@@ -915,6 +957,8 @@ interior runs empty, the end run keeps its tail. Each run yields a new
 source string for its own byte range, and the splices are applied
 back-to-front so the earlier ranges stay valid while the later ones
 change.
+
+<a name="chunk-apply-markdown-text-patch"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#apply-markdown-text-patch`</sub>
 
 ```rust {#apply-markdown-text-patch}
 fn apply_markdown_text_patch(
@@ -984,6 +1028,8 @@ untouched byte survives, punctuation included. When they differ, the
 whole decoded run is edited and re-rendered, and the author's original
 escaping is replaced by ours.
 
+<a name="chunk-replace-markdown-run"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#replace-markdown-run`</sub>
+
 ```rust {#replace-markdown-run}
 fn replace_markdown_run(
     input: &str,
@@ -1006,6 +1052,8 @@ fn replace_markdown_run(
 ```
 
 Resolution and validation are identity lookups over the index:
+
+<a name="chunk-resolve-markdown-run"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#resolve-markdown-run`</sub>
 
 ```rust {#resolve-markdown-run}
 fn find_markdown_text_run(
@@ -1043,6 +1091,8 @@ one guard — a replacement line that opens with three backticks would
 close the fence from inside, so it is refused rather than let the
 document's structure change under a text edit.
 
+<a name="chunk-render-markdown-text"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#render-markdown-text`</sub>
+
 ```rust {#render-markdown-text}
 fn render_markdown_text(
     decoded: &str,
@@ -1074,6 +1124,8 @@ preserve structure on reparse"), and the result is correspondingly
 noisier than a hand-written line — but it is unconditionally safe, and
 the fast path above means it only touches text the patch actually
 replaced.
+
+<a name="chunk-escape-markdown-text"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#escape-markdown-text`</sub>
 
 ```rust {#escape-markdown-text}
 fn escape_markdown_visible_text(text: &str) -> String {
@@ -1124,6 +1176,8 @@ the index mints HTML-shaped paths (`/p[1]/strong[1]`, `/p[1]/a[1]`) for
 the carried example, and that a text patch through the fast path leaves
 neighboring punctuation untouched.
 
+<a name="chunk-tests"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#tests`</sub>
+
 ```rust {#tests}
 #[cfg(test)]
 mod tests {
@@ -1167,6 +1221,8 @@ promises that *one sentence is true of both bodies*; a test that only ever
 sees one projection cannot say that. So the carried example is run twice
 through the crate's public surface, in `tests/patch_grammar.rs`.
 
+<a name="chunk-patch-grammar-imports"></a><sub>[`tests/patch_grammar.rs`](../../../x0k-folio/tests/patch_grammar.rs) · `#patch-grammar-imports`</sub>
+
 ```rust {#patch-grammar-imports file="tests/patch_grammar.rs"}
 use x0k_folio::{
     apply_folio_patches, canonicalize_edited_folio_content, canonicalize_folio_content,
@@ -1177,6 +1233,8 @@ use x0k_folio::{
 The fixtures are whole documents rather than bare bodies. The dialect is a
 fact about the envelope, so handing the module a body alone would test a
 dispatch that never happens in the running system:
+
+<a name="chunk-patch-grammar-documents"></a><sub>[`tests/patch_grammar.rs`](../../../x0k-folio/tests/patch_grammar.rs) · `#patch-grammar-documents`</sub>
 
 ```rust {#patch-grammar-documents file="tests/patch_grammar.rs"}
 const MARKDOWN_DOC: &str = r#"---
@@ -1204,6 +1262,8 @@ text first, attribute second. Both projections sort it back, applying
 attributes before visible text, so the order a caller happens to supply
 cannot make the two dialects disagree:
 
+<a name="chunk-patch-grammar-patches"></a><sub>[`tests/patch_grammar.rs`](../../../x0k-folio/tests/patch_grammar.rs) · `#patch-grammar-patches`</sub>
+
 ```rust {#patch-grammar-patches file="tests/patch_grammar.rs"}
 fn equivalent_patches() -> Vec<CanonicalPatch> {
     vec![
@@ -1226,6 +1286,8 @@ fn equivalent_patches() -> Vec<CanonicalPatch> {
 The first test is this chapter's opening promise, checked: the two result
 sentences from the introduction, byte for byte, and the wire tags an editing
 surface will actually put on the socket.
+
+<a name="chunk-patch-grammar-both-dialects"></a><sub>[`tests/patch_grammar.rs`](../../../x0k-folio/tests/patch_grammar.rs) · `#patch-grammar-both-dialects`</sub>
 
 ```rust {#patch-grammar-both-dialects file="tests/patch_grammar.rs"}
 #[test]
@@ -1254,6 +1316,8 @@ second pass as well as the first. This is the test that keeps the markdown
 side's "changed nothing it was not asked to" from decaying into "changed
 something small every time":
 
+<a name="chunk-patch-grammar-reparse-stable"></a><sub>[`tests/patch_grammar.rs`](../../../x0k-folio/tests/patch_grammar.rs) · `#patch-grammar-reparse-stable`</sub>
+
 ```rust {#patch-grammar-reparse-stable file="tests/patch_grammar.rs"}
 #[test]
 fn patched_bodies_are_save_reparse_stable_in_both_dialects() {
@@ -1277,6 +1341,8 @@ An edit that breaks the envelope is not repaired — it is refused, because a
 document the parser cannot read is not an edit the merge engine can reason
 about.
 
+<a name="chunk-patch-grammar-bridge-normalization"></a><sub>[`tests/patch_grammar.rs`](../../../x0k-folio/tests/patch_grammar.rs) · `#patch-grammar-bridge-normalization`</sub>
+
 ```rust {#patch-grammar-bridge-normalization file="tests/patch_grammar.rs"}
 #[test]
 fn bridge_style_source_edit_cannot_bypass_html_normalization() {
@@ -1298,6 +1364,8 @@ fn bridge_style_source_edit_cannot_bypass_html_normalization() {
 }
 ```
 
+<a name="chunk-patch-grammar-root"></a><sub>[`tests/patch_grammar.rs`](../../../x0k-folio/tests/patch_grammar.rs) · `#patch-grammar-root` · assembles [patch-grammar-imports](#chunk-patch-grammar-imports) · [patch-grammar-documents](#chunk-patch-grammar-documents) · [patch-grammar-patches](#chunk-patch-grammar-patches) · [patch-grammar-both-dialects](#chunk-patch-grammar-both-dialects) · [patch-grammar-reparse-stable](#chunk-patch-grammar-reparse-stable) · [patch-grammar-bridge-normalization](#chunk-patch-grammar-bridge-normalization)</sub>
+
 ```rust {#patch-grammar-root file="tests/patch_grammar.rs"}
 <<patch-grammar-imports>>
 
@@ -1313,6 +1381,8 @@ fn bridge_style_source_edit_cannot_bypass_html_normalization() {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/canonical_patch.rs`](../../../x0k-folio/src/canonical_patch.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [text-point](#chunk-text-point) · [patch-vocabulary](#chunk-patch-vocabulary) · [html-patch-alias](#chunk-html-patch-alias) · [patch-errors](#chunk-patch-errors) · [error-display](#chunk-error-display) · [dispatch-by-dialect](#chunk-dispatch-by-dialect) · [patch-folio-document](#chunk-patch-folio-document) · [canonicalize-folio-content](#chunk-canonicalize-folio-content) · [canonicalize-edited-content](#chunk-canonicalize-edited-content) · [apply-markdown-patches](#chunk-apply-markdown-patches) · [markdown-index-types](#chunk-markdown-index-types) · [markdown-index](#chunk-markdown-index) · [push-markdown-frame](#chunk-push-markdown-frame) · [push-markdown-text-run](#chunk-push-markdown-text-run) · [markdown-element-tags](#chunk-markdown-element-tags) · [apply-markdown-attribute-patch](#chunk-apply-markdown-attribute-patch) · [validate-attribute-name](#chunk-validate-attribute-name) · [replace-link-destination](#chunk-replace-link-destination) · [replace-fence-attribute](#chunk-replace-fence-attribute) · [replace-task-marker](#chunk-replace-task-marker) · [apply-markdown-text-patch](#chunk-apply-markdown-text-patch) · [replace-markdown-run](#chunk-replace-markdown-run) · [resolve-markdown-run](#chunk-resolve-markdown-run) · [render-markdown-text](#chunk-render-markdown-text) · [escape-markdown-text](#chunk-escape-markdown-text) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

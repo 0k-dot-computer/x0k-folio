@@ -16,14 +16,13 @@ x0k:
       - x0k:implementation/tangle/parsing
       - x0k:implementation/tangle/source-refs
       - x0k:implementation/folio/colophon
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 
 # An index is the document seen from outside
 
 The authoring UI's sidebar, a worked figure that binds to a document's real
-code, and any tool that wants to list the literate corpus all ask the same
+code, and any tool that wants to list the [literate
+corpus](../../wiki/literate-programming.md "x0k:wiki/literate-programming") all ask the same
 question: what documents are here, and what chunks do they carry? Parsing
 every document on every ask is too slow for a sidebar and too coupled for a
 figure. So `x0k-tangle index` walks a set of paths once and emits a
@@ -34,8 +33,12 @@ render the chunk's code without re-parsing the document.
 
 The carried example is a document with two `from=` chunks —
 
+<a name="chunk-verdict"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#verdict`</sub>
+
     ```rust {#verdict from="machine.rs" symbol="classify_range"}
     ```
+<a name="chunk-shelf"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#shelf`</sub>
+
     ```rust {#shelf from="machine.rs" symbol="Shelf"}
     ```
 
@@ -45,6 +48,8 @@ for `shelf`, a **span map** naming `seal` and `merge` with line ranges
 relative to the extracted chunk rather than the source file. A figure step
 that says "highlight `seal`" resolves to a line band through that map, and
 the band stays correct when `machine.rs` gains a preamble.
+
+<a name="chunk-module-doc"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 use crate::parser::parse_document;
@@ -63,6 +68,8 @@ a consumer distinguishes "owned chunk" from "from-chunk whose source could
 not be read" by presence rather than by empty strings. `modified_us` is the
 sidebar's recency key; `body_format` is the flag the authoring UI gates
 in-place editing on.
+
+<a name="chunk-doc-index"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#doc-index`</sub>
 
 ```rust {#doc-index}
 #[derive(Debug, Serialize)]
@@ -96,6 +103,8 @@ pub struct DocEntry {
     pub chunks: Vec<ChunkSummary>,
 }
 ```
+
+<a name="chunk-chunk-summary"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#chunk-summary`</sub>
 
 ```rust {#chunk-summary}
 #[derive(Debug, Serialize)]
@@ -151,6 +160,8 @@ A path is either a markdown file or a directory to walk. `AGENTS.md` and
 result is sorted by document id so the index is stable across filesystem
 order.
 
+<a name="chunk-build-index"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#build-index`</sub>
+
 ```rust {#build-index}
 pub fn build_index(paths: &[PathBuf], workspace_root: &Path) -> Result<DocIndex> {
     let mut docs = Vec::new();
@@ -194,6 +205,8 @@ coordinates the carried example shows: a `from=` symbol is re-extracted from
 its source file to recover the authoritative body, start line, and span map;
 when re-extraction is unavailable the chunk's own body stands in; an owned
 chunk's text is its combined body, and a media chunk has none.
+
+<a name="chunk-index-file"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#index-file`</sub>
 
 ```rust {#index-file}
 fn index_file(path: &Path, workspace_root: &Path) -> Result<Option<DocEntry>> {
@@ -313,6 +326,8 @@ fn index_file(path: &Path, workspace_root: &Path) -> Result<Option<DocEntry>> {
 `list_symbols` reports 1-based lines against whatever text it is given, so
 handing it the extracted body yields chunk-relative ranges for free.
 
+<a name="chunk-build-span-map"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#build-span-map`</sub>
+
 ```rust {#build-span-map}
 /// Build a chunk-relative symbol-relative span map from an extracted chunk
 /// body. `list_symbols` reports 1-based line numbers against the text it is
@@ -350,6 +365,8 @@ an index over a working corpus needs. The scanner tracks two list contexts,
 followed by dashed values), and leaves the edges context at the first
 non-indented, non-comment key.
 
+<a name="chunk-extract-body-format"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#extract-body-format`</sub>
+
 ```rust {#extract-body-format}
 /// Scan the frontmatter for `body_format:`, defaulting to `"markdown"` when
 /// absent (matches `x0k_folio::colophon::normalize_body_format`).
@@ -377,6 +394,8 @@ fn extract_body_format(content: &str) -> String {
 }
 ```
 
+<a name="chunk-extract-title"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#extract-title`</sub>
+
 ```rust {#extract-title}
 fn extract_title(content: &str) -> String {
     for line in content.lines() {
@@ -388,6 +407,8 @@ fn extract_title(content: &str) -> String {
     String::new()
 }
 ```
+
+<a name="chunk-extract-frontmatter-fields"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#extract-frontmatter-fields`</sub>
 
 ```rust {#extract-frontmatter-fields}
 fn extract_frontmatter_fields(
@@ -484,6 +505,8 @@ fn extract_frontmatter_fields(
 The last test writes a source file and a document into a fresh temp
 directory and asserts the carried example: source coordinates on `verdict`,
 a chunk-relative span map on `shelf`.
+
+<a name="chunk-tests"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -609,6 +632,8 @@ impl Shelf {
 ```
 
 ## The file
+
+<a name="chunk-root"></a><sub>[`src/index.rs`](../../../x0k-tangle/src/index.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [doc-index](#chunk-doc-index) · [chunk-summary](#chunk-chunk-summary) · [build-index](#chunk-build-index) · [index-file](#chunk-index-file) · [build-span-map](#chunk-build-span-map) · [extract-body-format](#chunk-extract-body-format) · [extract-title](#chunk-extract-title) · [extract-frontmatter-fields](#chunk-extract-frontmatter-fields) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

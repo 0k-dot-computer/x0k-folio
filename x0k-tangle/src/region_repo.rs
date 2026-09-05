@@ -70,7 +70,11 @@ use x0k_folio::{EntityId, InlineEntity};
 use crate::faces::proving_chunks;
 use crate::parser::parse_document;
 use crate::pipeline::PipelineRegistry;
-use crate::pipeline_runner::{tangle_document, TangleSidecar};
+use crate::pipeline_runner::{content_hash, tangle_document, TangleSidecar};
+use crate::region_gfm::{
+    relative_link, weave_affordance_section, weave_chapter, AffordanceEvidence, ChapterLinks,
+    ProofEvidence,
+};
 
 const SOFTWARE_MODULE_PREFIX: &str = "x0k:software-module/";
 const ONTOLOGY_MODULE_PREFIX: &str = "x0k:ontology-module/";
@@ -637,7 +641,25 @@ pub fn project_publication_repo_with(
         report.modules_dir = Some(modules_rel.to_string_lossy().to_string());
     }
 
-    let mut path_map = copy_literate_docs(workspace, output_dir, &literate, &mut report)?;
+    // Where the weave may link to: every chapter by its id, every named
+    // document by the reference the publication wrote, every affordance by
+    // its page.
+    let mut uri_to_rel: BTreeMap<String, String> = literate
+        .iter()
+        .map(|d| (d.id.clone(), d.rel.to_string_lossy().to_string()))
+        .collect();
+    for doc in &projected_docs {
+        uri_to_rel.insert(doc.reference.clone(), doc.rel.to_string_lossy().to_string());
+    }
+    for record in &affordances {
+        uri_to_rel.insert(record.id.clone(), record.document.clone());
+    }
+    let affordance_pages: BTreeMap<String, (String, String)> = affordances
+        .iter()
+        .map(|r| (r.id.clone(), (r.title.clone(), r.document.clone())))
+        .collect();
+    let links = ChapterLinks { uri_to_rel: &uri_to_rel, affordances: &affordance_pages };
+    let mut path_map = weave_literate_docs(workspace, output_dir, &literate, &links, &mut report)?;
     write_projected_documents(output_dir, &projected_docs, &mut path_map, &mut report)?;
 
     emit_workspace_manifest(output_dir, &crates, &edition)?;
@@ -648,6 +670,7 @@ pub fn project_publication_repo_with(
     std::fs::write(output_dir.join(".gitignore"), "/target\n**/target\n.direnv/\n")?;
     generate_lockfile(output_dir)?;
     run_proofs(output_dir, &mut affordances, proofs, &mut report)?;
+    weave_affordance_pages(output_dir, &projected_docs, &affordances)?;
     emit_provenance(
         output_dir,
         &env.id,
@@ -1426,10 +1449,13 @@ struct LiterateDoc {
     summary: Option<String>,
     /// The `id:` its envelope declares — how a proof names its chapter.
     id: String,
-    /// The concept pages its envelope `presupposes`, in declaration
-    /// order: what a reader needs before this chapter makes sense, and
-    /// what its contents group *rests on*.
+    /// The concept pages it `presupposes` — a prose link to a wiki page,
+    /// or an envelope edge — in the order met: what a reader needs before
+    /// this chapter makes sense, and what its contents group *rests on*.
     presupposes: Vec<String>,
+    /// The affordances it `realizes` — a prose link to an affordance, or
+    /// an envelope edge — in the order met: what its page lists it under.
+    realizes: Vec<String>,
 }
 
 /// A document's area — the `knowledge/implementation/<area>/` directory it
@@ -1501,12 +1527,17 @@ fn discover_literate_docs(
             continue;
         }
         let rel = entry.path().strip_prefix(workspace).unwrap().to_path_buf();
+        // The edges the chapter declares in its prose, unioned with the
+        // envelope's: a link is the edge, written where the sentence needs
+        // it (`x0k_folio::document_edges`).
+        let edges = x0k_folio::document_edges(&env.edges, body);
         let doc = LiterateDoc {
             title: heading_title(body, &rel),
             crate_name: env.tangle.as_ref().and_then(|t| t.crate_name.clone()),
             summary: env.summary.clone(),
             id: env.id.clone(),
-            presupposes: env.edges.get("presupposes").cloned().unwrap_or_default(),
+            presupposes: edges.get("presupposes").cloned().unwrap_or_default(),
+            realizes: edges.get("realizes").cloned().unwrap_or_default(),
             tangled: false,
             rel,
         };
@@ -1546,34 +1577,42 @@ fn discover_literate_docs(
     Ok(docs)
 }
 
-/// Copy each literate doc (preserving its `knowledge/implementation/<area>/`
-/// path so sidecar output paths stay valid) and, for tangled docs, its
-/// `<stem>.tangle-map.json` sidecar (rewriting the sidecar's absolute `source`
-/// to repo-relative). Returns the published-path → canonical-path map for the
-/// provenance seam.
-fn copy_literate_docs(
+/// Weave each literate doc for the forge and write it at its
+/// `knowledge/implementation/<area>/` path (so sidecar output paths stay
+/// valid), and, for tangled docs, its `<stem>.tangle-map.json` sidecar
+/// re-hashed over the woven text and with its `source` repo-relative.
+/// Returns the published-path → canonical-path map for the provenance seam.
+fn weave_literate_docs(
     workspace: &Path,
     output_dir: &Path,
     docs: &[LiterateDoc],
+    links: &ChapterLinks,
     report: &mut RepoProjectReport,
 ) -> Result<BTreeMap<String, String>> {
     let mut path_map = BTreeMap::new();
     for doc in docs {
         let src = workspace.join(&doc.rel);
         let rel_str = doc.rel.to_string_lossy().to_string();
+        let text = std::fs::read_to_string(&src)
+            .with_context(|| format!("reading literate doc {}", src.display()))?;
+        let krate = if doc.tangled { doc.crate_name.as_deref() } else { None };
+        let woven = weave_chapter(&text, &rel_str, krate, links)
+            .with_context(|| format!("weaving literate doc {}", src.display()))?;
         let dst = output_dir.join(&doc.rel);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(&src, &dst)
-            .with_context(|| format!("copying literate doc {}", src.display()))?;
+        std::fs::write(&dst, &woven)
+            .with_context(|| format!("writing literate doc {}", dst.display()))?;
         report.literate_docs.push(doc.rel.clone());
         path_map.insert(rel_str.clone(), rel_str);
+        tracing::info!(doc = %doc.id, "region_repo.document.woven");
 
-        // Sidecar: <stem>.tangle-map.json next to the doc.
+        // Sidecar: <stem>.tangle-map.json next to the doc, hashed over the
+        // text the projection holds.
         let sidecar = src.with_extension("tangle-map.json");
         if doc.tangled && sidecar.is_file() {
-            copy_sidecar_rewriting_source(&sidecar, workspace, output_dir)?;
+            copy_sidecar_rewriting_source(&sidecar, workspace, output_dir, &content_hash(&woven))?;
         }
     }
     Ok(path_map)
@@ -1590,6 +1629,7 @@ fn copy_sidecar_rewriting_source(
     sidecar: &Path,
     workspace: &Path,
     output_dir: &Path,
+    source_hash: &str,
 ) -> Result<()> {
     let text = std::fs::read_to_string(sidecar)?;
     let mut parsed: TangleSidecar = serde_json::from_str(&text)
@@ -1600,6 +1640,10 @@ fn copy_sidecar_rewriting_source(
     let abs = Path::new(&parsed.source);
     let rel_src = abs.strip_prefix(workspace).unwrap_or(abs);
     parsed.source = rel_src.to_string_lossy().to_string();
+    // The projection holds the woven chapter, and its re-tangle gate
+    // hashes that text; a sidecar carrying the corpus hash would be
+    // stale on the first run.
+    parsed.source_hash = source_hash.to_string();
     let rel = sidecar.strip_prefix(workspace).unwrap();
     let dst = output_dir.join(rel);
     if let Some(parent) = dst.parent() {
@@ -1907,6 +1951,8 @@ struct Proof {
     crate_name: String,
     file: String,
     tests: Vec<String>,
+    /// Each test's source, as the chapter tangles it, aligned with `tests`.
+    sources: Vec<String>,
 }
 
 impl Proof {
@@ -2145,6 +2191,7 @@ fn affordance_records(
                         crate_name: crate_name.to_string(),
                         file: file.to_string_lossy().to_string(),
                         tests: chunk.tests.clone(),
+                        sources: chunk.sources.clone(),
                     },
                 ));
             }
@@ -2175,6 +2222,18 @@ fn affordance_records(
                 if !report.unpublished_proof_targets.contains(&note) {
                     tracing::info!(proof = %note, "region_repo.proof.unpublished_target");
                     report.unpublished_proof_targets.push(note);
+                }
+            }
+        }
+    }
+    // A chapter that says it realizes an affordance is listed under it
+    // first; the chapters holding a signifier for it follow.
+    for doc in literate {
+        for id in &doc.realizes {
+            if let Some(record) = records.iter_mut().find(|r| &r.id == id) {
+                let chapter = (doc.title.clone(), doc.rel.to_string_lossy().to_string());
+                if !record.chapters.contains(&chapter) {
+                    record.chapters.push(chapter);
                 }
             }
         }
@@ -2390,8 +2449,8 @@ fn actor_phrase(kind: &str) -> String {
 /// The lead over the table: one bold phrase and one sentence, so the rows
 /// carry the page.
 const AFFORDANCES_LEAD: &str = "**What it can do.** Each capability is declared once, in the design \
-that owns it, and read back here from that declaration: who it is for, the cue that reaches it, \
-what proves it, and the chapters that present it.";
+that owns it, and has a page projected from that declaration: who it is for, the cues that reach \
+it, the chapters that realize it, and the tests that prove it, bodies and all.";
 
 /// The lead over the chapter groups, and the clause added when any group
 /// has a *rests on* line.
@@ -2402,75 +2461,109 @@ const SHIPS_LEAD_RESTS_ON: &str =
 
 /// The `<picture>` a glyph is shown through: the dark file under the
 /// dark scheme, the light one otherwise, `alt` saying what it means.
-fn glyph_picture(stem: &str, alt: &str, height: u32) -> String {
+fn glyph_picture(dir: &str, stem: &str, alt: &str, height: u32) -> String {
     format!(
         "<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{stem}-dark.svg\">\
          <img alt=\"{alt}\" src=\"{dir}/{stem}-light.svg\" height=\"{height}\"></picture>",
-        dir = AFFORDANCES_DIR,
         alt = xml_escape(alt),
     )
 }
 
-/// The affordance table: the lead, a header, and one row per record in
-/// `publishes` order. Empty when there is no record, so a publication
-/// that names no declaration gets exactly the contents page it always had.
+/// The actor glyph and the status ring for one record, as shown from a
+/// page whose glyph directory is at `dir`.
+fn record_glyphs(rec: &AffordanceRecord, dir: &str) -> String {
+    let status = rec.status();
+    let mut glyph = match glyph_stem(&rec.actors) {
+        Some(stem) => format!("{} ", glyph_picture(dir, stem, &glyph_label(stem), ACTOR_GLYPH_HEIGHT)),
+        None => String::new(),
+    };
+    glyph.push_str(&glyph_picture(dir, &status_glyph_stem(status), status.as_str(), STATUS_GLYPH_HEIGHT));
+    glyph
+}
+
+/// The affordance list: the lead, and one line per record in `publishes`
+/// order — the glyphs, the name linked to its page, who it is for. Every
+/// other thing the record knows is on the page. Empty when there is no
+/// record, so a publication that names no declaration gets exactly the
+/// contents page it always had.
 fn render_affordances(records: &[AffordanceRecord]) -> String {
     if records.is_empty() {
         return String::new();
     }
-    let mut out = format!(
-        "{AFFORDANCES_LEAD}\n\n|  | affordance | for | reachable through | proven by | chapters |\n|---|---|---|---|---|---|\n"
-    );
+    let mut out = format!("{AFFORDANCES_LEAD}\n\n");
     for rec in records {
-        let status = rec.status();
-        let mut glyph = match glyph_stem(&rec.actors) {
-            Some(stem) => format!("{} ", glyph_picture(stem, &glyph_label(stem), ACTOR_GLYPH_HEIGHT)),
-            None => String::new(),
-        };
-        glyph.push_str(&glyph_picture(
-            &status_glyph_stem(status),
-            status.as_str(),
-            STATUS_GLYPH_HEIGHT,
-        ));
-        let proven_by = if rec.proofs.iter().all(|p| p.tests.is_empty()) {
-            "—".to_string()
-        } else {
-            rec.proofs
-                .iter()
-                .flat_map(|p| p.tests.iter().map(move |t| format!("[`{t}`]({})", p.chapter.1)))
-                .collect::<Vec<_>>()
-                .join(" · ")
-        };
         let actors = if rec.actors.is_empty() {
-            "—".to_string()
+            String::new()
         } else {
-            rec.actors.iter().map(|k| actor_phrase(k)).collect::<Vec<_>>().join(", ")
-        };
-        let cues = if rec.surfaces.is_empty() {
-            "—".to_string()
-        } else {
-            rec.surfaces
-                .iter()
-                .map(|(surface, cue)| format!("`{surface}` `{cue}`"))
-                .collect::<Vec<_>>()
-                .join(" · ")
-        };
-        let chapters = if rec.chapters.is_empty() {
-            "—".to_string()
-        } else {
-            rec.chapters
-                .iter()
-                .map(|(title, rel)| format!("[{title}]({rel})"))
-                .collect::<Vec<_>>()
-                .join(", ")
+            format!(
+                " — for {}",
+                rec.actors.iter().map(|k| actor_phrase(k)).collect::<Vec<_>>().join(", ")
+            )
         };
         out.push_str(&format!(
-            "| {glyph} | **[{}]({})** | {actors} | {cues} | {proven_by} | {chapters} |\n",
-            rec.title, rec.document
+            "- {} **[{}]({})**{actors}\n",
+            record_glyphs(rec, AFFORDANCES_DIR),
+            rec.title,
+            rec.document
         ));
     }
     out.push('\n');
     out
+}
+
+/// Write each named document that declares a published affordance again,
+/// with the evidence woven under the declaration
+/// ([`region-gfm.md`](region-gfm.md) § "The affordance's page"). After the
+/// proofs, because what each test did is part of the evidence; the page
+/// was first written with the named documents so a refusal before this
+/// point leaves nothing half-claimed.
+fn weave_affordance_pages(
+    output_dir: &Path,
+    docs: &[ProjectedDoc],
+    records: &[AffordanceRecord],
+) -> Result<()> {
+    for doc in docs {
+        let rel = doc.rel.to_string_lossy().to_string();
+        let evidence: Vec<AffordanceEvidence> = records
+            .iter()
+            .filter(|r| r.document == rel)
+            .map(|r| affordance_evidence(r, &rel))
+            .collect();
+        if evidence.is_empty() {
+            continue;
+        }
+        let woven = weave_affordance_section(&doc.text, &evidence);
+        std::fs::write(output_dir.join(&doc.rel), woven)
+            .with_context(|| format!("writing affordance page {rel}"))?;
+        tracing::info!(document = %rel, affordances = evidence.len(), "region_repo.affordance_page.woven");
+    }
+    Ok(())
+}
+
+/// One record as its page shows it, every link made relative to `page`.
+fn affordance_evidence(rec: &AffordanceRecord, page: &str) -> AffordanceEvidence {
+    let glyph_dir = relative_link(page, AFFORDANCES_DIR);
+    AffordanceEvidence {
+        id: rec.id.clone(),
+        glyphs: record_glyphs(rec, &glyph_dir),
+        status: rec.status().as_str().to_string(),
+        actors: rec.actors.iter().map(|k| actor_phrase(k)).collect::<Vec<_>>().join(", "),
+        cues: rec.surfaces.clone(),
+        chapters: rec.chapters.iter().map(|(t, r)| (t.clone(), relative_link(page, r))).collect(),
+        proofs: rec
+            .proofs
+            .iter()
+            .flat_map(|p| {
+                p.tests.iter().zip(p.sources.iter()).map(move |(test, source)| ProofEvidence {
+                    test: test.clone(),
+                    outcome: rec.outcomes.get(&p.test_id(test)).map(|o| o.as_str().to_string()),
+                    chapter: (p.chapter.0.clone(), relative_link(page, &p.chapter.1)),
+                    chunk: p.chunk.clone(),
+                    source: source.clone(),
+                })
+            })
+            .collect(),
+    }
 }
 
 /// Projection-relative directory the glyphs are written to. Not `docs/`:
@@ -4038,6 +4131,7 @@ mod tests {
             title: title.to_string(),
             summary: summary.map(str::to_string),
             presupposes: Vec::new(),
+            realizes: Vec::new(),
         }
     }
 
@@ -4320,6 +4414,7 @@ mod tests {
             crate_name: "demo-crate".to_string(),
             file: "tests/proof.rs".to_string(),
             tests: tests.iter().map(|t| t.to_string()).collect(),
+            sources: tests.iter().map(|t| format!("#[test]\nfn {t}() {{}}")).collect(),
         };
         AffordanceRecord {
             id: "x0k:affordance/read_a_line".to_string(),

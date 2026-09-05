@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use x0k_folio::colophon::{is_colophon, parse_envelope, Colophon};
+use x0k_folio::colophon::{is_colophon, parse_envelope, Colophon, DocType};
 use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::{
-    check_corpus, check_declarations, declared_facts, extract_from_markdown, CorpusReport,
-    DeclarationReport, InlineEntity,
+    check_corpus, check_declarations, declared_facts, document_edges, extract_from_markdown,
+    CorpusReport, DeclarationReport, InlineEntity,
 };
 
 use crate::parser::{parse_document, ParsedDocument};
@@ -33,6 +33,9 @@ pub struct ProvingChunk {
     pub proves: Vec<String>,
     /// The `#[test]` functions in its bodies, in order.
     pub tests: Vec<String>,
+    /// Each test's source as the chapter tangles it, aligned with
+    /// `tests`: what an affordance's page shows under the test's name.
+    pub sources: Vec<String>,
 }
 
 /// Every chunk of `parsed` carrying `proves=`, in declaration order.
@@ -43,11 +46,13 @@ pub fn proving_chunks(parsed: &ParsedDocument) -> Vec<ProvingChunk> {
             if chunk.proves.is_empty() {
                 continue;
             }
+            let sources = test_fn_sources(&chunk.combined_body());
             out.push(ProvingChunk {
                 chunk: name.clone(),
                 file: chunk.file_target.clone().or_else(|| parsed.tangle_root.clone()),
                 proves: chunk.proves.clone(),
-                tests: test_fn_names(&chunk.combined_body()),
+                tests: sources.iter().map(|(name, _)| name.clone()).collect(),
+                sources: sources.into_iter().map(|(_, source)| source).collect(),
             });
         }
     }
@@ -57,29 +62,46 @@ pub fn proving_chunks(parsed: &ParsedDocument) -> Vec<ProvingChunk> {
 /// The `#[test]` functions in a body: each `fn <name>` after a
 /// `#[test]` line, with any further attributes between them skipped.
 pub fn test_fn_names(body: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut armed = false;
-    for line in body.lines() {
-        let t = line.trim();
-        if t.starts_with("#[test]") {
-            armed = true;
-            continue;
+    test_fn_sources(body).into_iter().map(|(name, _)| name).collect()
+}
+
+/// Each `#[test]` function in a body with its source: the lines from
+/// its `#[test]` to the line before the next, trailing blank lines and
+/// any line closing an enclosing item (indented less than the attribute,
+/// as a `mod tests` brace is) dropped, and the whole dedented to the
+/// margin. A `#[test]` followed by no `fn` names nothing.
+pub fn test_fn_sources(body: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = body.lines().collect();
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.trim().starts_with("#[test]"))
+        .map(|(i, _)| i)
+        .collect();
+    let mut out = Vec::new();
+    for (k, &start) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).copied().unwrap_or(lines.len());
+        let indent = lines[start].len() - lines[start].trim_start().len();
+        let mut span: Vec<&str> = lines[start..end].to_vec();
+        while span.last().is_some_and(|l| l.trim().is_empty() || l.len() - l.trim_start().len() < indent) {
+            span.pop();
         }
-        if !armed || t.starts_with("#[") {
-            continue;
-        }
-        armed = false;
-        if let Some(i) = t.find("fn ") {
-            let name: String = t[i + 3..]
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
-            if !name.is_empty() {
-                names.push(name);
-            }
-        }
+        let name = span.iter().skip(1).map(|l| l.trim()).find(|t| !t.starts_with("#[")).and_then(|t| {
+            let i = t.find("fn ")?;
+            let name: String = t[i + 3..].chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            (!name.is_empty()).then_some(name)
+        });
+        let Some(name) = name else { continue };
+        let source: Vec<String> = span
+            .iter()
+            .map(|l| {
+                let lead = l.len() - l.trim_start().len();
+                l[lead.min(indent)..].to_string()
+            })
+            .collect();
+        out.push((name, source.join("\n")));
     }
-    names
+    out
 }
 
 /// Every `.md` under `paths` whose frontmatter claims folio/v1, sorted.
@@ -159,6 +181,14 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
         let name = path.display().to_string();
         match parse_envelope(&content) {
             Ok((envelope, body)) => {
+                // A chapter's prose link is an edge — `presupposes` to a
+                // wiki page, `realizes` to an affordance — and is checked as
+                // one. The rule is a chapter's; a wiki page or a publication
+                // linking a concept page is linking.
+                let mut envelope = envelope;
+                if matches!(envelope.doc_type, DocType::Implementation) {
+                    envelope.edges = document_edges(&envelope.edges, &body);
+                }
                 // A block the extractor refuses is the `affordances` verb's
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());

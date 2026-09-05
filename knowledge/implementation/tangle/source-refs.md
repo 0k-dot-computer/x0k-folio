@@ -13,13 +13,12 @@ x0k:
     cites:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/chunk
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 # Symbol extraction for `from=` chunks
 
 A `from=` chunk is the inverse of a tangle output: instead of the
-document owning code that becomes a source file, the document
+document owning code that becomes a source file, the [literate
+document](../../wiki/literate-programming.md "x0k:wiki/literate-programming")
 *references* code that already lives in a source file. The fence
 declares "fill this block with the body of `Type::method` from
 `crate/src/file.rs`," and on sync, the toolchain extracts the
@@ -36,6 +35,8 @@ to enumerate symbols in a file for navigation panels.
 
 ## Imports
 
+<a name="chunk-imports"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#imports`</sub>
+
 ```rust {#imports}
 use anyhow::{bail, Result};
 use tree_sitter::{Node, Parser};
@@ -47,6 +48,8 @@ use tree_sitter::{Node, Parser};
 name (the leaf identifier — `arc`, `Canvas2DState`, `helper`), the
 extracted body text, line bounds (1-indexed for editor-friendly
 diagnostics), and byte bounds (for precise stitch-back).
+
+<a name="chunk-symbol-span"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#symbol-span`</sub>
 
 ```rust {#symbol-span}
 #[derive(Debug, Clone)]
@@ -72,6 +75,8 @@ symbol matching `symbol_path` (split on `::`), and returns one
   matching impl block and continues descent.
 - For a module-qualified path (`tests::test_it`), the walker enters
   the module body.
+
+<a name="chunk-extract-symbol"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#extract-symbol`</sub>
 
 ```rust {#extract-symbol}
 pub fn extract_symbol(source: &str, symbol_path: &str) -> Result<SymbolSpan> {
@@ -119,6 +124,8 @@ qualified by its containing impl / module. The doc-browser's symbol
 navigation panel consumes this; literate authors can also use it as a
 sanity check ("did the tangle hit the symbols I expected?").
 
+<a name="chunk-list-symbols"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#list-symbols`</sub>
+
 ```rust {#list-symbols}
 pub fn list_symbols(source: &str) -> Result<Vec<SymbolSpan>> {
     let mut parser = Parser::new();
@@ -142,6 +149,8 @@ pub fn list_symbols(source: &str) -> Result<Vec<SymbolSpan>> {
 `node_text` slices the source by the node's byte range — tree-sitter
 gives us byte positions, the source string is in-memory, so the body
 extraction is one slice.
+
+<a name="chunk-tree-helpers"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#tree-helpers`</sub>
 
 ```rust {#tree-helpers}
 fn node_text<'a>(node: Node, source: &'a str) -> &'a str {
@@ -203,6 +212,8 @@ trait *for* it.
   we're NOT at the final depth, descend into the impl body.
 - For module items whose name matches the target name and we're NOT
   at the final depth, descend into the module body.
+
+<a name="chunk-walk-matching"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#walk-matching`</sub>
 
 ```rust {#walk-matching}
 fn collect_matching_symbols(
@@ -285,6 +296,8 @@ but accumulates every leaf into a flat vec with its fully-qualified
 name (path components joined by `::`). Impl blocks contribute their
 receiver type to the prefix; module blocks contribute their name.
 
+<a name="chunk-walk-all"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#walk-all`</sub>
+
 ```rust {#walk-all}
 fn collect_all_symbols(
     node: Node,
@@ -343,6 +356,8 @@ with three methods, a `Default` impl, a free function, and a
 `#[cfg(test)] mod tests`. The cases exercise: top-level item lookup
 (enum + struct + function), nested method lookup, missing-symbol
 errors, and full-list enumeration.
+
+<a name="chunk-tests"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
@@ -441,6 +456,8 @@ mod tests {
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/source_ref.rs`](../../../x0k-tangle/src/source_ref.rs) · `#root` · assembles [imports](#chunk-imports) · [symbol-span](#chunk-symbol-span) · [extract-symbol](#chunk-extract-symbol) · [list-symbols](#chunk-list-symbols) · [tree-helpers](#chunk-tree-helpers) · [walk-matching](#chunk-walk-matching) · [walk-all](#chunk-walk-all) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>

@@ -14,14 +14,12 @@ x0k:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/parsing
       - x0k:implementation/tangle/chunk
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 # Weaving literate documents into HTML
 
 If tangle is the path from `.md` to `.rs`, *weave* is the path from
-`.md` to a browsable page. The two operations consume the same parsed
-document — the same chunk graph, the same frontmatter, the same
+`.md` to a browsable page. The two [literate](../../wiki/literate-programming.md "x0k:wiki/literate-programming") operations consume the
+same parsed document — the same chunk graph, the same frontmatter, the same
 `<<refs>>` — and produce different output channels. The compiler
 reads tangle's output; humans (and the doc-browser, and now you)
 read weave's.
@@ -46,6 +44,8 @@ span in a `<span>`, so the emitted HTML carries semantic classes the
 stylesheet (and 0k.computer) colour. Native and web share one tokenizer;
 only the last inch — colour vs. class — differs.
 
+<a name="chunk-imports"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#imports`</sub>
+
 ```rust {#imports}
 use crate::parser::{parse_info_string, ParsedDocument};
 use anyhow::Result;
@@ -69,7 +69,7 @@ body.
 
 `weave_html` is the entry point, and the library face of weaving: a
 consumer holding the published crate reaches the affordance of
-rendering a document as its woven page through this function's
+[rendering a document as its woven page](../../../decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md "x0k:affordance/weave_a_document") through this function's
 rustdoc, which is the cue the signifier below records.
 
 ```yaml x0k:signifier
@@ -91,6 +91,8 @@ The render pass walks the pulldown-cmark event stream and dispatches:
 code blocks go to `render_code_block` (which knows about chunk
 headers, language tabs, media embeds, and the `x0k:params` block);
 everything else flows through plain HTML emission.
+
+<a name="chunk-weave-html-fn"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#weave-html-fn`</sub>
 
 ```rust {#weave-html-fn}
 pub fn weave_html(content: &str, doc: &ParsedDocument) -> Result<WeaveOutput> {
@@ -472,6 +474,8 @@ tells us what kind of block this is:
 - has `#name`, single-language → chunk-headed `<pre><code>` block
 - anonymous → plain `<pre><code>` (no header, no chunk affordances)
 
+<a name="chunk-render-code-block-fn"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#render-code-block-fn`</sub>
+
 ```rust {#render-code-block-fn}
 fn render_code_block(
     html: &mut String,
@@ -626,6 +630,8 @@ loaded script because the weave output is meant to be self-contained
 HTML — a single file you can drop on any host. The closure is mildly
 ugly but it works in every browser without any framework.
 
+<a name="chunk-render-tabbed-chunk-fn"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#render-tabbed-chunk-fn`</sub>
+
 ```rust {#render-tabbed-chunk-fn}
 fn render_tabbed_chunk(
     html: &mut String,
@@ -727,6 +733,8 @@ fn render_tabbed_chunk(
 }
 ```
 
+<a name="chunk-capitalize-lang-fn"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#capitalize-lang-fn`</sub>
+
 ```rust {#capitalize-lang-fn}
 /// Capitalize a language identifier for display in tabs.
 fn capitalize_lang(lang: &str) -> String {
@@ -770,6 +778,8 @@ An escaped ref line, `<<!ref>>` ([`resolution.md`](resolution.md)),
 renders as the same literal text the tangler emits — `<<ref>>` under
 its indent — with no anchor: the page shows what the output will
 hold, and there is nothing to navigate to.
+
+<a name="chunk-render-code-with-refs-fn"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#render-code-with-refs-fn`</sub>
 
 ```rust {#render-code-with-refs-fn}
 /// A maximal sequence of consecutive `Comment` tokens separated only by
@@ -1512,6 +1522,8 @@ class="param-panel-data" data-params="...">` element with the params
 serialized as JSON. The doc-browser's parameter-panel component
 reads the JSON and builds the interactive control surface.
 
+<a name="chunk-render-param-panel-fn"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#render-param-panel-fn`</sub>
+
 ```rust {#render-param-panel-fn}
 /// Render a `x0k:params` block as a hidden data div that the doc browser
 /// reads to build the interactive parameter panel.
@@ -1646,6 +1658,8 @@ pulldown-cmark levels to HTML tag names. `escape_html` is the
 standard four-replace HTML entity escape. `split_body` is a copy of
 the frontmatter splitter — duplicated rather than shared to keep
 weave's only-dep on `parser` to the chunk-shape side.
+
+<a name="chunk-small-helpers"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#small-helpers`</sub>
 
 ```rust {#small-helpers}
 fn extract_ref_from_info(info: &str) -> Option<String> {
@@ -1793,6 +1807,8 @@ serif body, monospace code, accent blue for chunk names and links.
 The CSS variables make it cheap to fork for a different theme; the
 class names are stable so the doc-browser's per-page lensing can
 target them.
+
+<a name="chunk-stylesheet"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#stylesheet`</sub>
 
 ```rust {#stylesheet}
 const STYLESHEET: &str = r#"
@@ -2146,6 +2162,8 @@ data div instead of a code block). One final test checks the onclick
 attribute is present — the doc-browser injects the rendered HTML via
 innerHTML, and an event listener bound at registration time would
 fail; the inline onclick is the cheapest portable solution.
+
+<a name="chunk-tests"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#tests` · proves [Read a document as the woven artifact](../../../decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)</sub>
 
 `````rust {#tests proves="x0k:affordance/weave_a_document"}
 #[cfg(test)]
@@ -2671,6 +2689,8 @@ second
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/weave.rs`](../../../x0k-tangle/src/weave.rs) · `#root` · assembles [imports](#chunk-imports) · [weave-html-fn](#chunk-weave-html-fn) · [render-code-block-fn](#chunk-render-code-block-fn) · [render-tabbed-chunk-fn](#chunk-render-tabbed-chunk-fn) · [capitalize-lang-fn](#chunk-capitalize-lang-fn) · [render-code-with-refs-fn](#chunk-render-code-with-refs-fn) · [render-param-panel-fn](#chunk-render-param-panel-fn) · [small-helpers](#chunk-small-helpers) · [stylesheet](#chunk-stylesheet) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>

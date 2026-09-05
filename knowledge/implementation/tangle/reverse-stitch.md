@@ -15,8 +15,6 @@ x0k:
     cites:
       - x0k:implementation/tangle/source-sync
       - x0k:implementation/tangle/identity-pipeline
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 
 # Reading an edited output back through the sidecar
@@ -25,7 +23,8 @@ When someone edits a generated `.rs` file directly — against the rule, but
 it happens — the tangle map sidecar still knows which output lines came from
 which chunk. Stitching uses that map to lift each chunk's current output
 lines back into a patch against the document's source lines, so the edit can
-be carried into the literate source instead of being overwritten by the
+be carried into the [literate source](../../wiki/literate-programming.md "x0k:wiki/literate-programming") instead
+of being overwritten by the
 next tangle. It is the sidecar-driven complement to
 `x0k:implementation/tangle/source-sync`, which pulls bodies from *named
 symbols* rather than from line ranges.
@@ -34,6 +33,8 @@ Nothing in the tree calls `stitch` today; the module is exported and tested
 but unwired. The edit-generated-files rule is enforced by convention and by
 the drift gate rather than by this path, and the sidecar's line ranges are
 the only place the reverse mapping exists.
+
+<a name="chunk-module-doc"></a><sub>[`src/stitch.rs`](../../../x0k-tangle/src/stitch.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 use anyhow::Result;
@@ -47,6 +48,8 @@ The sidecar shape stitching reads is the line-range map: per chunk, the
 output lines it produced and the document lines it came from, under the
 source path and the two content hashes. This is the only reader of that
 shape, so the types live here with it.
+
+<a name="chunk-tangle-map"></a><sub>[`src/stitch.rs`](../../../x0k-tangle/src/stitch.rs) · `#tangle-map`</sub>
 
 ```rust {#tangle-map}
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,6 +72,8 @@ pub struct TangleMapEntry {
 
 A patch names a chunk, carries the body the output currently holds, and the
 document line range the sidecar recorded for that chunk.
+
+<a name="chunk-stitch-patch"></a><sub>[`src/stitch.rs`](../../../x0k-tangle/src/stitch.rs) · `#stitch-patch`</sub>
 
 ```rust {#stitch-patch}
 pub struct StitchPatch {
@@ -97,6 +102,8 @@ scanner leaves alone ([`chunk-refs.md`](chunk-refs.md)). The markdown
 content is read for that check and nothing else; the sidecar's
 `source_lines` are the fence line (1-indexed) and the line after the last
 body line, so the body is the half-open range between them.
+
+<a name="chunk-stitch"></a><sub>[`src/stitch.rs`](../../../x0k-tangle/src/stitch.rs) · `#stitch`</sub>
 
 ```rust {#stitch}
 pub fn stitch(
@@ -175,6 +182,8 @@ old body is skipped through to the recorded end. The oddly indented comment
 inside the loop is a formatter artifact carried verbatim: this module is
 projected byte-for-byte, so the chunk layout is the canonical formatting.
 
+<a name="chunk-apply-patches"></a><sub>[`src/stitch.rs`](../../../x0k-tangle/src/stitch.rs) · `#apply-patches`</sub>
+
 ```rust {#apply-patches}
 pub fn apply_patches(md_content: &str, patches: &[StitchPatch]) -> Result<String> {
     let md_lines: Vec<&str> = md_content.lines().collect();
@@ -221,6 +230,8 @@ The round-trip case pins the escape: a document whose chunk holds
 back yields `<<!greet>>` again, and applying the patch reproduces the
 document. A bare `<<greet>>` that the document already holds (inside a
 string literal, say) lifts as itself.
+
+<a name="chunk-tests"></a><sub>[`src/stitch.rs`](../../../x0k-tangle/src/stitch.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -272,6 +283,8 @@ mod tests {
 ```
 
 ## The file
+
+<a name="chunk-root"></a><sub>[`src/stitch.rs`](../../../x0k-tangle/src/stitch.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [tangle-map](#chunk-tangle-map) · [stitch-patch](#chunk-stitch-patch) · [stitch](#chunk-stitch) · [apply-patches](#chunk-apply-patches) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

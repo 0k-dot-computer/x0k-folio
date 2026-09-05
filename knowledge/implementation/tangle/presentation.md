@@ -47,6 +47,8 @@ from disk. The render-vello wasm is a prebuilt binary the I/O layer
 arrives as bytes the I/O layer read from a sidecar, or is stubbed. That
 split is what lets the shell be unit-tested by weaving two strings.
 
+<a name="chunk-module-doc"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Publication shell: turn a woven region into a **self-booting publication
 //! artifact**.
@@ -92,6 +94,8 @@ tested for what it promises structurally; a canvas artifact is not
 something this repository can produce on its own, and the fallback
 `pages/` weave, which needs none of that, is what a reader can build.
 
+<a name="chunk-shell-assets"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#shell-assets`</sub>
+
 ```rust {#shell-assets}
 /// The render-vello canvas shell (root `index.html`). Boots [`BOOT_JS`], detects
 /// missing WebGPU and falls back to `pages/index.html`.
@@ -133,6 +137,8 @@ bundles for embed-less regions. `members.json` and `narrative.json` follow,
 then the shell itself with the publication's title and a member/facet count
 substituted for the template's placeholders. The entry point becomes the
 shell.
+
+<a name="chunk-apply-publication-shell"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#apply-publication-shell`</sub>
 
 ```rust {#apply-publication-shell}
 /// Wrap a woven [`RegionWeaveOutput`] into the self-booting presentation layout:
@@ -245,6 +251,8 @@ pub fn apply_publication_shell(
 }
 ```
 
+<a name="chunk-escape-html-text"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#escape-html-text`</sub>
+
 ```rust {#escape-html-text}
 /// Minimal text-node escaping for values substituted into the shell template.
 fn escape_html_text(s: &str) -> String {
@@ -259,6 +267,8 @@ fn escape_html_text(s: &str) -> String {
 The loader tag points one level up, because pages live under `pages/` and
 the loader resolves its other assets relative to itself. Both injections
 are idempotent so a page shelled twice is unchanged.
+
+<a name="chunk-motif-loader"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#motif-loader`</sub>
 
 ```rust {#motif-loader}
 /// The `<script>` that boots the motif loader on a fallback page. Pages live
@@ -286,6 +296,8 @@ fn inject_motif_loader(html: &str) -> String {
 
 The palette mirrors `boot.js`'s `THREAD_COLORS` by hand; the two are kept
 in step by reading, not by a shared source.
+
+<a name="chunk-thread-hex"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#thread-hex`</sub>
 
 ```rust {#thread-hex}
 /// The eight-thread hue palette (mirrors `boot.js` `THREAD_COLORS`). The woven
@@ -316,6 +328,8 @@ The theme is injected as a scoped `<style>` before `</head>` rather than by
 editing the global weave stylesheet, which every officina page shares. Only
 the tokens and the few elements the global sheet sets by literal color are
 restated; everything else inherits through the CSS variables.
+
+<a name="chunk-publication-theme"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#publication-theme`</sub>
 
 ```rust {#publication-theme}
 /// Inject the publication theme (atlas-essay register) as a scoped `<style>`
@@ -366,6 +380,8 @@ fn inject_publication_theme(html: &str, thread: Option<&str>) -> String {
 }
 ```
 
+<a name="chunk-fallback-paths"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#fallback-paths`</sub>
+
 ```rust {#fallback-paths}
 /// The woven semantic entry page's path after the shell is applied
 /// (`pages/index.html`) — the no-WebGPU fallback target.
@@ -384,6 +400,8 @@ fn is_html(p: &Path) -> bool {
 per member without shipping the full pages twice. The stub narrative has
 zero stations, which the boot shell renders as the atlas with the launcher
 inert.
+
+<a name="chunk-members-json"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#members-json`</sub>
 
 ```rust {#members-json}
 /// Build `members.json`: `{ "members": { "<uri>": {title, summary, body} } }`.
@@ -409,6 +427,8 @@ pub fn build_members_json(input: &RegionInput) -> Vec<u8> {
 }
 ```
 
+<a name="chunk-stub-narrative"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#stub-narrative`</sub>
+
 ```rust {#stub-narrative}
 /// A minimal valid `narrative.json` for publications without a sidecar trail:
 /// zero stations (the boot shell renders the atlas with the launcher inert).
@@ -432,6 +452,8 @@ a dozen lines, each tolerates slightly different input (this one accepts a
 BOM and CRLF envelopes), and the duplication is named rather than resolved
 so the byte-for-byte projection of this module stays honest.
 
+<a name="chunk-split-frontmatter"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#split-frontmatter`</sub>
+
 ```rust {#split-frontmatter}
 /// Split a folio/v1 document into `(frontmatter, body)`. If the leading
 /// `---`-delimited envelope is absent, frontmatter is empty and the whole input
@@ -454,6 +476,8 @@ fn split_frontmatter(content: &str) -> (&str, &str) {
 }
 ```
 
+<a name="chunk-frontmatter-field"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#frontmatter-field`</sub>
+
 ```rust {#frontmatter-field}
 /// Pull a top-level scalar `key: value` from a frontmatter block (cheap line
 /// scan; only matches keys indented two spaces under the `x0k:` envelope, which
@@ -472,6 +496,8 @@ fn frontmatter_field(front: &str, key: &str) -> Option<String> {
     None
 }
 ```
+
+<a name="chunk-first-h1"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#first-h1`</sub>
 
 ```rust {#first-h1}
 /// Extract the first markdown `# ` heading from a doc (cheap line scan).
@@ -493,6 +519,8 @@ headings (the title and summary already carry the framing), fenced code,
 and blank-line noise, joins lines within a paragraph, and caps at
 `BODY_EXCERPT_MAX` characters, cutting back to a paragraph or sentence
 boundary when one exists under the cap.
+
+<a name="chunk-body-excerpt"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#body-excerpt`</sub>
 
 ```rust {#body-excerpt}
 /// Maximum body-excerpt length (chars) bundled per member for the deep-doc
@@ -566,6 +594,8 @@ narrow thing: no `__C0K_PUB_` token survives anywhere in the emitted shell,
 the entry member's title is what replaced the title hole, and a title
 carrying markup is escaped on the way in rather than reopening the template
 as an injection point.
+
+<a name="chunk-tests"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -750,6 +780,8 @@ mod tests {
 ```
 
 ## The file
+
+<a name="chunk-root"></a><sub>[`src/presentation.rs`](../../../x0k-tangle/src/presentation.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [shell-assets](#chunk-shell-assets) · [apply-publication-shell](#chunk-apply-publication-shell) · [escape-html-text](#chunk-escape-html-text) · [motif-loader](#chunk-motif-loader) · [thread-hex](#chunk-thread-hex) · [publication-theme](#chunk-publication-theme) · [fallback-paths](#chunk-fallback-paths) · [members-json](#chunk-members-json) · [stub-narrative](#chunk-stub-narrative) · [split-frontmatter](#chunk-split-frontmatter) · [frontmatter-field](#chunk-frontmatter-field) · [first-h1](#chunk-first-h1) · [body-excerpt](#chunk-body-excerpt) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

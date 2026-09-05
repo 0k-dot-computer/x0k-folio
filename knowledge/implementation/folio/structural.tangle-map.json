@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/folio/structural.md",
-  "source_hash": "9f9cc4ea09c8c864",
+  "source_hash": "26d44cc4070ef254",
   "pipelines": [
     {
       "kind": "identity-tangle",

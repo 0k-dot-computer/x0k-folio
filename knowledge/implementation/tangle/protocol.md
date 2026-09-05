@@ -20,13 +20,11 @@ x0k:
     realizes:
       - x0k:design/literate-programming
       - x0k:design/literate-pipelines
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 # The Tangle Protocol
 
-`x0k-tangle` is the substrate that makes literate programming real in
-x0k. A literate document is markdown with named code chunks; the
+`x0k-tangle` is the substrate that makes [literate
+programming](../../wiki/literate-programming.md "x0k:wiki/literate-programming") real in x0k. A literate document is markdown with named code chunks; the
 tangler extracts those chunks and writes source files; an orthogonal
 pipeline mechanism lets external codegens — theme tokens, service
 adapters, future things we haven't invented yet — ride the same

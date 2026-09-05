@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/parsing.md",
-  "source_hash": "09c4448b1a9afc59",
+  "source_hash": "1ff5316a0532a1f3",
   "pipelines": [
     {
       "kind": "identity-tangle",

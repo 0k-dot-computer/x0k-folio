@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/multi-doc-resolve.md",
-  "source_hash": "5b0ec171f37aa98c",
+  "source_hash": "a74c7ac8f10f1574",
   "pipelines": [
     {
       "kind": "identity-tangle",

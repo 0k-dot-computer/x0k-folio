@@ -65,6 +65,8 @@ the substrate's edges, not pure logic a cell could host. Per the
 residency test, a module in the plain `x0k-tangle` crate (beside the
 projector it drives) is the right home.
 
+<a name="chunk-module-doc"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Publish pipeline for a projected repository — project, prove,
 //! rehearse, and (operator-only, behind `really`) publish.
@@ -87,6 +89,8 @@ use x0k_folio::colophon::parse_envelope;
 ```
 
 ## Options and report
+
+<a name="chunk-options-and-report"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#options-and-report`</sub>
 
 ```rust {#options-and-report}
 /// Options for a publish-repo run.
@@ -151,6 +155,8 @@ fails guards never builds, a build that fails never rehearses, and the
 rehearsal happens even when `really` is set — a real publish with a
 failing dry-run behind it is exactly the accident the rehearsal exists
 to prevent.
+
+<a name="chunk-publish-repo"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#publish-repo` · assembles [really-publish](#chunk-really-publish)</sub>
 
 ```rust {#publish-repo}
 /// Run the publish pipeline for the publication doc at `region_doc`,
@@ -236,6 +242,8 @@ refuses to start unless every rehearsal passed, and the push goes to
 the configured remote exactly as `git push <url> HEAD:main` — nothing
 forge-specific beyond a URL.
 
+<a name="chunk-really-publish"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#really-publish`</sub>
+
 ```rust {#really-publish}
 if !report.rehearsal.as_ref().is_some_and(|r| r.ok) {
     bail!("refusing --really publish: the dry-run rehearsal did not pass");
@@ -269,6 +277,8 @@ path deps (Kahn's algorithm, ties broken alphabetically for
 determinism). Computing it from the vendored manifests rather than
 hard-coding the current four names means a future publication with a
 different membership publishes correctly with no code change.
+
+<a name="chunk-publish-order"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#publish-order`</sub>
 
 ```rust {#publish-order}
 /// Topological publish order (dependencies first) over the projected
@@ -331,6 +341,8 @@ target dir, capturing output and returning success plus a bounded tail
 — the caller's report stays readable while the full output remains on
 the process's stderr for anyone watching the run live.
 
+<a name="chunk-cargo-in"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#cargo-in`</sub>
+
 ```rust {#cargo-in}
 /// Run `cargo <args>` in `dir` with a private CARGO_TARGET_DIR. Returns
 /// `(success, tail-of-combined-output)`.
@@ -368,6 +380,8 @@ github = "git@github.com:0k-dot-computer/x0k-folio.git"
 The split keeps the publication doc forge-light: the doc commits to *a
 surface*, the config owns the concrete URL, and moving forges is a
 config edit that touches no decision document.
+
+<a name="chunk-resolve-remote"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#resolve-remote`</sub>
 
 ```rust {#resolve-remote}
 /// Resolve the publication's `publishedOn:` surface to a configured git
@@ -412,6 +426,8 @@ The unit-testable pieces are the order computation and the remote
 resolution; the pipeline's cargo stages are exercised by the
 publication e2e (`tests/integration/tests/publication_publishing_e2e.rs`),
 which owns a real projected workspace.
+
+<a name="chunk-tests"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -490,6 +506,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/publish_repo.rs`](../../../x0k-tangle/src/publish_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [options-and-report](#chunk-options-and-report) · [publish-repo](#chunk-publish-repo) · [publish-order](#chunk-publish-order) · [cargo-in](#chunk-cargo-in) · [resolve-remote](#chunk-resolve-remote) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

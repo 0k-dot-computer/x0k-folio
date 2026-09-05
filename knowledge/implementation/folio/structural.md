@@ -58,6 +58,8 @@ point of opening the document. The `Container` and `Raw` variants are
 the third way: keep the wrapper as a node, carry its tag and attributes
 opaquely, keep the children individually editable.
 
+<a name="chunk-module-doc"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Canonical structural block tree.
 //!
@@ -107,6 +109,8 @@ use std::hash::Hasher;
 A parsed document is just the block sequence. Frontmatter never enters —
 the loader strips the envelope (see [`colophon.md`](colophon.md)) before
 the body reaches any parser, so the structural tree has exactly one job.
+
+<a name="chunk-structural-doc"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#structural-doc`</sub>
 
 ```rust {#structural-doc}
 /// A parsed document as a sequence of structural blocks.
@@ -160,6 +164,8 @@ The escape is spent on the accessor rather than on a flag beside it.
 escape cannot act on one by forgetting to check. Only the two callers
 that must see the marker *as written* — the info-string reconstruction
 and the HTML attribute — reach for `x0k_marker()`, which keeps the `!`.
+
+<a name="chunk-fence-info"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#fence-info`</sub>
 
 ```rust {#fence-info}
 /// Parsed folio fence metadata shared by the markdown and HTML projections.
@@ -311,6 +317,8 @@ the residue of a real failure mode:
   [`transclusion.md`](transclusion.md)).
 - `Table` — GFM tables, cells carrying the same inline vocabulary as a
   paragraph.
+
+<a name="chunk-structural-block"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#structural-block`</sub>
 
 ```rust {#structural-block}
 /// Block-level structure: the syntactic skeleton of a document.
@@ -483,6 +491,8 @@ strikethrough (parsed but rendered as plain text in the tree). The comment
 names them rather than hiding them; each is an isomorphism gap a future
 variant closes.
 
+<a name="chunk-inline-span"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#inline-span`</sub>
+
 ```rust {#inline-span}
 /// Inline-level span: leaves of the structural tree inside a
 /// `Heading` or `Paragraph`'s `content`.
@@ -560,6 +570,8 @@ sensitivity, by design, where the underwriting key — the stability key
 a human's acceptance of a block locks to, minted in
 [`segmentation.md`](segmentation.md) — wants maximum stability.
 
+<a name="chunk-block-id"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#block-id`</sub>
+
 ```rust {#block-id}
 // ============================================================================
 // IDs
@@ -587,6 +599,8 @@ sibling position, position last, so two identical paragraphs at
 different positions cannot collide. Zero is rewritten to one on the
 astronomically unlikely hash collision, because the type promises the
 `UNSET` sentinel is never allocated:
+
+<a name="chunk-allocator"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#allocator`</sub>
 
 ```rust {#allocator}
 /// Allocates `BlockId`s during a parser pass. Folds a content seed
@@ -633,6 +647,8 @@ fast, non-cryptographic — and `DefaultHasher` is explicitly *not* stable
 across compiler versions, which disqualifies it for an id we want to
 survive cargo rebuilds. Fifteen lines of arithmetic beats a dependency:
 
+<a name="chunk-fnv"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#fnv`</sub>
+
 ```rust {#fnv}
 // ============================================================================
 // FNV-1a (64-bit) — no external dep
@@ -678,6 +694,8 @@ The tests pin the allocator's contract (deterministic, position-
 sensitive, never `UNSET`), the id getter across variants, and the
 `FenceInfo` normalization in both directions — raw info string and
 decomposed HTML parts converging on one canonical form.
+
+<a name="chunk-tests"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#tests`</sub>
 
 ```rust {#tests}
 // ============================================================================
@@ -793,6 +811,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/structural_block.rs`](../../../x0k-folio/src/structural_block.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [structural-doc](#chunk-structural-doc) · [fence-info](#chunk-fence-info) · [structural-block](#chunk-structural-block) · [inline-span](#chunk-inline-span) · [block-id](#chunk-block-id) · [allocator](#chunk-allocator) · [fnv](#chunk-fnv) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

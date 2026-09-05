@@ -16,13 +16,12 @@ x0k:
       - x0k:implementation/tangle/source-refs
       - x0k:implementation/tangle/parsing
       - x0k:implementation/tangle/reverse-stitch
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 
 # Pulling code back into the document
 
-Tangling flows one way: chunks in a document become a source file. Two
+Tangling flows one way: chunks in a [literate
+document](../../wiki/literate-programming.md "x0k:wiki/literate-programming") become a source file. Two
 situations need the other direction. A document that *references* a symbol
 in existing hand-written source — a chunk carrying `from="…" symbol="…"` and
 an empty body — wants that body filled in from the file, so the prose can
@@ -36,12 +35,16 @@ programmatic write-back.
 
 The carried example is a document with
 
+<a name="chunk-my-fn"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#my-fn`</sub>
+
     ```rust {#my-fn from="test.rs" symbol="my_fn"}
     ```
 
 Syncing it reads `test.rs`, extracts the span of `my_fn` with the
 source-refs extractor, and rewrites the document so the fence encloses that
 body. Running it again replaces the body with whatever `my_fn` is now.
+
+<a name="chunk-module-doc"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 use crate::parser::{parse_document, ParsedDocument};
@@ -59,6 +62,8 @@ or an unextractable symbol is an error against that chunk, and the rest of
 the document still syncs. The document is rewritten only when at least one
 patch exists.
 
+<a name="chunk-sync-result"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#sync-result`</sub>
+
 ```rust {#sync-result}
 pub struct SyncResult {
     pub doc_path: PathBuf,
@@ -67,6 +72,8 @@ pub struct SyncResult {
     pub errors: Vec<String>,
 }
 ```
+
+<a name="chunk-sync-document"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#sync-document`</sub>
 
 ```rust {#sync-document}
 pub fn sync_document(doc_path: &Path, workspace_root: &Path) -> Result<SyncResult> {
@@ -150,12 +157,16 @@ and emits the closing fence. The parsed document is threaded through but
 unused — the walk locates fences by re-parsing info strings, so it is
 self-sufficient.
 
+<a name="chunk-from-patch"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#from-patch`</sub>
+
 ```rust {#from-patch}
 struct FromPatch {
     chunk_name: String,
     new_body: String,
 }
 ```
+
+<a name="chunk-apply-from-patches"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#apply-from-patches`</sub>
 
 ```rust {#apply-from-patches}
 fn apply_from_patches(
@@ -219,6 +230,8 @@ multi-body chunks are append-composed by tangling, and programmatic
 write-back targets single-body artifact chunks. A trailing newline is
 preserved, because `lines()` drops it and a document that lost one on every
 save would churn.
+
+<a name="chunk-replace-chunk-body"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#replace-chunk-body`</sub>
 
 ```rust {#replace-chunk-body}
 /// Replace the body of one named fenced chunk in a literate document,
@@ -286,6 +299,8 @@ pub fn replace_chunk_body(md: &str, chunk_name: &str, new_body: &str) -> Result<
 
 ## Tests
 
+<a name="chunk-tests"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#tests`</sub>
+
 `````rust {#tests}
 #[cfg(test)]
 mod tests {
@@ -343,6 +358,8 @@ fn old_version() {}
 `````
 
 ## The file
+
+<a name="chunk-root"></a><sub>[`src/sync.rs`](../../../x0k-tangle/src/sync.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [sync-result](#chunk-sync-result) · [sync-document](#chunk-sync-document) · [from-patch](#chunk-from-patch) · [apply-from-patches](#chunk-apply-from-patches) · [replace-chunk-body](#chunk-replace-chunk-body) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

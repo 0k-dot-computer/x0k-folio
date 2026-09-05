@@ -17,14 +17,12 @@ x0k:
       - x0k:implementation/tangle/atlas
       - x0k:implementation/tangle/presentation
       - x0k:implementation/folio/transclusion
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 
 # Region weave: many documents, one artifact, no I/O
 
-The single-document weaver turns one literate doc into one standalone HTML
-page. A publication is many documents that link to each other, and a reader
+The single-document weaver turns one [literate
+doc](../../wiki/literate-programming.md "x0k:wiki/literate-programming") into one standalone HTML page. A publication is many documents that link to each other, and a reader
 who lands on one needs to reach the rest. This chapter is the layer between
 those two facts: it takes a **region** — an ordered set of members plus an
 entry point — weaves each member with the existing weaver, and then rewrites
@@ -36,6 +34,8 @@ cross-document links, the site nav, the URI-to-file map, the atlas — is
 computed over its output and its input. The function reads no files and
 writes none; the caller hands it content and receives bytes. That is what
 makes every rule in this chapter unit-testable with strings.
+
+<a name="chunk-module-doc"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 //! Region projection — the pure weave of a publication region.
@@ -71,6 +71,8 @@ makes every rule in this chapter unit-testable with strings.
 //! projection unit-testable and decoupled from the corpus's file layout.
 ```
 
+<a name="chunk-uses"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#uses`</sub>
+
 ```rust {#uses}
 use crate::parser::parse_document;
 use crate::weave::weave_html;
@@ -94,6 +96,8 @@ marked. Every mechanism below is one step of that transformation.
 A member is a URI, the path its content came from, and the content itself.
 The path is carried so that links authored as relative `.md` paths can be
 resolved too, but the weaver never opens it.
+
+<a name="chunk-region-member"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#region-member`</sub>
 
 ```rust {#region-member}
 /// One member of a region as handed to [`weave_region`]: its entity URI and the
@@ -130,6 +134,8 @@ links that looked cross-document but matched no member, media refs that have
 no live substrate in a static artifact, and transclusions that degraded to a
 link.
 
+<a name="chunk-artifact-file"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#artifact-file`</sub>
+
 ```rust {#artifact-file}
 /// One file in the projected artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +158,8 @@ pub struct UnresolvedLink {
     pub href: String,
 }
 ```
+
+<a name="chunk-region-weave-output"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#region-weave-output`</sub>
 
 ```rust {#region-weave-output}
 /// The product of projecting a region.
@@ -191,6 +199,8 @@ can resolve every sibling, then weaves in two passes: the first collects
 titles for the nav, the second rewrites links and injects the nav now that the
 list is complete.
 
+<a name="chunk-weave-region"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#weave-region` · assembles [weave-path-maps](#chunk-weave-path-maps) · [weave-collections](#chunk-weave-collections) · [weave-first-pass](#chunk-weave-first-pass) · [weave-second-pass](#chunk-weave-second-pass) · [weave-atlas](#chunk-weave-atlas) · [weave-output](#chunk-weave-output)</sub>
+
 ```rust {#weave-region}
 /// Project an ordered region into a self-contained multi-page web artifact.
 ///
@@ -218,6 +228,8 @@ pub fn weave_region(input: &RegionInput) -> Result<RegionWeaveOutput> {
 }
 ```
 
+<a name="chunk-weave-path-maps"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#weave-path-maps`</sub>
+
 ```rust {#weave-path-maps}
 // 1. URI → artifact path map. Entry first so it claims `index.html`;
 //    `slug` is deduped against already-claimed paths so two members whose
@@ -244,6 +256,8 @@ let mut nav_entries: Vec<NavEntry> = Vec::new();
 let wiki_titles = build_wiki_title_map(input);
 ```
 
+<a name="chunk-weave-collections"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#weave-collections`</sub>
+
 ```rust {#weave-collections}
 // 2. Weave each member, rewrite its links, inject nav + style.
 let mut files: Vec<ArtifactFile> = Vec::new();
@@ -261,6 +275,8 @@ Each member is transcluded, wikilink-rewritten, parsed and woven in that
 order, because transclusion arrives as markdown and the weaver must see a
 complete folio/v1 file. Media refs are harvested from the source rather than
 the woven HTML, so the harvest runs even when the `motifs` feature is off.
+
+<a name="chunk-weave-first-pass"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#weave-first-pass`</sub>
 
 ```rust {#weave-first-pass}
 // First pass: weave + collect titles so the nav (built per-page) is complete.
@@ -320,6 +336,8 @@ for m in &input.members {
 }
 ```
 
+<a name="chunk-weave-second-pass"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#weave-second-pass`</sub>
+
 ```rust {#weave-second-pass}
 // Second pass: rewrite links + inject nav now that nav_entries is complete.
 for w in &woven {
@@ -337,6 +355,8 @@ for w in &woven {
 
 The atlas is computed from the same input and emitted as one more file.
 
+<a name="chunk-weave-atlas"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#weave-atlas`</sub>
+
 ```rust {#weave-atlas}
 // 3. Compute the time×thread atlas and emit it as `atlas.json`. render-vello
 //    consumes the explicit node positions via the `set_graph` path, so the
@@ -347,6 +367,8 @@ files.push(ArtifactFile {
     bytes: crate::atlas::atlas_json(&atlas),
 });
 ```
+
+<a name="chunk-weave-output"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#weave-output`</sub>
 
 ```rust {#weave-output}
 let media_refs: Vec<String> = media_refs.into_iter().collect();
@@ -368,6 +390,8 @@ Ok(RegionWeaveOutput {
 A member's `transcludes:` references resolve against the region's own
 membership: the region is the document source. Out-of-region targets return
 `None` and degrade to a link with a warning.
+
+<a name="chunk-region-doc-source"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#region-doc-source`</sub>
 
 ```rust {#region-doc-source}
 /// A [`x0k_folio::transclusion::DocSource`] backed by a region's
@@ -405,6 +429,8 @@ impl x0k_folio::transclusion::DocSource for RegionDocSource {
 Media refs are scanned with a pure line scan that mirrors the surface-build
 scanner, kept local so the harvest has no feature dependency.
 
+<a name="chunk-scan-media-refs"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#scan-media-refs`</sub>
+
 ```rust {#scan-media-refs}
 /// Scan a document for `x0k:media {ref="…"}` fence refs. Pure line scan,
 /// mirroring `x0k_surface_build::scan_media_refs` so the harvest matches
@@ -436,6 +462,8 @@ fn scan_media_refs(text: &str) -> Vec<String> {
 After transclusion, the resolved body is spliced back behind the member's
 own frontmatter.
 
+<a name="chunk-reassemble"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#reassemble`</sub>
+
 ```rust {#reassemble}
 /// Reassemble a folio/v1 file from its original frontmatter and a
 /// (transclusion-resolved) body. Preserves the `---`-delimited envelope
@@ -466,10 +494,14 @@ whatever its URI class. The title map is built once from every member's first
 H1; a slug absent from the map is out-of-region and is stripped to plain text
 so no dangling href ships.
 
+<a name="chunk-entry-file"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#entry-file`</sub>
+
 ```rust {#entry-file}
 /// The entry member's artifact filename.
 pub const ENTRY_FILE: &str = "index.html";
 ```
+
+<a name="chunk-wiki-title-map"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#wiki-title-map`</sub>
 
 ```rust {#wiki-title-map}
 /// Build `slug -> (display-title, member-URI)` for every in-region member,
@@ -507,6 +539,8 @@ pub fn build_wiki_title_map(input: &RegionInput) -> HashMap<String, (String, Str
 carries in its own copies; each module keeps its own rather than sharing,
 and this chapter names that rather than hiding it.
 
+<a name="chunk-first-h1"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#first-h1`</sub>
+
 ```rust {#first-h1}
 /// Extract the first markdown `# ` heading from a doc's body (cheap line scan).
 /// Skips the frontmatter envelope. Returns `None` if no H1 is present.
@@ -520,6 +554,8 @@ fn first_h1(content: &str) -> Option<String> {
     None
 }
 ```
+
+<a name="chunk-rewrite-wikilinks"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#rewrite-wikilinks`</sub>
 
 ```rust {#rewrite-wikilinks}
 /// Replace `[[slug]]` wikilinks in a member's markdown source.
@@ -602,6 +638,8 @@ fn utf8_len(b: u8) -> usize {
 The entry member claims `index.html`; every other member gets a deduped slug
 from its URI (class and identifier both, so `x0k:design/foo` and
 `x0k:wiki/foo` do not collide).
+
+<a name="chunk-uri-to-path"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#uri-to-path`</sub>
 
 ```rust {#uri-to-path}
 /// Build the URI → artifact-path map. The entry member claims `index.html`;
@@ -695,6 +733,8 @@ Link rewriting matches exactly: an href is either a member URI (with an
 optional fragment), a member's source path, or left alone. Anything that
 looks cross-document but matches nothing is kept verbatim and recorded.
 
+<a name="chunk-nav-entry"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#nav-entry`</sub>
+
 ```rust {#nav-entry}
 /// One site-nav item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -705,6 +745,8 @@ struct NavEntry {
     title: String,
 }
 ```
+
+<a name="chunk-rewrite-cross-doc-links"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#rewrite-cross-doc-links`</sub>
 
 ```rust {#rewrite-cross-doc-links}
 /// Rewrite cross-doc links in one woven page.
@@ -841,6 +883,8 @@ first `</style>`; both tokens are guarded by a test against the single-doc
 weaver's output, so a change there fails here rather than silently producing
 nav-less pages.
 
+<a name="chunk-site-nav"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#site-nav`</sub>
+
 ```rust {#site-nav}
 /// Inject the site nav after the first `<body>\n` token, and a small scoped
 /// `<style>` after the first `</style>` (so the nav is themed but the woven
@@ -955,6 +999,8 @@ const REGION_NAV_STYLE: &str = r#"
 can run: the entry exists, every page is a complete standalone document with
 no external stylesheet, and every intra-region href resolves to a file in the
 set.
+
+<a name="chunk-validate"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#validate`</sub>
 
 ```rust {#validate}
 /// Assert a [`RegionWeaveOutput`] is a well-formed self-contained artifact.
@@ -1075,6 +1121,8 @@ fn extract_hrefs(html: &str) -> Vec<String> {
 
 The rules above are each one string-to-string rewrite, so the unit tests are
 too: a fixture region built in memory, one rewrite, one assertion.
+
+<a name="chunk-tests"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -1486,6 +1534,8 @@ property of the set, not of any rewrite. The second is the I/O leg that
 on disk, a directory of pages written out. `tests/region_weave.rs` covers both,
 against the crate's public surface.
 
+<a name="chunk-region-tests-doc"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-doc`</sub>
+
 ```rust {#region-tests-doc file="tests/region_weave.rs"}
 //! Integration tests for region projection — the `region-weave` and
 //! `region-project` chapters of the crate's literate source.
@@ -1503,6 +1553,8 @@ rather than fixture files, because the region layer cares about frontmatter
 hand-built `RegionWeaveOutput` is needed — the validator inspects pages, never
 the atlas, so filling one in would be furniture.
 
+<a name="chunk-region-tests-uses"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-uses`</sub>
+
 ```rust {#region-tests-uses file="tests/region_weave.rs"}
 use std::fs;
 use std::path::PathBuf;
@@ -1511,6 +1563,8 @@ use x0k_tangle::{
     project_publication, validate_artifact, weave_region, ArtifactFile, RegionInput, RegionMember,
 };
 ```
+
+<a name="chunk-region-tests-atlas"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-atlas`</sub>
 
 ```rust {#region-tests-atlas file="tests/region_weave.rs"}
 /// An empty atlas for hand-built `RegionWeaveOutput` fixtures (the validator
@@ -1527,6 +1581,8 @@ fn empty_atlas() -> x0k_tangle::Atlas {
     }
 }
 ```
+
+<a name="chunk-region-tests-fixtures"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-fixtures`</sub>
 
 ```rust {#region-tests-fixtures file="tests/region_weave.rs"}
 /// A minimal folio/v1 design doc body (frontmatter split off by the weaver).
@@ -1556,6 +1612,8 @@ page is a complete standalone HTML document, every link between members
 resolves to a file that exists, and the entry page is there. This is the test
 that would catch a rewrite rule that is individually correct and collectively
 wrong.
+
+<a name="chunk-region-tests-self-contained"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-self-contained`</sub>
 
 ```rust {#region-tests-self-contained file="tests/region_weave.rs"}
 #[test]
@@ -1638,6 +1696,8 @@ get one test each — a page pointing at a file the artifact does not hold, and 
 region whose entry is missing — because a validator that never says no is
 indistinguishable from one that does nothing.
 
+<a name="chunk-region-tests-dangling-link"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-dangling-link`</sub>
+
 ```rust {#region-tests-dangling-link file="tests/region_weave.rs"}
 #[test]
 fn validate_artifact_rejects_dangling_intra_region_link() {
@@ -1661,6 +1721,8 @@ fn validate_artifact_rejects_dangling_intra_region_link() {
     );
 }
 ```
+
+<a name="chunk-region-tests-missing-entry"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-missing-entry`</sub>
 
 ```rust {#region-tests-missing-entry file="tests/region_weave.rs"}
 #[test]
@@ -1686,6 +1748,8 @@ Everything to here runs in memory. The I/O leg is the projector's, and it
 is tested the only way it can be honestly tested: publication doc and member
 files written to a temp directory, `project_publication` run over them, and the
 written tree read back and walked as a reader would.
+
+<a name="chunk-region-tests-project-to-disk"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-project-to-disk`</sub>
 
 ```rust {#region-tests-project-to-disk file="tests/region_weave.rs"}
 #[test]
@@ -1810,6 +1874,8 @@ A publication with one member has no `entryPoint` to declare, and demanding
 one would be a rule with a single obvious answer. The default is the sole
 member, projected as `index.html`:
 
+<a name="chunk-region-tests-default-entry"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-default-entry`</sub>
+
 ```rust {#region-tests-default-entry file="tests/region_weave.rs"}
 #[test]
 fn single_member_publication_defaults_entry() {
@@ -1856,6 +1922,8 @@ can open offline. The wasm is located under the default
 wait on a real wasm build. Bundling *is* the `motifs` feature, so the test is
 gated on it; the motifs-severed build reports `wasm_bundled: false` on purpose,
 and a test that ran there would be asserting the wrong thing.
+
+<a name="chunk-region-tests-self-booting"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-self-booting`</sub>
 
 ```rust {#region-tests-self-booting file="tests/region_weave.rs"}
 #[test]
@@ -1975,6 +2043,8 @@ the region weaver has to resolve those at the same seam where it resolves
 links. Both spellings land in one woven page with both sections inlined, and
 the sections that were *not* named stay where they were:
 
+<a name="chunk-region-tests-transclude-two-briefs"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-transclude-two-briefs`</sub>
+
 ```rust {#region-tests-transclude-two-briefs file="tests/region_weave.rs"}
 #[test]
 fn spine_transcludes_two_briefs_into_one_woven_page() {
@@ -2054,6 +2124,8 @@ That is the design's edit-through property
 weave/resolution seam, which is the naga-free analogue of the native
 re-render.
 
+<a name="chunk-region-tests-edit-through"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-edit-through`</sub>
+
 ```rust {#region-tests-edit-through file="tests/region_weave.rs"}
 #[test]
 fn edit_through_to_source_is_reflected_when_spine_reresolves() {
@@ -2127,6 +2199,8 @@ A spine that transcludes itself is the one input that can turn resolution
 into a loop. It degrades to a link with a recorded warning — the reader gets a
 page, the author gets told:
 
+<a name="chunk-region-tests-self-transclusion"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-self-transclusion`</sub>
+
 ```rust {#region-tests-self-transclusion file="tests/region_weave.rs"}
 #[test]
 fn spine_self_transclusion_degrades_to_link_with_warning() {
@@ -2150,6 +2224,8 @@ fn spine_self_transclusion_degrades_to_link_with_warning() {
     validate_artifact(&out).expect("artifact still validates after degrade");
 }
 ```
+
+<a name="chunk-region-tests-root"></a><sub>[`tests/region_weave.rs`](../../../x0k-tangle/tests/region_weave.rs) · `#region-tests-root` · assembles [region-tests-doc](#chunk-region-tests-doc) · [region-tests-uses](#chunk-region-tests-uses) · [region-tests-atlas](#chunk-region-tests-atlas) · [region-tests-fixtures](#chunk-region-tests-fixtures) · [region-tests-self-contained](#chunk-region-tests-self-contained) · [region-tests-dangling-link](#chunk-region-tests-dangling-link) · [region-tests-missing-entry](#chunk-region-tests-missing-entry) · [region-tests-project-to-disk](#chunk-region-tests-project-to-disk) · [region-tests-default-entry](#chunk-region-tests-default-entry) · [region-tests-self-booting](#chunk-region-tests-self-booting) · [region-tests-transclude-two-briefs](#chunk-region-tests-transclude-two-briefs) · [region-tests-edit-through](#chunk-region-tests-edit-through) · [region-tests-self-transclusion](#chunk-region-tests-self-transclusion)</sub>
 
 ```rust {#region-tests-root file="tests/region_weave.rs"}
 <<region-tests-doc>>
@@ -2180,6 +2256,8 @@ fn spine_self_transclusion_degrades_to_link_with_warning() {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/region_weave.rs`](../../../x0k-tangle/src/region_weave.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [region-member](#chunk-region-member) · [artifact-file](#chunk-artifact-file) · [region-weave-output](#chunk-region-weave-output) · [weave-region](#chunk-weave-region) · [region-doc-source](#chunk-region-doc-source) · [scan-media-refs](#chunk-scan-media-refs) · [reassemble](#chunk-reassemble) · [entry-file](#chunk-entry-file) · [wiki-title-map](#chunk-wiki-title-map) · [first-h1](#chunk-first-h1) · [rewrite-wikilinks](#chunk-rewrite-wikilinks) · [uri-to-path](#chunk-uri-to-path) · [nav-entry](#chunk-nav-entry) · [rewrite-cross-doc-links](#chunk-rewrite-cross-doc-links) · [site-nav](#chunk-site-nav) · [validate](#chunk-validate) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

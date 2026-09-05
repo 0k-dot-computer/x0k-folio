@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/atlas.md",
-  "source_hash": "c25ab3d0b0b53399",
+  "source_hash": "fd0f8e3c2bb73896",
   "pipelines": [
     {
       "kind": "identity-tangle",

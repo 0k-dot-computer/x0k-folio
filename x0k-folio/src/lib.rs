@@ -49,8 +49,8 @@ pub use envelope_check::{
     PredicateStanding,
 };
 pub use inline_entity::{
-    declared_facts, declared_facts_with, defined_in_fact, extract_from_markdown,
-    inline_entity_facts, InlineEntity, InlineEntityError,
+    declared_facts, declared_facts_with, defined_in_fact, document_edges, extract_from_markdown,
+    inline_entity_facts, prose_edges, InlineEntity, InlineEntityError,
 };
 pub use canonical_patch::{
     apply_body_patches, apply_folio_patches, apply_markdown_patches,

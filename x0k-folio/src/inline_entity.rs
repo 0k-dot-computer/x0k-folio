@@ -45,7 +45,7 @@
 //! uninterpreted — because turning a placement demand into typed fleet
 //! values is the host's judgment, not the document's meaning.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use tracing::warn;
@@ -678,6 +678,114 @@ fn claimed_for_facts(value: &serde_norway::Value, out: &mut Vec<(String, String)
     }
 }
 
+/// The edges a body's prose links declare: `(predicate, target id)`, once
+/// each in first-seen order. A markdown link `[…](x0k:wiki/<stem>)` is a
+/// `presupposes` edge and `[…](x0k:affordance/<slug>)` a `realizes` edge;
+/// every other link is a link. Text inside a fenced block or an inline
+/// code span is not read.
+pub fn prose_edges(body: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        let fence_run = trimmed
+            .chars()
+            .next()
+            .filter(|c| *c == '`' || *c == '~')
+            .map(|c| (c, trimmed.chars().take_while(|x| *x == c).count()))
+            .filter(|(_, n)| *n >= 3);
+        match (fence, fence_run) {
+            (Some((c, n)), Some((c2, n2))) if c == c2 && n2 >= n => {
+                fence = None;
+                continue;
+            }
+            (Some(_), _) => continue,
+            (None, Some(open)) => {
+                fence = Some(open);
+                continue;
+            }
+            (None, None) => {}
+        }
+        for target in link_targets_outside_code(line) {
+            let edge = if let Some(rest) = target.strip_prefix("x0k:wiki/") {
+                let stem = rest.split('#').next().unwrap_or(rest);
+                Some(("presupposes", format!("x0k:wiki/{stem}")))
+            } else if target.starts_with("x0k:affordance/") {
+                Some(("realizes", target.to_string()))
+            } else {
+                None
+            };
+            if let Some((predicate, id)) = edge {
+                if !out.iter().any(|(p, t)| p == predicate && *t == id) {
+                    out.push((predicate.to_string(), id));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The `x0k:` link targets on one line of prose, with inline code spans
+/// (a run of backticks closed by a run of the same length) skipped. A
+/// target ends at `)` or at the space before a link title.
+fn link_targets_outside_code(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while !rest.is_empty() {
+        let next_code = rest.find('`');
+        let next_link = rest.find("](x0k:");
+        match (next_code, next_link) {
+            (Some(c), Some(l)) if c < l => rest = skip_code_span(&rest[c..]),
+            (Some(c), None) => rest = skip_code_span(&rest[c..]),
+            (_, Some(l)) => {
+                let after = &rest[l + 2..];
+                let end = after.find(|ch: char| ch == ')' || ch.is_whitespace()).unwrap_or(after.len());
+                out.push(&after[..end]);
+                rest = &after[end..];
+            }
+            (None, None) => break,
+        }
+    }
+    out
+}
+
+/// `s` starts with a backtick run; return what follows the matching
+/// closing run, or nothing when the span never closes.
+fn skip_code_span(s: &str) -> &str {
+    let n = s.chars().take_while(|c| *c == '`').count();
+    let body = &s[n..];
+    let mut i = 0;
+    while i < body.len() {
+        if body[i..].starts_with('`') {
+            let m = body[i..].chars().take_while(|c| *c == '`').count();
+            if m == n {
+                return &body[i + m..];
+            }
+            i += m;
+        } else {
+            i += body[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+        }
+    }
+    ""
+}
+
+/// The document's edges as one map: the envelope's `edges:` block and
+/// the edges its prose links declare, each target once per predicate,
+/// the envelope's first.
+pub fn document_edges(
+    envelope_edges: &BTreeMap<String, Vec<String>>,
+    body: &str,
+) -> BTreeMap<String, Vec<String>> {
+    let mut edges = envelope_edges.clone();
+    for (predicate, target) in prose_edges(body) {
+        let targets = edges.entry(predicate).or_default();
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    edges
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1070,5 +1178,35 @@ edges:
             (snake == "refined_from").then_some("refinedFrom")
         });
         assert!(facts.iter().any(|(p, _)| p == "refinedFrom"));
+    }
+    #[test]
+    fn prose_links_to_wiki_and_affordance_are_edges_and_nothing_else_is() {
+        let body = "Reads [literate programming](x0k:wiki/literate-programming#history) and\n\
+                    [the design](x0k:design/some-design); it is the\n\
+                    [check](x0k:affordance/check_it \"the check\") face.\n\
+                    Again [lp](x0k:wiki/literate-programming).\n";
+        assert_eq!(
+            prose_edges(body),
+            vec![
+                ("presupposes".to_string(), "x0k:wiki/literate-programming".to_string()),
+                ("realizes".to_string(), "x0k:affordance/check_it".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_links_inside_code_are_not_read() {
+        let body = "Write `[x](x0k:wiki/in-span)` like so:\n\n\
+                    ````markdown\n```\n[y](x0k:wiki/in-fence)\n```\n````\n\n\
+                    but [z](x0k:wiki/real) counts.\n";
+        assert_eq!(prose_edges(body), vec![("presupposes".to_string(), "x0k:wiki/real".to_string())]);
+    }
+
+    #[test]
+    fn document_edges_unions_the_envelope_and_the_prose_once_each() {
+        let mut envelope = BTreeMap::new();
+        envelope.insert("presupposes".to_string(), vec!["x0k:wiki/a".to_string()]);
+        let edges = document_edges(&envelope, "See [a](x0k:wiki/a) and [b](x0k:wiki/b).");
+        assert_eq!(edges["presupposes"], vec!["x0k:wiki/a".to_string(), "x0k:wiki/b".to_string()]);
     }
 }

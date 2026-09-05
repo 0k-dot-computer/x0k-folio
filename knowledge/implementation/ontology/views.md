@@ -17,14 +17,13 @@ x0k:
       - x0k:implementation/ontology/module-bootstrap
       - x0k:implementation/ontology/concept-region
       - x0k:implementation/ontology/declaration
-    presupposes:
-      - x0k:wiki/rdf-and-owl
 ---
 
 # The crate root is a compatibility view
 
 `x0k-ontology` is the crate every other crate reaches for when it needs to
-spell a predicate. The authoritative vocabulary is the self-typed
+spell a predicate. The authoritative vocabulary — [RDF and
+OWL](x0k:wiki/rdf-and-owl) terms — is the self-typed
 `x0k:Concept` root in the fact plane; the module files under
 `ontology/modules/` are the checked bootstrap that seeds an empty concept
 region. What consumers actually link against is neither: it is a pair of
@@ -48,6 +47,8 @@ camelCase is the URI suffix in the ontology view. The map is deterministic
 in both directions — insert `_` before each uppercase boundary (excluding
 position 0) and lowercase — but the crate exposes only the generated table,
 so the two forms can never drift apart from the TTL they were emitted from.
+
+<a name="chunk-module-doc"></a><sub>[`src/lib.rs`](../../../x0k-ontology/src/lib.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 //! Fold-derived ontology compatibility views.
@@ -107,6 +108,8 @@ already import them. The gate says which of them a build knows; splitting
 the crate would say it with a version seam instead, and there is no
 adopter for whom that is the better answer.
 
+<a name="chunk-modules"></a><sub>[`src/lib.rs`](../../../x0k-ontology/src/lib.rs) · `#modules`</sub>
+
 ```rust {#modules}
 pub mod concept_facts;
 
@@ -136,6 +139,8 @@ Two questions the UI and the envelope validator ask. A class URI's label,
 or `None` for a synthetic UI-only class the vocabulary does not declare; and
 an object property's `(domain, range)`, either half of which may itself be
 `None` when the property omits that constraint.
+
+<a name="chunk-lookups"></a><sub>[`src/lib.rs`](../../../x0k-ontology/src/lib.rs) · `#lookups`</sub>
 
 ```rust {#lookups}
 /// The `rdfs:label` for a class URI (bare `x0k:` form), or `None` if the
@@ -216,6 +221,8 @@ the missing range is what let the predicate land in `document` without naming a
 class `document` cannot import. `realizes` is the one whose subject arrives
 from a shape: its three carriers live in three modules, so it is `core`'s and
 its domain is in `ontology/shapes/core.ttl`.
+
+<a name="chunk-tests"></a><sub>[`src/lib.rs`](../../../x0k-ontology/src/lib.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -434,6 +441,8 @@ mod tests {
 ```
 
 ## The file
+
+<a name="chunk-root"></a><sub>[`src/lib.rs`](../../../x0k-ontology/src/lib.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [modules](#chunk-modules) · [lookups](#chunk-lookups) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

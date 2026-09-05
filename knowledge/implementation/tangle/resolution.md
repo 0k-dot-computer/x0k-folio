@@ -15,13 +15,11 @@ x0k:
       - x0k:implementation/tangle/chunk
       - x0k:implementation/tangle/chunk-refs
       - x0k:implementation/tangle/parsing
-    presupposes:
-      - x0k:wiki/literate-programming
-      - x0k:wiki/dependency-resolution
 ---
 # Resolving `<<chunk-ref>>` expansion
 
-Parsing gives us a chunk map. Resolution turns one of those
+Parsing a [literate document](../../wiki/literate-programming.md "x0k:wiki/literate-programming") gives us a
+chunk map. [Resolution](x0k:wiki/dependency-resolution) turns one of those
 chunks into its fully-expanded body — every `<<name>>` line
 replaced by the recursive expansion of the named chunk, with the
 call-site's indentation re-applied to every output line.
@@ -78,6 +76,8 @@ points pass `corpus = None`, so the within-doc path is untouched.
 
 ## Imports
 
+<a name="chunk-imports"></a><sub>[`src/resolve.rs`](../../../x0k-tangle/src/resolve.rs) · `#imports`</sub>
+
 ```rust {#imports}
 use crate::chunk_refs::find_chunk_refs_aware;
 use crate::multi_doc_resolve::Corpus;
@@ -105,6 +105,8 @@ error as undefined-cross-doc and bare `<<chunk>>` refs resolve
 within `doc`. The corpus entry point lives in
 [`multi-doc-resolve.md`](multi-doc-resolve.md) and shares the same
 engine below.
+
+<a name="chunk-expand-chunk-fn"></a><sub>[`src/resolve.rs`](../../../x0k-tangle/src/resolve.rs) · `#expand-chunk-fn`</sub>
 
 ```rust {#expand-chunk-fn}
 pub fn expand_chunk(doc: &ParsedDocument, name: &str) -> Result<String> {
@@ -170,6 +172,8 @@ key mechanics:
   strips the trailing `\n` so the returned string matches the
   input convention (`combined_body` does not include a trailing
   newline).
+
+<a name="chunk-expand-recursive-fn"></a><sub>[`src/resolve.rs`](../../../x0k-tangle/src/resolve.rs) · `#expand-recursive-fn`</sub>
 
 ```rust {#expand-recursive-fn}
 pub(crate) fn expand_recursive(
@@ -303,6 +307,8 @@ Three design notes:
   reached during this single-doc pass surfaces as an error rather
   than a phantom cycle.
 
+<a name="chunk-check-all-refs-fn"></a><sub>[`src/resolve.rs`](../../../x0k-tangle/src/resolve.rs) · `#check-all-refs-fn`</sub>
+
 ```rust {#check-all-refs-fn}
 pub fn check_all_refs(doc: &ParsedDocument) -> Result<Vec<String>> {
     let mut errors = Vec::new();
@@ -365,6 +371,8 @@ Rust raw string. Language-aware ref extraction (see
 `<<inner>>` / `<<b>>` etc. tokens that appear inside the
 fixture's raw string, which is what makes this doc tangle
 without the resolver chasing its own test data.
+
+<a name="chunk-tests"></a><sub>[`src/resolve.rs`](../../../x0k-tangle/src/resolve.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
@@ -465,6 +473,8 @@ and the tangler splices `greet` in there.
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/resolve.rs`](../../../x0k-tangle/src/resolve.rs) · `#root` · assembles [imports](#chunk-imports) · [expand-chunk-fn](#chunk-expand-chunk-fn) · [expand-recursive-fn](#chunk-expand-recursive-fn) · [check-all-refs-fn](#chunk-check-all-refs-fn) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>

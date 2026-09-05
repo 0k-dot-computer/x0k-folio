@@ -36,6 +36,8 @@ invariant every other reader of the corpus must agree with: a member URI
 `x0k:<class>/<stem>` names the file `<member_dir(class)>/…/<stem>.md`. The
 module says so where the table lives.
 
+<a name="chunk-module-doc"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Region projection I/O layer — the filesystem side of region projection.
 //!
@@ -63,6 +65,8 @@ module says so where the table lives.
 //! with it.
 ```
 
+<a name="chunk-uses"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#uses`</sub>
+
 ```rust {#uses}
 use crate::region_weave::{weave_region, RegionInput, RegionMember};
 use anyhow::{anyhow, Context, Result};
@@ -80,6 +84,8 @@ motif's wasm into `out/wasm/`. The report says how many pages were written,
 which embeds degraded, and whether the wasm was found.
 
 ## The report
+
+<a name="chunk-report"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#report`</sub>
 
 ```rust {#report}
 /// Summary of a region-projection run. Mirrors the MCP `tangle_weave_region`
@@ -124,6 +130,8 @@ the content-based entry is what the MCP tool calls once it has already read
 the doc. The narrative is read here so the presentation layer stays
 disk-free.
 
+<a name="chunk-project-publication"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#project-publication`</sub>
+
 ```rust {#project-publication}
 /// Project a publication doc into a self-contained multi-page artifact under
 /// `output_dir`. The single I/O entry point shared by the CLI and MCP tool.
@@ -158,6 +166,8 @@ the `motifs` feature: the standalone build of the crate compiles with
 `--no-default-features`, drops the surface-build dependency, and the
 `cfg(not(...))` arms below are what keep that build honest about what it
 does not do.
+
+<a name="chunk-project-publication-content"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#project-publication-content`</sub>
 
 ```rust {#project-publication-content}
 /// Like [`project_publication`] but takes the publication doc's content
@@ -247,6 +257,8 @@ monorepo's web UI (`ui/0k.computer`, a vite app) builds them to — never
 built inline. Both paths are the monorepo's; a standalone build of this
 crate compiles without the `motifs` feature and does not look for them.
 
+<a name="chunk-render-vello-bundle"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#render-vello-bundle`</sub>
+
 ```rust {#render-vello-bundle}
 /// Names of the two render-vello wasm-pack outputs the boot shell imports
 /// (`boot.js` does `import('./wasm/x0k_ui_render_vello.js')`, which resolves the
@@ -300,6 +312,8 @@ fn bundle_render_vello_wasm(workspace: &Path, output_dir: &Path) -> Result<(bool
 The publication doc's `publishes:` edge lists member URIs; each is mapped to
 its file and read. `member_dir` is the layout table the module doc names,
 and the tests below pin it.
+
+<a name="chunk-parse-publication-region"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#parse-publication-region`</sub>
 
 ```rust {#parse-publication-region}
 /// Resolve a publication doc into a [`RegionInput`]: read its `publishes:`
@@ -367,6 +381,8 @@ A decision's id carries no topic segment but its file lives in a topic
 subdirectory, so the stem is searched for under the subtype root before the
 flat join is used as the fallback (and as the path a missing member reports).
 
+<a name="chunk-member-doc-path"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#member-doc-path`</sub>
+
 ```rust {#member-doc-path}
 /// The decision file backing one member URI.
 ///
@@ -429,6 +445,8 @@ fn member_dir(class: &str) -> PathBuf {
 Each media ref is content-addressed and its wasm copied under `wasm/`; a
 static `host.js` shim and a `motifs.json` manifest are written beside it.
 Refs with no buildable surface stay in `degraded`.
+
+<a name="chunk-bundle-region-motifs"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#bundle-region-motifs`</sub>
 
 ```rust {#bundle-region-motifs}
 /// Content-address the region's surfaces and copy each resolved `.wasm` into the
@@ -517,6 +535,8 @@ loader, carried verbatim as a string constant so a published motif runs the
 same code path as the app. It is progressive enhancement: an embed with no
 bundled wasm, or a browser without WebGPU, keeps its static label. Like the
 bundler that writes it, it exists only under the `motifs` feature.
+
+<a name="chunk-host-js-shim"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#host-js-shim`</sub>
 
 ```rust {#host-js-shim}
 /// Vendored static motif host loader. This is the real mount, not a stub that
@@ -825,6 +845,8 @@ function injectMaxStyle() {
 
 ## Tests
 
+<a name="chunk-tests"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#tests`</sub>
+
 ```rust {#tests}
 #[cfg(test)]
 mod tests {
@@ -850,6 +872,8 @@ mod tests {
     }
 }
 ```
+
+<a name="chunk-root"></a><sub>[`src/region_project.rs`](../../../x0k-tangle/src/region_project.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [report](#chunk-report) · [project-publication](#chunk-project-publication) · [project-publication-content](#chunk-project-publication-content) · [render-vello-bundle](#chunk-render-vello-bundle) · [parse-publication-region](#chunk-parse-publication-region) · [member-doc-path](#chunk-member-doc-path) · [bundle-region-motifs](#chunk-bundle-region-motifs) · [host-js-shim](#chunk-host-js-shim) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

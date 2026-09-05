@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/folio/canonical-patch.md",
-  "source_hash": "455c013690e912c5",
+  "source_hash": "0cfbe988084cb703",
   "pipelines": [
     {
       "kind": "identity-tangle",

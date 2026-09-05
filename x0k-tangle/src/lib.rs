@@ -44,6 +44,7 @@ pub mod parser;
 pub mod pipeline;
 pub mod pipeline_runner;
 pub mod presentation;
+pub mod region_gfm;
 pub mod region_project;
 pub mod publish_repo;
 pub mod receive;

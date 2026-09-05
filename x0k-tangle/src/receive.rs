@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::parser::parse_document;
+use crate::region_gfm::unweave_chapter;
 use crate::region_repo::{project_publication_repo, RepoProjectOptions};
 use crate::resolve::expand_chunk;
 use x0k_folio::colophon::parse_envelope;
@@ -408,6 +409,15 @@ fn diff_and_classify(clone: &Path, reference: &Path, prov: &Provenance) -> Resul
             _ => "modified",
         };
         let (class, target, produced_by) = classify(path, &old, &new, reference, prov);
+        // A literate chapter crossed woven for the forge; the contributor
+        // edited the woven text, and the corpus holds the source. Both
+        // sides are unwoven before the diff, so the patch is against the
+        // document the target names.
+        let (old, new) = if matches!(class, Class::Literate) {
+            (old.map(|t| unweave_chapter(&t)), new.map(|t| unweave_chapter(&t)))
+        } else {
+            (old, new)
+        };
         let patch = if class.receivable() {
             let target = target.as_deref().unwrap_or(path);
             Some(unified_patch(target, old.as_deref(), new.as_deref()))

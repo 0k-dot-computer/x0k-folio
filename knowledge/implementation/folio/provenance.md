@@ -14,8 +14,6 @@ x0k:
       - x0k:design/prose-provenance-and-underwriting
     cites:
       - x0k:implementation/folio/segmentation
-    presupposes:
-      - x0k:wiki/event-sourcing
 ---
 # Provenance: an append-only log and a fold
 
@@ -29,7 +27,7 @@ per-block provenance **events** appended to a log, a **fold** from log to
 current state, and a **viewer-relative** display state.
 
 The pieces come from `x0k:design/prose-provenance-and-underwriting`, and
-the shape is event-sourcing at its most literal. Events are never
+the shape is [event-sourcing](x0k:wiki/event-sourcing) at its most literal. Events are never
 deleted: split or merged blocks leave their old ids in the log, a
 rejected-then-re-accepted block keeps its full history, and current state
 is always a fold over everything. That gives the one property a trust
@@ -51,6 +49,8 @@ the acceptance to that exact hash. Later an agent revises the paragraph
 (an `Edited` event with a `GenerationContext`), and every question the UI
 now needs to answer — "is the operator's acceptance still good?" — is a
 fold plus a hash comparison.
+
+<a name="chunk-module-doc"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 //! Per-block provenance + underwriting model.
@@ -89,6 +89,8 @@ proposed replacement — judgment history, deliberately separate from
 content history. `AgentAttestation` is typed evidence about an
 *artifact* generation, carrying its own subject identity rather than a
 block id.
+
+<a name="chunk-provenance-event"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#provenance-event`</sub>
 
 ```rust {#provenance-event}
 /// One append-only event in a document's provenance log. The doc identity is
@@ -144,6 +146,8 @@ speaking, not convenience: an attestation is a claim with agreed
 semantics ("checked against source" means something specific), so
 extending the vocabulary is a design change, never a free-text
 annotation. Free text would rot into unqueryable prose within a month.
+
+<a name="chunk-agent-attestation"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#agent-attestation`</sub>
 
 ```rust {#agent-attestation}
 /// The closed agent-attestation vocabulary accepted by the prose-provenance
@@ -204,6 +208,8 @@ operator never acts, nothing enters the permanent record.
 The accessor below is what routes an event to its block during the fold;
 artifact attestations return `None` because their subject is not a block:
 
+<a name="chunk-event-block-id"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#event-block-id`</sub>
+
 ```rust {#event-block-id}
 impl ProvenanceEvent {
     pub fn block_id(&self) -> Option<&str> {
@@ -237,6 +243,8 @@ The fold's output shape: per block, the creation and last-edit
 attribution, the most recent *recorded* hash (from the log — the live
 file may already have moved on), whether the latest edit was
 agent-generated, and the accumulated acceptances.
+
+<a name="chunk-folded-state"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#folded-state`</sub>
 
 ```rust {#folded-state}
 /// A single acceptance, folded out of the log.
@@ -292,6 +300,8 @@ gets its own `Edited` event, and inferring content state from a judgment
 record would double-count. `AgentAttestation` reaching the block fold is
 a caller bug — the `unreachable!` documents the contract that artifact
 events are filtered out before folding.
+
+<a name="chunk-fold-events"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#fold-events`</sub>
 
 ```rust {#fold-events}
 /// Fold an event log into per-block current state, preserving block order of
@@ -366,6 +376,8 @@ predates the last edit. The state is computed by joining the folded
 provenance against the block's **live** hash (from the file, via
 [`segmentation.md`](segmentation.md)) and the viewer's DID.
 
+<a name="chunk-viewer-state-enum"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#viewer-state-enum`</sub>
+
 ```rust {#viewer-state-enum}
 /// Viewer-relative display state for a block, per the design's §"Display
 /// states". Computed by joining folded provenance against the block's *live*
@@ -393,6 +405,8 @@ acceptance beats everything, their stale acceptance beats other people's
 state, and only when the viewer has no acceptance at all do we look at
 others and finally at the AI flag. Reading it as a chain of early
 returns keeps the precedence visible:
+
+<a name="chunk-viewer-state-fn"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#viewer-state-fn`</sub>
 
 ```rust {#viewer-state-fn}
 /// Compute the viewer-relative state for a block given its folded provenance,
@@ -442,6 +456,8 @@ The tests build tiny logs with helper constructors and pin the fold's
 attribution rules, the dedupe, and — in one matrix test — every arm of
 the viewer ladder. The JSONL round-trip test pins the wire shape the
 daemon's sidecar depends on (`"kind":"underwritten"` tagging).
+
+<a name="chunk-tests"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -563,6 +579,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/block_provenance.rs`](../../../x0k-folio/src/block_provenance.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [provenance-event](#chunk-provenance-event) · [agent-attestation](#chunk-agent-attestation) · [event-block-id](#chunk-event-block-id) · [folded-state](#chunk-folded-state) · [fold-events](#chunk-fold-events) · [viewer-state-enum](#chunk-viewer-state-enum) · [viewer-state-fn](#chunk-viewer-state-fn) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

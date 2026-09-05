@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/folio/projection.md",
-  "source_hash": "ddfa491429ddd0f5",
+  "source_hash": "9dd4a420933f5ec7",
   "pipelines": [
     {
       "kind": "identity-tangle",

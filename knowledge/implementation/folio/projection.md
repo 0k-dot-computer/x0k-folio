@@ -17,9 +17,6 @@ x0k:
       - x0k:implementation/folio/colophon
       - x0k:implementation/folio/html-canonical
       - x0k:implementation/folio/format
-    presupposes:
-      - x0k:wiki/event-graph-crdts
-      - x0k:wiki/loro
 ---
 # The folio/v1 projection plugin
 
@@ -35,7 +32,8 @@ public artifact; this chapter is where it meets the private substrate.
 
 That substrate is the daemon's file-materialization loop, set out in an
 internal architecture decision (`filesystem-graph-materialization`).
-A folio document that lives in Loro — the CRDT document store the
+A folio document that lives in [Loro](../../wiki/loro.md "x0k:wiki/loro") — the
+[CRDT](../../wiki/event-graph-crdts.md "x0k:wiki/event-graph-crdts") document store the
 daemon keeps its live state in — is *projected* to a file on disk, and
 a human's file edit is *parsed back* into Loro ops; this module
 implements both directions of that round trip for `format: folio/v1`
@@ -65,6 +63,8 @@ Both directions are thin by design:
   into the new. The one wrinkle is HTML bodies, which are canonicalized
   through [`html-canonical.md`](html-canonical.md) *before* diffing —
   the single chokepoint promise, kept at the write boundary.
+
+<a name="chunk-module-doc"></a><sub>[`src/projection.rs`](../../../x0k-folio/src/projection.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 //! `folio/v1` projection plugin.
@@ -104,6 +104,8 @@ One instance per class entry: many document classes (`x0k:wiki/*`,
 `x0k:design/*`, …) all name plugin `folio/v1`, each parameterized with
 its own path template and live-edit policy. The plugin itself holds
 nothing else — it is a stateless pair of functions plus configuration.
+
+<a name="chunk-plugin-type"></a><sub>[`src/projection.rs`](../../../x0k-folio/src/projection.rs) · `#plugin-type`</sub>
 
 ```rust {#plugin-type}
 /// `folio/v1` projection plugin instance. Parameterized per class
@@ -164,6 +166,8 @@ concurrent edits round-trip through Loro without diff drift. A file
 that doesn't parse (no envelope yet, raw body) falls back to the
 verbatim diff rather than erroring; the materializer must never refuse
 a half-written file.
+
+<a name="chunk-parse-diff"></a><sub>[`src/projection.rs`](../../../x0k-folio/src/projection.rs) · `#parse-diff`</sub>
 
 ```rust {#parse-diff}
 impl ProjectionParser for ColophonProjection {
@@ -226,6 +230,8 @@ practice, and its simplicity means op indices are trivially right.
 Indices are in Unicode scalar values, not bytes, because that is what
 Loro's character-indexed text ops address; the `char`-vector
 materialization is the price of that alignment.
+
+<a name="chunk-text-diff"></a><sub>[`src/projection.rs`](../../../x0k-folio/src/projection.rs) · `#text-diff`</sub>
 
 ```rust {#text-diff}
 /// Build the minimal set of Loro text ops that take `old_content` to
@@ -296,6 +302,8 @@ the plugin's tests as pure as the plugin. They pin render's
 verbatim/empty behavior, the three diff shapes (pure insert,
 delete-then-insert, no-op), UTF-8 rejection, and that the injected
 per-class configuration is visible through the trait.
+
+<a name="chunk-tests"></a><sub>[`src/projection.rs`](../../../x0k-folio/src/projection.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -417,6 +425,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/projection.rs`](../../../x0k-folio/src/projection.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [plugin-type](#chunk-plugin-type) · [parse-diff](#chunk-parse-diff) · [text-diff](#chunk-text-diff) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

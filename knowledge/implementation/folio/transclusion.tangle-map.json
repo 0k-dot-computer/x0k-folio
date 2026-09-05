@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/folio/transclusion.md",
-  "source_hash": "f58ecbd2a7e31514",
+  "source_hash": "7b83175a56ec43f4",
   "pipelines": [
     {
       "kind": "identity-tangle",

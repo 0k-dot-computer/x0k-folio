@@ -79,6 +79,8 @@ The module performs no IO. It takes strings and returns strings and typed
 values; where a file comes from and what happens to the rendered YAML is
 entirely the caller's business.
 
+<a name="chunk-module-doc"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Canonical folio/v1 frontmatter envelope: shared parser + renderer.
 //!
@@ -106,6 +108,8 @@ rather than arbitrary YAML — [`is_colophon`](#is-colophon) gates on it and
 live the recognized body formats. A folio body is markdown unless the
 envelope says otherwise; HTML is the one opt-in alternative:
 
+<a name="chunk-format-tokens"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#format-tokens`</sub>
+
 ```rust {#format-tokens}
 /// Frontmatter format token authoritative for this parser.
 pub const FORMAT_FOLIO_V1: &str = "folio/v1";
@@ -127,6 +131,8 @@ written a format this build doesn't know. Erroring would make old software
 unable to *open* new documents, which is worse than rendering them as
 markdown; so the policy is warn-and-fall-back, centralized here so callers
 don't each reinvent it:
+
+<a name="chunk-normalize-body-format"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#normalize-body-format`</sub>
 
 ```rust {#normalize-body-format}
 /// Normalize the parsed-or-omitted body format string. Returns the canonical
@@ -157,6 +163,8 @@ because everything downstream (review workflow, storage authority, URI
 namespace) dispatches on it. Our carried publication manifest parses to
 `DocType::Publication`; this literate page parses to
 `DocType::Implementation`.
+
+<a name="chunk-doc-type"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#doc-type`</sub>
 
 ```rust {#doc-type}
 /// Genus types per `ontology/`. Decision subtypes (commitment / design /
@@ -219,6 +227,8 @@ minting, and every caller in the corpus writes
 `FromStr` would force `Result<Self, E>` on all of them for a `()`-shaped
 error. `Status::from_str` below is the same call:
 
+<a name="chunk-doc-type-strings"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#doc-type-strings`</sub>
+
 ```rust {#doc-type-strings}
 impl DocType {
     pub fn as_str(self) -> &'static str {
@@ -265,6 +275,8 @@ superseded`, knowledge pages move `draft → stable → stale`. Merging them
 into one type means the shared parser doesn't need to know the genus
 before it can read the status; which values are *legal* for a given genus
 is (like predicate vocabularies) the consumer's rule to enforce.
+
+<a name="chunk-status"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#status`</sub>
 
 ```rust {#status}
 /// Lifecycle status. Decisions use `proposed | accepted | superseded`;
@@ -316,6 +328,8 @@ document it is a window onto; `tangle:` marks a literate document whose
 code chunks project into a crate (this page carries one); `pipelines:`
 declares codegen passes over named chunks.
 
+<a name="chunk-materialization"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#materialization`</sub>
+
 ```rust {#materialization}
 /// Optional materialization metadata block — pointers to the Loro doc and
 /// last revision the file was projected from. Absent on file-authority docs
@@ -334,6 +348,8 @@ pub struct Materialization {
 `TangleConfig` mirrors what the tangler's own frontmatter walk extracts
 (see [`tangle/parsing.md`](../tangle/parsing.md)) — the crate, the default
 output file, and the per-language `roots:` map for bilingual documents:
+
+<a name="chunk-tangle-config"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#tangle-config`</sub>
 
 ```rust {#tangle-config}
 /// Optional tangle configuration — when present, the document participates
@@ -357,6 +373,8 @@ and an untyped config payload the plugin deserializes itself. The wire
 format has a shorthand (`input: tokens`) and a long form (`inputs: {name:
 chunk}`); the shorthand normalizes at parse time to a single entry under
 the `"default"` key, so plugins see one shape:
+
+<a name="chunk-pipeline-decl"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#pipeline-decl`</sub>
 
 ````rust {#pipeline-decl}
 /// Declaration of one pipeline pass for a literate document. A pipeline
@@ -409,6 +427,8 @@ file — skip it", while everything after means "this file *claims* to be
 folio/v1 and is broken — surface it". A directory walk over a mixed tree
 leans on exactly that split.
 
+<a name="chunk-folio-error"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#folio-error`</sub>
+
 ```rust {#folio-error}
 /// Errors typed at the level a caller can act on: missing envelope means
 /// "not a folio/v1 file"; malformed envelope means "claims to be
@@ -460,6 +480,8 @@ requirements, the same division of labor as the string-shaped URIs.
 And `Eq` is deliberately not derived: `pipelines[].config` is a
 `serde_json::Value`, which can carry `f64`s, and floats only have partial
 equality.
+
+<a name="chunk-colophon-type"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#colophon-type`</sub>
 
 ```rust {#colophon-type}
 /// Parsed canonical envelope. Edge targets and the document `id` are kept as
@@ -531,6 +553,8 @@ promotion from wire to `Colophon` — where required fields are demanded and
 keywords validated — happens in one readable pass inside
 [`parse_envelope`](#parse-envelope) instead of scattered across serde
 attributes.
+
+<a name="chunk-wire-shapes"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#wire-shapes`</sub>
 
 ```rust {#wire-shapes}
 /// Inner serde shape mirrors the YAML wire format. `edges` is captured as
@@ -617,6 +641,8 @@ end-of-file (an envelope-only document, legal for thin manifests). Note
 the return type — both halves borrow from the input, so a caller that only
 wants the body pays for no allocation:
 
+<a name="chunk-split-frontmatter"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#split-frontmatter`</sub>
+
 ```rust {#split-frontmatter}
 /// Parse the frontmatter block out of `content`, leaving the body untouched.
 /// Returns `(yaml_block, body)`. Both wiki and daemon callers split on the
@@ -643,6 +669,8 @@ Directory walks meet thousands of files that are not folio documents, so
 there is a cheap gate that avoids the full YAML parse — a substring check,
 knowingly imprecise (a stray `folio/v1` in a comment would pass), because
 the full parser runs right behind it for anything that matters:
+
+<a name="chunk-is-colophon"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#is-colophon`</sub>
 
 ```rust {#is-colophon}
 /// Quick check: does this file claim folio/v1? Cheap so callers can gate
@@ -675,6 +703,8 @@ repository inspects should not be a deprecated one. `serde_yml`, the
 other name in that neighbourhood, is a trap: it carries RUSTSEC-2025-0067
 and RUSTSEC-2025-0068, so adopting it would introduce two advisories
 where there are none.
+
+<a name="chunk-parse-envelope"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#parse-envelope`</sub>
 
 ```rust {#parse-envelope}
 /// Parse a folio/v1 envelope from full file contents. Returns the typed
@@ -772,6 +802,8 @@ is collapsing non-string YAML map keys via `to_string`, which matches the
 loose frontmatter convention that structured config keys are always
 strings anyway:
 
+<a name="chunk-yaml-to-json"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#yaml-to-json`</sub>
+
 ```rust {#yaml-to-json}
 /// Convert a `serde_norway::Value` to a `serde_json::Value`. YAML maps with
 /// non-string keys collapse their keys via `to_string` (matches the loose
@@ -827,6 +859,8 @@ diff. So the renderer is a hand-rolled string builder with a fixed field
 order, and *omission is load-bearing*: default values (`body_format:
 markdown`, empty `concerns`, empty sub-blocks) are not written at all, so
 legacy documents round-trip without picking up stray fields.
+
+<a name="chunk-render-envelope"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#render-envelope`</sub>
 
 ```rust {#render-envelope}
 /// Render a `Colophon` as the canonical `--- ... ---` YAML
@@ -976,6 +1010,8 @@ blocklist of the characters that make YAML re-interpret a plain scalar —
 grungy, but the mirror of what a full YAML emitter would write for these
 fields:
 
+<a name="chunk-yaml-scalar"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#yaml-scalar`</sub>
+
 ```rust {#yaml-scalar}
 /// Serialize a string as a YAML scalar. Plain unquoted form when the value
 /// is YAML-safe; double-quoted with escapes otherwise. Mirrors what a full
@@ -1039,6 +1075,8 @@ The tests pin the envelope's rules from both directions: what parses
 (unknown type, missing format, malformed YAML, legacy flat frontmatter),
 and that render-then-parse round-trips including the omit-when-default
 behaviors.
+
+<a name="chunk-tests"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -1491,6 +1529,8 @@ body
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/colophon.rs`](../../../x0k-folio/src/colophon.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [format-tokens](#chunk-format-tokens) · [normalize-body-format](#chunk-normalize-body-format) · [doc-type](#chunk-doc-type) · [doc-type-strings](#chunk-doc-type-strings) · [status](#chunk-status) · [materialization](#chunk-materialization) · [tangle-config](#chunk-tangle-config) · [pipeline-decl](#chunk-pipeline-decl) · [folio-error](#chunk-folio-error) · [colophon-type](#chunk-colophon-type) · [wire-shapes](#chunk-wire-shapes) · [split-frontmatter](#chunk-split-frontmatter) · [is-colophon](#chunk-is-colophon) · [parse-envelope](#chunk-parse-envelope) · [yaml-to-json](#chunk-yaml-to-json) · [render-envelope](#chunk-render-envelope) · [yaml-scalar](#chunk-yaml-scalar) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

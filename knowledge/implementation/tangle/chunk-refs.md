@@ -14,8 +14,6 @@ x0k:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/chunk
       - x0k:implementation/tangle/resolution
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 # Language-aware chunk reference extraction
 
@@ -25,8 +23,8 @@ deliberately structural: chunk refs are not meant to be inlined
 inside expressions or comments, so a line like `// <<x>>` or
 `let s = "<<x>>";` is correctly *not* a ref under that scan.
 
-But the line-based rule is not enough for the literate substrate
-explaining itself. Some of `x0k-tangle`'s own modules contain
+But the line-based rule is not enough for the [literate
+substrate](../../wiki/literate-programming.md "x0k:wiki/literate-programming") explaining itself. Some of `x0k-tangle`'s own modules contain
 test fixtures and string literals that legitimately have
 `<<imports>>` as data — e.g. a Rust string `r#"<<imports>>"#`
 sitting alone on its own line. Under the naive rule that line
@@ -47,6 +45,8 @@ drop a real ref).
 We re-export the `ChunkRef` type from `chunk.rs` and call its
 `find_chunk_refs` as the naive seed; everything else here is
 tree-sitter wiring.
+
+<a name="chunk-imports"></a><sub>[`src/chunk_refs.rs`](../../../x0k-tangle/src/chunk_refs.rs) · `#imports`</sub>
 
 ```rust {#imports}
 use crate::chunk::{find_chunk_refs, ChunkRef};
@@ -78,6 +78,8 @@ comment both are dropped, so both stay verbatim in the output. That
 uniformity is what lets the resolver's and weaver's own tests carry
 `<<!…>>` inside fixture strings — the escape is only ever interpreted
 where a plain ref would have been.
+
+<a name="chunk-find-chunk-refs-aware-fn"></a><sub>[`src/chunk_refs.rs`](../../../x0k-tangle/src/chunk_refs.rs) · `#find-chunk-refs-aware-fn`</sub>
 
 ```rust {#find-chunk-refs-aware-fn}
 pub fn find_chunk_refs_aware(content: &str, lang: Option<&str>) -> Vec<ChunkRef> {
@@ -123,6 +125,8 @@ raw string is still classified as inside-the-raw-string.
 A tiny helper: precompute the byte offsets where each line starts,
 so the filter above can map `line_in_body` → byte position in O(1).
 
+<a name="chunk-line-start-offsets-fn"></a><sub>[`src/chunk_refs.rs`](../../../x0k-tangle/src/chunk_refs.rs) · `#line-start-offsets-fn`</sub>
+
 ```rust {#line-start-offsets-fn}
 fn line_start_offsets(content: &str) -> Vec<usize> {
     let mut offsets = vec![0usize];
@@ -154,6 +158,8 @@ extend `exclude_kinds` with that grammar's node kinds (likely
 `string`, `template_string`, `comment`). Deferred — the Rust
 unblocker is what the substrate needs right now.
 
+<a name="chunk-collect-exclude-spans-fn"></a><sub>[`src/chunk_refs.rs`](../../../x0k-tangle/src/chunk_refs.rs) · `#collect-exclude-spans-fn`</sub>
+
 ```rust {#collect-exclude-spans-fn}
 fn collect_exclude_spans(content: &str, lang: &str) -> Option<Vec<(usize, usize)>> {
     let language = match lang {
@@ -176,6 +182,8 @@ When a node matches our exclude list we record its byte span and
 stop descending — we don't care about nested string interpolations
 or comment-inside-comment, and we don't want to record overlapping
 spans. For non-excluded nodes we recurse.
+
+<a name="chunk-walk-collect-fn"></a><sub>[`src/chunk_refs.rs`](../../../x0k-tangle/src/chunk_refs.rs) · `#walk-collect-fn`</sub>
 
 ```rust {#walk-collect-fn}
 fn walk_collect(node: Node, exclude_kinds: &[&str], spans: &mut Vec<(usize, usize)>) {
@@ -204,6 +212,8 @@ Coverage hits the Rust edge cases:
   not crash; we don't make a strict assertion on count here.
 - An escaped ref inside a string is dropped like a plain one; outside,
   it is reported with `escaped` set.
+
+<a name="chunk-tests"></a><sub>[`src/chunk_refs.rs`](../../../x0k-tangle/src/chunk_refs.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -328,6 +338,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/chunk_refs.rs`](../../../x0k-tangle/src/chunk_refs.rs) · `#root` · assembles [imports](#chunk-imports) · [find-chunk-refs-aware-fn](#chunk-find-chunk-refs-aware-fn) · [line-start-offsets-fn](#chunk-line-start-offsets-fn) · [collect-exclude-spans-fn](#chunk-collect-exclude-spans-fn) · [walk-collect-fn](#chunk-walk-collect-fn) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>

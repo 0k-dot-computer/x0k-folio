@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/receiving.md",
-  "source_hash": "f94c291c667243ad",
+  "source_hash": "3830d619cdc1e614",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -13,7 +13,7 @@
         },
         {
           "path": "x0k-tangle/src/receive.rs",
-          "hash": "8f7ba9a79e5c4160"
+          "hash": "7aca3f16ff639e74"
         }
       ]
     }

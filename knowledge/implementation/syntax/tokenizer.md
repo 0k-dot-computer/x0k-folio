@@ -43,6 +43,8 @@ off, `highlight` returns `None` for every input and the grammar crates are
 not built at all — a consumer that only needs the `TokenKind` vocabulary
 (or a build that cannot afford five C grammars) pays nothing.
 
+<a name="chunk-module-doc"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Pure tree-sitter syntax tokenizer.
 //!
@@ -73,6 +75,8 @@ A `Language` is parsed from a code-fence info string, accepting the common
 aliases. TypeScript's grammar is a superset of JavaScript and TSX's of JSX,
 so the JS aliases route to the TS grammars rather than needing grammars of
 their own.
+
+<a name="chunk-language"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#language`</sub>
 
 ```rust {#language}
 /// Supported languages for syntax highlighting.
@@ -117,6 +121,8 @@ impl Language {
 
 The token kinds are the contract every presenter agrees on. `Default` is the
 fallback a presenter paints in its ordinary code color.
+
+<a name="chunk-token-kind"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#token-kind`</sub>
 
 ```rust {#token-kind}
 /// Token types for syntax highlighting.
@@ -166,6 +172,8 @@ impl HighlightedToken {
 `css_class` is the one presentation-adjacent thing here, and it is still
 only a name: the matching CSS lives in whichever surface consumes it.
 
+<a name="chunk-css-class"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#css-class`</sub>
+
 ```rust {#css-class}
 /// The stable CSS class name for a token kind, e.g. `TokenKind::Keyword =>
 /// "tok-keyword"`. This is the shared class-name contract every HTML/web
@@ -194,6 +202,8 @@ pub fn css_class(kind: TokenKind) -> &'static str {
 `highlight` dispatches on language. The two definitions are `cfg`-gated
 mirror images: with the feature off, the signature survives and the body is
 `None`, so callers compile either way.
+
+<a name="chunk-highlight"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#highlight`</sub>
 
 ```rust {#highlight}
 /// Highlight code, returning token ranges.
@@ -227,6 +237,8 @@ match arms are grammar-specific strings. The recursion visits every node —
 a `string` node and its child `string_content` may both push — and pushes in
 tree order, which for a presenter that only reads ranges is what it needs.
 
+<a name="chunk-section-marker"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#section-marker`</sub>
+
 ```rust {#section-marker}
 // ============================================================================
 // Language-specific implementations
@@ -235,6 +247,8 @@ tree order, which for a presenter that only reads ranges is what it needs.
 
 JSON distinguishes a key from a string value by position: a `string` whose
 parent is a `pair` and which is that pair's first child is a `Property`.
+
+<a name="chunk-json"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#json`</sub>
 
 ```rust {#json}
 #[cfg(feature = "syntax-highlight")]
@@ -309,6 +323,8 @@ fn collect_json_tokens(node: &tree_sitter::Node, tokens: &mut Vec<HighlightedTok
 Rust classifies a plain `identifier` as a `Function` when its parent is a
 function item or a call; everything else falls to the grammar's named
 literal, comment, and type nodes.
+
+<a name="chunk-rust"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#rust`</sub>
 
 ```rust {#rust}
 #[cfg(feature = "syntax-highlight")]
@@ -410,6 +426,8 @@ Python's walk is the same shape with the `?` operator in place of the logged
 failure branches — a missing grammar or failed parse falls through to `None`
 either way.
 
+<a name="chunk-python"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#python`</sub>
+
 ```rust {#python}
 #[cfg(feature = "syntax-highlight")]
 fn highlight_python(code: &str) -> Option<Vec<HighlightedToken>> {
@@ -489,6 +507,8 @@ TypeScript and TSX share one walk; the flag only selects which grammar to
 load. A JSX element name is painted as a `Type` (so `<Component/>` reads like
 a type, as it is), and JSX attribute names ride the `property_identifier`
 arm.
+
+<a name="chunk-typescript"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#typescript`</sub>
 
 ```rust {#typescript}
 #[cfg(feature = "syntax-highlight")]
@@ -619,6 +639,8 @@ The feature-off tests pin the language table and the class contract; the
 feature-on tests pin one classification decision per grammar — the JSON key,
 the Rust keywords, the TS type annotation, the JSX tag.
 
+<a name="chunk-tests"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#tests`</sub>
+
 ```rust {#tests}
 #[cfg(test)]
 mod tests {
@@ -736,6 +758,8 @@ mod tests {
 ```
 
 ## The file
+
+<a name="chunk-root"></a><sub>[`src/lib.rs`](../../../x0k-syntax/src/lib.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [language](#chunk-language) · [token-kind](#chunk-token-kind) · [css-class](#chunk-css-class) · [highlight](#chunk-highlight) · [section-marker](#chunk-section-marker) · [json](#chunk-json) · [rust](#chunk-rust) · [python](#chunk-python) · [typescript](#chunk-typescript) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

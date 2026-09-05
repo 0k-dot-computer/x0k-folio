@@ -51,6 +51,8 @@ Placement: like the publisher, this is build-time tooling that reads
 two trees and shells out to `git` — orchestration around edges, not
 pure logic — so it lives beside the projector in `x0k-tangle`.
 
+<a name="chunk-module-doc"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Receive a contribution made in a projected repository back into the
 //! monorepo as a proposed change — the inward leg of the projection
@@ -70,6 +72,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::parser::parse_document;
+use crate::region_gfm::unweave_chapter;
 use crate::region_repo::{project_publication_repo, RepoProjectOptions};
 use crate::resolve::expand_chunk;
 use x0k_folio::colophon::parse_envelope;
@@ -81,6 +84,8 @@ Every changed path in the clone lands in exactly one of five classes.
 The first two are *receivable* — a patch exists and can be applied; the
 other three are not, and the report says why in a form a contributor
 can act on:
+
+<a name="chunk-classification"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#classification`</sub>
 
 ```rust {#classification}
 /// What a changed path in the clone is, and therefore what can be done
@@ -117,6 +122,8 @@ A generated-file refusal carries its attribution — the document and,
 when the tangler can localize it, the chunk names whose expansion
 contains the touched lines:
 
+<a name="chunk-origin"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#origin`</sub>
+
 ```rust {#origin}
 /// Where a refused `@generated` edit should have been made.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +141,8 @@ patch applies to — usually the clone path itself, since the projector
 preserves paths, but always looked up rather than assumed. `patch` is a
 unified diff with `a/`–`b/` headers against the *target*, ready for
 `git apply` from the workspace root:
+
+<a name="chunk-change"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#change`</sub>
 
 ```rust {#change}
 /// One changed path in the clone, classified.
@@ -159,6 +168,8 @@ The options and the report. The report states which revision the
 reference was built at and whether that is the revision the clone was
 projected from — the honesty the design's "never a stale snapshot of a
 hidden truth" demands in the other direction:
+
+<a name="chunk-options-and-report"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#options-and-report`</sub>
 
 ```rust {#options-and-report}
 /// Options for a receive-repo run.
@@ -219,6 +230,8 @@ one by reading its first line, and to find the sidecar that names its
 doc), and the reference needs the provenance (to know which publication
 and which revision).
 
+<a name="chunk-receive-repo"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#receive-repo`</sub>
+
 ```rust {#receive-repo}
 /// Receive the changes in `clone` (a projected repository) as patches
 /// against `workspace`. Reports every change; applies the receivable
@@ -274,6 +287,8 @@ does not own and the receiver does not carry back. It is the design's
 "deliberate divergence" made explicit: a `CONTRIBUTING.md` written for
 the forge's audience, a forge-specific funding file.
 
+<a name="chunk-provenance"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#provenance`</sub>
+
 ```rust {#provenance}
 /// The fields of `PROVENANCE.json` the receiver reads.
 #[derive(Debug, Clone, Deserialize)]
@@ -320,6 +335,8 @@ The provenance names the publication by URI, not by path — the clone
 does not carry the publication doc (it is a decision, outside the
 disclosed region). Publications are few and live in one directory, so
 a scan is the resolver:
+
+<a name="chunk-find-publication-doc"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#find-publication-doc`</sub>
 
 ```rust {#find-publication-doc}
 /// Find the publication doc whose `id:` is `uri` under
@@ -375,6 +392,8 @@ reference that moves with the operator's uncommitted edits; after
 reports nothing to receive. That is consistent, not wrong, but a
 commit id in provenance would be a fixed point; recording one is the
 projector's call.
+
+<a name="chunk-reference"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#reference`</sub>
 
 ```rust {#reference}
 /// The reference projection: a temp dir holding a fresh projection of
@@ -433,6 +452,8 @@ The crate membership comes from the publication doc's `publishes`
 edges; it decides which crate directories to archive. Reading it here
 rather than through the projector keeps the archive narrow:
 
+<a name="chunk-published-crates"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#published-crates`</sub>
+
 ```rust {#published-crates}
 /// Crate names from the publication's `publishes` edges.
 fn published_crates(pub_doc: &Path) -> Result<Vec<String>> {
@@ -459,6 +480,8 @@ nor locks the operator's working copy) and fall back to git. Any
 failure anywhere returns `None`; the caller degrades to the current
 tree rather than erroring, because a skewed reference with an honest
 label is more useful than no report.
+
+<a name="chunk-materialize-corpus"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#materialize-corpus`</sub>
 
 ```rust {#materialize-corpus}
 /// Materialize the projector's inputs at `rev` under `<scratch>/corpus`.
@@ -524,6 +547,8 @@ fn git_path_exists(git_dir: &Path, commit: &str, path: &str) -> bool {
 }
 ```
 
+<a name="chunk-resolve-commit"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#resolve-commit`</sub>
+
 ```rust {#resolve-commit}
 /// `(git dir, commit sha)` for `rev`, via jj (change id → commit) or
 /// git (sha or ref). `None` when neither resolves it.
@@ -575,6 +600,8 @@ A path is *changed* when it is missing from one side or its bytes
 differ. Each changed path is then classified with the provenance and
 the reference tree in hand:
 
+<a name="chunk-diff-and-classify"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#diff-and-classify`</sub>
+
 ```rust {#diff-and-classify}
 fn diff_and_classify(clone: &Path, reference: &Path, prov: &Provenance) -> Result<Vec<ReceivedChange>> {
     let clone_files = collect_files(clone)?;
@@ -592,6 +619,15 @@ fn diff_and_classify(clone: &Path, reference: &Path, prov: &Provenance) -> Resul
             _ => "modified",
         };
         let (class, target, produced_by) = classify(path, &old, &new, reference, prov);
+        // A literate chapter crossed woven for the forge; the contributor
+        // edited the woven text, and the corpus holds the source. Both
+        // sides are unwoven before the diff, so the patch is against the
+        // document the target names.
+        let (old, new) = if matches!(class, Class::Literate) {
+            (old.map(|t| unweave_chapter(&t)), new.map(|t| unweave_chapter(&t)))
+        } else {
+            (old, new)
+        };
         let patch = if class.receivable() {
             let target = target.as_deref().unwrap_or(path);
             Some(unified_patch(target, old.as_deref(), new.as_deref()))
@@ -641,6 +677,13 @@ fn read_opt(path: &Path) -> Result<Option<String>> {
 }
 ```
 
+A literate chapter in the clone is the *woven* chapter — the projector
+wove it for the forge ([`region-gfm.md`](region-gfm.md)), and the
+contributor edited that. The corpus holds the source, and the patch has
+to apply there, so both the reference's copy and the clone's are unwoven
+before they are diffed; the weave inverts line for line, which is the
+invariant that makes this a routing step and not a merge.
+
 The classifier is a short ladder, ordered so the more specific claim
 wins. Overlay first — a maintainer's declaration outranks every
 inference. Then the literate docs: a path in `path_map` maps back
@@ -652,6 +695,8 @@ a published crate is source, unless its first line carries the
 `@generated` marker — the reference copy's first line when it exists,
 the clone's when the file is new — in which case it is refused with
 its origin. Everything else is scaffolding.
+
+<a name="chunk-classify"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#classify`</sub>
 
 ```rust {#classify}
 /// `(class, monorepo target, generated origin)` for one changed path.
@@ -713,6 +758,8 @@ chunk whose expansion contains it
 contains everything beneath it. A line that appears in no chunk (the
 generated header) contributes nothing; the doc alone is still named.
 
+<a name="chunk-generated-origin"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#generated-origin`</sub>
+
 ```rust {#generated-origin}
 /// The doc (and, best-effort, the chunks) that produce `output` in the
 /// reference projection.
@@ -759,6 +806,8 @@ fn doc_from_header(text: &str) -> Option<String> {
     Some(rest.split([' ', '\u{2014}']).next()?.trim().to_string())
 }
 ```
+
+<a name="chunk-touched-chunks"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#touched-chunks`</sub>
 
 ```rust {#touched-chunks}
 /// Innermost chunk per touched reference line, deduplicated.
@@ -811,6 +860,8 @@ target, in the `a/`–`b/` form `git apply` strips by default, with
 computed in-process (`similar`) rather than by shelling out, so the
 report is complete even where `git` is not the operator's tool:
 
+<a name="chunk-unified-patch"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#unified-patch`</sub>
+
 ```rust {#unified-patch}
 /// Unified diff of `old` → `new` addressed at `target`.
 fn unified_patch(target: &str, old: Option<&str>, new: Option<&str>) -> String {
@@ -825,6 +876,8 @@ The patch set on disk is one file per receivable change plus a
 `receipt.json` carrying the whole report — the artifact a CI check or
 a reviewer reads. File names are numbered and derived from the target
 so a directory listing reads as a table of contents:
+
+<a name="chunk-write-patch-set"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#write-patch-set`</sub>
 
 ```rust {#write-patch-set}
 fn write_patch_set(dir: &Path, report: &mut ReceiveReport) -> Result<()> {
@@ -859,6 +912,8 @@ dirty check asks jj first (the monorepo's VCS; the `@` commit *is* the
 uncommitted state, and it must snapshot to see it), then git, and
 records which answered. Then `git apply --check` over the whole set
 precedes the real `git apply`; the set lands entirely or not at all.
+
+<a name="chunk-apply-patch-set"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#apply-patch-set`</sub>
 
 ```rust {#apply-patch-set}
 fn apply_patch_set(workspace: &Path, patch_dir: &Path, report: &mut ReceiveReport) -> Result<()> {
@@ -935,6 +990,8 @@ a projection on disk; the end-to-end path — a real projection, an edit
 in the clone, the receive, the apply and its refusal — follows below in
 `tests/receive_repo.rs`, over a synthetic workspace with a git history
 so the exact-reference path is exercised too.
+
+<a name="chunk-tests"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -1027,6 +1084,8 @@ commit, a corpus that has moved since, a `@generated` file whose origin has to
 be recovered by re-expanding chunks. So `tests/receive_repo.rs` builds both
 trees with the real projector and runs Carol's typo through the whole cycle.
 
+<a name="chunk-receive-e2e-doc"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-doc`</sub>
+
 ```rust {#receive-e2e-doc file="tests/receive_repo.rs"}
 //! End-to-end pins for `receive_repo`, the inward leg of the projection
 //! cycle (`x0k:implementation/tangle/receiving`): a synthetic literate
@@ -1048,6 +1107,8 @@ trees with the real projector and runs Carol's typo through the whole cycle.
 receiver's classification vocabulary is deliberately not part of the top-level
 surface, and the test speaks the same name a consumer would have to.
 
+<a name="chunk-receive-e2e-uses"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-uses`</sub>
+
 ```rust {#receive-e2e-uses file="tests/receive_repo.rs"}
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1065,10 +1126,14 @@ relating paths across two trees, and a fixture with only one of each still has
 every relation. The document and publication are written as string constants so
 the fixture is legible at the point of use:
 
+<a name="chunk-receive-e2e-paths"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-paths`</sub>
+
 ```rust {#receive-e2e-paths file="tests/receive_repo.rs"}
 const DOC_REL: &str = "knowledge/implementation/demo/colophon.md";
 const PUB_REL: &str = "decisions/publications/demo.md";
 ```
+
+<a name="chunk-receive-e2e-fixture-docs"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-fixture-docs`</sub>
 
 ```rust {#receive-e2e-fixture-docs file="tests/receive_repo.rs"}
 const DOC: &str = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/demo/colophon\n  type: implementation\n  status: draft\n  summary: The demo crate's one exported function, and where it trims.\n  tangle:\n    crate: demo-crate\n    root: src/lib.rs\n---\n# The demo colophon\n\nThe envelope parser tolerates keys it does not own. The first line\nis the whole contract.\n\n```rust {#parse-line}\n/// First line of `s`, trimmed.\npub fn parse_line(s: &str) -> &str {\n    s.lines().next().unwrap_or(\"\").trim()\n}\n```\n\n```rust {#root}\npub mod hand;\n\n<<parse-line>>\n```\n";
@@ -1079,6 +1144,8 @@ const PUB: &str = "---\nx0k:\n  format: folio/v1\n  type: publication\n  id: x0k
 `git` runs with identity and signing pinned inline. A test that inherited
 the operator's `user.email` or a global `commit.gpgsign = true` would pass on
 one machine and hang on another:
+
+<a name="chunk-receive-e2e-git"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-git`</sub>
 
 ```rust {#receive-e2e-git file="tests/receive_repo.rs"}
 fn git(dir: &Path, args: &[&str]) {
@@ -1103,6 +1170,8 @@ The workspace is tangled by the real tangler, not by writing a plausible
 `lib.rs`. The assertion after the call is the load-bearing part: if the fixture
 ever stopped producing an `@generated` file, the refusal test below would keep
 passing for the wrong reason — nothing to refuse.
+
+<a name="chunk-receive-e2e-workspace"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-workspace`</sub>
 
 ```rust {#receive-e2e-workspace file="tests/receive_repo.rs"}
 /// A workspace with one published crate, one literate doc tangled by the
@@ -1148,6 +1217,8 @@ the reference the receiver rebuilds is compared against something the projector
 actually emits. `git_init` is off: the clone needs a `PROVENANCE.json`, not a
 history of its own.
 
+<a name="chunk-receive-e2e-project"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-project`</sub>
+
 ```rust {#receive-e2e-project file="tests/receive_repo.rs"}
 fn project(ws: &Path, clone: &Path) {
     project_publication_repo(
@@ -1169,6 +1240,8 @@ Each test hands the receiver its own scratch directory. The receiver
 materializes the corpus at a past commit to build the reference, and a shared
 scratch would let one test read another's materialization:
 
+<a name="chunk-receive-e2e-options"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-options`</sub>
+
 ```rust {#receive-e2e-options file="tests/receive_repo.rs"}
 fn scratch_opts(scratch: &Path, apply: bool, out: Option<PathBuf>) -> ReceiveOptions {
     ReceiveOptions {
@@ -1188,6 +1261,8 @@ saw, and the maintainer's own new paragraph would come back as a deletion in
 her patch. Building the reference at the clone's `corpus_rev` is what keeps the
 report to one change, and the assertion that the drift text is absent from the
 patch is what proves it.
+
+<a name="chunk-receive-e2e-literate-edit"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-literate-edit`</sub>
 
 ```rust {#receive-e2e-literate-edit file="tests/receive_repo.rs"}
 #[test]
@@ -1258,6 +1333,8 @@ bare refusal would be useless to the contributor. The report has to name the
 document and the chunk, so the test checks both — `parse-line`, not `root`,
 because the origin walk finds the innermost chunk whose expansion changed.
 
+<a name="chunk-receive-e2e-generated-edit"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-generated-edit`</sub>
+
 ```rust {#receive-e2e-generated-edit file="tests/receive_repo.rs"}
 #[test]
 fn generated_edit_is_refused_and_names_doc_and_chunk() {
@@ -1293,6 +1370,8 @@ file corresponds to it. `README.md` is projection-owned: it is regenerated from
 the publication document on every publish, so an edit to it is reported and
 dropped. `PROVENANCE.json` is neither, because it is the receiver's *input*;
 reporting it as a change would mean the receiver diffing its own instructions.
+
+<a name="chunk-receive-e2e-overlay"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-overlay`</sub>
 
 ```rust {#receive-e2e-overlay file="tests/receive_repo.rs"}
 #[test]
@@ -1347,6 +1426,8 @@ dirty. The refusal names the path so the operator can see what it would have
 overwritten. Applied, never committed: the intent stamp is the operator's to
 make.
 
+<a name="chunk-receive-e2e-apply"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-apply`</sub>
+
 ```rust {#receive-e2e-apply file="tests/receive_repo.rs"}
 #[test]
 fn apply_patches_the_working_copy_and_refuses_a_dirty_target() {
@@ -1392,6 +1473,8 @@ and the report says `rev_exact: false` rather than pretending. The receiver
 still works; the maintainer just knows the comparison is against now, not
 against the projection.
 
+<a name="chunk-receive-e2e-no-vcs"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-no-vcs`</sub>
+
 ```rust {#receive-e2e-no-vcs file="tests/receive_repo.rs"}
 #[test]
 fn without_a_vcs_the_reference_is_the_current_tree_and_says_so() {
@@ -1410,6 +1493,8 @@ fn without_a_vcs_the_reference_is_the_current_tree_and_says_so() {
     assert_eq!(report.changes[0].class, Class::Source);
 }
 ```
+
+<a name="chunk-receive-e2e-root"></a><sub>[`tests/receive_repo.rs`](../../../x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-root` · assembles [receive-e2e-doc](#chunk-receive-e2e-doc) · [receive-e2e-uses](#chunk-receive-e2e-uses) · [receive-e2e-paths](#chunk-receive-e2e-paths) · [receive-e2e-fixture-docs](#chunk-receive-e2e-fixture-docs) · [receive-e2e-git](#chunk-receive-e2e-git) · [receive-e2e-workspace](#chunk-receive-e2e-workspace) · [receive-e2e-project](#chunk-receive-e2e-project) · [receive-e2e-options](#chunk-receive-e2e-options) · [receive-e2e-literate-edit](#chunk-receive-e2e-literate-edit) · [receive-e2e-generated-edit](#chunk-receive-e2e-generated-edit) · [receive-e2e-overlay](#chunk-receive-e2e-overlay) · [receive-e2e-apply](#chunk-receive-e2e-apply) · [receive-e2e-no-vcs](#chunk-receive-e2e-no-vcs)</sub>
 
 ```rust {#receive-e2e-root file="tests/receive_repo.rs"}
 <<receive-e2e-doc>>
@@ -1440,6 +1525,8 @@ fn without_a_vcs_the_reference_is_the_current_tree_and_says_so() {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/receive.rs`](../../../x0k-tangle/src/receive.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [classification](#chunk-classification) · [origin](#chunk-origin) · [change](#chunk-change) · [options-and-report](#chunk-options-and-report) · [receive-repo](#chunk-receive-repo) · [provenance](#chunk-provenance) · [find-publication-doc](#chunk-find-publication-doc) · [reference](#chunk-reference) · [published-crates](#chunk-published-crates) · [materialize-corpus](#chunk-materialize-corpus) · [resolve-commit](#chunk-resolve-commit) · [diff-and-classify](#chunk-diff-and-classify) · [classify](#chunk-classify) · [generated-origin](#chunk-generated-origin) · [touched-chunks](#chunk-touched-chunks) · [unified-patch](#chunk-unified-patch) · [write-patch-set](#chunk-write-patch-set) · [apply-patch-set](#chunk-apply-patch-set) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

@@ -86,6 +86,8 @@ literate `.md` sources and their tangled `@generated` output is what
 breaks that bootstrap circle, and the projected `tools/ci` is what keeps
 the two from drifting apart afterwards.
 
+<a name="chunk-module-doc"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Repository projection — the git-repo Surface for a Publication.
 //!
@@ -146,6 +148,8 @@ the two from drifting apart afterwards.
 //! refuses to disclose anything above `public` access tier.
 ```
 
+<a name="chunk-uses"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#uses`</sub>
+
 ```rust {#uses}
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -160,7 +164,11 @@ use x0k_folio::{EntityId, InlineEntity};
 use crate::faces::proving_chunks;
 use crate::parser::parse_document;
 use crate::pipeline::PipelineRegistry;
-use crate::pipeline_runner::{tangle_document, TangleSidecar};
+use crate::pipeline_runner::{content_hash, tangle_document, TangleSidecar};
+use crate::region_gfm::{
+    relative_link, weave_affordance_section, weave_chapter, AffordanceEvidence, ChapterLinks,
+    ProofEvidence,
+};
 ```
 
 Members are named by `x0k:software-module/<crate>` URIs for crates and
@@ -175,6 +183,8 @@ concrete versions for the dependency keys the monorepo inherits from
 its root manifest. The resolutions are a fixed table mirroring the
 monorepo root; an inherited key with no entry here surfaces as a build
 failure in the projection's own CI, not a silent substitution.
+
+<a name="chunk-constants"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#constants`</sub>
 
 ```rust {#constants}
 const SOFTWARE_MODULE_PREFIX: &str = "x0k:software-module/";
@@ -260,6 +270,8 @@ past the guards, for inspecting a projection that is not yet clean; the
 two forge-agnostic scripts, and a caller targeting another forge skips
 the wrappers entirely.
 
+<a name="chunk-options"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#options`</sub>
+
 ```rust {#options}
 /// Options controlling a repository projection.
 #[derive(Debug, Clone)]
@@ -304,6 +316,8 @@ projection from the second, precisely because the first can be amended
 after the fact. When the run re-projects over an earlier projection,
 the previous pair is read from that projection's `PROVENANCE.json` so
 the new commit message can name the link it follows.
+
+<a name="chunk-report"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#report`</sub>
 
 ```rust {#report}
 /// Summary of a repository-projection run.
@@ -406,6 +420,8 @@ version a consumer of the bundle already tracks), else the **corpus
 revision** the provenance already records. Which one was used is
 recorded in `PROVENANCE.json` beside the version.
 
+<a name="chunk-module-version-source"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#module-version-source`</sub>
+
 ```rust {#module-version-source}
 /// Where the version stamped into shipped modules' `owl:versionIRI` came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -427,6 +443,8 @@ impl ModuleVersionSource {
     }
 }
 ```
+
+<a name="chunk-license-source"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#license-source`</sub>
 
 ```rust {#license-source}
 /// Where the applied license expression came from.
@@ -451,6 +469,8 @@ that is what [`project_publication_repo`](#the-projection-as-an-outline)
 does, and `project_publication_repo_with` takes the runner for a caller
 that wants another. A runner is handed one target at a time and answers
 with what the harness printed, by name.
+
+<a name="chunk-proofs"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#proofs`</sub>
 
 ```rust {#proofs}
 /// How the proofs the published affordances name are run at projection.
@@ -534,6 +554,8 @@ known before a crate is vendored, because vendoring judges each
 `@generated` file against it — and the fragments below hang off this
 outline in that order.
 
+<a name="chunk-project-publication-repo"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#project-publication-repo` · assembles [read-publication](#chunk-read-publication) · [resolve-license](#chunk-resolve-license) · [resolve-overlay](#chunk-resolve-overlay) · [open-report](#chunk-open-report) · [gather-manifests-and-guard](#chunk-gather-manifests-and-guard) · [refuse-on-violations](#chunk-refuse-on-violations) · [select-modules](#chunk-select-modules) · [discover-literate-docs](#chunk-discover-literate-docs) · [select-documents](#chunk-select-documents) · [prepare-output-dir](#chunk-prepare-output-dir) · [vendor-crates](#chunk-vendor-crates) · [vendor-modules](#chunk-vendor-modules) · [copy-docs-and-scaffold](#chunk-copy-docs-and-scaffold) · [restore-overlay-and-commit](#chunk-restore-overlay-and-commit)</sub>
+
 ```rust {#project-publication-repo}
 /// Project the publication decision doc at `region_doc` into a standalone repo
 /// under `output_dir`, resolving crate sources against `workspace`. The
@@ -609,6 +631,8 @@ whose source document is outside the literate set is dropped. Excluding
 the document is therefore the whole act; nothing separate deletes the
 code.
 
+<a name="chunk-read-publication"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#read-publication`</sub>
+
 ```rust {#read-publication}
 let content = std::fs::read_to_string(region_doc)
     .with_context(|| format!("reading publication doc {}", region_doc.display()))?;
@@ -658,6 +682,8 @@ the holder is a fact the projector cannot invent: the publication's
 one refuses. The year is the projection year — the notice dates the
 act of publishing, which is what the projector performs.
 
+<a name="chunk-resolve-license"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#resolve-license`</sub>
+
 ```rust {#resolve-license}
 // Licensing is part of the act of publishing: the publication doc's
 // `license:` field is authoritative, and an explicit caller override is
@@ -687,6 +713,8 @@ projector preserves them exactly as found instead of regenerating them.
 Everything not listed is authoritative from the corpus and is
 regenerated wholesale.
 
+<a name="chunk-resolve-overlay"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#resolve-overlay`</sub>
+
 ```rust {#resolve-overlay}
 // Deliberate divergence: `overlay:` names projected-repo-relative paths
 // the public side owns (community files such as CONTRIBUTING.md). They
@@ -700,6 +728,8 @@ somewhere to accumulate; the two revisions and the previous
 projection's pair are resolved here too. The crates.io keys
 (`repository:`, `keywords:`) are optional envelope keys the shared
 parser tolerates but does not own, so this module reads them itself.
+
+<a name="chunk-open-report"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#open-report`</sub>
 
 ```rust {#open-report}
 let mut report = RepoProjectReport {
@@ -740,6 +770,8 @@ monorepo. `workspace-hack` is the one exemption — a build-performance
 artifact the vendoring step strips, never shipped. The same pass reads
 each crate's `edition`, because the standalone workspace declares one
 edition under `[workspace.package]` that every crate inherits.
+
+<a name="chunk-gather-manifests-and-guard"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#gather-manifests-and-guard`</sub>
 
 ```rust {#gather-manifests-and-guard}
 let mut versions: BTreeMap<String, String> = BTreeMap::new();
@@ -794,6 +826,8 @@ A violation refuses the whole projection with every finding listed;
 partial tree is ever written under a guard failure, because the guards
 run before the output directory is even created.
 
+<a name="chunk-refuse-on-violations"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#refuse-on-violations`</sub>
+
 ```rust {#refuse-on-violations}
 if !opts.allow_dirty
     && (!report.leak_violations.is_empty() || !report.closure_violations.is_empty())
@@ -836,6 +870,8 @@ module version. Finally, the empty case: `x0k-ontology` published with
 no module selected would be a crate whose build script finds no
 modules directory in the projection, so the projector refuses up front
 and says what to add.
+
+<a name="chunk-select-modules"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#select-modules`</sub>
 
 ```rust {#select-modules}
 let mut vocab_modules: Vec<VocabModule> = Vec::new();
@@ -895,6 +931,8 @@ copy is the set itself. A workspace with more than one edition among
 its published crates is refused here too — the standalone workspace
 declares one — and a crate that declares none inherits 2021.
 
+<a name="chunk-discover-literate-docs"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#discover-literate-docs`</sub>
+
 ```rust {#discover-literate-docs}
 let literate = discover_literate_docs(workspace, &published, &excluded_docs)?;
 let literate_set: BTreeSet<String> = literate
@@ -917,6 +955,8 @@ The decision documents the publication named are resolved next, and for
 the same reason the literate set is settled early: this step refuses —
 on an id that names no document, on an anchor that heads no section —
 and a refusal must land before the output directory is touched.
+
+<a name="chunk-select-documents"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#select-documents`</sub>
 
 ```rust {#select-documents}
 let projected_docs = project_named_documents(workspace, &documents)?;
@@ -943,6 +983,8 @@ region is cleared so nothing stale survives, and after the write the
 overlay is restored over whatever the projector produced. `.git` and
 `target/` are the only things that persist through the clear.
 
+<a name="chunk-prepare-output-dir"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#prepare-output-dir`</sub>
+
 ```rust {#prepare-output-dir}
 // A prior projection (a `.git`, or a PROVENANCE.json) is projected INTO,
 // not beside: the overlay paths are stashed, the regenerated region is
@@ -964,6 +1006,8 @@ let stash = if prior_projection {
 Each published crate is copied whole, stripped of any `@generated`
 file the region does not own, and its manifest rewritten (the
 mechanics are below).
+
+<a name="chunk-vendor-crates"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#vendor-crates`</sub>
 
 ```rust {#vendor-crates}
 let vendor_ctx = VendorCtx {
@@ -997,6 +1041,8 @@ is a drift hazard, and the projector never writes both. Which layout a
 given projection used is recorded in `PROVENANCE.json`
 (`modules_dir`), so the record says where to look rather than leaving a
 reader to guess.
+
+<a name="chunk-modules-rel-dir"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#modules-rel-dir`</sub>
 
 ```rust {#modules-rel-dir}
 /// The projection-relative directory the shipped `*.ttl` module files go in.
@@ -1032,6 +1078,8 @@ still the sorted N-Triples set the module contract promises —
 `x0k-ontology`'s round-trip test re-renders the file from its facts,
 sorted, and compares bytes, and a stamp placed anywhere else fails it
 (found on the first `[core, document]` projection, 2026-09-02).
+
+<a name="chunk-vendor-modules"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#vendor-modules`</sub>
 
 ```rust {#vendor-modules}
 let modules_rel = modules_rel_dir(&crates);
@@ -1079,8 +1127,28 @@ target dir; no build) — about half a second against a warm registry
 index, and the projection's own `cargo build --locked` afterwards is
 what proves it.
 
+<a name="chunk-copy-docs-and-scaffold"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#copy-docs-and-scaffold`</sub>
+
 ```rust {#copy-docs-and-scaffold}
-let mut path_map = copy_literate_docs(workspace, output_dir, &literate, &mut report)?;
+// Where the weave may link to: every chapter by its id, every named
+// document by the reference the publication wrote, every affordance by
+// its page.
+let mut uri_to_rel: BTreeMap<String, String> = literate
+    .iter()
+    .map(|d| (d.id.clone(), d.rel.to_string_lossy().to_string()))
+    .collect();
+for doc in &projected_docs {
+    uri_to_rel.insert(doc.reference.clone(), doc.rel.to_string_lossy().to_string());
+}
+for record in &affordances {
+    uri_to_rel.insert(record.id.clone(), record.document.clone());
+}
+let affordance_pages: BTreeMap<String, (String, String)> = affordances
+    .iter()
+    .map(|r| (r.id.clone(), (r.title.clone(), r.document.clone())))
+    .collect();
+let links = ChapterLinks { uri_to_rel: &uri_to_rel, affordances: &affordance_pages };
+let mut path_map = weave_literate_docs(workspace, output_dir, &literate, &links, &mut report)?;
 write_projected_documents(output_dir, &projected_docs, &mut path_map, &mut report)?;
 
 emit_workspace_manifest(output_dir, &crates, &edition)?;
@@ -1091,6 +1159,7 @@ emit_ci_and_guard(output_dir, opts.emit_github)?;
 std::fs::write(output_dir.join(".gitignore"), "/target\n**/target\n.direnv/\n")?;
 generate_lockfile(output_dir)?;
 run_proofs(output_dir, &mut affordances, proofs, &mut report)?;
+weave_affordance_pages(output_dir, &projected_docs, &affordances)?;
 emit_provenance(
     output_dir,
     &env.id,
@@ -1216,6 +1285,8 @@ description and carries no information, printed for exactly the
 document nobody has described yet. The fix is one line in that
 document's own envelope, which is where the sentence belonged anyway;
 a module with no `rdfs:comment` refuses for the same reason.
+
+<a name="chunk-write-readme-contents"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#write-readme-contents`</sub>
 
 ```rust {#write-readme-contents}
 /// The marker a publication's README carries where its contents page goes.
@@ -1689,6 +1760,8 @@ commit on top of the existing history — none at all when the
 re-projection changed nothing, so an idle publish leaves no empty
 commit and `committed` says which happened.
 
+<a name="chunk-restore-overlay-and-commit"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#restore-overlay-and-commit`</sub>
+
 ```rust {#restore-overlay-and-commit}
 if let Some(stash) = stash {
     restore_overlay(output_dir, &stash)?;
@@ -1715,6 +1788,8 @@ absolute paths, no `..`, no trailing slash (a directory is named by its
 bare path), and never `.git` or `PROVENANCE.json`, which the projector
 owns. A bad entry refuses the projection rather than silently
 preserving something the publication did not mean.
+
+<a name="chunk-overlay-paths"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#overlay-paths`</sub>
 
 ```rust {#overlay-paths}
 /// Read the `overlay:` list from the publication envelope and validate each
@@ -1750,6 +1825,8 @@ already in the output directory. A missing field is tolerated — an
 older projection recorded no `corpus_commit` — so the chain simply
 starts where the record does.
 
+<a name="chunk-previous-provenance-field"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#previous-provenance-field`</sub>
+
 ```rust {#previous-provenance-field}
 /// One string field of the `PROVENANCE.json` already in `output_dir`, if
 /// there is one — the previous link in the projected history. Absent
@@ -1772,6 +1849,8 @@ touches it, the repository's `.gitignore` already hides it, and a
 rename within one filesystem is atomic and cheap even for a directory
 tree. Only entries that actually exist are stashed; the publication may
 declare an overlay path the public side has not created yet.
+
+<a name="chunk-overlay-stash"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#overlay-stash`</sub>
 
 ```rust {#overlay-stash}
 /// Where overlay paths wait while the regenerated region is cleared and
@@ -1815,6 +1894,8 @@ Restoring replaces whatever the projector wrote at an overlay path —
 the corpus never wins over the overlay — and removes the stash root so
 a clean projection leaves no trace of the mechanism.
 
+<a name="chunk-restore-overlay"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#restore-overlay`</sub>
+
 ```rust {#restore-overlay}
 /// Put the stashed overlay paths back, replacing anything the projector
 /// wrote at those paths — the overlay is preserved exactly as found.
@@ -1839,6 +1920,8 @@ fn restore_overlay(output_dir: &Path, stash: &OverlayStash) -> Result<()> {
     Ok(())
 }
 ```
+
+<a name="chunk-clear-regenerated-region"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#clear-regenerated-region`</sub>
 
 ```rust {#clear-regenerated-region}
 /// Remove everything in `output_dir` except `.git` and `target/` — the
@@ -1871,6 +1954,8 @@ names a crate (an `excludes` entry may carry a `#feature` suffix
 naming the severance, and only the crate name matters here) and
 `x0k:ontology-module/` names a vocabulary module. Any other URI under
 a membership edge is an error naming it.
+
+<a name="chunk-member-names"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#member-names`</sub>
 
 ```rust {#member-names}
 /// The members a membership edge names, split by kind.
@@ -1944,6 +2029,8 @@ tolerant line scan over the raw YAML: a scalar at two-space indent, or
 a list in either inline or block form. This is grungy string handling,
 and it is confined to these two functions.
 
+<a name="chunk-envelope-scalar"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#envelope-scalar`</sub>
+
 ```rust {#envelope-scalar}
 /// Read one top-level scalar (`key: value`) out of a publication doc's
 /// `x0k:` envelope. The shared envelope parser deliberately drops keys it
@@ -1967,6 +2054,8 @@ fn envelope_scalar(content: &str, key: &str) -> Option<String> {
     None
 }
 ```
+
+<a name="chunk-envelope-string-list"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#envelope-string-list`</sub>
 
 ```rust {#envelope-string-list}
 /// Read a top-level string list (`key: [a, b]` inline, or a `- item` block
@@ -2021,6 +2110,8 @@ Manifests are read and rewritten through `toml_edit`, so a hand-authored
 `Cargo.toml` keeps its layout and comments through the projection; only
 the keys the publication act owns change.
 
+<a name="chunk-manifest-readers"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#manifest-readers`</sub>
+
 ```rust {#manifest-readers}
 fn manifest_package_str(doc: &toml_edit::DocumentMut, key: &str) -> Option<String> {
     doc.get("package")
@@ -2068,6 +2159,8 @@ fn manifest_access(doc: &toml_edit::DocumentMut) -> String {
 }
 ```
 
+<a name="chunk-path-deps"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#path-deps`</sub>
+
 ```rust {#path-deps}
 /// `(dep-key, optional, target-crate)` for each `path = "..."` dependency.
 fn path_deps(doc: &toml_edit::DocumentMut) -> Vec<(String, bool, String)> {
@@ -2109,6 +2202,8 @@ records the path in the report so `PROVENANCE.json` says what was held
 back. The judgment is the header alone — `@generated by x0k-tangle …
 from <doc> — DO NOT EDIT` — read against the literate set the
 projection settled before vendoring began.
+
+<a name="chunk-vendor-crate"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#vendor-crate`</sub>
 
 ```rust {#vendor-crate}
 /// Copy `<workspace>/<crate>/` into `<output>/<crate>/`, drop any
@@ -2180,6 +2275,8 @@ metadata gaps; give in-bundle path dependencies a `version`; drop the
 dependencies that do not ship; and sever the features that referenced
 them.
 
+<a name="chunk-rewrite-vendored-manifest"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#rewrite-vendored-manifest` · assembles [rewrite-package-metadata](#chunk-rewrite-package-metadata) · [rewrite-in-bundle-versions](#chunk-rewrite-in-bundle-versions) · [rewrite-drop-deps](#chunk-rewrite-drop-deps) · [rewrite-prune-features](#chunk-rewrite-prune-features)</sub>
+
 ```rust {#rewrite-vendored-manifest}
 /// Rewrite one vendored `Cargo.toml`: strip workspace-hack + any publish-excluded
 /// optional dep, sever features that referenced a dropped dep (declared, empty,
@@ -2217,6 +2314,8 @@ standalone workspace so the toolchain floor is declared in one place.
 The corpus-only `[package.metadata.x0k]` table (module naming, access
 class) is stripped: it is monorepo registry vocabulary, and it would
 ship inside every crates.io tarball otherwise.
+
+<a name="chunk-rewrite-package-metadata"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#rewrite-package-metadata`</sub>
 
 ```rust {#rewrite-package-metadata}
 // License + crates.io metadata. Existing fields the crate author set
@@ -2267,6 +2366,8 @@ the same case — `cargo deny` reads it as a wildcard just the same, and
 the published tarball carries it — so all three dependency tables are
 walked (2026-09-05: a test-only path to `x0k-ontology` was the first).
 
+<a name="chunk-rewrite-in-bundle-versions"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#rewrite-in-bundle-versions`</sub>
+
 ```rust {#rewrite-in-bundle-versions}
 // In-bundle path deps gain a `version` (from the target's vendored
 // manifest) so the crate is publishable: cargo strips `path` on publish
@@ -2303,6 +2404,8 @@ Two kinds of dependency are dropped: `workspace-hack`, and any
 dependency whose path target is publish-excluded. The closure guard has
 already ensured the latter are optional, so removing them cannot break a
 default build.
+
+<a name="chunk-rewrite-drop-deps"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#rewrite-drop-deps`</sub>
 
 ```rust {#rewrite-drop-deps}
 // Collect dep keys to drop: workspace-hack + any dep whose path target is
@@ -2343,6 +2446,8 @@ turns every one of them into an `unexpected_cfgs` warning, and
 is the mechanical half of the `motifs` severance: the monorepo manifest
 keeps the feature live, the projection keeps it as a name that builds
 nothing.
+
+<a name="chunk-rewrite-prune-features"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#rewrite-prune-features`</sub>
 
 ```rust {#rewrite-prune-features}
 // Sever features that reference a dropped dep (via `dep:<name>`): the
@@ -2405,6 +2510,8 @@ An import must be another x0k-hosted module (`https://0k.computer/ontology/<name
 a foreign IRI refuses, because admitting foreign terms into the closure
 is the trust question the ADR leaves open. The file's bytes are kept
 so the write is the tree's file plus one line.
+
+<a name="chunk-vocab-module"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#vocab-module`</sub>
 
 ```rust {#vocab-module}
 /// A vocabulary module selected for the projection, read from the tree.
@@ -2593,9 +2700,16 @@ stable across runs.
 
 Each document arrives carrying what the contents page will say about
 it — the crate its chapters back, the title it heads with, its
-envelope's `summary:`, and the concept pages it `presupposes` — read
-here because the envelope is already parsed here, and asked for again
-nowhere.
+envelope's `summary:`, the concept pages it `presupposes` and the
+affordances it `realizes` — read here because the envelope and the body
+are already in hand here, and asked for again nowhere. The two edges are
+read from the prose first: a chapter links the concept page in the
+sentence that needs it and the affordance where it realizes it, and the
+link is the edge ([`inline-entities.md`](../folio/inline-entities.md)
+§ "Links authored inside prose"); an envelope `edges:` entry is admitted
+and unioned in.
+
+<a name="chunk-discover-literate-docs-fn"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#discover-literate-docs-fn`</sub>
 
 ```rust {#discover-literate-docs-fn}
 /// One document of the literate set: its workspace-relative path, whether it
@@ -2610,10 +2724,13 @@ struct LiterateDoc {
     summary: Option<String>,
     /// The `id:` its envelope declares — how a proof names its chapter.
     id: String,
-    /// The concept pages its envelope `presupposes`, in declaration
-    /// order: what a reader needs before this chapter makes sense, and
-    /// what its contents group *rests on*.
+    /// The concept pages it `presupposes` — a prose link to a wiki page,
+    /// or an envelope edge — in the order met: what a reader needs before
+    /// this chapter makes sense, and what its contents group *rests on*.
     presupposes: Vec<String>,
+    /// The affordances it `realizes` — a prose link to an affordance, or
+    /// an envelope edge — in the order met: what its page lists it under.
+    realizes: Vec<String>,
 }
 
 /// A document's area — the `knowledge/implementation/<area>/` directory it
@@ -2685,12 +2802,17 @@ fn discover_literate_docs(
             continue;
         }
         let rel = entry.path().strip_prefix(workspace).unwrap().to_path_buf();
+        // The edges the chapter declares in its prose, unioned with the
+        // envelope's: a link is the edge, written where the sentence needs
+        // it (`x0k_folio::document_edges`).
+        let edges = x0k_folio::document_edges(&env.edges, body);
         let doc = LiterateDoc {
             title: heading_title(body, &rel),
             crate_name: env.tangle.as_ref().and_then(|t| t.crate_name.clone()),
             summary: env.summary.clone(),
             id: env.id.clone(),
-            presupposes: env.edges.get("presupposes").cloned().unwrap_or_default(),
+            presupposes: edges.get("presupposes").cloned().unwrap_or_default(),
+            realizes: edges.get("realizes").cloned().unwrap_or_default(),
             tangled: false,
             rel,
         };
@@ -2738,35 +2860,59 @@ returned map (canonical path → projected path, identity today) is the
 `path_map` in `PROVENANCE.json` — the seam a receiver uses to route a
 contributor's edit back to the document it came from.
 
+A chapter does not cross as its bytes. The public repository is read
+through a renderer the projector does not own, and that renderer keeps
+one word of a fence's info-string, leaves `<<name>>` literal and has no
+`x0k:` scheme — so each chapter is woven for it on the way out
+([`region-gfm.md`](region-gfm.md)): a caption above every named fence,
+`x0k:` links rewritten to where the projection put their targets, nothing
+else touched. The weave is a projection and not a fork on two counts the
+chapter pins by test: the woven chapter tangles to the bytes the source
+does, and it inverts line for line, which is what lets
+[`receiving.md`](receiving.md) route a contribution made against the
+woven text back to the corpus document. The sidecar records the woven
+text's hash, because that is the text the projection's own re-tangle
+gate hashes.
+
+<a name="chunk-copy-literate-docs"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#copy-literate-docs`</sub>
+
 ```rust {#copy-literate-docs}
-/// Copy each literate doc (preserving its `knowledge/implementation/<area>/`
-/// path so sidecar output paths stay valid) and, for tangled docs, its
-/// `<stem>.tangle-map.json` sidecar (rewriting the sidecar's absolute `source`
-/// to repo-relative). Returns the published-path → canonical-path map for the
-/// provenance seam.
-fn copy_literate_docs(
+/// Weave each literate doc for the forge and write it at its
+/// `knowledge/implementation/<area>/` path (so sidecar output paths stay
+/// valid), and, for tangled docs, its `<stem>.tangle-map.json` sidecar
+/// re-hashed over the woven text and with its `source` repo-relative.
+/// Returns the published-path → canonical-path map for the provenance seam.
+fn weave_literate_docs(
     workspace: &Path,
     output_dir: &Path,
     docs: &[LiterateDoc],
+    links: &ChapterLinks,
     report: &mut RepoProjectReport,
 ) -> Result<BTreeMap<String, String>> {
     let mut path_map = BTreeMap::new();
     for doc in docs {
         let src = workspace.join(&doc.rel);
         let rel_str = doc.rel.to_string_lossy().to_string();
+        let text = std::fs::read_to_string(&src)
+            .with_context(|| format!("reading literate doc {}", src.display()))?;
+        let krate = if doc.tangled { doc.crate_name.as_deref() } else { None };
+        let woven = weave_chapter(&text, &rel_str, krate, links)
+            .with_context(|| format!("weaving literate doc {}", src.display()))?;
         let dst = output_dir.join(&doc.rel);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(&src, &dst)
-            .with_context(|| format!("copying literate doc {}", src.display()))?;
+        std::fs::write(&dst, &woven)
+            .with_context(|| format!("writing literate doc {}", dst.display()))?;
         report.literate_docs.push(doc.rel.clone());
         path_map.insert(rel_str.clone(), rel_str);
+        tracing::info!(doc = %doc.id, "region_repo.document.woven");
 
-        // Sidecar: <stem>.tangle-map.json next to the doc.
+        // Sidecar: <stem>.tangle-map.json next to the doc, hashed over the
+        // text the projection holds.
         let sidecar = src.with_extension("tangle-map.json");
         if doc.tangled && sidecar.is_file() {
-            copy_sidecar_rewriting_source(&sidecar, workspace, output_dir)?;
+            copy_sidecar_rewriting_source(&sidecar, workspace, output_dir, &content_hash(&woven))?;
         }
     }
     Ok(path_map)
@@ -2783,6 +2929,8 @@ two differ on every sidecar. Re-serializing through the tangler's type
 is what makes the projection tangle into itself; the workspace-relative
 `source` is what the projection's tangler records.
 
+<a name="chunk-copy-sidecar"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#copy-sidecar`</sub>
+
 ```rust {#copy-sidecar}
 /// Copy one sidecar into the projection, re-serialized through the tangler's
 /// own [`TangleSidecar`] type so the bytes equal what a re-tangle inside the
@@ -2795,6 +2943,7 @@ fn copy_sidecar_rewriting_source(
     sidecar: &Path,
     workspace: &Path,
     output_dir: &Path,
+    source_hash: &str,
 ) -> Result<()> {
     let text = std::fs::read_to_string(sidecar)?;
     let mut parsed: TangleSidecar = serde_json::from_str(&text)
@@ -2805,6 +2954,10 @@ fn copy_sidecar_rewriting_source(
     let abs = Path::new(&parsed.source);
     let rel_src = abs.strip_prefix(workspace).unwrap_or(abs);
     parsed.source = rel_src.to_string_lossy().to_string();
+    // The projection holds the woven chapter, and its re-tangle gate
+    // hashes that text; a sidecar carrying the corpus hash would be
+    // stale on the first run.
+    parsed.source_hash = source_hash.to_string();
     let rel = sidecar.strip_prefix(workspace).unwrap();
     let dst = output_dir.join(rel);
     if let Some(parent) = dst.parent() {
@@ -2833,6 +2986,8 @@ anchor it is the whole document. Selection is **default-deny**: nothing
 under `decisions/` is walked, nothing reachable from a named document
 follows it out, and a document crosses because it was named and for no
 other reason.
+
+<a name="chunk-doc-selection"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#doc-selection`</sub>
 
 ```rust {#doc-selection}
 /// A document a publication names under `publishes`: its id, whose
@@ -2865,6 +3020,8 @@ whole: it is one idea at one address, and the fenced `yaml x0k:prompt`
 blocks it carries — the review cards a reader drills the idea with —
 travel verbatim inside it, which is the point of naming the page rather
 than a section of it.
+
+<a name="chunk-resolve-named-document"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#resolve-named-document`</sub>
 
 ```rust {#resolve-named-document}
 /// The tree file a named document lives in. The lookup is keyed by the
@@ -2945,6 +3102,8 @@ the same rule an `excludes` id matching no document already gets. The
 message lists the anchors the document does offer, because the slug is
 minted from the heading text and capped, and a reader who guessed the
 long form should be told the short one rather than left to derive it.
+
+<a name="chunk-project-named-documents"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#project-named-documents`</sub>
 
 ```rust {#project-named-documents}
 /// One named document, resolved to the markdown that enters the
@@ -3053,6 +3212,8 @@ edit-through inverse ([`replace_section`](../folio/transclusion.md)) that
 splices a replacement over exactly the span it took. Keeping the level is
 what leaves that inverse true across the projection.
 
+<a name="chunk-section-document"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#section-document`</sub>
+
 ```rust {#section-document}
 /// A projected section, as a document: the parent's identity qualified by
 /// the anchor, the parent's genus and status, and a `transcludes` edge
@@ -3078,6 +3239,8 @@ fn section_document(env: &Colophon, id: &EntityId, section: &str) -> String {
 Writing them is the same act as copying a literate chapter, and records
 the same two things: the provenance seam (projected path → the corpus
 path it was cut from) and the report line a publisher reads back.
+
+<a name="chunk-write-projected-documents"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#write-projected-documents`</sub>
 
 ```rust {#write-projected-documents}
 /// Write the projected documents, recording each in the provenance seam
@@ -3120,6 +3283,8 @@ publication to the edge. This is the residency audit
 that found `x0k-folio-daemon` straddling the x0k-folio boundary, made
 mechanical. It is not downgradable, for the reason the anchor refusal is
 not: a name that promises what the region does not hold is the defect.
+
+<a name="chunk-affordance-closure"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#affordance-closure`</sub>
 
 ```rust {#affordance-closure}
 /// The closure rule for published declarations: every module an affordance
@@ -3175,7 +3340,7 @@ fn affordance_closure(
 }
 ```
 
-## Each affordance, as a row of the contents page
+## Each affordance, as a line of the contents page and a page of its own
 
 The contents page answers *what is here*. The question a reader actually
 arrives with is *what can I do with it*, and the corpus already holds
@@ -3217,6 +3382,8 @@ test ran green and none red, `declared` when a signifier reaches it and
 no proof stands, `claimed` when neither. A `status:` scalar in the
 declaration, if one is still there, is not read.
 
+<a name="chunk-affordance-record"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#affordance-record`</sub>
+
 ```rust {#affordance-record}
 /// One affordance the publication publishes, as the contents page sees
 /// it: the declaration's own fields, and the cues and chapters of the
@@ -3256,6 +3423,8 @@ struct Proof {
     crate_name: String,
     file: String,
     tests: Vec<String>,
+    /// Each test's source, as the chapter tangles it, aligned with `tests`.
+    sources: Vec<String>,
 }
 
 impl Proof {
@@ -3408,6 +3577,8 @@ affordance the publication does not publish is a note in the report
 rather than a refusal — the proof is still true of its chapter, and the
 audience simply is not shown the claim it backs.
 
+<a name="chunk-affordance-records"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#affordance-records`</sub>
+
 ```rust {#affordance-records}
 /// Read the declarations in one body: affordances when `declarations` is
 /// on, signifiers always. `document` is the projection-relative path of
@@ -3511,6 +3682,7 @@ fn affordance_records(
                         crate_name: crate_name.to_string(),
                         file: file.to_string_lossy().to_string(),
                         tests: chunk.tests.clone(),
+                        sources: chunk.sources.clone(),
                     },
                 ));
             }
@@ -3541,6 +3713,18 @@ fn affordance_records(
                 if !report.unpublished_proof_targets.contains(&note) {
                     tracing::info!(proof = %note, "region_repo.proof.unpublished_target");
                     report.unpublished_proof_targets.push(note);
+                }
+            }
+        }
+    }
+    // A chapter that says it realizes an affordance is listed under it
+    // first; the chapters holding a signifier for it follow.
+    for doc in literate {
+        for id in &doc.realizes {
+            if let Some(record) = records.iter_mut().find(|r| &r.id == id) {
+                let chapter = (doc.title.clone(), doc.rel.to_string_lossy().to_string());
+                if !record.chapters.contains(&chapter) {
+                    record.chapters.push(chapter);
                 }
             }
         }
@@ -3601,6 +3785,8 @@ which is a test that has been renamed away from under its chunk. Under
 [`Proofs::Skip`](#contract) nothing runs, nothing is recorded, and the
 page cannot read `proven` anywhere: that is the honest reading of a
 tree whose tests were not asked.
+
+<a name="chunk-run-proofs"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#run-proofs`</sub>
 
 ```rust {#run-proofs}
 /// Run the proofs the records name, in the projected workspace, and
@@ -3784,6 +3970,8 @@ to show shows a dash: an affordance no signifier reaches is a fact about
 the record, and for a human claim it is the defect the shipped checker
 reports.
 
+<a name="chunk-affordance-table"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#affordance-table`</sub>
+
 ```rust {#affordance-table}
 /// What an actor kind is called in the table: the two the corpus
 /// declares by name, and any other as itself.
@@ -3798,8 +3986,8 @@ fn actor_phrase(kind: &str) -> String {
 /// The lead over the table: one bold phrase and one sentence, so the rows
 /// carry the page.
 const AFFORDANCES_LEAD: &str = "**What it can do.** Each capability is declared once, in the design \
-that owns it, and read back here from that declaration: who it is for, the cue that reaches it, \
-what proves it, and the chapters that present it.";
+that owns it, and has a page projected from that declaration: who it is for, the cues that reach \
+it, the chapters that realize it, and the tests that prove it, bodies and all.";
 
 /// The lead over the chapter groups, and the clause added when any group
 /// has a *rests on* line.
@@ -3810,75 +3998,109 @@ const SHIPS_LEAD_RESTS_ON: &str =
 
 /// The `<picture>` a glyph is shown through: the dark file under the
 /// dark scheme, the light one otherwise, `alt` saying what it means.
-fn glyph_picture(stem: &str, alt: &str, height: u32) -> String {
+fn glyph_picture(dir: &str, stem: &str, alt: &str, height: u32) -> String {
     format!(
         "<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{stem}-dark.svg\">\
          <img alt=\"{alt}\" src=\"{dir}/{stem}-light.svg\" height=\"{height}\"></picture>",
-        dir = AFFORDANCES_DIR,
         alt = xml_escape(alt),
     )
 }
 
-/// The affordance table: the lead, a header, and one row per record in
-/// `publishes` order. Empty when there is no record, so a publication
-/// that names no declaration gets exactly the contents page it always had.
+/// The actor glyph and the status ring for one record, as shown from a
+/// page whose glyph directory is at `dir`.
+fn record_glyphs(rec: &AffordanceRecord, dir: &str) -> String {
+    let status = rec.status();
+    let mut glyph = match glyph_stem(&rec.actors) {
+        Some(stem) => format!("{} ", glyph_picture(dir, stem, &glyph_label(stem), ACTOR_GLYPH_HEIGHT)),
+        None => String::new(),
+    };
+    glyph.push_str(&glyph_picture(dir, &status_glyph_stem(status), status.as_str(), STATUS_GLYPH_HEIGHT));
+    glyph
+}
+
+/// The affordance list: the lead, and one line per record in `publishes`
+/// order — the glyphs, the name linked to its page, who it is for. Every
+/// other thing the record knows is on the page. Empty when there is no
+/// record, so a publication that names no declaration gets exactly the
+/// contents page it always had.
 fn render_affordances(records: &[AffordanceRecord]) -> String {
     if records.is_empty() {
         return String::new();
     }
-    let mut out = format!(
-        "{AFFORDANCES_LEAD}\n\n|  | affordance | for | reachable through | proven by | chapters |\n|---|---|---|---|---|---|\n"
-    );
+    let mut out = format!("{AFFORDANCES_LEAD}\n\n");
     for rec in records {
-        let status = rec.status();
-        let mut glyph = match glyph_stem(&rec.actors) {
-            Some(stem) => format!("{} ", glyph_picture(stem, &glyph_label(stem), ACTOR_GLYPH_HEIGHT)),
-            None => String::new(),
-        };
-        glyph.push_str(&glyph_picture(
-            &status_glyph_stem(status),
-            status.as_str(),
-            STATUS_GLYPH_HEIGHT,
-        ));
-        let proven_by = if rec.proofs.iter().all(|p| p.tests.is_empty()) {
-            "—".to_string()
-        } else {
-            rec.proofs
-                .iter()
-                .flat_map(|p| p.tests.iter().map(move |t| format!("[`{t}`]({})", p.chapter.1)))
-                .collect::<Vec<_>>()
-                .join(" · ")
-        };
         let actors = if rec.actors.is_empty() {
-            "—".to_string()
+            String::new()
         } else {
-            rec.actors.iter().map(|k| actor_phrase(k)).collect::<Vec<_>>().join(", ")
-        };
-        let cues = if rec.surfaces.is_empty() {
-            "—".to_string()
-        } else {
-            rec.surfaces
-                .iter()
-                .map(|(surface, cue)| format!("`{surface}` `{cue}`"))
-                .collect::<Vec<_>>()
-                .join(" · ")
-        };
-        let chapters = if rec.chapters.is_empty() {
-            "—".to_string()
-        } else {
-            rec.chapters
-                .iter()
-                .map(|(title, rel)| format!("[{title}]({rel})"))
-                .collect::<Vec<_>>()
-                .join(", ")
+            format!(
+                " — for {}",
+                rec.actors.iter().map(|k| actor_phrase(k)).collect::<Vec<_>>().join(", ")
+            )
         };
         out.push_str(&format!(
-            "| {glyph} | **[{}]({})** | {actors} | {cues} | {proven_by} | {chapters} |\n",
-            rec.title, rec.document
+            "- {} **[{}]({})**{actors}\n",
+            record_glyphs(rec, AFFORDANCES_DIR),
+            rec.title,
+            rec.document
         ));
     }
     out.push('\n');
     out
+}
+
+/// Write each named document that declares a published affordance again,
+/// with the evidence woven under the declaration
+/// ([`region-gfm.md`](region-gfm.md) § "The affordance's page"). After the
+/// proofs, because what each test did is part of the evidence; the page
+/// was first written with the named documents so a refusal before this
+/// point leaves nothing half-claimed.
+fn weave_affordance_pages(
+    output_dir: &Path,
+    docs: &[ProjectedDoc],
+    records: &[AffordanceRecord],
+) -> Result<()> {
+    for doc in docs {
+        let rel = doc.rel.to_string_lossy().to_string();
+        let evidence: Vec<AffordanceEvidence> = records
+            .iter()
+            .filter(|r| r.document == rel)
+            .map(|r| affordance_evidence(r, &rel))
+            .collect();
+        if evidence.is_empty() {
+            continue;
+        }
+        let woven = weave_affordance_section(&doc.text, &evidence);
+        std::fs::write(output_dir.join(&doc.rel), woven)
+            .with_context(|| format!("writing affordance page {rel}"))?;
+        tracing::info!(document = %rel, affordances = evidence.len(), "region_repo.affordance_page.woven");
+    }
+    Ok(())
+}
+
+/// One record as its page shows it, every link made relative to `page`.
+fn affordance_evidence(rec: &AffordanceRecord, page: &str) -> AffordanceEvidence {
+    let glyph_dir = relative_link(page, AFFORDANCES_DIR);
+    AffordanceEvidence {
+        id: rec.id.clone(),
+        glyphs: record_glyphs(rec, &glyph_dir),
+        status: rec.status().as_str().to_string(),
+        actors: rec.actors.iter().map(|k| actor_phrase(k)).collect::<Vec<_>>().join(", "),
+        cues: rec.surfaces.clone(),
+        chapters: rec.chapters.iter().map(|(t, r)| (t.clone(), relative_link(page, r))).collect(),
+        proofs: rec
+            .proofs
+            .iter()
+            .flat_map(|p| {
+                p.tests.iter().zip(p.sources.iter()).map(move |(test, source)| ProofEvidence {
+                    test: test.clone(),
+                    outcome: rec.outcomes.get(&p.test_id(test)).map(|o| o.as_str().to_string()),
+                    chapter: (p.chapter.0.clone(), relative_link(page, &p.chapter.1)),
+                    chunk: p.chunk.clone(),
+                    source: source.clone(),
+                })
+            })
+            .collect(),
+    }
 }
 ```
 
@@ -3896,6 +4118,8 @@ transparent ground, drawn with the plates' own line weight, with a
 The actor marks stand 20 tall, a little over the text; the status ring
 16, level with it. None goes in `PROVENANCE.json`'s `path_map`, which
 routes edits back to corpus sources, and a glyph has none.
+
+<a name="chunk-actor-glyphs"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#actor-glyphs`</sub>
 
 ```rust {#actor-glyphs}
 /// Projection-relative directory the glyphs are written to. Not `docs/`:
@@ -4096,6 +4320,8 @@ The workspace manifest lists the published crates, declares the
 edition and toolchain floor every crate inherits, and resolves the
 inherited dependency keys from the fixed table above.
 
+<a name="chunk-emit-workspace-manifest"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#emit-workspace-manifest`</sub>
+
 ```rust {#emit-workspace-manifest}
 fn emit_workspace_manifest(output_dir: &Path, crates: &[String], edition: &str) -> Result<()> {
     let inherited = inherited_dep_keys(output_dir, crates)?;
@@ -4172,6 +4398,8 @@ refusal — a `LICENSE-MIT` with the line missing is a license file
 nobody can attribute — and the year is the projection year, because
 the notice attaches to the act of publishing, not to the corpus
 revision the act projected.
+
+<a name="chunk-license-files"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#license-files`</sub>
 
 ```rust {#license-files}
 /// `(file name, body)` for every license identifier in the SPDX
@@ -4266,6 +4494,8 @@ each published crate's directory: `cargo package` builds a tarball from
 the crate directory alone, and a crates.io tarball with a `license`
 field and no license text is the same lie as a repository without one.
 
+<a name="chunk-emit-licenses"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#emit-licenses`</sub>
+
 ```rust {#emit-licenses}
 fn emit_licenses(output_dir: &Path, crates: &[String], bodies: &[(&str, String)]) -> Result<()> {
     for (file, body) in bodies {
@@ -4284,6 +4514,8 @@ is a private one under the projection's `target/` (git-ignored, never
 cleared) so the resolve leaves nothing in the tree, and a registry
 that cannot be reached falls back to `--offline` — a warm local index
 resolves the same set — before the run refuses.
+
+<a name="chunk-generate-lockfile"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#generate-lockfile`</sub>
 
 ```rust {#generate-lockfile}
 /// Write `Cargo.lock` for the projected workspace with `cargo
@@ -4360,6 +4592,8 @@ checked against the declared set — `README.md` plus the overlay, an
 exact path or a path under an overlay directory — and anything else
 is a refusal: a chunk routed to a regenerated path would be a second
 writer for a file the crates or the corpus already own.
+
+<a name="chunk-tangle-readme"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#tangle-readme`</sub>
 
 ```rust {#tangle-readme}
 /// Tangle the publication doc's own `tangle:` block into the projection:
@@ -4510,6 +4744,8 @@ declared floor. That pairing is the whole of the MSRV claim — a pinned
 modern toolchain proves the code compiles *at all*, and only the lint
 proves it compiles for the oldest reader the manifest invites.
 
+<a name="chunk-emit-ci-and-guard"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#emit-ci-and-guard`</sub>
+
 ```rust {#emit-ci-and-guard}
 fn emit_ci_and_guard(output_dir: &Path, emit_github: bool) -> Result<()> {
     // The CI contract is two forge-agnostic scripts any runner calls:
@@ -4562,6 +4798,8 @@ declared in the source tree it was projected from, and the outcome of
 every proof test the README's status marks rest on. The three list
 fields are what the old templated README computed and restated; the
 authored README points at them instead.
+
+<a name="chunk-emit-provenance"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#emit-provenance`</sub>
 
 ```rust {#emit-provenance}
 fn emit_provenance(
@@ -4663,6 +4901,8 @@ plain git checkout second, and a workspace with neither yields an empty
 string that the commit message and provenance carry honestly rather
 than fabricating.
 
+<a name="chunk-current-corpus-rev"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#current-corpus-rev`</sub>
+
 ```rust {#current-corpus-rev}
 /// Best-effort canonical revision (jj change id, else git commit) the projection
 /// was taken from. Empty when neither is available.
@@ -4702,6 +4942,8 @@ fn current_corpus_rev(workspace: &Path) -> String {
 }
 ```
 
+<a name="chunk-current-corpus-commit"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#current-corpus-commit`</sub>
+
 ```rust {#current-corpus-commit}
 /// The immutable git commit id the projection was taken from: the parent of
 /// the jj working copy (`@-`, the described commit an operator lands), else
@@ -4738,6 +4980,8 @@ message is the navigable link back into the corpus: the subject names
 the publication and change id, the trailers carry the immutable commit
 and — on a re-projection — the previous projection's pair.
 
+<a name="chunk-git-run-and-commit"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#git-run-and-commit`</sub>
+
 ```rust {#git-run-and-commit}
 /// Run one git command in `output_dir`, failing on a non-zero exit.
 fn git_run(output_dir: &Path, args: &[&str]) -> Result<()> {
@@ -4769,6 +5013,8 @@ fn git_commit(output_dir: &Path, message: &str) -> Result<()> {
     )
 }
 ```
+
+<a name="chunk-projection-message"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#projection-message`</sub>
 
 ```rust {#projection-message}
 /// Commit message for a projection: subject names the publication and the
@@ -4804,6 +5050,8 @@ fn projection_message(publication_uri: &str, report: &RepoProjectReport, initial
     msg
 }
 ```
+
+<a name="chunk-git-init-and-reproject"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#git-init-and-reproject`</sub>
 
 ```rust {#git-init-and-reproject}
 /// Fresh repository: `git init` + the root commit.
@@ -4847,6 +5095,8 @@ fn git_commit_projection(
 The license bodies, the CI script, its two workflow wrappers, and the
 generated-file guard are committed into every projection verbatim.
 
+<a name="chunk-license-texts"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#license-texts`</sub>
+
 ```rust {#license-texts}
 const MIT_LICENSE: &str = r#"MIT License
 
@@ -4879,6 +5129,8 @@ const MPL_PLACEHOLDER: &str = "Mozilla Public License Version 2.0\n\n\
 This is a placeholder. Before publication, replace this file with the canonical\n\
 MPL-2.0 text from https://www.mozilla.org/media/MPL/2.0/index.txt\n";
 ```
+
+<a name="chunk-ci-script"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#ci-script`</sub>
 
 ```rust {#ci-script}
 /// The forge-agnostic CI entry point committed into the projected repo. Any
@@ -4962,6 +5214,8 @@ run, so those pins go stale as the registry moves and
 merely drifted. That is the intended failure — a duplicate the policy
 has not seen should stop and be looked at — but it means the list is
 maintenance, not a set-and-forget.
+
+<a name="chunk-deny-config"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#deny-config`</sub>
 
 ```rust {#deny-config}
 /// `deny.toml` — the projected repository's supply-chain policy, committed as
@@ -5047,6 +5301,8 @@ allow-git = []
 "#;
 ```
 
+<a name="chunk-toolchain-file"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#toolchain-file`</sub>
+
 ```rust {#toolchain-file}
 /// The toolchain `tools/ci` and every contributor run on. Pinned so a green
 /// run means the same thing everywhere; the floor a reader may build with is
@@ -5063,6 +5319,8 @@ channel = "{channel}"
 components = ["clippy"]
 "#;
 ```
+
+<a name="chunk-workflow-wrappers"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#workflow-wrappers`</sub>
 
 ```rust {#workflow-wrappers}
 const CI_WORKFLOW: &str = r#"name: ci
@@ -5104,6 +5362,8 @@ jobs:
 "#;
 ```
 
+<a name="chunk-guard-script"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#guard-script`</sub>
+
 ```rust {#guard-script}
 const GUARD_SCRIPT: &str = r#"#!/bin/sh
 # Reject PR edits to @generated files. Generated code is not an edit surface —
@@ -5140,6 +5400,8 @@ parenthesized expression is read through, and an unknown identifier —
 `WITH` exception refuses. MIT carries its notice line, dated with the
 year it was given and naming the holder, and refuses without one; the
 year reader is checked against a date whose year is not in doubt.
+
+<a name="chunk-tests"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
@@ -5206,6 +5468,7 @@ mod tests {
             title: title.to_string(),
             summary: summary.map(str::to_string),
             presupposes: Vec::new(),
+            realizes: Vec::new(),
         }
     }
 
@@ -5488,6 +5751,7 @@ mod tests {
             crate_name: "demo-crate".to_string(),
             file: "tests/proof.rs".to_string(),
             tests: tests.iter().map(|t| t.to_string()).collect(),
+            sources: tests.iter().map(|t| format!("#[test]\nfn {t}() {{}}")).collect(),
         };
         AffordanceRecord {
             id: "x0k:affordance/read_a_line".to_string(),
@@ -5533,6 +5797,8 @@ tiny vocabulary modules stand in for the ontology: `core`, which imports
 nothing; `document`, which imports `core`; and `orphan`, which imports a module
 the tree does not hold.
 
+<a name="chunk-modules-doc"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-doc`</sub>
+
 ```rust {#modules-doc file="tests/region_repo_modules.rs"}
 //! Pins for the vocabulary modules a publication ships
 //! (`x0k:implementation/tangle/region-repo`, against ADR
@@ -5543,6 +5809,8 @@ the tree does not hold.
 //! modules: `core` (no imports), `document` (imports `core`), and `orphan`
 //! (imports a module the tree does not hold).
 ```
+
+<a name="chunk-modules-uses"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-uses`</sub>
 
 ```rust {#modules-uses file="tests/region_repo_modules.rs"}
 use std::path::Path;
@@ -5556,6 +5824,8 @@ The fixture documents are string constants so a test can read as one
 paragraph. `demo-crate` is the published crate; `colophon` and `extra` are two
 chapters of it in one area, which is the minimum shape in which a severance can
 hold one document back and keep the other.
+
+<a name="chunk-modules-consts"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-consts`</sub>
 
 ```rust {#modules-consts file="tests/region_repo_modules.rs"}
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-modules");
@@ -5584,6 +5854,8 @@ because almost every test varies one field of it — which crates, which modules
 whether there is an entry point, what `excludes` names. The `excludes` list is
 interpolated verbatim, so a test can name a document, a module, or nonsense and
 see what the reader does with it.
+
+<a name="chunk-modules-publication-fixture"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-publication-fixture`</sub>
 
 ```rust {#modules-publication-fixture file="tests/region_repo_modules.rs"}
 /// A publication doc publishing `demo-crate` plus `modules`, with
@@ -5652,6 +5924,8 @@ A hand-written `lib.rs` would let a test pass while the projector's actual input
 — a `@generated` file with a sidecar naming its document — had stopped being
 produced.
 
+<a name="chunk-modules-write-crate"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-write-crate`</sub>
+
 ```rust {#modules-write-crate file="tests/region_repo_modules.rs"}
 fn write_crate(ws: &Path, name: &str) {
     std::fs::create_dir_all(ws.join(name).join("src")).unwrap();
@@ -5665,6 +5939,8 @@ fn write_crate(ws: &Path, name: &str) {
     std::fs::write(ws.join(name).join("src/lib.rs"), "pub fn one() -> u8 {\n    1\n}\n").unwrap();
 }
 ```
+
+<a name="chunk-modules-workspace"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-workspace`</sub>
 
 ```rust {#modules-workspace file="tests/region_repo_modules.rs"}
 /// A workspace with `demo-crate` (tangled by the real tangler), the
@@ -5716,6 +5992,8 @@ one that expects a report and one that expects an error message to read.
 Both run the proofs through a fake runner — one that answers green for
 whatever it is asked — so nothing here shells out to cargo; the one test
 that does says so, and skips when there is no cargo to run.
+
+<a name="chunk-modules-project-helpers"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-project-helpers`</sub>
 
 ```rust {#modules-project-helpers file="tests/region_repo_modules.rs"}
 /// The decision-document fixture: a design whose `## Affordances` heading
@@ -5837,6 +6115,8 @@ from. Byte-identity is the part worth stating: a vocabulary that is *rewritten*
 on the way out is a second vocabulary, and no consumer could tell which one it
 had.
 
+<a name="chunk-modules-closed-selection"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-closed-selection`</sub>
+
 ```rust {#modules-closed-selection file="tests/region_repo_modules.rs"}
 #[test]
 fn a_closed_selection_projects_each_module_stamped_and_otherwise_verbatim() {
@@ -5916,6 +6196,8 @@ mentions a shape file, and none can select one on its own
 a rule instead of a copy: a selection that leaves a module out leaves its
 shapes out too, and a module that constrains nothing ships no file at all.
 
+<a name="chunk-modules-shapes-travel"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-shapes-travel`</sub>
+
 ```rust {#modules-shapes-travel file="tests/region_repo_modules.rs"}
 #[test]
 fn a_module_carries_its_shapes_and_only_its_own() {
@@ -5955,6 +6237,8 @@ name that is neither refuses before anything is projected. Each refusal names
 both ends, because "incomplete module set" without the two module names leaves
 the maintainer to guess.
 
+<a name="chunk-modules-import-outside-selection"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-import-outside-selection`</sub>
+
 ```rust {#modules-import-outside-selection file="tests/region_repo_modules.rs"}
 #[test]
 fn an_import_outside_the_selection_is_refused_naming_both_modules() {
@@ -5970,6 +6254,8 @@ fn an_import_outside_the_selection_is_refused_naming_both_modules() {
     );
 }
 ```
+
+<a name="chunk-modules-import-absent"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-import-absent`</sub>
 
 ```rust {#modules-import-absent file="tests/region_repo_modules.rs"}
 #[test]
@@ -5987,6 +6273,8 @@ A module file is a vocabulary, and a vocabulary is not a place to keep
 instances. A file carrying an instance line is refused rather than trimmed —
 trimming would make the published file differ from the corpus file, which is the
 one property the stamping rule above works to preserve.
+
+<a name="chunk-modules-instance-line"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-instance-line`</sub>
 
 ```rust {#modules-instance-line file="tests/region_repo_modules.rs"}
 #[test]
@@ -6007,6 +6295,8 @@ fn a_module_file_carrying_an_instance_line_is_refused() {
 }
 ```
 
+<a name="chunk-modules-not-in-tree"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-not-in-tree`</sub>
+
 ```rust {#modules-not-in-tree file="tests/region_repo_modules.rs"}
 #[test]
 fn a_module_that_is_not_in_the_tree_is_refused() {
@@ -6020,6 +6310,8 @@ Publishing `x0k-ontology` with no module is the coherent-looking mistake:
 the crate builds its tables from module files at build time, so a tarball with
 the crate and none of its input cannot compile. The refusal is on the pair, not
 on either half.
+
+<a name="chunk-modules-ontology-without-module"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-ontology-without-module`</sub>
 
 ```rust {#modules-ontology-without-module file="tests/region_repo_modules.rs"}
 #[test]
@@ -6043,6 +6335,8 @@ The stamp needs a version, and the version comes from the entry point's
 manifest. Without an entry point it falls back to the corpus revision, and with
 neither it refuses — an unstamped module file would be a vocabulary nobody can
 cite.
+
+<a name="chunk-modules-stamp-fallback"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-stamp-fallback`</sub>
 
 ```rust {#modules-stamp-fallback file="tests/region_repo_modules.rs"}
 #[test]
@@ -6073,6 +6367,8 @@ fn without_an_entry_point_the_stamp_falls_back_to_the_corpus_rev_or_refuses() {
 A publication that ships no vocabulary at all still has documents to list.
 The contents marker is replaced by the document pages and no vocabulary section
 appears — the marker is a position, not a promise that modules exist.
+
+<a name="chunk-modules-no-module-still-lists"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-no-module-still-lists`</sub>
 
 ```rust {#modules-no-module-still-lists file="tests/region_repo_modules.rs"}
 #[test]
@@ -6108,6 +6404,8 @@ crates, the module files are its build-script input and must travel *inside* its
 package or `cargo package` fails verifying the tarball. When the crate is held
 back, nothing in the bundle reads them, and they keep the tree's own root
 layout. Never both: one vocabulary, one copy.
+
+<a name="chunk-modules-layout-published"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-layout-published`</sub>
 
 ```rust {#modules-layout-published file="tests/region_repo_modules.rs"}
 #[test]
@@ -6152,6 +6450,8 @@ fn publishing_the_vocabulary_crate_puts_the_modules_inside_it() {
 }
 ```
 
+<a name="chunk-modules-layout-unpublished"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-layout-unpublished`</sub>
+
 ```rust {#modules-layout-unpublished file="tests/region_repo_modules.rs"}
 #[test]
 fn without_the_vocabulary_crate_the_modules_stay_at_the_root() {
@@ -6188,6 +6488,8 @@ output ships as dead code a public reader is invited to read. Excluding the
 document is the whole act — the projector's existing rule, that a generated file
 whose source is outside the literate set is dropped, takes the code out with it.
 Nothing separate deletes anything.
+
+<a name="chunk-modules-excluded-document"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-excluded-document`</sub>
 
 ```rust {#modules-excluded-document file="tests/region_repo_modules.rs"}
 #[test]
@@ -6253,6 +6555,8 @@ membership, it follows the crate it tangles to — and an `excludes` id that
 matches nothing refuses too. That last one is the quiet form of the failure this
 severance exists to close: an exclusion that severs nothing, silently.
 
+<a name="chunk-modules-unrecognised-excludes"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-unrecognised-excludes`</sub>
+
 ```rust {#modules-unrecognised-excludes file="tests/region_repo_modules.rs"}
 #[test]
 fn an_unrecognised_excludes_uri_is_still_refused_naming_it() {
@@ -6267,6 +6571,8 @@ fn an_unrecognised_excludes_uri_is_still_refused_naming_it() {
     assert!(err.contains("`excludes` member"), "{err}");
 }
 ```
+
+<a name="chunk-modules-document-under-publishes"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-document-under-publishes`</sub>
 
 ```rust {#modules-document-under-publishes file="tests/region_repo_modules.rs"}
 #[test]
@@ -6285,6 +6591,8 @@ fn a_document_under_publishes_is_refused() {
     assert!(err.contains("only `excludes` may name one"), "{err}");
 }
 ```
+
+<a name="chunk-modules-excluded-matches-nothing"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-excluded-matches-nothing`</sub>
 
 ```rust {#modules-excluded-matches-nothing file="tests/region_repo_modules.rs"}
 #[test]
@@ -6316,6 +6624,8 @@ id is the parent's qualified by the anchor and whose one edge names the
 document it was cut from. Everything else about that design — its
 context, and the sibling affordance this bundle could not honestly claim
 — stays behind.
+
+<a name="chunk-modules-named-section"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-named-section`</sub>
 
 ```rust {#modules-named-section file="tests/region_repo_modules.rs"}
 #[test]
@@ -6372,6 +6682,8 @@ it. The whole design carries the fleet affordance too, so the publication
 has to say, in `excludes`, that the crate it names is one the audience
 will not have; the closure rule below is what asks.
 
+<a name="chunk-modules-named-whole-document"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-named-whole-document`</sub>
+
 ```rust {#modules-named-whole-document file="tests/region_repo_modules.rs"}
 #[test]
 fn a_document_named_without_an_anchor_crosses_whole() {
@@ -6392,7 +6704,11 @@ fn a_document_named_without_an_anchor_crosses_whole() {
     let report = project(ws.path(), out.path()).expect("projection");
 
     let text = std::fs::read_to_string(out.path().join(DESIGN_REL)).expect("the design shipped");
-    assert_eq!(text, demo_design(), "a whole document crosses verbatim");
+    let design = demo_design();
+    let prose = &design[..design.find("```yaml x0k:affordance").unwrap()];
+    assert!(text.starts_with(prose), "the design's prose crosses as written:\n{text}");
+    assert!(text.contains("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\n"), "the declaration stays as written: {text}");
+    assert!(text.contains("</picture> *"), "the evidence is woven under the declaration: {text}");
     assert_eq!(report.documents.get(DESIGN_ID), Some(&DESIGN_REL.to_string()));
 }
 ```
@@ -6401,6 +6717,8 @@ Selection is default-deny, and this is the test that says so: the design
 sits in the corpus for every projection in this file, and crosses in
 exactly the two above. Nothing reachable from a published crate, and
 nothing under `decisions/`, drags it out.
+
+<a name="chunk-modules-unnamed-document"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-unnamed-document`</sub>
 
 ```rust {#modules-unnamed-document file="tests/region_repo_modules.rs"}
 #[test]
@@ -6425,6 +6743,8 @@ names the anchor and lists the ones the document offers, because the slug
 is minted from the heading text and capped, so the anchor a reader
 guesses is not always the one that resolves.
 
+<a name="chunk-modules-anchor-matches-nothing"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-anchor-matches-nothing`</sub>
+
 ```rust {#modules-anchor-matches-nothing file="tests/region_repo_modules.rs"}
 #[test]
 fn an_anchor_that_heads_no_section_is_refused_naming_it() {
@@ -6445,6 +6765,8 @@ fn an_anchor_that_heads_no_section_is_refused_naming_it() {
 The id half is refused the same way, and by the document's own `id:`
 rather than by its filename: a publication naming a document the corpus
 does not declare has selected nothing.
+
+<a name="chunk-modules-document-id-matches-nothing"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-document-id-matches-nothing`</sub>
 
 ```rust {#modules-document-id-matches-nothing file="tests/region_repo_modules.rs"}
 #[test]
@@ -6468,6 +6790,8 @@ naming its section is refused with the affordance, the reference that
 published it, and the crate — everything a publisher needs to either ship
 the crate or sever it by name.
 
+<a name="chunk-modules-affordance-closure-refused"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-affordance-closure-refused`</sub>
+
 ```rust {#modules-affordance-closure-refused file="tests/region_repo_modules.rs"}
 #[test]
 fn a_published_affordance_naming_an_unshipped_module_is_refused() {
@@ -6490,6 +6814,8 @@ Severing the crate by name is the publication saying so, and then the
 declaration crosses: the audience reads an affordance whose enabling module
 the publication has told them, in the same edge that severs a dependency,
 they do not get.
+
+<a name="chunk-modules-affordance-closure-excluded"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-affordance-closure-excluded`</sub>
 
 ```rust {#modules-affordance-closure-excluded file="tests/region_repo_modules.rs"}
 #[test]
@@ -6519,6 +6845,8 @@ An area's teaching order lives in no field of any envelope, so the contents
 marker may carry one: a line per area, `<area>: <stem> …`. It names a *spine*,
 not a membership list — a named chapter is pulled ahead of path order, and
 everything the spine does not name still ships, after the named ones, by path.
+
+<a name="chunk-modules-reading-order"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-reading-order`</sub>
 
 ```rust {#modules-reading-order file="tests/region_repo_modules.rs"}
 #[test]
@@ -6550,6 +6878,8 @@ refuses — the ordering would simply stop applying and nobody would see it. The
 same holds for an area the publication ships nothing from: an ordering with no
 subject.
 
+<a name="chunk-modules-reading-order-unshipped-doc"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-reading-order-unshipped-doc`</sub>
+
 ```rust {#modules-reading-order-unshipped-doc file="tests/region_repo_modules.rs"}
 #[test]
 fn a_reading_order_naming_an_unshipped_document_is_refused() {
@@ -6571,6 +6901,8 @@ fn a_reading_order_naming_an_unshipped_document_is_refused() {
 }
 ```
 
+<a name="chunk-modules-reading-order-unshipped-area"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-reading-order-unshipped-area`</sub>
+
 ```rust {#modules-reading-order-unshipped-area file="tests/region_repo_modules.rs"}
 #[test]
 fn a_reading_order_naming_an_unshipped_area_is_refused() {
@@ -6590,6 +6922,8 @@ The concept form is what the book uses. A `# ` line heads a group, the `> `
 line under it is the group's own sentence, and the members are
 `<area>/<stem>` — so the page reads as concepts rather than as crates, and a
 crate is visible only where it always was, in a chapter's own path.
+
+<a name="chunk-modules-concept-groups"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-concept-groups`</sub>
 
 ```rust {#modules-concept-groups file="tests/region_repo_modules.rs"}
 #[test]
@@ -6632,6 +6966,8 @@ under contradictory concepts. And a marker carrying both forms is two
 different promises about one page, so it refuses rather than half-applying
 either.
 
+<a name="chunk-modules-group-unshipped-member"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-group-unshipped-member`</sub>
+
 ```rust {#modules-group-unshipped-member file="tests/region_repo_modules.rs"}
 #[test]
 fn a_group_naming_an_unshipped_document_is_refused() {
@@ -6645,6 +6981,8 @@ fn a_group_naming_an_unshipped_document_is_refused() {
 }
 ```
 
+<a name="chunk-modules-group-unnamed-document"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-group-unnamed-document`</sub>
+
 ```rust {#modules-group-unnamed-document file="tests/region_repo_modules.rs"}
 #[test]
 fn a_shipped_document_that_no_group_names_is_refused() {
@@ -6655,6 +6993,8 @@ fn a_shipped_document_that_no_group_names_is_refused() {
     );
 }
 ```
+
+<a name="chunk-modules-group-claimed-twice"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-group-claimed-twice`</sub>
 
 ```rust {#modules-group-claimed-twice file="tests/region_repo_modules.rs"}
 #[test]
@@ -6668,6 +7008,8 @@ fn a_document_two_groups_both_claim_is_refused() {
     );
 }
 ```
+
+<a name="chunk-modules-group-mixed-forms"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-group-mixed-forms`</sub>
 
 ```rust {#modules-group-mixed-forms file="tests/region_repo_modules.rs"}
 #[test]
@@ -6684,6 +7026,8 @@ than the repository. A publication with documents and modules to list and no
 marker has nowhere to put them; a document with no `summary:` cannot be
 described, and a link with no description is exactly the degradation the
 contents page exists to prevent.
+
+<a name="chunk-modules-no-contents-marker"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-no-contents-marker`</sub>
 
 ```rust {#modules-no-contents-marker file="tests/region_repo_modules.rs"}
 #[test]
@@ -6702,6 +7046,8 @@ fn a_publication_with_no_contents_marker_is_refused() {
     );
 }
 ```
+
+<a name="chunk-modules-document-without-summary"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-document-without-summary`</sub>
 
 ```rust {#modules-document-without-summary file="tests/region_repo_modules.rs"}
 #[test]
@@ -6739,6 +7085,8 @@ the one for a person, written light and dark under `affordances/` and named
 in the report, never in the provenance seam: nothing in the corpus produced
 it.
 
+<a name="chunk-modules-affordance-rows"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-affordance-rows`</sub>
+
 ```rust {#modules-affordance-rows file="tests/region_repo_modules.rs"}
 #[test]
 fn the_contents_page_opens_with_the_affordances_the_publication_publishes() {
@@ -6757,15 +7105,15 @@ fn the_contents_page_opens_with_the_affordances_the_publication_publishes() {
     let expected = "\
 ## What is here
 
-**What it can do.** Each capability is declared once, in the design that owns it, and read back here from that declaration: who it is for, the cue that reaches it, what proves it, and the chapters that present it.
+**What it can do.** Each capability is declared once, in the design that owns it, and has a page projected from that declaration: who it is for, the cues that reach it, the chapters that realize it, and the tests that prove it, bodies and all.
 
-|  | affordance | for | reachable through | proven by | chapters |
-|---|---|---|---|---|---|
-| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-declared-dark.svg\"><img alt=\"declared\" src=\"affordances/status-declared-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person | `cli` `demo-line` | — | [The demo verbs](knowledge/implementation/demo/verbs.md) |
+- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-declared-dark.svg\"><img alt=\"declared\" src=\"affordances/status-declared-light.svg\" height=\"16\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — for a person
 
 ### `demo-crate`
 ";
-    assert!(readme.contains(expected), "the rows open the contents page:\n{readme}");
+    assert!(readme.contains(expected), "the list opens the contents page:\n{readme}");
+    let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
+    assert!(page.contains("*declared* · for a person · reachable through `cli` `demo-line`\n\n*realized in* [The demo verbs](../../../../knowledge/implementation/demo/verbs.md)\n"), "the cue and the chapter are on the page:\n{page}");
 
     let light = std::fs::read_to_string(out.path().join("affordances/for-a-person-light.svg"))
         .expect("the light glyph is written");
@@ -6806,6 +7154,8 @@ fixture, the affordance is reachable through nothing the audience can
 perceive and presented by no chapter, and the row says so rather than
 guessing at a face.
 
+<a name="chunk-modules-affordance-actor-set"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-affordance-actor-set`</sub>
+
 ```rust {#modules-affordance-actor-set file="tests/region_repo_modules.rs"}
 #[test]
 fn a_claim_on_both_actors_gets_both_marks_and_an_unreached_face_a_dash() {
@@ -6826,8 +7176,8 @@ fn a_claim_on_both_actors_gets_both_marks_and_an_unreached_face_a_dash() {
     let report = project(ws.path(), out.path()).expect("projection");
 
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    let row = "| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-and-an-agent-dark.svg\"><img alt=\"for a person and an agent\" src=\"affordances/for-a-person-and-an-agent-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-claimed-dark.svg\"><img alt=\"claimed\" src=\"affordances/status-claimed-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person, an agent | — | — | — |\n";
-    assert!(readme.contains(row), "both actors, and dashes where nothing is declared:\n{readme}");
+    let row = "- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-and-an-agent-dark.svg\"><img alt=\"for a person and an agent\" src=\"affordances/for-a-person-and-an-agent-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-claimed-dark.svg\"><img alt=\"claimed\" src=\"affordances/status-claimed-light.svg\" height=\"16\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — for a person, an agent\n";
+    assert!(readme.contains(row), "both actors on the line, and nothing else claimed:\n{readme}");
 
     let svg = std::fs::read_to_string(out.path().join("affordances/for-a-person-and-an-agent-light.svg"))
         .expect("the glyph for both is written");
@@ -6844,6 +7194,8 @@ fn a_claim_on_both_actors_gets_both_marks_and_an_unreached_face_a_dash() {
 A publication that names no affordance gets exactly the contents page it
 always had: no lead line, no table, no glyph directory, no report line.
 The opening is not a section that can be empty; it is absent.
+
+<a name="chunk-modules-affordance-none"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-affordance-none`</sub>
 
 ```rust {#modules-affordance-none file="tests/region_repo_modules.rs"}
 #[test]
@@ -6866,6 +7218,8 @@ The standalone marker an earlier projector replaced, `<!-- x0k:affordances
 -->`, is a comment like any other now: a README still carrying it is left
 verbatim, and nothing refuses over it.
 
+<a name="chunk-modules-affordance-old-marker"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-affordance-old-marker`</sub>
+
 ```rust {#modules-affordance-old-marker file="tests/region_repo_modules.rs"}
 #[test]
 fn the_retired_affordances_marker_is_left_verbatim() {
@@ -6885,12 +7239,16 @@ fn the_retired_affordances_marker_is_left_verbatim() {
 
 ### The proofs, and what a row rests on
 
-A chunk that tangles a test may say what it proves, and the row reads its
-status from that and from the run. The fixture's proof chapter is a third
-chapter of the demo crate: it tangles one test to `tests/proof.rs`, names
-the shippable affordance on the fence, and presupposes a concept page. It
-is tangled by the real tangler, so the proof the projector reads is the
-one the tangle used.
+A chunk that tangles a test may say what it proves, and the affordance
+reads its status from that and from the run. The fixture's proof chapter
+is a third chapter of the demo crate: it tangles one test to
+`tests/proof.rs`, names the shippable affordance on the fence, and in its
+one sentence of prose links the concept page it presupposes and the
+affordance it realizes — the links are the edges, and the envelope
+declares none. It is tangled by the real tangler, so the proof the
+projector reads is the one the tangle used.
+
+<a name="chunk-modules-proof-fixture"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-proof-fixture`</sub>
 
 ```rust {#modules-proof-fixture file="tests/region_repo_modules.rs"}
 const PROOF_REL: &str = "knowledge/implementation/demo/proof.md";
@@ -6898,6 +7256,7 @@ const PROOF_ID: &str = "x0k:implementation/demo/proof";
 const CONCEPT_ID: &str = "x0k:wiki/first-lines";
 const CONCEPT_REL: &str = "knowledge/wiki/first-lines.md";
 const PROOF_TEST: &str = "x0k:test/demo-crate/tests/proof.rs::a_line_is_read";
+const SHIPPABLE_PAGE: &str = "decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md";
 
 /// A tangled chapter of the demo crate whose one chunk tangles a test and
 /// says it proves `proves`, and which presupposes the concept page.
@@ -6905,7 +7264,7 @@ fn declare_proof(ws: &Path, proves: &str) {
     std::fs::write(
         ws.join(PROOF_REL),
         format!(
-            "---\nx0k:\n  format: folio/v1\n  id: {PROOF_ID}\n  type: implementation\n  status: draft\n  summary: The test that proves a line is read.\n  tangle:\n    crate: demo-crate\n    root: tests/proof.rs\n  edges:\n    presupposes:\n      - {CONCEPT_ID}\n---\n# Proving the demo\n\n```rust {{#root proves=\"{proves}\"}}\n#[test]\nfn a_line_is_read() {{\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}}\n```\n"
+            "---\nx0k:\n  format: folio/v1\n  id: {PROOF_ID}\n  type: implementation\n  status: draft\n  summary: The test that proves a line is read.\n  tangle:\n    crate: demo-crate\n    root: tests/proof.rs\n---\n# Proving the demo\n\nReads [First lines]({CONCEPT_ID}) to [read a line]({proves}).\n\n```rust {{#root proves=\"{proves}\"}}\n#[test]\nfn a_line_is_read() {{\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}}\n```\n"
         ),
     )
     .unwrap();
@@ -6937,11 +7296,12 @@ fn grouped_publication(documents: &[&str]) -> String {
 }
 ```
 
-With the fake runner answering green, the row lists the test under *proven
-by*, linked to the chapter that tangles it, and reads `proven`: the filled
-ring, the outcome on the report, and the same outcome in `PROVENANCE.json`
-under the test's id — the status mark is a claim, and the provenance backs
-it with the run.
+With the fake runner answering green, the README lists the affordance
+with the filled ring and links its page; the outcome is on the report,
+and the same outcome is in `PROVENANCE.json` under the test's id — the
+status mark is a claim, and the provenance backs it with the run.
+
+<a name="chunk-modules-proof-proven"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-proof-proven`</sub>
 
 ```rust {#modules-proof-proven file="tests/region_repo_modules.rs"}
 #[test]
@@ -6958,8 +7318,8 @@ fn a_proving_chunk_lists_its_test_and_the_row_reads_proven() {
     let report = project(ws.path(), out.path()).expect("projection");
 
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    let row = "| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-proven-dark.svg\"><img alt=\"proven\" src=\"affordances/status-proven-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person | — | [`a_line_is_read`](knowledge/implementation/demo/proof.md) | — |\n";
-    assert!(readme.contains(row), "the test under proven by, and the filled ring:\n{readme}");
+    let line = "- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-proven-dark.svg\"><img alt=\"proven\" src=\"affordances/status-proven-light.svg\" height=\"16\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — for a person\n";
+    assert!(readme.contains(line), "the filled ring, and the page linked:\n{readme}");
 
     assert!(report.proofs_run);
     assert_eq!(report.proofs.get(PROOF_TEST), Some(&ProofOutcome::Passed), "{:?}", report.proofs);
@@ -6985,6 +7345,8 @@ A red proof refuses the projection, naming the test. Nothing is claimed
 over it: the README and the provenance are never written, because the
 refusal lands before either.
 
+<a name="chunk-modules-proof-refused"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-proof-refused`</sub>
+
 ```rust {#modules-proof-refused file="tests/region_repo_modules.rs"}
 #[test]
 fn a_red_proof_refuses_the_projection_naming_the_test() {
@@ -7007,8 +7369,10 @@ fn a_red_proof_refuses_the_projection_naming_the_test() {
 ```
 
 Skipping the proofs is honest in the other direction: the test is still
-listed, and the row reads `declared` or `claimed` as the signifiers say,
-never `proven`.
+on the page, marked not run, and the status reads `declared` or `claimed`
+as the signifiers say, never `proven`.
+
+<a name="chunk-modules-proof-skipped"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-proof-skipped`</sub>
 
 ```rust {#modules-proof-skipped file="tests/region_repo_modules.rs"}
 #[test]
@@ -7024,8 +7388,9 @@ fn skipped_proofs_are_listed_and_prove_nothing() {
     let out = tempfile::tempdir().unwrap();
     let report = project_with(ws.path(), out.path(), &Proofs::Skip).expect("projection");
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    assert!(readme.contains("[`a_line_is_read`](knowledge/implementation/demo/proof.md)"), "{readme}");
     assert!(readme.contains("alt=\"claimed\"") && !readme.contains("alt=\"proven\""), "{readme}");
+    let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
+    assert!(page.contains("<code>a_line_is_read</code> · not run ·"), "{page}");
     assert!(!report.proofs_run && report.proofs.is_empty());
 }
 ```
@@ -7034,6 +7399,8 @@ The one test that runs cargo. It projects the fixture and lets the default
 runner ask the projected workspace for the demo proof, which is a crate
 with no dependencies and one test — seconds, when there is a cargo to
 run it with, and a printed skip when there is not.
+
+<a name="chunk-modules-proof-cargo"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-proof-cargo`</sub>
 
 ```rust {#modules-proof-cargo file="tests/region_repo_modules.rs"}
 #[test]
@@ -7067,6 +7434,8 @@ A `proves=` naming an affordance the publication does not publish is a
 note, not a refusal: the proof stays in its chapter, and the audience is
 not shown the claim it backs.
 
+<a name="chunk-modules-proof-unpublished"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-proof-unpublished`</sub>
+
 ```rust {#modules-proof-unpublished file="tests/region_repo_modules.rs"}
 #[test]
 fn a_proof_of_an_unpublished_affordance_is_noted_and_the_row_unchanged() {
@@ -7086,7 +7455,9 @@ fn a_proof_of_an_unpublished_affordance_is_noted_and_the_row_unchanged() {
     );
     assert!(report.proofs.is_empty(), "nothing was asked for: {:?}", report.proofs);
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    assert!(readme.contains("| a person | — | — | — |") && readme.contains("alt=\"claimed\""), "{readme}");
+    assert!(readme.contains("** — for a person\n") && readme.contains("alt=\"claimed\""), "{readme}");
+    let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
+    assert!(!page.contains("<details>"), "no proof reaches the page: {page}");
 }
 ```
 
@@ -7094,6 +7465,8 @@ What a group rests on is derived from its chapters' `presupposes` edges,
 and links the concept page when the publication names it: the page lands
 at its own path under `knowledge/wiki/`, review cards and all, and is
 recorded like any named document.
+
+<a name="chunk-modules-rests-on"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-rests-on`</sub>
 
 ```rust {#modules-rests-on file="tests/region_repo_modules.rs"}
 #[test]
@@ -7133,6 +7506,8 @@ A concept a chapter presupposes and the publication does not ship is
 printed bare — the stem, no link — and noted: the wiki's writing queue.
 And a concept page is named whole or not at all.
 
+<a name="chunk-modules-rests-on-unpublished"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-rests-on-unpublished`</sub>
+
 ```rust {#modules-rests-on-unpublished file="tests/region_repo_modules.rs"}
 #[test]
 fn an_unpublished_concept_is_plain_text_and_noted() {
@@ -7158,6 +7533,89 @@ fn an_unpublished_concept_is_plain_text_and_noted() {
     assert!(err.contains("knowledge/wiki/first-lines.md"), "names the path that is not there: {err}");
 }
 ```
+
+### The chapter crosses woven, and stays the same tangle
+
+The projection's own gate is a re-tangle of every chapter and a clean
+tree after it. A woven chapter has to pass that gate as the corpus bytes
+did, which is the first invariant: the tangler inside the projection,
+run on the woven text, rewrites nothing — not the generated file, not the
+sidecar, whose hash is the woven text's. And the weave inverts: the
+source is recovered from the woven chapter exactly, which is what the
+receiver relies on.
+
+<a name="chunk-modules-woven-chapter"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-woven-chapter`</sub>
+
+```rust {#modules-woven-chapter file="tests/region_repo_modules.rs"}
+#[test]
+fn a_chapter_crosses_woven_and_re_tangles_clean() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    write_concept(ws.path());
+    std::fs::write(ws.path().join(PUB_REL), grouped_publication(&[CONCEPT_ID])).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+
+    let source = std::fs::read_to_string(ws.path().join(PROOF_REL)).unwrap();
+    let woven = std::fs::read_to_string(out.path().join(PROOF_REL)).unwrap();
+    assert_ne!(woven, source, "the chapter is woven, not copied");
+    assert!(
+        woven.contains("Reads [First lines](../../wiki/first-lines.md \"x0k:wiki/first-lines\") to [read a line](../../../decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md \"x0k:affordance/read_a_line\").\n"),
+        "links land on the shipped copies, ids kept as titles:\n{woven}"
+    );
+    assert!(
+        woven.contains("<a name=\"chunk-root\"></a><sub>[`tests/proof.rs`](../../../demo-crate/tests/proof.rs) · `#root` · proves [Read a line out of a document](../../../decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)</sub>\n\n```rust {#root proves=\"x0k:affordance/read_a_line\"}\n"),
+        "the caption says the file, the chunk and the proof:\n{woven}"
+    );
+    assert_eq!(x0k_tangle::region_gfm::unweave_chapter(&woven), source, "the weave inverts");
+
+    // The gate: re-tangling the woven chapter inside the projection
+    // rewrites nothing.
+    let generated = out.path().join("demo-crate/tests/proof.rs");
+    let sidecar = out.path().join("knowledge/implementation/demo/proof.tangle-map.json");
+    let (before_gen, before_side) =
+        (std::fs::read_to_string(&generated).unwrap(), std::fs::read_to_string(&sidecar).unwrap());
+    tangle_document(&out.path().join(PROOF_REL), out.path(), &PipelineRegistry::default())
+        .expect("re-tangle inside the projection");
+    assert_eq!(std::fs::read_to_string(&generated).unwrap(), before_gen, "same tangle");
+    assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), before_side, "same sidecar, hashed over the woven text");
+}
+```
+
+### The affordance's page
+
+The section that declares the affordance crosses as its page, and the
+projector writes the evidence under the declaration: the glyphs and the
+status, who it is for, the chapter that said in its prose that it
+realizes the affordance, and the proof test with its outcome and its body
+under `<details>`, every link relative to the page.
+
+<a name="chunk-modules-affordance-page"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-affordance-page`</sub>
+
+```rust {#modules-affordance-page file="tests/region_repo_modules.rs"}
+#[test]
+fn the_affordance_page_carries_its_evidence() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+
+    let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
+    let expected = "```\n\n<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"../../../../affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/status-proven-dark.svg\"><img alt=\"proven\" src=\"../../../../affordances/status-proven-light.svg\" height=\"16\"></picture> *proven* · for a person\n\n*realized in* [Proving the demo](../../../../knowledge/implementation/demo/proof.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · passed · <a href=\"../../../../knowledge/implementation/demo/proof.md#chunk-root\">#root</a> in Proving the demo</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}\n```\n\n</details>\n";
+    assert!(page.contains(expected), "the evidence under the declaration:\n{page}");
+    assert!(page.contains("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\n"), "the declaration stays as written: {page}");
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(!readme.contains("a_line_is_read"), "the test is on the page, not the README: {readme}");
+}
+```
+
+<a name="chunk-modules-root"></a><sub>[`tests/region_repo_modules.rs`](../../../x0k-tangle/tests/region_repo_modules.rs) · `#modules-root` · assembles [modules-doc](#chunk-modules-doc) · [modules-uses](#chunk-modules-uses) · [modules-consts](#chunk-modules-consts) · [modules-publication-fixture](#chunk-modules-publication-fixture) · [modules-write-crate](#chunk-modules-write-crate) · [modules-workspace](#chunk-modules-workspace) · [modules-project-helpers](#chunk-modules-project-helpers) · [modules-closed-selection](#chunk-modules-closed-selection) · [modules-shapes-travel](#chunk-modules-shapes-travel) · [modules-import-outside-selection](#chunk-modules-import-outside-selection) · [modules-import-absent](#chunk-modules-import-absent) · [modules-instance-line](#chunk-modules-instance-line) · [modules-not-in-tree](#chunk-modules-not-in-tree) · [modules-ontology-without-module](#chunk-modules-ontology-without-module) · [modules-stamp-fallback](#chunk-modules-stamp-fallback) · [modules-no-module-still-lists](#chunk-modules-no-module-still-lists) · [modules-layout-published](#chunk-modules-layout-published) · [modules-layout-unpublished](#chunk-modules-layout-unpublished) · [modules-excluded-document](#chunk-modules-excluded-document) · [modules-unrecognised-excludes](#chunk-modules-unrecognised-excludes) · [modules-document-under-publishes](#chunk-modules-document-under-publishes) · [modules-excluded-matches-nothing](#chunk-modules-excluded-matches-nothing) · [modules-named-section](#chunk-modules-named-section) · [modules-named-whole-document](#chunk-modules-named-whole-document) · [modules-unnamed-document](#chunk-modules-unnamed-document) · [modules-anchor-matches-nothing](#chunk-modules-anchor-matches-nothing) · [modules-document-id-matches-nothing](#chunk-modules-document-id-matches-nothing) · [modules-affordance-closure-refused](#chunk-modules-affordance-closure-refused) · [modules-affordance-closure-excluded](#chunk-modules-affordance-closure-excluded) · [modules-reading-order](#chunk-modules-reading-order) · [modules-reading-order-unshipped-doc](#chunk-modules-reading-order-unshipped-doc) · [modules-reading-order-unshipped-area](#chunk-modules-reading-order-unshipped-area) · [modules-concept-groups](#chunk-modules-concept-groups) · [modules-group-unshipped-member](#chunk-modules-group-unshipped-member) · [modules-group-unnamed-document](#chunk-modules-group-unnamed-document) · [modules-group-claimed-twice](#chunk-modules-group-claimed-twice) · [modules-group-mixed-forms](#chunk-modules-group-mixed-forms) · [modules-no-contents-marker](#chunk-modules-no-contents-marker) · [modules-document-without-summary](#chunk-modules-document-without-summary) · [modules-affordance-rows](#chunk-modules-affordance-rows) · [modules-affordance-actor-set](#chunk-modules-affordance-actor-set) · [modules-affordance-none](#chunk-modules-affordance-none) · [modules-affordance-old-marker](#chunk-modules-affordance-old-marker) · [modules-proof-fixture](#chunk-modules-proof-fixture) · [modules-proof-proven](#chunk-modules-proof-proven) · [modules-proof-refused](#chunk-modules-proof-refused) · [modules-proof-skipped](#chunk-modules-proof-skipped) · [modules-proof-cargo](#chunk-modules-proof-cargo) · [modules-proof-unpublished](#chunk-modules-proof-unpublished) · [modules-rests-on](#chunk-modules-rests-on) · [modules-rests-on-unpublished](#chunk-modules-rests-on-unpublished) · [modules-woven-chapter](#chunk-modules-woven-chapter) · [modules-affordance-page](#chunk-modules-affordance-page)</sub>
 
 ```rust {#modules-root file="tests/region_repo_modules.rs"}
 <<modules-doc>>
@@ -7261,9 +7719,15 @@ fn an_unpublished_concept_is_plain_text_and_noted() {
 <<modules-rests-on>>
 
 <<modules-rests-on-unpublished>>
+
+<<modules-woven-chapter>>
+
+<<modules-affordance-page>>
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../../x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [envelope-scalar](#chunk-envelope-scalar) · [envelope-string-list](#chunk-envelope-string-list) · [manifest-readers](#chunk-manifest-readers) · [path-deps](#chunk-path-deps) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [actor-glyphs](#chunk-actor-glyphs) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

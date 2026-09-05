@@ -16,9 +16,6 @@ x0k:
       - x0k:implementation/tangle/chunk-refs
       - x0k:implementation/tangle/parsing
       - x0k:implementation/tangle/resolution
-    presupposes:
-      - x0k:wiki/literate-programming
-      - x0k:wiki/dependency-resolution
 ---
 # Cross-document chunk transclusion
 
@@ -26,11 +23,13 @@ Within-document resolution ([`resolution.md`](resolution.md)) expands
 `<<chunk>>` refs against one parsed document. This module lifts that to
 a **corpus**: a set of parsed documents indexed by their frontmatter
 `id:` URI, so a chunk in one doc can transclude a chunk defined in
-another via `<<uri::chunk>>`.
+another via `<<uri::chunk>>` — [dependency
+resolution](x0k:wiki/dependency-resolution) whose edges cross document
+boundaries.
 
 The motivating use is a future literate agent-profile system — a
 profile document assembles itself from shared prompt-fragment chunks
-that live in other documents, the same way a literate program assembles
+that live in other documents, the same way a [literate program](../../wiki/literate-programming.md "x0k:wiki/literate-programming") assembles
 a function from chunks defined elsewhere in the file. Cross-doc
 transclusion is the substrate primitive that makes "shared fragment,
 referenced by URI" expressible.
@@ -43,6 +42,8 @@ public entry point that seeds expansion with the right starting
 document.
 
 ## Imports
+
+<a name="chunk-imports"></a><sub>[`src/multi_doc_resolve.rs`](../../../x0k-tangle/src/multi_doc_resolve.rs) · `#imports`</sub>
 
 ```rust {#imports}
 use crate::parser::ParsedDocument;
@@ -60,6 +61,8 @@ a directory; a test builds a handful inline) and lend them to the
 resolver for the duration of an expansion. The lifetime `'a` ties the
 borrowed map to the documents it points at.
 
+<a name="chunk-corpus-type"></a><sub>[`src/multi_doc_resolve.rs`](../../../x0k-tangle/src/multi_doc_resolve.rs) · `#corpus-type`</sub>
+
 ```rust {#corpus-type}
 /// A set of parsed documents indexed by their frontmatter `id:` URI.
 /// `<<uri::chunk>>` refs resolve the document by URI, then the chunk
@@ -74,6 +77,8 @@ pub struct Corpus<'a> {
 `from_docs` indexes an iterator of parsed documents by their `id`,
 skipping any document with no `id:` URI (it can't be a cross-doc
 target). `doc` is the single lookup the resolver needs.
+
+<a name="chunk-corpus-impl"></a><sub>[`src/multi_doc_resolve.rs`](../../../x0k-tangle/src/multi_doc_resolve.rs) · `#corpus-impl`</sub>
 
 ```rust {#corpus-impl}
 impl<'a> Corpus<'a> {
@@ -118,6 +123,8 @@ shape: index everything, then expand a chunk in one of them). We take
 the URI explicitly rather than reading `start.id` so a caller can
 expand the same parsed doc under a chosen identity if it ever needs to.
 
+<a name="chunk-expand-in-corpus-fn"></a><sub>[`src/multi_doc_resolve.rs`](../../../x0k-tangle/src/multi_doc_resolve.rs) · `#expand-in-corpus-fn`</sub>
+
 ```rust {#expand-in-corpus-fn}
 pub fn expand_chunk_in_corpus(
     corpus: &Corpus,
@@ -144,6 +151,8 @@ The fixture docs embed triple-backtick markdown fences inside Rust raw
 strings. Language-aware ref extraction skips `<<...>>` tokens inside
 those raw strings (see [`chunk-refs.md`](chunk-refs.md)), so the doc
 tangles without the resolver chasing its own fixture data.
+
+<a name="chunk-tests"></a><sub>[`src/multi_doc_resolve.rs`](../../../x0k-tangle/src/multi_doc_resolve.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
@@ -325,6 +334,8 @@ x0k:
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/multi_doc_resolve.rs`](../../../x0k-tangle/src/multi_doc_resolve.rs) · `#root` · assembles [imports](#chunk-imports) · [corpus-type](#chunk-corpus-type) · [corpus-impl](#chunk-corpus-impl) · [expand-in-corpus-fn](#chunk-expand-in-corpus-fn) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>

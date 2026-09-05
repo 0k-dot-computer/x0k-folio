@@ -64,6 +64,8 @@ filesystem-canonical, so any reader (a human, an agent, a freshly booted
 daemon) must derive the same ids for the same bytes. Loro-structural ids
 are reserved for the db-canonical `knowledge/` tree.
 
+<a name="chunk-module-doc"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Body segmentation for in-place authoring + underwriting.
 //!
@@ -106,6 +108,8 @@ carries two names: a short tag that goes *into* the block id (ids are
 read by humans in provenance logs, so `brief/p/2` beats
 `brief/paragraph/2`) and a full name for API clients rendering a block
 model.
+
+<a name="chunk-block-kind"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#block-kind`</sub>
 
 ```rust {#block-kind}
 /// Block-level kind. One variant per top-level markdown construct we treat
@@ -154,6 +158,8 @@ A segment is the two identities plus what a caller needs to *use* them:
 the byte range (so an editor can splice a replacement into the original
 body) and the exact text slice (the per-block markdown an editor shows).
 
+<a name="chunk-block-segment"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#block-segment`</sub>
+
 ```rust {#block-segment}
 /// One segment of a document body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +186,8 @@ keeps that blast radius small — an edit under `## Details` never renumbers
 anything under `## Brief`.
 
 ## The entry point
+
+<a name="chunk-segment-body"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#segment-body`</sub>
 
 ```rust {#segment-body}
 /// Segment a document body into ordered top-level blocks.
@@ -210,6 +218,8 @@ block renders (trailing whitespace, surrounding blank lines) should not
 revoke anyone's acceptance. Interior whitespace *does* count — `hello
 world` and `hello  world` render differently in a code span.
 
+<a name="chunk-hash-block"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#hash-block`</sub>
+
 ```rust {#hash-block}
 /// blake3 hex hash of canonicalized text. Public so the save / underwriting
 /// tools hash the same way the segmenter does.
@@ -239,6 +249,8 @@ helpers: a level-to-number map (pulldown-cmark's `HeadingLevel` is an
 enum) and a slugifier that turns heading text into a path segment. The
 slug caps at 40 characters so a long heading doesn't make every id under
 it unreadable; the cap is safe because the ordinal disambiguates.
+
+<a name="chunk-heading-helpers"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#heading-helpers`</sub>
 
 ```rust {#heading-helpers}
 fn heading_level_num(level: HeadingLevel) -> usize {
@@ -306,6 +318,8 @@ then the heading's segment is emitted against the *popped* path, and only
 then is the new slug pushed so subsequent blocks nest under it. Getting
 this order wrong produces ids like `brief/h/0` for `## Brief` itself —
 an address that names the thing as its own parent.
+
+<a name="chunk-segment-markdown"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#segment-markdown`</sub>
 
 ```rust {#segment-markdown}
 fn segment_markdown(body: &str) -> Vec<BlockSegment> {
@@ -422,6 +436,8 @@ whole body. Per-element segmentation — each top-level `<section>`, `<p>`,
 canonical paths — is the natural refinement if HTML bodies ever become
 block-editable, and nothing in the id scheme blocks it.
 
+<a name="chunk-segment-html"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#segment-html`</sub>
+
 ```rust {#segment-html}
 /// HTML segmentation: one whole-body section. Per-element HTML
 /// segmentation (each top-level `<section>/<p>/<h*>/...` via
@@ -449,6 +465,8 @@ paragraph, two `##` sections, a code block and a list — and the tests pin
 each half of the two-identity contract in turn: section-scoped addresses,
 id-stable-hash-changed under a content edit, byte ranges that slice back
 to the text, and whitespace-forgiving hashing.
+
+<a name="chunk-tests"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -556,6 +574,8 @@ body without ever re-rendering the frontmatter — the promise
 segmenter's byte ranges are what make per-block splicing possible at all.
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/block_segment.rs`](../../../x0k-folio/src/block_segment.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [block-kind](#chunk-block-kind) · [block-segment](#chunk-block-segment) · [segment-body](#chunk-segment-body) · [hash-block](#chunk-hash-block) · [heading-helpers](#chunk-heading-helpers) · [segment-markdown](#chunk-segment-markdown) · [segment-html](#chunk-segment-html) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

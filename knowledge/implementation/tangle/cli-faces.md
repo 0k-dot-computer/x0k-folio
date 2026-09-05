@@ -22,8 +22,8 @@ x0k:
 # The faces behind `check` and `affordances`
 
 Two of the affordances the `x0k-folio` publication ships claim a human:
-checking a document against the vocabulary that shipped beside it, and
-reading the affordances a document declares as data. Both were true of
+[checking a document against the vocabulary that shipped beside it](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary"), and
+[reading the affordances a document declares as data](../../../decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md "x0k:affordance/read_declared_affordances"). Both were true of
 the *library* — `x0k_folio::check_corpus` and
 `x0k_folio::extract_from_markdown` are public and published — and false
 of the *repository*, because nothing a person could run reached either.
@@ -42,6 +42,8 @@ the bundle growing a dependency on `x0k-folio`. The signifiers for the
 verbs live in [`crate.md`](crate.md), under each verb's own heading,
 because a signifier is declared where its face lives.
 
+<a name="chunk-doc"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#doc`</sub>
+
 ```rust {#doc}
 //! The mechanism behind the `check` and `affordances` CLI verbs: every
 //! folio/v1 envelope under a set of paths read against the vocabulary
@@ -50,17 +52,19 @@ because a signifier is declared where its face lives.
 //! own printing.
 ```
 
+<a name="chunk-imports"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#imports`</sub>
+
 ```rust {#imports}
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use x0k_folio::colophon::{is_colophon, parse_envelope, Colophon};
+use x0k_folio::colophon::{is_colophon, parse_envelope, Colophon, DocType};
 use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::{
-    check_corpus, check_declarations, declared_facts, extract_from_markdown, CorpusReport,
-    DeclarationReport, InlineEntity,
+    check_corpus, check_declarations, declared_facts, document_edges, extract_from_markdown,
+    CorpusReport, DeclarationReport, InlineEntity,
 };
 
 use crate::parser::{parse_document, ParsedDocument};
@@ -80,6 +84,8 @@ after a `#[test]` line, other attributes between them allowed; nothing
 subtler, because the projector asks cargo for these names and cargo's
 own filter is no subtler either.
 
+<a name="chunk-proving-chunks"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#proving-chunks`</sub>
+
 ```rust {#proving-chunks}
 /// One chunk of a tangled document that says what it proves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +101,9 @@ pub struct ProvingChunk {
     pub proves: Vec<String>,
     /// The `#[test]` functions in its bodies, in order.
     pub tests: Vec<String>,
+    /// Each test's source as the chapter tangles it, aligned with
+    /// `tests`: what an affordance's page shows under the test's name.
+    pub sources: Vec<String>,
 }
 
 /// Every chunk of `parsed` carrying `proves=`, in declaration order.
@@ -105,11 +114,13 @@ pub fn proving_chunks(parsed: &ParsedDocument) -> Vec<ProvingChunk> {
             if chunk.proves.is_empty() {
                 continue;
             }
+            let sources = test_fn_sources(&chunk.combined_body());
             out.push(ProvingChunk {
                 chunk: name.clone(),
                 file: chunk.file_target.clone().or_else(|| parsed.tangle_root.clone()),
                 proves: chunk.proves.clone(),
-                tests: test_fn_names(&chunk.combined_body()),
+                tests: sources.iter().map(|(name, _)| name.clone()).collect(),
+                sources: sources.into_iter().map(|(_, source)| source).collect(),
             });
         }
     }
@@ -119,29 +130,46 @@ pub fn proving_chunks(parsed: &ParsedDocument) -> Vec<ProvingChunk> {
 /// The `#[test]` functions in a body: each `fn <name>` after a
 /// `#[test]` line, with any further attributes between them skipped.
 pub fn test_fn_names(body: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut armed = false;
-    for line in body.lines() {
-        let t = line.trim();
-        if t.starts_with("#[test]") {
-            armed = true;
-            continue;
+    test_fn_sources(body).into_iter().map(|(name, _)| name).collect()
+}
+
+/// Each `#[test]` function in a body with its source: the lines from
+/// its `#[test]` to the line before the next, trailing blank lines and
+/// any line closing an enclosing item (indented less than the attribute,
+/// as a `mod tests` brace is) dropped, and the whole dedented to the
+/// margin. A `#[test]` followed by no `fn` names nothing.
+pub fn test_fn_sources(body: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = body.lines().collect();
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.trim().starts_with("#[test]"))
+        .map(|(i, _)| i)
+        .collect();
+    let mut out = Vec::new();
+    for (k, &start) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).copied().unwrap_or(lines.len());
+        let indent = lines[start].len() - lines[start].trim_start().len();
+        let mut span: Vec<&str> = lines[start..end].to_vec();
+        while span.last().is_some_and(|l| l.trim().is_empty() || l.len() - l.trim_start().len() < indent) {
+            span.pop();
         }
-        if !armed || t.starts_with("#[") {
-            continue;
-        }
-        armed = false;
-        if let Some(i) = t.find("fn ") {
-            let name: String = t[i + 3..]
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
-            if !name.is_empty() {
-                names.push(name);
-            }
-        }
+        let name = span.iter().skip(1).map(|l| l.trim()).find(|t| !t.starts_with("#[")).and_then(|t| {
+            let i = t.find("fn ")?;
+            let name: String = t[i + 3..].chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            (!name.is_empty()).then_some(name)
+        });
+        let Some(name) = name else { continue };
+        let source: Vec<String> = span
+            .iter()
+            .map(|l| {
+                let lead = l.len() - l.trim_start().len();
+                l[lead.min(indent)..].to_string()
+            })
+            .collect();
+        out.push((name, source.join("\n")));
     }
-    names
+    out
 }
 ```
 
@@ -155,6 +183,8 @@ is the format's own cheap gate, `is_colophon`, which reads the
 frontmatter and nothing else. A file path is taken as given; a
 directory is walked. The result is sorted so two runs over the same
 tree print in the same order.
+
+<a name="chunk-discover"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#discover`</sub>
 
 ```rust {#discover}
 /// Every `.md` under `paths` whose frontmatter claims folio/v1, sorted.
@@ -224,6 +254,8 @@ declaration deleted, since the edge on the chunk outlives both. A
 `proves=` value that is not an id at all is a defect, the same one a
 malformed edge target is.
 
+<a name="chunk-vocabulary-report"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#vocabulary-report`</sub>
+
 ```rust {#vocabulary-report}
 /// What `check` found reading a set of envelopes against the shipped
 /// vocabulary.
@@ -254,6 +286,8 @@ impl VocabularyReport {
 }
 ```
 
+<a name="chunk-check-vocabulary"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#check-vocabulary`</sub>
+
 ```rust {#check-vocabulary}
 /// Read every folio/v1 document under `paths` against the vocabulary
 /// this build compiled. Documents are named by their path in the
@@ -273,6 +307,14 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
         let name = path.display().to_string();
         match parse_envelope(&content) {
             Ok((envelope, body)) => {
+                // A chapter's prose link is an edge — `presupposes` to a
+                // wiki page, `realizes` to an affordance — and is checked as
+                // one. The rule is a chapter's; a wiki page or a publication
+                // linking a concept page is linking.
+                let mut envelope = envelope;
+                if matches!(envelope.doc_type, DocType::Implementation) {
+                    envelope.edges = document_edges(&envelope.edges, &body);
+                }
                 // A block the extractor refuses is the `affordances` verb's
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());
@@ -352,6 +394,8 @@ extractor's string form. The title and description are fields of the
 record, so their `x0k:title` / `x0k:description` facts are not repeated
 under `facts`.
 
+<a name="chunk-fact-value"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#fact-value`</sub>
+
 ```rust {#fact-value}
 /// One value of a declared fact, with the extractor's kind prefix made
 /// a tag: an `entity:` value is an id, a `string:` value a literal.
@@ -374,6 +418,8 @@ impl FactValue {
     }
 }
 ```
+
+<a name="chunk-affordance-record"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#affordance-record`</sub>
 
 ```rust {#affordance-record}
 /// One affordance declaration, as the `affordances` verb prints it.
@@ -430,6 +476,8 @@ chunk's name and its test functions — so the relation reaches a
 reader's tooling as data. Relayed, not judged: this verb reads what a
 chunk says it proves; whether the test passes is settled where the
 tests run, at projection ([`region-repo.md`](region-repo.md)).
+
+<a name="chunk-declared-affordances"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#declared-affordances`</sub>
 
 ```rust {#declared-affordances}
 /// Read every inline affordance declaration under `paths`.
@@ -506,6 +554,8 @@ fn record_of(entity: &InlineEntity, defined_in: &str) -> AffordanceRecord {
 
 ## Composing the module
 
+<a name="chunk-root"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances)</sub>
+
 ```rust {#root}
 <<doc>>
 
@@ -542,12 +592,16 @@ face — the lesson [`checking.md`](../folio/checking.md) records. The
 well-formed fixture takes its edge predicate from the compiled slice at
 runtime; the defective one uses a term no module will ever declare.
 
+<a name="chunk-tests-doc"></a><sub>[`tests/cli_faces.rs`](../../../x0k-tangle/tests/cli_faces.rs) · `#tests-doc`</sub>
+
 ```rust {#tests-doc file="tests/cli_faces.rs"}
 //! Pins for the `check` and `affordances` faces of the shipped CLI
 //! (`x0k:implementation/tangle/cli-faces`): the built binary is run
 //! over a temp fixture, and what it prints and how it exits is the
 //! claim.
 ```
+
+<a name="chunk-tests-uses"></a><sub>[`tests/cli_faces.rs`](../../../x0k-tangle/tests/cli_faces.rs) · `#tests-uses`</sub>
 
 ```rust {#tests-uses file="tests/cli_faces.rs"}
 use std::fs;
@@ -556,6 +610,8 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 ```
+
+<a name="chunk-tests-fixture"></a><sub>[`tests/cli_faces.rs`](../../../x0k-tangle/tests/cli_faces.rs) · `#tests-fixture`</sub>
 
 ```rust {#tests-fixture file="tests/cli_faces.rs"}
 /// A predicate this build is certain to accept, so the well-formed
@@ -599,6 +655,8 @@ fn run(args: &[&str], dir: &Path) -> Output {
 The check's two outcomes, each on its own fixture: an edge into the
 private corpus is noted and passes; a predicate no module declares is
 named and fails.
+
+<a name="chunk-tests-check"></a><sub>[`tests/cli_faces.rs`](../../../x0k-tangle/tests/cli_faces.rs) · `#tests-check` · proves [Check a document against its vocabulary](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)</sub>
 
 ```rust {#tests-check file="tests/cli_faces.rs" proves="x0k:affordance/check_a_document_against_shipped_vocabulary"}
 #[test]

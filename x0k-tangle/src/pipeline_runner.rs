@@ -996,7 +996,7 @@ fn stage(tmp: &Path, content: &[u8]) -> std::io::Result<()> {
     f.sync_all()
 }
 
-fn content_hash(s: &str) -> String {
+pub fn content_hash(s: &str) -> String {
     let mut h = DefaultHasher::new();
     s.hash(&mut h);
     format!("{:016x}", h.finish())

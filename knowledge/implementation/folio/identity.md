@@ -70,6 +70,8 @@ the same string back. Both exceptions are deliberate and both are
 stated where they are made — the locator under *Parsing*, the fragment
 in the section after this one.
 
+<a name="chunk-module-doc"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! `EntityId` — the identity half of an x0k entity URI.
 //!
@@ -136,6 +138,8 @@ class against a vocabulary, a resolver looks the identifier up on disk,
 a projector reads the fragment to cut a section out, a renderer prints
 them back.
 
+<a name="chunk-entity-id"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#entity-id`</sub>
+
 ```rust {#entity-id}
 /// A parsed x0k entity id: a class, a class-specific identifier, and an
 /// optional fragment naming a part of what the identifier names.
@@ -201,6 +205,8 @@ same way. The honest statement is that this pair round-trips
 language than it renders. A test pins that shape so it stays a known
 edge rather than a surprise.
 
+<a name="chunk-display"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#display`</sub>
+
 ```rust {#display}
 impl fmt::Display for EntityId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -233,6 +239,8 @@ split is the second, and it is a *widening*: `EntityUri` reads
 `None`, for the reason the locator refuses: a `#` that was typed meant
 something, and the parse that quietly forgets it is the one nobody
 debugs.
+
+<a name="chunk-from-str"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#from-str`</sub>
 
 ```rust {#from-str}
 impl FromStr for EntityId {
@@ -312,6 +320,8 @@ Each variant carries the offending input, because these surface in a
 check report over a whole corpus where "invalid id" without the string
 is useless.
 
+<a name="chunk-error"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#error`</sub>
+
 ```rust {#error}
 /// Errors produced while parsing an [`EntityId`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -378,6 +388,8 @@ substrate's renderer does not encode it, so the two agree on every
 string that has no `#` in it — which is every authored id in the corpus
 measured today — and the divergence is the same shape as the locator's,
 written down rather than discovered.
+
+<a name="chunk-percent"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#percent`</sub>
 
 ```rust {#percent}
 /// Whether a byte must be percent-encoded. Disallowed: the separators
@@ -447,6 +459,8 @@ class, so the parity claim is checked against the same inputs
 `EntityUri` is checked against. The rest pin the refusals, the one
 asymmetry, and the two ways a fragment must behave: it survives a
 round-trip as a *part*, and it never leaks into the identifier.
+
+<a name="chunk-tests"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -628,6 +642,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [entity-id](#chunk-entity-id) · [display](#chunk-display) · [from-str](#chunk-from-str) · [error](#chunk-error) · [percent](#chunk-percent) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

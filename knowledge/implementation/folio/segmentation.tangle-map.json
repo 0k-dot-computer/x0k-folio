@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/folio/segmentation.md",
-  "source_hash": "3eb8442588825b2a",
+  "source_hash": "364f25ae4d1d6128",
   "pipelines": [
     {
       "kind": "identity-tangle",

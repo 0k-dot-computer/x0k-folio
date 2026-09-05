@@ -15,8 +15,6 @@ x0k:
     cites:
       - x0k:implementation/folio/segmentation
       - x0k:implementation/folio/structural
-    presupposes:
-      - x0k:wiki/dependency-resolution
 ---
 # Transclusion: include, don't copy
 
@@ -32,8 +30,9 @@ content of one document (or a section of it) into another *by
 reference*, resolved at render time, so there is exactly one home for
 every paragraph and every reading is current.
 
-This module is the shared resolution core, and it lives in `x0k-folio`
-rather than the weave crate for a dependency reason. Two rendering
+This module is the shared resolution core — [dependency
+resolution](x0k:wiki/dependency-resolution) over include references — and
+it lives in `x0k-folio` rather than the weave crate for a dependency reason. Two rendering
 surfaces consume it: the **weave** — the `x0k-tangle` step that turns a
 region of literate documents into a static HTML site — inlines
 transclusions before weaving HTML for the web renderer, and the
@@ -66,6 +65,8 @@ reference, a missing section, a cycle, a too-deep nest — each turns into
 a plain markdown link (the "go there" fallback) plus a typed warning.
 A reader always gets a readable document; the warnings tell the
 authoring surface what to flag.
+
+<a name="chunk-module-doc"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 //! Transclusion — read-only, section-level.
@@ -130,6 +131,8 @@ Parsing is total — any string yields *some* reference — because a
 malformed reference should degrade at resolution time with a warning,
 not crash the parse of the document that contains it:
 
+<a name="chunk-transclude-ref"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#transclude-ref`</sub>
+
 ```rust {#transclude-ref}
 /// A parsed transclusion reference: a folio URI plus an optional
 /// `#heading-path` section anchor.
@@ -188,6 +191,8 @@ the published region simply degrades to a link, so transclusion never
 leaks unpublished prose — the resolver's scope is the disclosure
 boundary.
 
+<a name="chunk-doc-source"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#doc-source`</sub>
+
 ```rust {#doc-source}
 /// A source of document bodies for resolution. Implementors map a
 /// folio URI to that document's **body markdown** (frontmatter
@@ -204,6 +209,8 @@ The four degradations, typed so an authoring surface can render each
 distinctly, and the resolution product — body, warnings, and the deduped
 set of URIs that were actually inlined (the weave harvests these to emit
 `transcludes` edges):
+
+<a name="chunk-warnings-and-resolved"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#warnings-and-resolved`</sub>
 
 ```rust {#warnings-and-resolved}
 /// A warning surfaced during resolution. Non-fatal: the corresponding
@@ -256,6 +263,8 @@ line-oriented walk rather than a YAML parse for the same reason the
 tangler's frontmatter walk is (see [`tangle/parsing.md`](../tangle/parsing.md)):
 we need three lines' worth of information and tolerance for slightly
 untidy envelopes, not a schema.
+
+<a name="chunk-frontmatter-transcludes"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#frontmatter-transcludes`</sub>
 
 ```rust {#frontmatter-transcludes}
 /// Extract the `transcludes:` sequence from a folio/v1 frontmatter
@@ -329,6 +338,8 @@ The inline form is a fenced block whose info string carries
 resolver can splice replacements in place. It is another line walk, with
 one grungy corner: after finding an opening fence it must locate the
 closing ``` ``` ``` line, tolerating an unclosed fence at end-of-body.
+
+<a name="chunk-fence-scan"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#fence-scan`</sub>
 
 ```rust {#fence-scan}
 /// One inline transclude fence found in a body, with its byte range so the
@@ -428,6 +439,8 @@ heading at the same-or-shallower level, heading line included so the
 inlined section keeps its title. The anchor matches by heading slug —
 a multi-segment anchor (`parent/child`) matches its final segment.
 
+<a name="chunk-extract-section"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#extract-section`</sub>
+
 ```rust {#extract-section}
 /// Extract a section from a markdown body by heading-path anchor.
 ///
@@ -485,6 +498,8 @@ the paragraph's one canonical home and every reading updates. The shared
 `find_section_range` is what keeps read and write in lockstep; a missing
 anchor refuses the write (returns `None`) rather than appending
 somewhere surprising.
+
+<a name="chunk-replace-section"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#replace-section`</sub>
 
 ```rust {#replace-section}
 /// Replace the section addressed by `anchor` in `body` with
@@ -579,6 +594,8 @@ a direct or transitive self-transclusion is caught as a cycle — the
 weave uses this form because it knows the URI of the document it is
 rendering. Both resolve inline fences in place first, then append
 frontmatter references in reading order with blank-line separation.
+
+<a name="chunk-resolve"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#resolve`</sub>
 
 ```rust {#resolve}
 /// Resolve all transclusions in a spine document.
@@ -697,6 +714,8 @@ extracted section with the target's URI pushed onto the visited-stack
 for exactly the duration of its own resolution. Popping it afterward
 matters: the same document may legitimately be transcluded twice as
 *siblings*; only *ancestry* is a cycle.
+
+<a name="chunk-resolve-body-and-ref"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#resolve-body-and-ref`</sub>
 
 ```rust {#resolve-body-and-ref}
 /// Resolve every inline fence in `body`, splicing the resolved content in
@@ -836,6 +855,8 @@ The tests run resolution against an in-memory `DocSource` and cover the
 happy paths (inline fence, frontmatter order, recursion), every
 degradation (cycle, self-transclusion, unresolved), edit-through's
 splice-and-refuse behaviors, and the slug-equivalence tripwire.
+
+<a name="chunk-tests"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
@@ -1084,6 +1105,8 @@ mod tests {
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/transclusion.rs`](../../../x0k-folio/src/transclusion.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [transclude-ref](#chunk-transclude-ref) · [doc-source](#chunk-doc-source) · [warnings-and-resolved](#chunk-warnings-and-resolved) · [frontmatter-transcludes](#chunk-frontmatter-transcludes) · [fence-scan](#chunk-fence-scan) · [extract-section](#chunk-extract-section) · [replace-section](#chunk-replace-section) · [resolve](#chunk-resolve) · [resolve-body-and-ref](#chunk-resolve-body-and-ref) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

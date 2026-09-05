@@ -16,13 +16,11 @@ x0k:
       - x0k:implementation/entry-spine/spine
     motivated_by:
       - x0k:intent/ba2f3043-cb4f-4ec6-87c5-d58b5d71e30b
-    presupposes:
-      - x0k:wiki/rdf-and-owl
-      - x0k:wiki/open-world-assumption
 ---
 # Concepts Are Facts
 
-An ontology stops being extensible by assertion when its vocabulary is
+An ontology stops being [extensible by
+assertion](x0k:wiki/open-world-assumption) when its vocabulary is
 compiled directly out of a schema file. The file may be pleasant to review,
 but it becomes a registry that must change before the running system can
 recognize a new concept. The fact plane needs the opposite authority: a
@@ -46,9 +44,12 @@ fact and nothing else — not the term's namespace, not a file, not a table.
 
 ## The fact vocabulary is small
 
-The model preserves RDF's own predicates rather than introducing a parallel
+The model preserves [RDF's own predicates](x0k:wiki/rdf-and-owl) rather
+than introducing a parallel
 set of schema-about-schema names. These constants are the vocabulary the fold
 needs to recognize classes, properties, descriptions, and RDF lists:
+
+<a name="chunk-vocabulary"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#vocabulary`</sub>
 
 ```rust {#vocabulary}
 use std::collections::{BTreeMap, BTreeSet};
@@ -86,6 +87,8 @@ namespace (`https://0k.computer/ontology/aec#`) shares the prefix but carries a
 `#`, so the distinction is one test, shared by the region fold and the
 materializer:
 
+<a name="chunk-module-iri"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#module-iri`</sub>
+
 ```rust {#module-iri}
 /// The module name of a module IRI (`https://0k.computer/ontology/work` → `work`),
 /// or `None` for anything else under the prefix, such as a term in an
@@ -102,6 +105,8 @@ The substrate-neutral value is deliberately narrower than arbitrary RDF. The
 checked vocabulary uses entity references and string literals, exactly the
 two `FactValue` variants the folio path projects. A future typed literal is a
 new fact-plane value decision, not something this view silently erases:
+
+<a name="chunk-fact-value"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#fact-value`</sub>
 
 ```rust {#fact-value}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -121,6 +126,8 @@ pub struct OntologyFact {
 Constructors keep the generated bootstrap projection terse while leaving the
 three stored fields completely visible to folds:
 
+<a name="chunk-fact-constructors"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#fact-constructors`</sub>
+
 ```rust {#fact-constructors}
 impl OntologyFact {
     pub fn text(entity: impl Into<String>, predicate: impl Into<String>, value: impl Into<String>) -> Self {
@@ -139,6 +146,8 @@ impl OntologyFact {
 fact source the caller already has: generated bootstrap facts at build time,
 or `FactEntry` values folded from the entry spine at runtime. Duplicate
 assertions collapse without reordering the first observation:
+
+<a name="chunk-model"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#model`</sub>
 
 ```rust {#model}
 #[derive(Debug, Clone)]
@@ -163,6 +172,8 @@ The bootstrap projection has one permitted addition to the historical
 Turtle: it closes the meta-level. It asserts the root class and makes every
 declared class or property a concept. Once these assertions are in the log,
 the method is no longer involved; the fold is authoritative:
+
+<a name="chunk-close-root"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#close-root`</sub>
 
 ```rust {#close-root}
 impl OntologyModel {
@@ -191,6 +202,8 @@ impl OntologyModel {
 Declaration kinds remain RDF/OWL facts. That makes the class and property
 views derivable without another enum becoming authoritative:
 
+<a name="chunk-declared-entities"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#declared-entities`</sub>
+
 ```rust {#declared-entities}
 impl OntologyModel {
     fn declared_entities(&self) -> Vec<String> {
@@ -217,6 +230,8 @@ impl OntologyModel {
 The owned records below are intermediate views used both by `build.rs` and by
 the runtime parity check. They contain no `'static` references and therefore
 cannot masquerade as a compiled registry:
+
+<a name="chunk-view-records"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#view-records`</sub>
 
 ```rust {#view-records}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -247,6 +262,8 @@ extension's class at a glance. Until 2026-09-05 the fold stripped only
 the base namespace and silently dropped everything else, so the first
 extension in its own namespace was invisible to every table; the rule
 was declared and not exercised.
+
+<a name="chunk-class-view"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#class-view`</sub>
 
 ```rust {#class-view}
 impl OntologyModel {
@@ -305,6 +322,8 @@ walks the same RDF list facts in either the bootstrap model or the spine. The
 compatibility table keeps the first member of an RDF list, preserving the
 meaning of the old single-slot projection without relying on append order:
 
+<a name="chunk-class-values"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#class-values`</sub>
+
 ```rust {#class-values}
 impl OntologyModel {
     fn first_class_value(&self, entity: &str, predicate: &str) -> Option<String> {
@@ -347,6 +366,8 @@ List traversal is defensive against a malformed cycle. The current
 vocabulary is well formed, but a view generator must terminate on facts a
 peer asserted independently:
 
+<a name="chunk-rdf-list"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#rdf-list`</sub>
+
 ```rust {#rdf-list}
 impl OntologyModel {
     fn rdf_list_members(&self, head: &str) -> Vec<String> {
@@ -371,6 +392,8 @@ convenience: a shape file is part of the T-box union
 domain out of a term file, a derivation that consulted only `rdfs:domain`
 would be reading a truncated union and would silently drop the predicate from
 the slice every decision document draws on. `realizes` is the live case.
+
+<a name="chunk-decision-predicates"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#decision-predicates`</sub>
 
 ```rust {#decision-predicates}
 impl OntologyModel {
@@ -400,6 +423,8 @@ A module is read off the same facts: the `owl:Ontology` individuals under the
 module prefix, each with its sorted imports and, for a domain extension, the
 namespace it declares. The record is owned data like the class and property
 records, so `build.rs` and the region share one reading:
+
+<a name="chunk-module-records"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#module-records`</sub>
 
 ```rust {#module-records}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -439,6 +464,8 @@ impl OntologyModel {
 The import graph must be a DAG whose every edge lands on a module of the
 set. Both failures are named at the module that carries them, because a
 publication ships a set and the maker of that set is who can fix it:
+
+<a name="chunk-import-order"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#import-order`</sub>
 
 ```rust {#import-order}
 impl OntologyModel {
@@ -507,6 +534,8 @@ model — `software`'s `publishedOn`, whose domain is `Publication`, is a
 Decision edge because `Publication` subclasses `Decision` in `document` —
 and only the answer is partitioned:
 
+<a name="chunk-module-views"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#module-views`</sub>
+
 ```rust {#module-views}
 impl OntologyModel {
     pub fn classes_in(&self, module_iri: &str) -> Vec<ClassRecord> {
@@ -532,6 +561,8 @@ defines, and the structural nodes those axioms own — found by walking from
 the owned entities into the skolem prefix, never by namespace. An instance
 that no module claims is therefore unreachable from every file:
 
+<a name="chunk-module-facts"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#module-facts`</sub>
+
 ```rust {#module-facts}
 impl OntologyModel {
     pub fn module_facts(&self, module_iri: &str) -> Vec<&OntologyFact> {
@@ -554,6 +585,8 @@ impl OntologyModel {
 
 The small naming helpers are shared rather than duplicated between the build
 and runtime projections:
+
+<a name="chunk-naming"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#naming`</sub>
 
 ```rust {#naming}
 pub fn bare_c0k(iri: &str) -> String {
@@ -587,6 +620,8 @@ The split is **by predicate**, not by subject, and that is forced rather than
 chosen: `module_facts` gathers a module's facts by walking `rdfs:isDefinedBy`
 from the subject, so the two claims about `publishedBy` arrive together and
 nothing about the subject can tell them apart. The predicate can.
+
+<a name="chunk-shape-predicates"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#shape-predicates`</sub>
 
 ```rust {#shape-predicates}
 /// True for a predicate that states a shape rather than a term. A shape is
@@ -650,6 +685,8 @@ module. A subject with two structural objects under one predicate would
 tie on (subject, predicate) and fall back to skolem order, which is
 set-dependent; no term does that, and the projection's own round-trip
 test is where it would show.
+
+<a name="chunk-render-view"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#render-view`</sub>
 
 ```rust {#render-view}
 impl OntologyModel {
@@ -760,6 +797,8 @@ fn render_fact(fact: &OntologyFact, labels: &BTreeMap<String, String>) -> String
 Only syntax-significant characters are escaped. Unicode remains readable in
 the review artifact, while control characters use N-Triples escapes:
 
+<a name="chunk-render-atoms"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#render-atoms`</sub>
+
 ```rust {#render-atoms}
 fn render_entity(value: &str, labels: &BTreeMap<String, String>) -> String {
     if let Some(local) = value.strip_prefix(STRUCTURAL_NODE_PREFIX) {
@@ -803,6 +842,8 @@ live here, at the package that owns the bootstrap facts and compatibility
 tables, so an ontology-only test selection cannot silently skip the contract.
 The projection test compares complete name sets and compatibility rows rather
 than sampling known entries:
+
+<a name="chunk-concept-fact-contract-tests"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#concept-fact-contract-tests`</sub>
 
 ```rust {#concept-fact-contract-tests}
 #[cfg(test)]

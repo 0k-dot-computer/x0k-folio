@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/folio/colophon.md",
-  "source_hash": "da969ddc17960d8a",
+  "source_hash": "eb15767d27cf015a",
   "pipelines": [
     {
       "kind": "identity-tangle",

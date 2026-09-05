@@ -17,14 +17,12 @@ x0k:
       - x0k:architecture/ontology-modules
       - x0k:implementation/folio/colophon
       - x0k:implementation/folio/identity
-    presupposes:
-      - x0k:wiki/rdf-and-owl
-      - x0k:wiki/open-world-assumption
 ---
 # Checking a document against what shipped with it
 
 A publication of this crate ships three things that ought to be able to
-meet: the format, the vocabulary its `type` and `edges` are terms of, and
+meet: the format, the vocabulary its `type` and `edges` are terms of (an
+[RDF and OWL](x0k:wiki/rdf-and-owl) ontology, shipped as modules), and
 the documents themselves. Until this module they could not. The parser
 read `edges:` into a `BTreeMap<String, Vec<String>>` and its own comment
 said predicate vocabularies were validated by the consumer — and the only
@@ -38,7 +36,8 @@ layer.
 
 Point a checker at a published bundle and almost every document will
 have edges that resolve to nothing. That is not a bug; a publication is a
-*region*, and an edge out of the region is the boundary doing its job.
+*region*, and an edge out of the region is the boundary doing its job, as
+the [open-world assumption](x0k:wiki/open-world-assumption) says it should.
 Point the same checker at a document whose `edges:` block uses a
 predicate the shipped vocabulary never defines, and something is
 genuinely wrong — not with the document, with the packaging. Somebody
@@ -65,6 +64,8 @@ the term was not wiki-scoped and had no module to wait for. It is now
 `x0k:cites` in `core`, with no domain and no range, and what the report
 still names in that shape is a genuine module-selection question rather
 than a term filed in the wrong house.
+
+<a name="chunk-module-doc"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 //! Reading a folio/v1 envelope against the vocabulary compiled into this
@@ -116,6 +117,8 @@ A predicate can therefore be outside the slice and still perfectly real:
 to use it. Calling that undeclared would be wrong. So standing has three
 values, not two.
 
+<a name="chunk-standing"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#standing`</sub>
+
 ```rust {#standing}
 /// What the shipped ontology modules have to say about an `edges:`
 /// predicate, in its snake_case frontmatter form.
@@ -159,6 +162,8 @@ capitalizes the letter after each `_`. Deriving it is what lets the
 question reach properties outside the generated slice, which is the
 whole reason `DeclaredElsewhere` can exist.
 
+<a name="chunk-camel-form"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#camel-form`</sub>
+
 ```rust {#camel-form}
 /// snake_case → camelCase, the inverse of the rule `x0k-ontology`'s view
 /// applies. Used only to *ask* about a predicate outside the generated
@@ -185,6 +190,8 @@ fn camel_form(snake: &str) -> String {
 Three ways a document can outrun the vocabulary shipped beside it. Each
 carries the offending string, because these are read in a report over a
 whole corpus where the finding without its subject is unactionable.
+
+<a name="chunk-defect"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#defect`</sub>
 
 ```rust {#defect}
 /// The shipped vocabulary cannot express something this document says.
@@ -232,7 +239,8 @@ impl std::error::Error for Defect {}
 
 ## `check_envelope`: one document
 
-`check_envelope` is the face of this check. A caller holding one parsed
+`check_envelope` is the face of [checking a document against what
+shipped with it](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary"). A caller holding one parsed
 envelope reaches for it and gets back a report: the document's id, its
 well-formed edges, and the defects, in the order found. That is all the
 cue there is — a reader of this library learns the check is here from
@@ -254,6 +262,8 @@ edges:
 The report keeps the well-formed edges as well as the faults, because
 the corpus pass needs them and a caller checking a single document
 usually wants to know what it points at.
+
+<a name="chunk-check-envelope"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#check-envelope`</sub>
 
 ```rust {#check-envelope}
 /// What checking one envelope against the shipped vocabulary found.
@@ -328,6 +338,8 @@ document whose own id is malformed contributes no id to the set, so its
 edges are still checked and its inbound edges dangle — the fault is
 reported once, at its source, and its consequences are visible rather
 than swallowed.
+
+<a name="chunk-check-corpus"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#check-corpus`</sub>
 
 ```rust {#check-corpus}
 /// A well-formed edge whose target names no document in the checked set.
@@ -434,6 +446,8 @@ when first run over this publication: two of its four affordances —
 `read_declared_affordances` — claimed a human and were reachable only
 through Rust, with nothing declared to say so. The two signifiers in
 this crate's chapters are what made those claims true.
+
+<a name="chunk-check-declarations"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#check-declarations`</sub>
 
 ```rust {#check-declarations}
 /// A declaration the shipped vocabulary expresses but that does not
@@ -543,6 +557,8 @@ compiled slice at runtime. Writing `motivated_by` into a fixture was
 the first version of these tests, and it passed in the monorepo and
 failed in the published bundle — correctly, which is the point, but a
 test that measures the module selection is not measuring the checker.
+
+<a name="chunk-tests"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
@@ -770,6 +786,8 @@ edges:
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [standing](#chunk-standing) · [camel-form](#chunk-camel-form) · [defect](#chunk-defect) · [check-envelope](#chunk-check-envelope) · [check-corpus](#chunk-check-corpus) · [check-declarations](#chunk-check-declarations) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

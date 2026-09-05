@@ -16,8 +16,6 @@ x0k:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/pipeline
       - x0k:implementation/tangle/identity-pipeline
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 # The pipeline dispatcher
 
@@ -25,7 +23,8 @@ This module wires every other piece — the parser, the chunk resolver,
 the registry, the identity plugin, the typed I/O — into the three
 user-facing entry points:
 
-- `tangle_document` — process one doc. Synthesizes a `PipelineDecl`
+- `tangle_document` — process one [literate
+  doc](../../wiki/literate-programming.md "x0k:wiki/literate-programming"). Synthesizes a `PipelineDecl`
   for the `tangle:` block, runs every declared pipeline, writes
   outputs + a sidecar.
 - `tangle_directory` — walk a directory, call `tangle_document` on
@@ -37,6 +36,8 @@ user-facing entry points:
 Everything else in the module is in service of these three.
 
 ## Module header
+
+<a name="chunk-module-header"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#module-header`</sub>
 
 ```rust {#module-header}
 //! Pipeline dispatch + sidecar writing.
@@ -81,6 +82,8 @@ Everything else in the module is in service of these three.
 
 ## Imports
 
+<a name="chunk-imports"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#imports`</sub>
+
 ```rust {#imports}
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
@@ -113,6 +116,8 @@ It lives next to the source `.md`, contains the source hash plus one
 entry per pipeline run. Each entry records what the plugin received
 and produced; the dispatcher uses these hashes on the next run to
 decide whether the doc is still up-to-date.
+
+<a name="chunk-sidecar-types"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#sidecar-types`</sub>
 
 ```rust {#sidecar-types}
 /// One output written by a pipeline run, with its workspace-relative
@@ -181,6 +186,8 @@ returns content + path + style, the sidecar records path + hash, and
 the run-result needs the composed-with-header bytes for callers that
 want to inspect the writes.
 
+<a name="chunk-run-result-types"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#run-result-types`</sub>
+
 ```rust {#run-result-types}
 /// Outputs surfaced from running one pipeline. Distinct from
 /// [`PipelineOutput`] (the plugin's return type) — this carries the
@@ -221,6 +228,8 @@ pub struct IdentityOutputRecord {
 ```
 
 ## Where the sidecar lives
+
+<a name="chunk-sidecar-path"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#sidecar-path`</sub>
 
 ```rust {#sidecar-path}
 /// Compute the canonical sidecar path for a source `.md` doc.
@@ -270,6 +279,8 @@ directory, under a name derived from the workspace root. Nothing is
 created in the tree the tangler was asked to write to but the files it
 was asked to write.
 
+<a name="chunk-tangle-lock-state"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tangle-lock-state`</sub>
+
 ```rust {#tangle-lock-state}
 /// Serializes tanglers *within* this process. The file lock below
 /// cannot: `flock` is held per open file description, so a second
@@ -288,6 +299,8 @@ The guard owns whatever the acquisition actually took. A nested
 acquisition owns nothing and is pure bookkeeping; only the outermost
 one holds the mutex and the locked file, and both release when it
 drops.
+
+<a name="chunk-tangle-lock-guard"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tangle-lock-guard`</sub>
 
 ```rust {#tangle-lock-guard}
 /// Released by dropping. Fields are `Option` because a re-entrant
@@ -311,6 +324,8 @@ first fallible call, so an error on the way in still unwinds the
 depth counter. The wait is unconditional: a tangle run is seconds at
 worst, so blocking is kinder than failing and leaving the caller to
 decide what a contended workspace means.
+
+<a name="chunk-tangle-lock-acquire"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tangle-lock-acquire`</sub>
 
 ```rust {#tangle-lock-acquire}
 /// Take the workspace-wide tangle lock, blocking until it's free.
@@ -354,6 +369,8 @@ The hash is hand-rolled FNV-1a rather than `DefaultHasher` because
 `DefaultHasher`'s output is explicitly unspecified across builds, and two
 `x0k-tangle` binaries built by different compilers must still agree on
 the name or they do not coordinate at all.
+
+<a name="chunk-tangle-lock-path"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tangle-lock-path`</sub>
 
 ```rust {#tangle-lock-path}
 /// The workspace-wide tangle lock's path: a file in the OS temp directory
@@ -407,6 +424,8 @@ already lost track of where it is.
 dir in a test, a not-yet-created output tree), so it canonicalizes
 when it can and falls back to `cwd`-joining plus lexical
 normalization when it cannot.
+
+<a name="chunk-containment-fns"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#containment-fns`</sub>
 
 ```rust {#containment-fns}
 /// Resolve `path` to an absolute, lexically-normalized form.
@@ -483,8 +502,8 @@ same mistake wearing different clothes.
 ## tangle_document
 
 The single-doc entry point, and the library face of tangling: a
-consumer holding the published crate reaches the affordance of turning
-a document into its source through this function's rustdoc, which is
+consumer holding the published crate reaches the affordance of [turning
+a document into its source](../../../decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md "x0k:affordance/tangle_source_from_a_document") through this function's rustdoc, which is
 the cue the signifier below records.
 
 ```yaml x0k:signifier
@@ -539,6 +558,8 @@ above was bought by. The discriminant is the target, not the caller:
 a projection root is one that already carries `PROVENANCE.json`, which
 the projector writes before it tangles the README. Anywhere else, a
 publication document is refused with the command that does tangle it.
+
+<a name="chunk-tangle-document"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tangle-document`</sub>
 
 ```rust {#tangle-document}
 /// Run every pipeline declared (or synthesized) for one document.
@@ -798,6 +819,8 @@ A thin wrapper around `tangle_document` that walks a directory. The
 cheap content-gate (`!contains("tangle:") && !contains("pipelines:")`)
 avoids parsing every `AGENTS.md` in the tree.
 
+<a name="chunk-tangle-directory"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tangle-directory`</sub>
+
 ```rust {#tangle-directory}
 /// Walk `dir` and run [`tangle_document`] on each `.md` folio/v1
 /// file that declares `tangle:` or `pipelines:`. Skipped files (no
@@ -857,6 +880,8 @@ produced, and the tangler reported success. An output path that
 escapes the root tells us nothing about this tree, so the honest
 answer is `Dirty`: re-tangle locally and record paths we can trust.
 
+<a name="chunk-freshness-types"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#freshness-types`</sub>
+
 ```rust {#freshness-types}
 /// Per-doc result of the up-to-date check used by [`tangle_workspace`]
 /// and by the `tangle check` CLI subcommand.
@@ -888,6 +913,8 @@ pub enum DirtyReason {
     OutputOutsideRoot(PathBuf),
 }
 ```
+
+<a name="chunk-doc-freshness-fn"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#doc-freshness-fn`</sub>
 
 ```rust {#doc-freshness-fn}
 /// Determine whether a doc is up to date with respect to its sidecar.
@@ -977,6 +1004,8 @@ projection, the workspace pass emits `obs.tangle_output_drifted` with
 both source and output paths. That event is the hand-edit detector;
 regeneration remains the repair.
 
+<a name="chunk-workspace-types"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#workspace-types`</sub>
+
 ```rust {#workspace-types}
 /// Report from one invocation of [`tangle_workspace`].
 #[derive(Debug, Default)]
@@ -990,6 +1019,8 @@ pub struct WorkspaceTangleReport {
     pub errored: Vec<(PathBuf, anyhow::Error)>,
 }
 ```
+
+<a name="chunk-tangle-workspace-fn"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tangle-workspace-fn`</sub>
 
 ```rust {#tangle-workspace-fn}
 /// Walk every literate root contributed by the registry's plugins
@@ -1196,6 +1227,8 @@ the operator's next workspace pass sees an inconsistent state.
 
 ## Helpers
 
+<a name="chunk-collision-error-fn"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#collision-error-fn`</sub>
+
 ```rust {#collision-error-fn}
 /// Build a collision error for a doubly-declared output path.
 fn collision_error(path: &Path, first: &Path, second: &Path) -> anyhow::Error {
@@ -1207,6 +1240,8 @@ fn collision_error(path: &Path, first: &Path, second: &Path) -> anyhow::Error {
     )
 }
 ```
+
+<a name="chunk-sidecar-output-claims-fn"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#sidecar-output-claims-fn`</sub>
 
 ```rust {#sidecar-output-claims-fn}
 /// Read the sidecar next to `doc_path` (if any) and return absolute
@@ -1243,6 +1278,8 @@ fn sidecar_output_claims(
     Some(claims)
 }
 ```
+
+<a name="chunk-compose-with-header-fn"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#compose-with-header-fn`</sub>
 
 ```rust {#compose-with-header-fn}
 /// Prepend the `@generated by x0k-tangle (pipeline: <kind>) — DO NOT
@@ -1300,6 +1337,8 @@ either the whole old file or the whole new one, never a mixture. The
 temp file must be a *sibling* — `rename` across filesystems fails, and
 `target/` or `/tmp` may well be a different mount.
 
+<a name="chunk-temp-sibling-fn"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#temp-sibling-fn`</sub>
+
 ```rust {#temp-sibling-fn}
 /// Counter making concurrent temp names distinct within a process;
 /// the pid separates processes.
@@ -1323,6 +1362,8 @@ The staging write is `sync_all`'d before the rename. That costs a
 flush per generated file, which is the price of the crash story being
 "either the old file or the new one" rather than "a correctly-named
 file full of zeroes."
+
+<a name="chunk-write-atomic-fn"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#write-atomic-fn`</sub>
 
 ```rust {#write-atomic-fn}
 /// Write `content` to `path`, creating parent directories. Readers
@@ -1354,8 +1395,10 @@ fn stage(tmp: &Path, content: &[u8]) -> std::io::Result<()> {
 }
 ```
 
+<a name="chunk-hash-fns"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#hash-fns`</sub>
+
 ```rust {#hash-fns}
-fn content_hash(s: &str) -> String {
+pub fn content_hash(s: &str) -> String {
     let mut h = DefaultHasher::new();
     s.hash(&mut h);
     format!("{:016x}", h.finish())
@@ -1384,6 +1427,8 @@ collision detection; freshness skipping.
 Three more cover the write path rather than the dispatch: a reader
 thread racing `write_atomic` and never seeing a partial file, the
 staging file not surviving the call, and the lock's re-entrancy.
+
+<a name="chunk-tests"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tests` · proves [Project source code out of a document](../../../decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)</sub>
 
 `````rust {#tests proves="x0k:affordance/tangle_source_from_a_document"}
 #[cfg(test)]
@@ -1677,6 +1722,8 @@ That group is the proof that source tangles out of a document — the
 carries `proves=` for the affordance it makes true. The rest is the
 machinery around that act: containment, sidecars and freshness,
 workspace aggregation, the write path and the lock.
+
+<a name="chunk-tests-machinery"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#tests-machinery`</sub>
 
 `````rust {#tests-machinery}
     /// `absolutize` collapses `.` and `..` and lands on an absolute
@@ -2617,6 +2664,8 @@ from b
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/pipeline_runner.rs`](../../../x0k-tangle/src/pipeline_runner.rs) · `#root` · assembles [module-header](#chunk-module-header) · [imports](#chunk-imports) · [sidecar-types](#chunk-sidecar-types) · [run-result-types](#chunk-run-result-types) · [sidecar-path](#chunk-sidecar-path) · [tangle-lock-state](#chunk-tangle-lock-state) · [tangle-lock-guard](#chunk-tangle-lock-guard) · [tangle-lock-acquire](#chunk-tangle-lock-acquire) · [tangle-lock-path](#chunk-tangle-lock-path) · [containment-fns](#chunk-containment-fns) · [tangle-document](#chunk-tangle-document) · [tangle-directory](#chunk-tangle-directory) · [freshness-types](#chunk-freshness-types) · [doc-freshness-fn](#chunk-doc-freshness-fn) · [workspace-types](#chunk-workspace-types) · [tangle-workspace-fn](#chunk-tangle-workspace-fn) · [collision-error-fn](#chunk-collision-error-fn) · [sidecar-output-claims-fn](#chunk-sidecar-output-claims-fn) · [compose-with-header-fn](#chunk-compose-with-header-fn) · [temp-sibling-fn](#chunk-temp-sibling-fn) · [write-atomic-fn](#chunk-write-atomic-fn) · [hash-fns](#chunk-hash-fns) · [tests](#chunk-tests) · [tests-machinery](#chunk-tests-machinery)</sub>
 
 ```rust {#root}
 <<module-header>>

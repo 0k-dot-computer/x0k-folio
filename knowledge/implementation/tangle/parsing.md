@@ -10,15 +10,14 @@ x0k:
     crate: x0k-tangle
     root: src/parser.rs
   edges:
-    presupposes:
-      - x0k:wiki/literate-programming
     cites:
       - x0k:implementation/tangle/protocol
       - x0k:implementation/tangle/chunk
 ---
 # Parsing a literate document
 
-The parser turns a markdown file into a `ParsedDocument`: tangle
+The parser turns a markdown file — a [literate
+document](../../wiki/literate-programming.md "x0k:wiki/literate-programming") — into a `ParsedDocument`: tangle
 metadata from the frontmatter, pipeline declarations from the
 folio/v1 envelope, and a map of named code chunks keyed by
 `{#name}` from each fence's info-string.
@@ -38,6 +37,8 @@ adds:
   different language tokens.
 
 ## Imports
+
+<a name="chunk-imports"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#imports`</sub>
 
 ```rust {#imports}
 use crate::chunk::{Chunk, ChunkBody};
@@ -84,6 +85,8 @@ file. Shape rationale:
 - `pipelines` — declared pipelines from the folio/v1 envelope.
   Empty when the doc isn't folio/v1 or has no `pipelines:`.
 
+<a name="chunk-parsed-document-type"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#parsed-document-type`</sub>
+
 ```rust {#parsed-document-type}
 #[derive(Debug, Clone)]
 pub struct ParsedDocument {
@@ -117,6 +120,8 @@ The three lookup methods cover the common access patterns:
   missing-variant.
 - `chunk_variants(name)` — full slice for callers that walk every
   variant (the weaver does this when rendering tabs).
+
+<a name="chunk-parsed-document-impl"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#parsed-document-impl`</sub>
 
 ```rust {#parsed-document-impl}
 impl ParsedDocument {
@@ -165,6 +170,8 @@ and the tangler itself never looks at it.
 `ChunkAttrs` is the intermediate parsed shape; the parser drains
 this into the `Chunk` fields once a fence's body is read.
 
+<a name="chunk-chunk-attrs-type"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#chunk-attrs-type`</sub>
+
 ```rust {#chunk-attrs-type}
 #[derive(Debug, Clone, Default)]
 pub struct ChunkAttrs {
@@ -185,6 +192,8 @@ Top-level info-string parser. Handles the optional `x0k:media`
 flag (it can appear anywhere in the front-matter token list; we
 strip it then re-tokenise), the language token in front of the
 brace, and the brace-attribute block.
+
+<a name="chunk-parse-info-string-fn"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#parse-info-string-fn`</sub>
 
 ```rust {#parse-info-string-fn}
 pub fn parse_info_string(info: &str) -> ChunkAttrs {
@@ -236,6 +245,8 @@ chunk tangles it exactly as before, which is what let the attribute
 arrive in the corpus ahead of the code that reads it). The list form
 needs the quotes: a bare value stops at the first comma, because a
 comma is also the separator between attributes.
+
+<a name="chunk-parse-brace-attrs-fn"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#parse-brace-attrs-fn`</sub>
 
 ```rust {#parse-brace-attrs-fn}
 fn parse_brace_attrs(attr_str: &str, attrs: &mut ChunkAttrs) {
@@ -289,6 +300,8 @@ fn parse_brace_attrs(attr_str: &str, attrs: &mut ChunkAttrs) {
 A small utility: `attr="value with spaces"` or `attr=bare_value`.
 Returns the value and the remaining input after the value.
 
+<a name="chunk-extract-quoted-or-bare-fn"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#extract-quoted-or-bare-fn`</sub>
+
 ```rust {#extract-quoted-or-bare-fn}
 fn extract_quoted_or_bare(s: &str) -> (&str, &str) {
     let s = s.trim_start();
@@ -327,6 +340,8 @@ Two non-obvious mechanics worth flagging:
   variant's `bodies` vec. When it appears with a *different*
   language token, a new variant is added. This is what makes
   multi-language chunks composable.
+
+<a name="chunk-parse-document-fn"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#parse-document-fn`</sub>
 
 ```rust {#parse-document-fn}
 pub fn parse_document(content: &str) -> Result<ParsedDocument> {
@@ -469,6 +484,8 @@ recognized by indentation: once inside it, any deeper-indented
 `lang: path` line is a per-language root, and the first line at or
 above the `roots:` indent ends the submap.
 
+<a name="chunk-split-frontmatter-fn"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#split-frontmatter-fn`</sub>
+
 ```rust {#split-frontmatter-fn}
 fn split_frontmatter(content: &str) -> (Option<&str>, &str) {
     if !content.starts_with("---") {
@@ -491,6 +508,8 @@ fn split_frontmatter(content: &str) -> (Option<&str>, &str) {
     }
 }
 ```
+
+<a name="chunk-parse-tangle-frontmatter-fn"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#parse-tangle-frontmatter-fn`</sub>
 
 ```rust {#parse-tangle-frontmatter-fn}
 type TangleFrontmatter = (Option<String>, Option<PathBuf>, Vec<(String, PathBuf)>);
@@ -560,6 +579,8 @@ language-aware chunk-ref extraction skips refs that fall inside
 Rust raw strings (see [`chunk-refs.md`](chunk-refs.md)); without
 that wrapper, the resolver would try to expand `<<imports>>` etc.
 inside the fixture text.
+
+<a name="chunk-tests"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
@@ -779,6 +800,8 @@ ts part
 `````
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/parser.rs`](../../../x0k-tangle/src/parser.rs) · `#root` · assembles [imports](#chunk-imports) · [parsed-document-type](#chunk-parsed-document-type) · [parsed-document-impl](#chunk-parsed-document-impl) · [chunk-attrs-type](#chunk-chunk-attrs-type) · [parse-info-string-fn](#chunk-parse-info-string-fn) · [parse-brace-attrs-fn](#chunk-parse-brace-attrs-fn) · [extract-quoted-or-bare-fn](#chunk-extract-quoted-or-bare-fn) · [parse-document-fn](#chunk-parse-document-fn) · [split-frontmatter-fn](#chunk-split-frontmatter-fn) · [parse-tangle-frontmatter-fn](#chunk-parse-tangle-frontmatter-fn) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>

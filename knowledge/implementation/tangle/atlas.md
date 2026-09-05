@@ -38,6 +38,8 @@ The module documentation carries the full description of the layout: lanes
 and bands, the year sources, and the two ways a project can belong in several
 places at once.
 
+<a name="chunk-module-doc"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! Atlas builder — the publication's time×idea layout, computed at projection.
 //!
@@ -91,6 +93,8 @@ places at once.
 //! of truth — the map *is* the idea taxonomy made spatial.
 ```
 
+<a name="chunk-uses"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#uses`</sub>
+
 ```rust {#uses}
 use crate::region_weave::RegionInput;
 use serde::Serialize;
@@ -116,6 +120,8 @@ The x-axis is time, scaled by `X_SCALE` units per year; when a region carries
 no years at all, reading order stands in for time with `ORDINAL_X_STEP_YEARS`
 pseudo-years per member. Each lane is `LANE_HEIGHT` tall.
 
+<a name="chunk-scale"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#scale`</sub>
+
 ```rust {#scale}
 /// Horizontal pixels per year. `x = (year - min_year) * X_SCALE`.
 pub const X_SCALE: f64 = 60.0;
@@ -129,6 +135,8 @@ pub const LANE_HEIGHT: f64 = 200.0;
 The idea lanes are a fixed, ordered set. Their order is the vertical order of
 the map and is part of the atlas's canonical form: `threads` in the output
 lists only the lanes that are present, but always in this order.
+
+<a name="chunk-lanes"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#lanes`</sub>
 
 ```rust {#lanes}
 /// The eight idea-lanes, in arc order (lane index = vertical row).
@@ -150,6 +158,8 @@ Three convergence bands sit to the right of the lanes rather than along them:
 synthesis, frontier, and capstone. They are not time-positioned — a band
 member's x-coordinate is `band_x`, just past the last lane node, offset by
 `BAND_X_OFFSET`.
+
+<a name="chunk-bands"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#bands`</sub>
 
 ```rust {#bands}
 /// Convergence-band sentinel: projects that fuse several lanes into one system.
@@ -182,6 +192,8 @@ Two tables are the editorial layer of the atlas. `CURATED_YEARS` answers
 answers "which lanes". Both are keyed by wiki slug (the identifier after the
 last `/` of a URI), so a chapter authored as `x0k:genealogy/<slug>` and a
 reference at `x0k:wiki/<slug>` resolve against the same rows.
+
+<a name="chunk-curated-years"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#curated-years`</sub>
 
 ```rust {#curated-years}
 /// Curated anchor years for the known lineage members (keyed by wiki slug).
@@ -241,6 +253,8 @@ pub const CURATED_YEARS: &[(&str, u32)] = &[
     ("common-tools", 2023),
 ];
 ```
+
+<a name="chunk-curated-threads"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#curated-threads`</sub>
 
 ```rust {#curated-threads}
 /// Curated idea-lane membership for every member (keyed by wiki slug). Each
@@ -346,6 +360,8 @@ tell a curated placement from a mined one. `unresolved_years` on the atlas
 is the list of members that fell through every source; they are placed at
 `min_year` rather than dropped.
 
+<a name="chunk-year-source"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#year-source`</sub>
+
 ```rust {#year-source}
 /// Where a node's year came from. Recorded per node so a publisher can audit
 /// coverage and see which members leaned on curated overrides.
@@ -363,6 +379,8 @@ pub enum YearSource {
     ReadingOrder,
 }
 ```
+
+<a name="chunk-node"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#node`</sub>
 
 ```rust {#node}
 /// One canonical node in the atlas — one per region member URI, regardless of
@@ -391,6 +409,8 @@ pub struct AtlasNode {
 A node is placed once per lane it belongs to. The placement carries the
 coordinates; the node carries the identity.
 
+<a name="chunk-placement"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#placement`</sub>
+
 ```rust {#placement}
 /// One spatial copy of a node in one lane — the transcluded glyph. A node with
 /// N lanes yields N placements (same `uri` + `x`, one `y` per lane).
@@ -407,6 +427,8 @@ pub struct AtlasPlacement {
 }
 ```
 
+<a name="chunk-edge"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#edge`</sub>
+
 ```rust {#edge}
 /// One influence arc (a member citing an in-region member).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -417,6 +439,8 @@ pub struct AtlasEdge {
     pub to: String,
 }
 ```
+
+<a name="chunk-atlas"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas`</sub>
 
 ```rust {#atlas}
 /// The atlas: every region member as one canonical node, transcluded into its
@@ -447,6 +471,8 @@ pub const ATLAS_FILE: &str = "atlas.json";
 Two small lookups translate a membership name into a row index and tell a
 band from a lane.
 
+<a name="chunk-rows"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#rows`</sub>
+
 ```rust {#rows}
 /// Row index for a lane / band name (lane position, or a band's row below the
 /// eight lanes). Used both to order a node's `threads` and to place its `y`.
@@ -473,6 +499,8 @@ fn is_band(name: &str) -> bool {
 `build_atlas` runs the pipeline in numbered stages: influence edges, mass,
 year and lane resolution (with the reading-order fallback), then nodes and
 placements. It ends by sorting everything that reaches the output.
+
+<a name="chunk-build-atlas"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#build-atlas` · assembles [atlas-membership](#chunk-atlas-membership) · [atlas-edges](#chunk-atlas-edges) · [atlas-mass](#chunk-atlas-mass) · [atlas-resolve](#chunk-atlas-resolve) · [atlas-reading-order](#chunk-atlas-reading-order) · [atlas-band-x](#chunk-atlas-band-x) · [atlas-place](#chunk-atlas-place) · [atlas-finish](#chunk-atlas-finish)</sub>
 
 ```rust {#build-atlas}
 /// Build the atlas from a region's members and their content.
@@ -501,6 +529,8 @@ pub fn build_atlas(input: &RegionInput) -> Atlas {
 The membership boundary is the in-region URI set; a slug map lets body
 wikilinks resolve to whichever member carries that identifier.
 
+<a name="chunk-atlas-membership"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-membership`</sub>
+
 ```rust {#atlas-membership}
 // In-region URI set (membership boundary for edges + citation derivation).
 let in_region: BTreeSet<&str> = input.members.iter().map(|m| m.uri.as_str()).collect();
@@ -519,6 +549,8 @@ for m in &input.members {
 
 Stage 1: an influence edge is a `cites` target or a body `[[wikilink]]` that
 resolves to another member. Self-edges are dropped; the set dedupes.
+
+<a name="chunk-atlas-edges"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-edges`</sub>
 
 ```rust {#atlas-edges}
 // 1. Influence edges: cites + body wikilinks, restricted in-region, deduped.
@@ -546,6 +578,8 @@ for m in &input.members {
 
 Stage 2: mass is the number of distinct in-region members citing a node.
 
+<a name="chunk-atlas-mass"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-mass`</sub>
+
 ```rust {#atlas-mass}
 // 2. mass(node) = distinct in-region members citing it (one per node).
 let mut inbound: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
@@ -560,6 +594,8 @@ for (from, to) in &edge_set {
 Stage 3 resolves a year and a lane set for each member. The year sources are
 tried in order — frontmatter, the curated table, then body mining — and the
 lanes come from the curated table with the first lane as the fallback.
+
+<a name="chunk-atlas-resolve"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-resolve`</sub>
 
 ```rust {#atlas-resolve}
 // 3. Resolve each member's year + lane membership.
@@ -624,6 +660,8 @@ for m in &input.members {
 When no member resolves a year at all, the region is year-less by nature and
 reading order becomes the time axis.
 
+<a name="chunk-atlas-reading-order"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-reading-order`</sub>
+
 ```rust {#atlas-reading-order}
 // Reading-order fallback: a region can be legitimately year-less (a
 // manuscript's movements, unlike the genealogy's wiki pages, carry no
@@ -664,6 +702,8 @@ if resolved.is_empty() && !unresolved_years.is_empty() {
 }
 ```
 
+<a name="chunk-atlas-band-x"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-band-x`</sub>
+
 ```rust {#atlas-band-x}
 let min_year = resolved.iter().map(|r| r.year).min().unwrap_or(0);
 let max_year = resolved.iter().map(|r| r.year).max().unwrap_or(min_year);
@@ -673,6 +713,8 @@ let band_x = (max_year as f64 - min_year as f64) * X_SCALE + BAND_X_OFFSET;
 
 Stage 4 emits one node per member and one placement per node×membership;
 band members take `band_x`, lane members take their year.
+
+<a name="chunk-atlas-place"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-place`</sub>
 
 ```rust {#atlas-place}
 // 4. Canonical nodes (one per member) + placements (one per node×lane).
@@ -709,6 +751,8 @@ for r in &resolved {
 Everything that reaches the output is sorted here — this is the whole of the
 determinism guarantee.
 
+<a name="chunk-atlas-finish"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-finish`</sub>
+
 ```rust {#atlas-finish}
 // Deterministic: nodes x-ordered by year, ties by URI; placements by uri+lane.
 nodes.sort_by(|a, b| a.year.cmp(&b.year).then_with(|| a.uri.cmp(&b.uri)));
@@ -744,6 +788,8 @@ Atlas {
 }
 ```
 
+<a name="chunk-atlas-json"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#atlas-json`</sub>
+
 ```rust {#atlas-json}
 /// Serialize the atlas to pretty JSON bytes (the `atlas.json` payload).
 pub fn atlas_json(atlas: &Atlas) -> Vec<u8> {
@@ -757,6 +803,8 @@ pub fn atlas_json(atlas: &Atlas) -> Vec<u8> {
 The helpers below read members' content for the signals the pipeline needs:
 a slug from a URI, citation targets, wikilinks, a frontmatter year, a year
 mined from the body, and a title.
+
+<a name="chunk-member-slug"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#member-slug`</sub>
 
 ```rust {#member-slug}
 /// `x0k:<class>/<slug>` → `Some(slug)` (the URI identifier, after the last
@@ -774,6 +822,8 @@ fn member_slug(uri: &str) -> Option<String> {
 `scan_influence_targets` mirrors the cites/wikilink scanning that the weaver
 does for its own purposes; the two stay separate because the weaver rewrites
 links while the atlas only counts them.
+
+<a name="chunk-scan-targets"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#scan-targets`</sub>
 
 ```rust {#scan-targets}
 /// Collect a member's in-region influence targets: `edges.cites` targets plus
@@ -839,6 +889,8 @@ Year mining is two-tiered: an explicit `year:` in the frontmatter wins, else
 the body is scanned for a plausible four-digit year, preferring one that
 follows a cue word such as "founded" or "released".
 
+<a name="chunk-years"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#years`</sub>
+
 ```rust {#years}
 /// Scan a frontmatter YAML block for a `year: NNNN` field (top level under the
 /// `x0k:` envelope; matched leniently by leading-whitespace + `year:`).
@@ -894,6 +946,8 @@ fn body_mine_year(body: &str) -> Option<u32> {
 each module keeps its own copy rather than sharing one, and this chapter
 names that plainly.
 
+<a name="chunk-first-h1"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#first-h1`</sub>
+
 ```rust {#first-h1}
 /// First markdown `# ` heading in body text (cheap line scan).
 fn first_h1(body: &str) -> Option<String> {
@@ -912,6 +966,8 @@ fn first_h1(body: &str) -> Option<String> {
 The tests cover the year sources in order, the multi-lane transclusion, the
 band placement, the reading-order fallback, and the determinism claim
 (building twice yields the same JSON).
+
+<a name="chunk-tests"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#tests`</sub>
 
 ```rust {#tests}
 #[cfg(test)]
@@ -1573,6 +1629,8 @@ mod tests {
     }
 }
 ```
+
+<a name="chunk-root"></a><sub>[`src/atlas.rs`](../../../x0k-tangle/src/atlas.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [scale](#chunk-scale) · [lanes](#chunk-lanes) · [bands](#chunk-bands) · [curated-years](#chunk-curated-years) · [curated-threads](#chunk-curated-threads) · [year-source](#chunk-year-source) · [node](#chunk-node) · [placement](#chunk-placement) · [edge](#chunk-edge) · [atlas](#chunk-atlas) · [rows](#chunk-rows) · [build-atlas](#chunk-build-atlas) · [atlas-json](#chunk-atlas-json) · [member-slug](#chunk-member-slug) · [scan-targets](#chunk-scan-targets) · [years](#chunk-years) · [first-h1](#chunk-first-h1) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>

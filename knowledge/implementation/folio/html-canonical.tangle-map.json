@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/folio/html-canonical.md",
-  "source_hash": "df303912c0b71409",
+  "source_hash": "c12eb15c26db50db",
   "pipelines": [
     {
       "kind": "identity-tangle",

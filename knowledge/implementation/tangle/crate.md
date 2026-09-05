@@ -26,12 +26,11 @@ x0k:
       - x0k:implementation/tangle/receiving
       - x0k:implementation/tangle/cli-faces
       - x0k:implementation/tangle/bundle
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 # x0k-tangle: the crate and its CLI
 
-`x0k-tangle` is the crate that makes a literate document executable:
+`x0k-tangle` is the crate that makes a [literate
+document](../../wiki/literate-programming.md "x0k:wiki/literate-programming") executable:
 it parses the folio/v1 pages under `knowledge/implementation/`, expands
 their named chunks into source files, weaves them into HTML, and — the
 outward-facing half — projects a whole publication region into a reader
@@ -106,6 +105,8 @@ The crate root opens with the documentation a `docs.rs` reader or a
 `cargo doc` browser sees first: what the crate is, the three verbs a
 user needs, and where the document format is specified.
 
+<a name="chunk-crate-doc"></a><sub>[`src/lib.rs`](../../../x0k-tangle/src/lib.rs) · `#crate-doc`</sub>
+
 ```rust {#crate-doc}
 //! Literate programming for folio/v1 documents: tangle a document's
 //! named code chunks into source files, weave it into HTML, and
@@ -142,6 +143,8 @@ user needs, and where the document format is specified.
 //! public repository.
 ```
 
+<a name="chunk-modules"></a><sub>[`src/lib.rs`](../../../x0k-tangle/src/lib.rs) · `#modules`</sub>
+
 ```rust {#modules}
 pub mod atlas;
 pub mod chunk;
@@ -154,6 +157,7 @@ pub mod parser;
 pub mod pipeline;
 pub mod pipeline_runner;
 pub mod presentation;
+pub mod region_gfm;
 pub mod region_project;
 pub mod publish_repo;
 pub mod receive;
@@ -171,6 +175,8 @@ knowing the module layout: the atlas, the pipeline protocol and its
 runner, the presentation shell's file names, and the four outward
 verbs — project a region to HTML, project it to a repository, publish
 that repository, receive a contribution from it.
+
+<a name="chunk-exports"></a><sub>[`src/lib.rs`](../../../x0k-tangle/src/lib.rs) · `#exports`</sub>
 
 ```rust {#exports}
 pub use atlas::{
@@ -234,17 +240,23 @@ lie than a command that names its own precondition: one is a sentence a
 reader can act on, the other is a discrepancy they can only be confused
 by.
 
+<a name="chunk-bin-doc"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#bin-doc`</sub>
+
 ```rust {#bin-doc file="src/main.rs"}
 //! The protocol-only `x0k-tangle` CLI: the crate's verbs in a shell,
 //! with the built-in registry and no plugins. The binary a projected
 //! repository ships and builds.
 ```
 
+<a name="chunk-cli-imports"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#cli-imports`</sub>
+
 ```rust {#cli-imports file="src/main.rs"}
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 ```
+
+<a name="chunk-cli-struct"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#cli-struct`</sub>
 
 ```rust {#cli-struct file="src/main.rs"}
 #[derive(Parser)]
@@ -270,6 +282,8 @@ backends, `publish-repo` the pipeline that makes a projection public,
 and `receive-repo` the inbound door. Each variant's doc comment is its
 `--help` text, so the clap derive below is also the user-facing
 contract.
+
+<a name="chunk-command-enum"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [weave-region-command](#chunk-weave-region-command) · [project-repo-command](#chunk-project-repo-command) · [publish-repo-command](#chunk-publish-repo-command) · [receive-repo-command](#chunk-receive-repo-command) · [list-command](#chunk-list-command) · [workspace-command](#chunk-workspace-command)</sub>
 
 ```rust {#command-enum file="src/main.rs"}
 #[derive(Subcommand)]
@@ -301,8 +315,8 @@ same words.
 ### `x0k-tangle tangle`
 
 Tangle `.md` documents to their source files, writing a
-`.tangle-map.json` sidecar beside each: the affordance of turning a
-literate document into the code it describes, from a shell.
+`.tangle-map.json` sidecar beside each: the affordance of [turning a
+literate document into the code it describes](../../../decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md "x0k:affordance/tangle_source_from_a_document"), from a shell.
 
 ```yaml x0k:signifier
 id: x0k:signifier/x0k-tangle-tangle
@@ -312,6 +326,8 @@ edges:
   presentedOn:
     - x0k:surface/cli
 ```
+
+<a name="chunk-tangle-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#tangle-command`</sub>
 
 ```rust {#tangle-command file="src/main.rs"}
 /// Tangle .md documents to their source files (writes .tangle-map.json sidecars)
@@ -328,8 +344,8 @@ Tangle {
 
 Verify chunk references resolve and no cycles exist, and read every
 folio/v1 envelope under the paths against the vocabulary this build
-compiled. The second half is the affordance of checking a document
-against the vocabulary that shipped beside it, and its help text names
+compiled. The second half is the affordance of [checking a document
+against the vocabulary that shipped beside it](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary"), and its help text names
 the two outcomes the affordance promises to tell apart: a predicate no
 shipped module declares is a defect and fails the check; a target
 naming no document here is an edge into the corpus the repository was
@@ -343,6 +359,8 @@ edges:
   presentedOn:
     - x0k:surface/cli
 ```
+
+<a name="chunk-check-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#check-command`</sub>
 
 ```rust {#check-command file="src/main.rs"}
 /// Verify chunk references resolve and no cycles exist, and read every
@@ -370,7 +388,7 @@ JSON array on stdout: one record per `yaml x0k:affordance` block, with
 its id, title, description, the document it is defined in, and its
 declared facts grouped by predicate. What a declaration says becomes
 data a reader's own tooling can consume, which is the affordance of
-reading an affordance out of a document rather than trusting the
+[reading an affordance out of a document](../../../decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md "x0k:affordance/read_declared_affordances") rather than trusting the
 document's summary of itself. A block the extractor refuses is
 reported on stderr and skipped.
 
@@ -382,6 +400,8 @@ edges:
   presentedOn:
     - x0k:surface/cli
 ```
+
+<a name="chunk-affordances-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#affordances-command`</sub>
 
 ```rust {#affordances-command file="src/main.rs"}
 /// Print every affordance the folio/v1 documents under the paths
@@ -401,6 +421,8 @@ Affordances {
 
 ### `x0k-tangle sync`
 
+<a name="chunk-sync-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#sync-command`</sub>
+
 ```rust {#sync-command file="src/main.rs"}
 /// Sync from= chunks: populate code blocks from source files
 Sync {
@@ -413,6 +435,8 @@ Sync {
 ```
 
 ### `x0k-tangle index`
+
+<a name="chunk-index-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#index-command`</sub>
 
 ```rust {#index-command file="src/main.rs"}
 /// Build a JSON index of all folio/v1 files
@@ -432,7 +456,7 @@ Index {
 
 Weave one literate document into HTML — prose and highlighted code
 together as a single page, to a directory or to stdout: the affordance
-of reading a document as the woven page it describes, from a shell.
+of [reading a document as the woven page it describes](../../../decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md "x0k:affordance/weave_a_document"), from a shell.
 
 ```yaml x0k:signifier
 id: x0k:signifier/x0k-tangle-weave
@@ -442,6 +466,8 @@ edges:
   presentedOn:
     - x0k:surface/cli
 ```
+
+<a name="chunk-weave-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#weave-command`</sub>
 
 ```rust {#weave-command file="src/main.rs"}
 /// Weave a literate document into HTML
@@ -455,6 +481,8 @@ Weave {
 ```
 
 ### The publication verbs
+
+<a name="chunk-weave-region-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#weave-region-command`</sub>
 
 ```rust {#weave-region-command file="src/main.rs"}
 /// [corpus-only] Project a publication region into a self-contained,
@@ -492,6 +520,8 @@ override of the publication doc's `license:` field, and with neither the
 projection refuses ([`region-repo.md`](region-repo.md)). `--allow-dirty`
 is the escape hatch past the disclosure and closure guards, for
 inspecting a projection that is not yet clean.
+
+<a name="chunk-project-repo-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#project-repo-command`</sub>
 
 ```rust {#project-repo-command file="src/main.rs"}
 /// [corpus-only] Project a publication region into a standalone,
@@ -535,6 +565,8 @@ ProjectRepo {
 `publish-repo` is the one verb with an irreversible half, and it sits
 behind `--really` ([`publishing.md`](publishing.md)).
 
+<a name="chunk-publish-repo-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#publish-repo-command`</sub>
+
 ```rust {#publish-repo-command file="src/main.rs"}
 /// [corpus-only] Publish pipeline for a projected repository: project,
 /// prove, rehearse, and (only under --really) publish.
@@ -570,6 +602,8 @@ PublishRepo {
     really: bool,
 },
 ```
+
+<a name="chunk-receive-repo-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#receive-repo-command`</sub>
 
 ```rust {#receive-repo-command file="src/main.rs"}
 /// [corpus-only] Receive changes made in a projected repository (a
@@ -608,6 +642,8 @@ ReceiveRepo {
 },
 ```
 
+<a name="chunk-list-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#list-command`</sub>
+
 ```rust {#list-command file="src/main.rs"}
 /// List chunks and their targets in a document
 List {
@@ -615,6 +651,8 @@ List {
     path: PathBuf,
 },
 ```
+
+<a name="chunk-workspace-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#workspace-command`</sub>
 
 ```rust {#workspace-command file="src/main.rs"}
 /// Tangle every dirty literate document this binary's registry
@@ -643,6 +681,8 @@ is reserved for data (`index` and `weave` without an output path,
 `workspace` exit non-zero on any error, `publish-repo` when the
 projection fails to build or test, `receive-repo` when any change was
 refused.
+
+<a name="chunk-main-fn"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
 
 ```rust {#main-fn file="src/main.rs"}
 fn main() -> Result<()> {
@@ -683,6 +723,8 @@ fn main() -> Result<()> {
 directly, so a document that declares a pipeline this binary does not
 ship errors loudly instead of tangling half of itself.
 
+<a name="chunk-dispatch-tangle"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-tangle`</sub>
+
 ```rust {#dispatch-tangle file="src/main.rs"}
 Command::Tangle { paths, workspace } => {
     // Route identity tangling through the unified dispatcher.
@@ -717,6 +759,8 @@ Command::Tangle { paths, workspace } => {
     );
 }
 ```
+
+<a name="chunk-dispatch-sync"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-sync`</sub>
 
 ```rust {#dispatch-sync file="src/main.rs"}
 Command::Sync { paths, workspace } => {
@@ -758,6 +802,8 @@ which fails the run, and a dangling edge as a `note:` that names the
 target and says why it is expected. The summary line counts both, so a
 clean run still says how many envelopes were read and how many edges
 left the set.
+
+<a name="chunk-dispatch-check"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-check`</sub>
 
 ```rust {#dispatch-check file="src/main.rs"}
 Command::Check { paths } => {
@@ -812,6 +858,8 @@ Command::Check { paths } => {
 its records go to stdout as pretty JSON and only the extractor's
 refusals go to stderr.
 
+<a name="chunk-dispatch-affordances"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-affordances`</sub>
+
 ```rust {#dispatch-affordances file="src/main.rs"}
 Command::Affordances { paths } => {
     let report = x0k_tangle::faces::declared_affordances(&paths)?;
@@ -821,6 +869,8 @@ Command::Affordances { paths } => {
     println!("{}", serde_json::to_string_pretty(&report.records)?);
 }
 ```
+
+<a name="chunk-dispatch-index"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-index`</sub>
 
 ```rust {#dispatch-index file="src/main.rs"}
 Command::Index {
@@ -845,6 +895,8 @@ Command::Index {
 }
 ```
 
+<a name="chunk-dispatch-weave"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-weave`</sub>
+
 ```rust {#dispatch-weave file="src/main.rs"}
 Command::Weave { path, output_dir } => {
     let content = std::fs::read_to_string(&path)?;
@@ -864,6 +916,8 @@ Command::Weave { path, output_dir } => {
 
 The region arms print the report shapes their chapters define; the
 prose about what each field means lives there, not here.
+
+<a name="chunk-dispatch-weave-region"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-weave-region`</sub>
 
 ```rust {#dispatch-weave-region file="src/main.rs"}
 Command::WeaveRegion {
@@ -921,6 +975,8 @@ Command::WeaveRegion {
 }
 ```
 
+<a name="chunk-dispatch-project-repo"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-project-repo`</sub>
+
 ```rust {#dispatch-project-repo file="src/main.rs"}
 Command::ProjectRepo {
     region,
@@ -970,6 +1026,8 @@ Command::ProjectRepo {
     }
 }
 ```
+
+<a name="chunk-dispatch-publish-repo"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-publish-repo`</sub>
 
 ```rust {#dispatch-publish-repo file="src/main.rs"}
 Command::PublishRepo {
@@ -1031,6 +1089,8 @@ Command::PublishRepo {
     }
 }
 ```
+
+<a name="chunk-dispatch-receive-repo"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-receive-repo`</sub>
 
 ```rust {#dispatch-receive-repo file="src/main.rs"}
 Command::ReceiveRepo {
@@ -1095,6 +1155,8 @@ Command::ReceiveRepo {
 }
 ```
 
+<a name="chunk-dispatch-workspace"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-workspace`</sub>
+
 ```rust {#dispatch-workspace file="src/main.rs"}
 Command::Workspace { root } => {
     let ws = resolve_workspace_root(root)?;
@@ -1106,6 +1168,8 @@ Command::Workspace { root } => {
     }
 }
 ```
+
+<a name="chunk-dispatch-list"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-list`</sub>
 
 ```rust {#dispatch-list file="src/main.rs"}
 Command::List { path } => {
@@ -1166,6 +1230,8 @@ content sniff — a `.md` mentioning `tangle:` (or, for `sync`, `from=`) —
 because the parse that would confirm it is what the verb is about to do
 anyway. The rest is report formatting.
 
+<a name="chunk-resolve-workspace-root"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#resolve-workspace-root`</sub>
+
 ```rust {#resolve-workspace-root file="src/main.rs"}
 /// Resolve a workspace root from the CLI flag, else the current directory.
 fn resolve_workspace_root(flag: Option<PathBuf>) -> Result<PathBuf> {
@@ -1179,6 +1245,8 @@ fn resolve_workspace_root(flag: Option<PathBuf>) -> Result<PathBuf> {
         .with_context(|| format!("resolving workspace root {}", raw.display()))
 }
 ```
+
+<a name="chunk-print-workspace-summary"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#print-workspace-summary`</sub>
 
 ```rust {#print-workspace-summary file="src/main.rs"}
 /// Pretty-print a `WorkspaceTangleReport` to stderr.
@@ -1230,6 +1298,8 @@ fn print_workspace_summary(
     }
 }
 ```
+
+<a name="chunk-discover-documents"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#discover-documents`</sub>
 
 ```rust {#discover-documents file="src/main.rs"}
 fn discover_documents_any(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
@@ -1285,6 +1355,8 @@ fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 
 ## Composing the crate root and the binary
 
+<a name="chunk-root"></a><sub>[`src/lib.rs`](../../../x0k-tangle/src/lib.rs) · `#root` · assembles [crate-doc](#chunk-crate-doc) · [modules](#chunk-modules) · [exports](#chunk-exports)</sub>
+
 ```rust {#root}
 <<crate-doc>>
 
@@ -1292,6 +1364,8 @@ fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 
 <<exports>>
 ```
+
+<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [print-workspace-summary](#chunk-print-workspace-summary) · [discover-documents](#chunk-discover-documents)</sub>
 
 ```rust {#bin-root file="src/main.rs"}
 <<bin-doc>>

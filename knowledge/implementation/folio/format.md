@@ -25,8 +25,6 @@ x0k:
       - x0k:implementation/folio/html-canonical
       - x0k:implementation/folio/canonical-patch
       - x0k:implementation/folio/projection
-    presupposes:
-      - x0k:wiki/literate-programming
 ---
 # x0k-folio: the format library
 
@@ -34,7 +32,7 @@ Every document in x0k's corpus — the body of markdown files, kept
 under version control, from which the system's decisions, reference
 pages, publication manifests, and its own code are all derived — is a
 **folio/v1** document: a YAML envelope declaring identity, genus, and
-graph edges, over a markdown or HTML body. This literate page is one
+graph edges, over a markdown or HTML body. This [literate page](../../wiki/literate-programming.md "x0k:wiki/literate-programming") is one
 of them. `x0k-folio` is the library that makes that
 sentence precise. It owns the envelope's one parser and renderer, the
 block-level identity schemes that let judgments and proposals attach to
@@ -115,6 +113,8 @@ so the monorepo and the public repository build from the same source.
 The projection module's absence from the public build is the design —
 what is published is the format, not the substrate coupling.
 
+<a name="chunk-module-doc"></a><sub>[`src/lib.rs`](../../../x0k-folio/src/lib.rs) · `#module-doc`</sub>
+
 ```rust {#module-doc}
 //! folio/v1 envelope types + HTML canonicalizer, and — under the `plugins`
 //! feature — the projection plugin that binds the format into a live substrate.
@@ -147,6 +147,8 @@ The module list and re-exports are the crate's table of contents. The
 `#[cfg(feature = "plugins")]` lines are the severance made visible:
 exactly one module and its two names disappear from the public build.
 
+<a name="chunk-modules-and-exports"></a><sub>[`src/lib.rs`](../../../x0k-folio/src/lib.rs) · `#modules-and-exports`</sub>
+
 ```rust {#modules-and-exports}
 pub mod block_provenance;
 pub mod block_segment;
@@ -174,8 +176,8 @@ pub use envelope_check::{
     PredicateStanding,
 };
 pub use inline_entity::{
-    declared_facts, declared_facts_with, defined_in_fact, extract_from_markdown,
-    inline_entity_facts, InlineEntity, InlineEntityError,
+    declared_facts, declared_facts_with, defined_in_fact, document_edges, extract_from_markdown,
+    inline_entity_facts, prose_edges, InlineEntity, InlineEntityError,
 };
 pub use canonical_patch::{
     apply_body_patches, apply_folio_patches, apply_markdown_patches,
@@ -204,6 +206,8 @@ calls no-ops; the same registration is also triggered lazily by
 `x0k-types`' inline `ensure_builtin_plugins_registered` path, so the
 two routes converge on one factory entry.
 
+<a name="chunk-register-factory"></a><sub>[`src/lib.rs`](../../../x0k-folio/src/lib.rs) · `#register-factory`</sub>
+
 ```rust {#register-factory}
 /// Idempotent registration of the `folio/v1` projection factory in
 /// `x0k_types::class_registry::PLUGIN_FACTORIES`. Daemons call this once at
@@ -231,6 +235,8 @@ pub fn register_colophon_factory() {
 ```
 
 ## Composing the crate root
+
+<a name="chunk-root"></a><sub>[`src/lib.rs`](../../../x0k-folio/src/lib.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [modules-and-exports](#chunk-modules-and-exports) · [register-factory](#chunk-register-factory)</sub>
 
 ```rust {#root}
 <<module-doc>>
