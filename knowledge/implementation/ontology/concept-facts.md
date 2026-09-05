@@ -232,22 +232,63 @@ pub struct PropertyRecord {
 
 Classes use the established UI label contract: the URI suffix, not the
 display-oriented `rdfs:label`. This preserves existing consumers while
-moving where the list comes from:
+moving where the list comes from.
+
+A term's compact name follows its namespace. The kernel and the
+infrastructure extension share the base namespace and compact to
+`x0k:<Name>`; a domain extension owns a namespace it declares on its
+module fact (`vann:preferredNamespaceUri`, `ontology-modules` §2), and a
+term there compacts to `<module>:<Name>` — `paracosm:Place` — so two
+extensions can never collide and a kernel consumer can tell an
+extension's class at a glance. Until 2026-09-05 the fold stripped only
+the base namespace and silently dropped everything else, so the first
+extension in its own namespace was invisible to every table; the rule
+was declared and not exercised.
 
 ```rust {#class-view}
 impl OntologyModel {
+    /// The extension namespaces the modules declare, as `(prefix, namespace)`.
+    fn extension_namespaces(&self) -> Vec<(String, String)> {
+        self.modules().into_iter()
+            .filter_map(|module| module.namespace.map(|namespace| (module.name, namespace)))
+            .collect()
+    }
+
+    /// The compact name of a term IRI: `x0k:<Name>` in the base namespace,
+    /// `<module>:<Name>` in a declared extension namespace, `None` for an
+    /// IRI no module claims.
+    pub fn compact(&self, iri: &str) -> Option<String> {
+        if let Some(local) = iri.strip_prefix(X0K_NS) {
+            return Some(format!("x0k:{local}"));
+        }
+        self.extension_namespaces().into_iter()
+            .find_map(|(prefix, namespace)| iri.strip_prefix(namespace.as_str()).map(|local| format!("{prefix}:{local}")))
+    }
+
+    /// The inverse of [`compact`](Self::compact); a name with no known
+    /// prefix is returned as it came.
+    pub fn expand(&self, bare: &str) -> String {
+        if let Some(local) = bare.strip_prefix("x0k:") {
+            return format!("{X0K_NS}{local}");
+        }
+        self.extension_namespaces().into_iter()
+            .find_map(|(prefix, namespace)| bare.strip_prefix(&format!("{prefix}:")).map(|local| format!("{namespace}{local}")))
+            .unwrap_or_else(|| bare.to_string())
+    }
+
     pub fn classes(&self) -> Vec<ClassRecord> {
         self.entities_typed_as(OWL_CLASS).into_iter().filter_map(|full| {
-            let local = full.strip_prefix(X0K_NS)?;
-            Some(ClassRecord { uri: format!("x0k:{local}"), label: local.to_string() })
+            let uri = self.compact(&full)?;
+            let label = uri.rsplit(':').next().unwrap_or(&uri).to_string();
+            Some(ClassRecord { uri, label })
         }).collect()
     }
 
     pub fn object_properties(&self) -> Vec<PropertyRecord> {
         self.entities_typed_as(OWL_OBJECT_PROPERTY).into_iter().filter_map(|full| {
-            let local = full.strip_prefix(X0K_NS)?;
+            let uri = self.compact(&full)?;
             Some(PropertyRecord {
-                uri: format!("x0k:{local}"),
+                uri,
                 domain: self.first_class_value(&full, RDFS_DOMAIN),
                 range: self.first_class_value(&full, RDFS_RANGE),
             })
@@ -267,7 +308,7 @@ impl OntologyModel {
         self.facts.iter().filter(|fact| fact.entity == entity && fact.predicate == predicate)
             .filter_map(|fact| match &fact.value { OntologyValue::Entity(value) => Some(value), _ => None })
             .flat_map(|value| self.resolve_class_set(value))
-            .next().map(|iri| bare_c0k(&iri))
+            .next().map(|iri| self.compact(&iri).unwrap_or(iri))
     }
 
     fn resolve_class_set(&self, node: &str) -> Vec<String> {
@@ -467,12 +508,12 @@ and only the answer is partitioned:
 impl OntologyModel {
     pub fn classes_in(&self, module_iri: &str) -> Vec<ClassRecord> {
         let defined = self.defined_in(module_iri);
-        self.classes().into_iter().filter(|class| defined.contains(&full_c0k(&class.uri))).collect()
+        self.classes().into_iter().filter(|class| defined.contains(&self.expand(&class.uri))).collect()
     }
 
     pub fn object_properties_in(&self, module_iri: &str) -> Vec<PropertyRecord> {
         let defined = self.defined_in(module_iri);
-        self.object_properties().into_iter().filter(|property| defined.contains(&full_c0k(&property.uri))).collect()
+        self.object_properties().into_iter().filter(|property| defined.contains(&self.expand(&property.uri))).collect()
     }
 
     pub fn decision_edge_predicates_in(&self, module_iri: &str) -> Vec<(String, String)> {

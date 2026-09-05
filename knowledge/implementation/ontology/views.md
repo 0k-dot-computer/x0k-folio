@@ -395,6 +395,7 @@ mod tests {
             ("actor", "x0k:Actor"),
             ("software", "x0k:Affordance"),
             ("product", "x0k:SoftwareModule"),
+            ("paracosm", "paracosm:Place"),
         ] {
             if let Some(tables) = MODULE_TABLES.iter().find(|t| t.name == module) {
                 assert!(
@@ -408,6 +409,7 @@ mod tests {
             ("work", &["core", "document"]),
             ("actor", &["core"]),
             ("software", &["core", "document"]),
+            ("paracosm", &["core", "work"]),
             ("product", &["actor", "core", "document", "software", "work"]),
         ] {
             if let Some(tables) = MODULE_TABLES.iter().find(|t| t.name == module) {

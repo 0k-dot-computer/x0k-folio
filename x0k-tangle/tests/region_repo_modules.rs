@@ -220,7 +220,8 @@ fn project_err_with_marker(marker: &str) -> String {
 }
 
 /// The fixture's README with a `## What you can do here` section carrying
-/// the affordances marker, ahead of the afterword.
+/// the retired `<!-- x0k:affordances -->` marker, ahead of the afterword —
+/// a comment like any other to this projector.
 fn with_affordances_marker(publication: &str) -> String {
     publication.replace(
         "## Afterwards\n",
@@ -924,94 +925,9 @@ fn a_document_without_a_summary_is_refused_naming_it() {
 }
 
 #[test]
-fn the_affordances_marker_draws_one_figure_pair_per_published_declaration() {
-    let ws = workspace(&[], true);
-    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
-    std::fs::write(
-        ws.path().join(PUB_REL),
-        with_affordances_marker(&publication_publishing(&["demo-crate"], &[reference.as_str()])),
-    )
-    .unwrap();
-    let out = tempfile::tempdir().unwrap();
-    let report = project(ws.path(), out.path()).expect("projection");
-
-    let light = std::fs::read_to_string(out.path().join("affordances/read-a-line-light.svg"))
-        .expect("the light figure is drawn");
-    let dark = std::fs::read_to_string(out.path().join("affordances/read-a-line-dark.svg"))
-        .expect("the dark figure is drawn");
-    for svg in [&light, &dark] {
-        assert!(svg.contains("role=\"img\""), "{svg}");
-        assert!(svg.contains(">Read a line out of a document<"), "the title is drawn: {svg}");
-        assert!(svg.contains(">a person<"), "the claimed actor is drawn: {svg}");
-        assert!(svg.contains(">demo-crate<"), "the enabling crate is drawn: {svg}");
-        assert!(svg.contains("no signifier declared"), "an undeclared cue is drawn as such: {svg}");
-        assert!(svg.contains(">status: wip<"), "{svg}");
-    }
-    // The README's own two palettes, not a third.
-    assert!(light.contains("Georgia") && light.contains("#b88e44"), "paper and gold:\n{light}");
-    assert!(dark.contains("monospace") && dark.contains("#e2e8f0"), "surface and slate:\n{dark}");
-
-    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    let expected = "\
-## What you can do here
-
-<picture>
-  <source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/read-a-line-dark.svg\">
-  <img alt=\"Read a line out of a document — for a person; no signifier declared; enabled by demo-crate; status wip.\" src=\"affordances/read-a-line-light.svg\">
-</picture>
-
-**Read a line out of a document** — for a person; no signifier declared; enabled by `demo-crate`; status wip.
-
-## Afterwards
-";
-    assert!(readme.contains(expected), "the figure and its caption stand where the marker was:\n{readme}");
-    assert_eq!(
-        report.figures.get("x0k:affordance/read_a_line").map(String::as_str),
-        Some("affordances/read-a-line-light.svg")
-    );
-    let prov = std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap();
-    assert!(!prov.contains("affordances/"), "a figure has no corpus source to record: {prov}");
-}
-
-#[test]
-fn a_signifier_in_a_shipped_chapter_puts_its_surface_on_the_figure() {
+fn the_contents_page_opens_with_the_affordances_the_publication_publishes() {
     let ws = workspace(&[], true);
     declare_signifier(ws.path());
-    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
-    std::fs::write(
-        ws.path().join(PUB_REL),
-        with_affordances_marker(&publication_publishing(&["demo-crate"], &[reference.as_str()])),
-    )
-    .unwrap();
-    let out = tempfile::tempdir().unwrap();
-    project(ws.path(), out.path()).expect("projection");
-
-    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    assert!(
-        readme.contains("for a person; reachable on `cli` as `demo-line`; enabled by `demo-crate`"),
-        "the caption names the surface and the cue:\n{readme}"
-    );
-    assert!(!readme.contains("no signifier declared"), "{readme}");
-
-    let svg = std::fs::read_to_string(out.path().join("affordances/read-a-line-light.svg")).unwrap();
-    assert!(svg.contains(">cli</tspan>"), "the surface heads the pill: {svg}");
-    assert!(svg.contains("demo-line</tspan>"), "the cue follows it: {svg}");
-    assert!(!svg.contains("no signifier declared"), "{svg}");
-}
-
-#[test]
-fn an_affordances_marker_with_nothing_to_draw_is_refused_naming_it() {
-    let ws = workspace(&[], true);
-    let doc = std::fs::read_to_string(ws.path().join(PUB_REL)).unwrap();
-    std::fs::write(ws.path().join(PUB_REL), with_affordances_marker(&doc)).unwrap();
-    let err = project_err(ws.path());
-    assert!(err.contains("<!-- x0k:affordances -->"), "names the marker: {err}");
-    assert!(err.contains("no affordance declaration"), "{err}");
-}
-
-#[test]
-fn without_the_marker_no_figure_is_drawn() {
-    let ws = workspace(&[], true);
     let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
     std::fs::write(
         ws.path().join(PUB_REL),
@@ -1020,8 +936,98 @@ fn without_the_marker_no_figure_is_drawn() {
     .unwrap();
     let out = tempfile::tempdir().unwrap();
     let report = project(ws.path(), out.path()).expect("projection");
-    assert!(!out.path().join("affordances").exists(), "no marker, no directory");
-    assert!(report.figures.is_empty(), "{:?}", report.figures);
+
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    assert!(!readme.contains("<picture"), "{readme}");
+    let expected = "\
+## What is here
+
+What this repository affords, each declared in a design and presented by the chapters below:
+
+|  | affordance | for | reachable through | chapters |
+|---|---|---|---|---|
+| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person | `cli` `demo-line` | [The demo verbs](knowledge/implementation/demo/verbs.md) |
+
+### `demo-crate`
+";
+    assert!(readme.contains(expected), "the rows open the contents page:\n{readme}");
+
+    let light = std::fs::read_to_string(out.path().join("affordances/for-a-person-light.svg"))
+        .expect("the light glyph is written");
+    let dark = std::fs::read_to_string(out.path().join("affordances/for-a-person-dark.svg"))
+        .expect("the dark glyph is written");
+    for svg in [&light, &dark] {
+        assert!(svg.contains("role=\"img\" aria-label=\"for a person\""), "{svg}");
+        assert!(svg.contains("height=\"16\""), "text height: {svg}");
+        assert!(svg.contains("<path") && !svg.contains("<rect"), "the eye alone: {svg}");
+    }
+    // The README's own two palettes, on a transparent ground.
+    assert!(light.contains("#b88e44") && light.contains("#111111"), "gold and ink:\n{light}");
+    assert!(dark.contains("#96b4dc") && dark.contains("#e2e8f0"), "blue and slate:\n{dark}");
+    assert!(!out.path().join("affordances/for-an-agent-light.svg").exists(), "only the glyphs used");
+
+    assert_eq!(
+        report.figures,
+        std::collections::BTreeMap::from([("for-a-person".to_string(), "affordances/for-a-person-light.svg".to_string())])
+    );
+    let prov = std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap();
+    assert!(!prov.contains("affordances/"), "a glyph has no corpus source to record: {prov}");
+}
+
+#[test]
+fn a_claim_on_both_actors_gets_both_marks_and_an_unreached_face_a_dash() {
+    let ws = workspace(&[], true);
+    let design = std::fs::read_to_string(ws.path().join(DESIGN_REL)).unwrap();
+    std::fs::write(
+        ws.path().join(DESIGN_REL),
+        design.replace("actors: [human]", "actors: [human, ai_agent]"),
+    )
+    .unwrap();
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    let row = "| <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-and-an-agent-dark.svg\"><img alt=\"for a person and an agent\" src=\"affordances/for-a-person-and-an-agent-light.svg\" height=\"16\"></picture> | **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** | a person, an agent | — | — |\n";
+    assert!(readme.contains(row), "both actors, and dashes where nothing is declared:\n{readme}");
+
+    let svg = std::fs::read_to_string(out.path().join("affordances/for-a-person-and-an-agent-light.svg"))
+        .expect("the glyph for both is written");
+    assert!(svg.contains("<path") && svg.contains("<rect"), "the eye and the machine: {svg}");
+    assert_eq!(report.figures.len(), 1, "one glyph, for the one actor set used: {:?}", report.figures);
+    assert!(!out.path().join("affordances/for-a-person-light.svg").exists());
+}
+
+#[test]
+fn a_publication_naming_no_affordance_renders_the_contents_page_unchanged() {
+    let ws = workspace(&[], true);
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("projection");
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(
+        readme.contains("## What is here\n\n### `demo-crate`\n\n- [The demo colophon]"),
+        "the page opens with its first group:\n{readme}"
+    );
+    assert!(!readme.contains("affords") && !readme.contains("<picture"), "{readme}");
+    assert!(!out.path().join("affordances").exists(), "no affordance, no directory");
+    assert!(report.figures.is_empty(), "{:?}", report.figures);
+}
+
+#[test]
+fn the_retired_affordances_marker_is_left_verbatim() {
+    let ws = workspace(&[], true);
+    let doc = std::fs::read_to_string(ws.path().join(PUB_REL)).unwrap();
+    std::fs::write(ws.path().join(PUB_REL), with_affordances_marker(&doc)).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("the marker is only a comment");
+    let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    assert!(
+        readme.contains("## What you can do here\n\n<!-- x0k:affordances -->\n\n## Afterwards\n"),
+        "left as written:\n{readme}"
+    );
+    assert!(!out.path().join("affordances").exists());
 }

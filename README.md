@@ -53,39 +53,6 @@ slice of itself, using itself.
 The generated code is committed beside the documents, which is what breaks the
 bootstrap circle: a fresh clone has no `x0k-tangle` until it builds one.
 
-## What you can do here
-
-Each capability this repository claims, drawn from its own declaration: who it
-is for, the cue that reaches it, and the crates that make it true.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="affordances/tangle-source-from-a-document-dark.svg">
-  <img alt="Project source code out of a document — for a person, for an agent; reachable on cli as x0k-tangle tangle, sdk as tangle_document; enabled by x0k-tangle, x0k-folio; status wip." src="affordances/tangle-source-from-a-document-light.svg">
-</picture>
-
-**Project source code out of a document** — for a person, for an agent; reachable on `cli` as `x0k-tangle tangle`, `sdk` as `tangle_document`; enabled by `x0k-tangle`, `x0k-folio`; status wip.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="affordances/weave-a-document-dark.svg">
-  <img alt="Read a document as the woven artifact — for a person; reachable on cli as x0k-tangle weave, sdk as weave_html; enabled by x0k-tangle, x0k-syntax, x0k-folio; status wip." src="affordances/weave-a-document-light.svg">
-</picture>
-
-**Read a document as the woven artifact** — for a person; reachable on `cli` as `x0k-tangle weave`, `sdk` as `weave_html`; enabled by `x0k-tangle`, `x0k-syntax`, `x0k-folio`; status wip.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="affordances/check-a-document-against-shipped-vocabulary-dark.svg">
-  <img alt="Check a document against its vocabulary — for a person, for an agent; reachable on sdk as check_envelope, cli as x0k-tangle check; enabled by x0k-folio, x0k-ontology; status wip." src="affordances/check-a-document-against-shipped-vocabulary-light.svg">
-</picture>
-
-**Check a document against its vocabulary** — for a person, for an agent; reachable on `sdk` as `check_envelope`, `cli` as `x0k-tangle check`; enabled by `x0k-folio`, `x0k-ontology`; status wip.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="affordances/read-declared-affordances-dark.svg">
-  <img alt="Read an affordance out of a document — for a person, for an agent; reachable on sdk as extract_from_markdown, cli as x0k-tangle affordances; enabled by x0k-folio; status wip." src="affordances/read-declared-affordances-light.svg">
-</picture>
-
-**Read an affordance out of a document** — for a person, for an agent; reachable on `sdk` as `extract_from_markdown`, `cli` as `x0k-tangle affordances`; enabled by `x0k-folio`; status wip.
-
 None of these ideas is new. Tangling and weaving are Knuth's words from 1984, and
 the shape here — named chunks, one document producing many files — is noweb's,
 which Org-mode Babel and Entangled carry into editors and Markdown. That a
@@ -109,11 +76,21 @@ committed is not byte-for-byte what the document says.
 
 ## Reading the implementation
 
-What follows is the substrate chapter by chapter, grouped by what each document
+What follows opens with what this repository affords, each drawn from its own
+declaration, then the substrate chapter by chapter, grouped by what each document
 is about rather than which crate its code ends up in. It is implementation
 detail, and none of it is required reading: pointing an agent at this repository
 is a first-class way in, and the typed envelopes and the shipped vocabulary are
 much of what makes that work.
+
+What this repository affords, each declared in a design and presented by the chapters below:
+
+|  | affordance | for | reachable through | chapters |
+|---|---|---|---|---|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="16"></picture> | **[Project source code out of a document](decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)** | a person, an agent | `cli` `x0k-tangle tangle` · `sdk` `tangle_document` | [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md), [The pipeline dispatcher](knowledge/implementation/tangle/dispatcher.md) |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-dark.svg"><img alt="for a person" src="affordances/for-a-person-light.svg" height="16"></picture> | **[Read a document as the woven artifact](decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)** | a person | `cli` `x0k-tangle weave` · `sdk` `weave_html` | [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md), [Weaving literate documents into HTML](knowledge/implementation/tangle/weave.md) |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="16"></picture> | **[Check a document against its vocabulary](decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)** | a person, an agent | `cli` `x0k-tangle check` · `sdk` `check_envelope` | [Checking a document against what shipped with it](knowledge/implementation/folio/checking.md), [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md) |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="16"></picture> | **[Read an affordance out of a document](decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md)** | a person, an agent | `cli` `x0k-tangle affordances` · `sdk` `extract_from_markdown` | [Entities authored inside prose](knowledge/implementation/folio/inline-entities.md), [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md) |
 
 ### What a document is
 

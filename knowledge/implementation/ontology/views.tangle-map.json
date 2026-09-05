@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/ontology/views.md",
-  "source_hash": "fddd226f326ca1e3",
+  "source_hash": "08b974019accf2f6",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "x0k-ontology/src/lib.rs",
-          "hash": "10f6d874ba1ab945"
+          "hash": "d586b5910caaeaaf"
         }
       ]
     }
