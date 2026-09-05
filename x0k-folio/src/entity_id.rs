@@ -288,7 +288,6 @@ mod tests {
             "x0k:commitment/no-shortcuts",
             "x0k:design/publish-a-region-as-a-repository",
             "x0k:architecture/publication-projection",
-            "x0k:bundle/messenger",
             "x0k:wiki/pattern-language-of-computing",
             "x0k:literate-spec/agent_messaging",
             "x0k:affordance/publish_region_as_repository",

@@ -174,7 +174,7 @@ A publication names a region of the graph; these chapters turn one into a reader
 
 - [`x0k-ontology/ontology/modules/core.ttl`](x0k-ontology/ontology/modules/core.ttl) — The self-typed root every x0k vocabulary module stands on: Concept, the one meta-level that every class and property occupies.
 - [`x0k-ontology/ontology/modules/document.ttl`](x0k-ontology/ontology/modules/document.ttl) — The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with the document-to-document edges and the folio/v1 envelope properties that stay inside the genus.
-- [`x0k-ontology/ontology/modules/software.ttl`](x0k-ontology/ontology/modules/software.ttl) — The publishable slice of the infrastructure domain: Affordance, Signifier, Surface, Bundle, and the edges among them and the document genus. Split out of product (ontology-modules §2) so a publication that ships core and document can ship the affordance vocabulary its documents use without importing work or actor. Keeps the base namespace, like product. SoftwareModule stays in product: it is rdfs:subClassOf Artifact, which work defines.
+- [`x0k-ontology/ontology/modules/software.ttl`](x0k-ontology/ontology/modules/software.ttl) — The publishable slice of the infrastructure domain: Affordance, Signifier, Surface, and the edges among them and the document genus. Split out of product (ontology-modules §2) so a publication that ships core and document can ship the affordance vocabulary its documents use without importing work or actor. Keeps the base namespace, like product. SoftwareModule stays in product: it is rdfs:subClassOf Artifact, which work defines.
 
 ## Contributing
 

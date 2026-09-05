@@ -648,7 +648,13 @@ fn a_document_named_without_an_anchor_crosses_whole() {
     let ws = workspace(&[], true);
     std::fs::write(
         ws.path().join(PUB_REL),
-        publication_publishing(&["demo-crate"], &[DESIGN_ID]),
+        publication_full(
+            &["demo-crate"],
+            &[],
+            true,
+            &["x0k:software-module/unshipped-crate"],
+            &[DESIGN_ID],
+        ),
     )
     .unwrap();
 
@@ -700,6 +706,42 @@ fn a_named_document_no_corpus_document_declares_is_refused() {
     let err = project_err(ws.path());
     assert!(err.contains("x0k:design/demo-desgin"), "{err}");
     assert!(err.contains("selects nothing"), "{err}");
+}
+
+#[test]
+fn a_published_affordance_naming_an_unshipped_module_is_refused() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#run-the-whole-fleet");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("x0k:affordance/run_the_whole_fleet"), "{err}");
+    assert!(err.contains(&reference), "names what published it: {err}");
+    assert!(err.contains("unshipped-crate"), "{err}");
+    assert!(err.contains("neither publishes nor excludes"), "{err}");
+}
+
+#[test]
+fn a_published_affordance_naming_an_excluded_module_crosses() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#run-the-whole-fleet");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_full(
+            &["demo-crate"],
+            &[],
+            true,
+            &["x0k:software-module/unshipped-crate"],
+            &[reference.as_str()],
+        ),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("an excluded module is a stated absence");
+    assert!(tree_carries(out.path(), "run_the_whole_fleet"));
 }
 
 #[test]

@@ -417,7 +417,6 @@ fn member_dir(class: &str) -> PathBuf {
         "design" => "design",
         "architecture" => "architecture",
         "commitment" => "commitments",
-        "bundle" => "bundles",
         "publication" => "publications",
         other => other,
     };

@@ -10,7 +10,7 @@ x0k:
     crate: x0k-ontology
     root: src/lib.rs
   edges:
-    implements:
+    constrained_by:
       - x0k:architecture/state-representation
     cites:
       - x0k:implementation/ontology/concept-facts
@@ -196,10 +196,14 @@ checked module by module for the same reason: `supersedes` sits in `work`
 (its declared domain and range are both the union of `Decision` and
 `Observation`, and `Observation` is `work`'s own term, so `document`
 could not carry the predicate without using a term it does not import)
-and `constrains` in `product`, so a `[core, document]` build legitimately
-lacks both. `defines` and `verified_by` are `software`'s, and a
+and `serves` in `product`, so a `[core, document]` build legitimately
+lacks both. `constrains` and `constrained_by` are both `document`'s — the
+same restriction stated from the deciding side and from the constrained
+side — so a build that ships the document genus can spell either end, and
+a chapter that declares what it was written under is checkable in the
+published repository rather than only in the monorepo. `defines` and `verified_by` are `software`'s, and a
 `[core, document, software]` build has them: that set is exactly what the
-split was for. `implements` is pinned to `document` because the corpus's 273
+split was for. `implements` is pinned to `document` because the 197
 implementation documents carrying it are the reason the module set exists — a
 build that ships the document genus and cannot spell the edge its own
 documents carry would be the failure the split was drawn to prevent. It sits
@@ -287,6 +291,19 @@ mod tests {
                 // so it lands in the slice; its two admissible targets span
                 // `document` and `product` and are a shape.
                 ("excludes", "excludes"),
+                // Placed here by its `x0k:Decision` domain, with the union of
+                // `Decision`, `Techne` and `SoftwareModule` it used to declare
+                // as a range now three `x0k:targetClass` facts. That union
+                // spans three modules and was the whole reason the term sat in
+                // `product` — a build shipping the subject class could not
+                // spell the predicate.
+                ("constrains", "constrains"),
+                // Declared 2026-09-04, the counterpart authored from the
+                // constrained end. Domain `Implementation`, which is where
+                // every one of the corpus's 95 uses has its subject, so it
+                // lands in the slice beside `implements`; range-free like
+                // `implements`, with the Architecture expectation a shape.
+                ("constrained_by", "constrainedBy"),
             ],
         ),
         (
@@ -306,7 +323,6 @@ mod tests {
         (
             "product",
             &[
-                ("constrains", "constrains"),
                 ("serves", "serves"),
                 ("depends_on", "dependsOn"),
             ],
@@ -377,7 +393,7 @@ mod tests {
             ("document", "x0k:Decision"),
             ("work", "x0k:Intent"),
             ("actor", "x0k:Actor"),
-            ("software", "x0k:Bundle"),
+            ("software", "x0k:Affordance"),
             ("product", "x0k:SoftwareModule"),
         ] {
             if let Some(tables) = MODULE_TABLES.iter().find(|t| t.name == module) {

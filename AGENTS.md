@@ -41,7 +41,7 @@ tangled from a document under `knowledge/implementation/`. There is no second
 category — no file you edit directly, and so no question about which half of a
 crate is authored and which is derived. Change the document, re-tangle.
 `PROVENANCE.json` lists the documents that back the code (`literate_docs`), the
-crates in the bundle, and what was deliberately held back.
+crates in the publication, and what was deliberately held back.
 
 ## Documents have types and edges
 

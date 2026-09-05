@@ -43,11 +43,20 @@
 //! way; `modules_rel_dir` below decides which, and `PROVENANCE.json`
 //! records the answer.
 //!
+//! `publishes` may also name a **decision document**, whole or by section
+//! (`x0k:design/<stem>#<heading-path>`), which is how an affordance's
+//! declaration reaches the audience as data. What a publication affords is
+//! derived from the modules it publishes, never claimed, so the projector
+//! holds the closure rule of
+//! `x0k:architecture/publication-is-the-shipping-unit` §7: every module a
+//! published declaration names under `enabledBy` is published, or excluded —
+//! a declaration naming a module the audience will not have is refused.
+//!
 //! The projector emits a `PROVENANCE.json` (the inbound-contribution seam) and
 //! refuses to disclose anything above `public` access tier.
 
 use anyhow::{anyhow, bail, Context, Result};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
@@ -461,6 +470,7 @@ pub fn project_publication_repo(
     };
 
     let projected_docs = project_named_documents(workspace, &documents)?;
+    affordance_closure(&projected_docs, &published, &excluded)?;
 
     // A prior projection (a `.git`, or a PROVENANCE.json) is projected INTO,
     // not beside: the overlay paths are stashed, the regenerated region is
@@ -1640,6 +1650,58 @@ fn write_projected_documents(
         tracing::info!(reference = %doc.reference, "region_repo.document.projected");
     }
     Ok(())
+}
+
+/// The closure rule for published declarations: every module an affordance
+/// names under `enabledBy` is published, or excluded. Runs on the projected
+/// documents (whole or cut to a section), before anything is written.
+fn affordance_closure(
+    docs: &[ProjectedDoc],
+    published: &BTreeSet<String>,
+    excluded: &BTreeSet<String>,
+) -> Result<()> {
+    let classes: HashSet<String> = HashSet::from(["affordance".to_string()]);
+    let mut violations: Vec<String> = Vec::new();
+    for doc in docs {
+        let (_, body) = parse_envelope(&doc.text)
+            .map_err(|e| anyhow!("projected document `{}` lost its envelope: {e:?}", doc.reference))?;
+        for record in x0k_folio::extract_from_markdown(&body, &classes) {
+            // A malformed block is the extractor's report, not this guard's.
+            let Ok(entity) = record else { continue };
+            for (predicate, value) in x0k_folio::declared_facts(&entity) {
+                if predicate != "enabledBy" {
+                    continue;
+                }
+                let Some(krate) = value
+                    .strip_prefix("entity:")
+                    .and_then(|v| v.strip_prefix("x0k:software-module/"))
+                else {
+                    continue;
+                };
+                if published.contains(krate) || excluded.contains(krate) {
+                    continue;
+                }
+                violations.push(format!(
+                    "affordance `{}` (published via `{}`) is enabledBy `{krate}`, which this \
+                     publication neither publishes nor excludes — the audience would read a \
+                     claim it cannot exercise",
+                    entity.uri, doc.reference
+                ));
+            }
+        }
+    }
+    if violations.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::from(
+        "repository projection refused — a published declaration is not closed over the crate set:\n",
+    );
+    for v in &violations {
+        msg.push_str("  - ");
+        msg.push_str(v);
+        msg.push('\n');
+    }
+    bail!(msg);
 }
 
 fn emit_workspace_manifest(output_dir: &Path, crates: &[String], edition: &str) -> Result<()> {

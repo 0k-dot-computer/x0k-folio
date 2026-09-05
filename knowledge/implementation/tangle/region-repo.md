@@ -120,13 +120,22 @@ the two from drifting apart afterwards.
 //! way; `modules_rel_dir` below decides which, and `PROVENANCE.json`
 //! records the answer.
 //!
+//! `publishes` may also name a **decision document**, whole or by section
+//! (`x0k:design/<stem>#<heading-path>`), which is how an affordance's
+//! declaration reaches the audience as data. What a publication affords is
+//! derived from the modules it publishes, never claimed, so the projector
+//! holds the closure rule of
+//! `x0k:architecture/publication-is-the-shipping-unit` §7: every module a
+//! published declaration names under `enabledBy` is published, or excluded —
+//! a declaration naming a module the audience will not have is refused.
+//!
 //! The projector emits a `PROVENANCE.json` (the inbound-contribution seam) and
 //! refuses to disclose anything above `public` access tier.
 ```
 
 ```rust {#uses}
 use anyhow::{anyhow, bail, Context, Result};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
@@ -389,7 +398,8 @@ pub enum LicenseSource {
 The entry point reads as the whole algorithm: parse the publication,
 settle the license and the overlay, open the report, run the guards,
 select and check the vocabulary modules, discover the literate
-documents, resolve the documents the publication named,
+documents, resolve the documents the publication named and check
+that what they declare is closed over the crate set,
 prepare the output directory, vendor the crates and the
 modules, copy the documents, emit the scaffolding, put the overlay
 back, commit. The order matters in two places — every guard runs
@@ -771,6 +781,7 @@ and a refusal must land before the output directory is touched.
 
 ```rust {#select-documents}
 let projected_docs = project_named_documents(workspace, &documents)?;
+affordance_closure(&projected_docs, &published, &excluded)?;
 ```
 
 ### Projecting into an existing repository
@@ -2754,6 +2765,77 @@ fn write_projected_documents(
         tracing::info!(reference = %doc.reference, "region_repo.document.projected");
     }
     Ok(())
+}
+```
+
+A published declaration is a claim the audience reads as data, and the
+crate guard above already says what closure means for this projector:
+in the set, or severed by name. The same rule holds for what a
+declaration names. What a publication affords is derived from the
+modules it publishes, never claimed
+(`x0k:architecture/publication-is-the-shipping-unit` §3), so an
+affordance whose `enabledBy` names a module that is neither published nor
+excluded is a declaration the audience can read and cannot exercise —
+and the projector refuses it rather than ship it (§7). `excludes` is the
+publication's own statement that the audience will not have that module;
+the reason lives in the publication's prose, and the projector holds the
+publication to the edge. This is the residency audit
+`publish-a-region-as-a-repository` states as a consequence, and the check
+that found `x0k-folio-daemon` straddling the x0k-folio boundary, made
+mechanical. It is not downgradable, for the reason the anchor refusal is
+not: a name that promises what the region does not hold is the defect.
+
+```rust {#affordance-closure}
+/// The closure rule for published declarations: every module an affordance
+/// names under `enabledBy` is published, or excluded. Runs on the projected
+/// documents (whole or cut to a section), before anything is written.
+fn affordance_closure(
+    docs: &[ProjectedDoc],
+    published: &BTreeSet<String>,
+    excluded: &BTreeSet<String>,
+) -> Result<()> {
+    let classes: HashSet<String> = HashSet::from(["affordance".to_string()]);
+    let mut violations: Vec<String> = Vec::new();
+    for doc in docs {
+        let (_, body) = parse_envelope(&doc.text)
+            .map_err(|e| anyhow!("projected document `{}` lost its envelope: {e:?}", doc.reference))?;
+        for record in x0k_folio::extract_from_markdown(&body, &classes) {
+            // A malformed block is the extractor's report, not this guard's.
+            let Ok(entity) = record else { continue };
+            for (predicate, value) in x0k_folio::declared_facts(&entity) {
+                if predicate != "enabledBy" {
+                    continue;
+                }
+                let Some(krate) = value
+                    .strip_prefix("entity:")
+                    .and_then(|v| v.strip_prefix("x0k:software-module/"))
+                else {
+                    continue;
+                };
+                if published.contains(krate) || excluded.contains(krate) {
+                    continue;
+                }
+                violations.push(format!(
+                    "affordance `{}` (published via `{}`) is enabledBy `{krate}`, which this \
+                     publication neither publishes nor excludes — the audience would read a \
+                     claim it cannot exercise",
+                    entity.uri, doc.reference
+                ));
+            }
+        }
+    }
+    if violations.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::from(
+        "repository projection refused — a published declaration is not closed over the crate set:\n",
+    );
+    for v in &violations {
+        msg.push_str("  - ");
+        msg.push_str(v);
+        msg.push('\n');
+    }
+    bail!(msg);
 }
 ```
 
@@ -4868,7 +4950,9 @@ fn a_named_section_crosses_as_a_document_and_the_rest_of_its_design_does_not() {
 
 Naming the document without an anchor takes the whole of it, at its own
 path — the same address, read the way a transclusion with no anchor reads
-it.
+it. The whole design carries the fleet affordance too, so the publication
+has to say, in `excludes`, that the crate it names is one the audience
+will not have; the closure rule below is what asks.
 
 ```rust {#modules-named-whole-document file="tests/region_repo_modules.rs"}
 #[test]
@@ -4876,7 +4960,13 @@ fn a_document_named_without_an_anchor_crosses_whole() {
     let ws = workspace(&[], true);
     std::fs::write(
         ws.path().join(PUB_REL),
-        publication_publishing(&["demo-crate"], &[DESIGN_ID]),
+        publication_full(
+            &["demo-crate"],
+            &[],
+            true,
+            &["x0k:software-module/unshipped-crate"],
+            &[DESIGN_ID],
+        ),
     )
     .unwrap();
 
@@ -4950,6 +5040,58 @@ fn a_named_document_no_corpus_document_declares_is_refused() {
     let err = project_err(ws.path());
     assert!(err.contains("x0k:design/demo-desgin"), "{err}");
     assert!(err.contains("selects nothing"), "{err}");
+}
+```
+
+What a publication affords is derived from the modules it publishes, so a
+declaration it discloses may not name a module the audience will not have.
+The fleet affordance names a crate this publication does not ship, and
+naming its section is refused with the affordance, the reference that
+published it, and the crate — everything a publisher needs to either ship
+the crate or sever it by name.
+
+```rust {#modules-affordance-closure-refused file="tests/region_repo_modules.rs"}
+#[test]
+fn a_published_affordance_naming_an_unshipped_module_is_refused() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#run-the-whole-fleet");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("x0k:affordance/run_the_whole_fleet"), "{err}");
+    assert!(err.contains(&reference), "names what published it: {err}");
+    assert!(err.contains("unshipped-crate"), "{err}");
+    assert!(err.contains("neither publishes nor excludes"), "{err}");
+}
+```
+
+Severing the crate by name is the publication saying so, and then the
+declaration crosses: the audience reads an affordance whose enabling module
+the publication has told them, in the same edge that severs a dependency,
+they do not get.
+
+```rust {#modules-affordance-closure-excluded file="tests/region_repo_modules.rs"}
+#[test]
+fn a_published_affordance_naming_an_excluded_module_crosses() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#run-the-whole-fleet");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_full(
+            &["demo-crate"],
+            &[],
+            true,
+            &["x0k:software-module/unshipped-crate"],
+            &[reference.as_str()],
+        ),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("an excluded module is a stated absence");
+    assert!(tree_carries(out.path(), "run_the_whole_fleet"));
 }
 ```
 
@@ -5217,6 +5359,10 @@ fn a_document_without_a_summary_is_refused_naming_it() {
 
 <<modules-document-id-matches-nothing>>
 
+<<modules-affordance-closure-refused>>
+
+<<modules-affordance-closure-excluded>>
+
 <<modules-reading-order>>
 
 <<modules-reading-order-unshipped-doc>>
@@ -5300,6 +5446,8 @@ fn a_document_without_a_summary_is_refused_naming_it() {
 <<section-document>>
 
 <<write-projected-documents>>
+
+<<affordance-closure>>
 
 <<emit-workspace-manifest>>
 

@@ -2,6 +2,10 @@
 # Bootstrap source: this view seeds an empty region exactly once.
 # Shapes: document
 
+<https://0k.computer/ontology#constrainedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Architecture> .
+<https://0k.computer/ontology#constrains> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#constrains> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#SoftwareModule> .
+<https://0k.computer/ontology#constrains> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Techne> .
 <https://0k.computer/ontology#excludes> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Implementation> .
 <https://0k.computer/ontology#excludes> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#SoftwareModule> .
 <https://0k.computer/ontology#informedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Decision> .

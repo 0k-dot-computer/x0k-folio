@@ -10,7 +10,7 @@ x0k:
     crate: x0k-ontology
     root: build.rs
   edges:
-    implements:
+    constrained_by:
       - x0k:architecture/state-representation
     cites:
       - x0k:architecture/ontology-modules

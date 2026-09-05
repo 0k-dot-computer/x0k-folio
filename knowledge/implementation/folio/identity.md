@@ -30,7 +30,7 @@ string is the whole of a document's identity, and until this module
 existed the format library could not read it. `Colophon` kept `id` as a
 `String` and left the grammar to whoever consumed the envelope — which
 in practice meant one consumer, the daemon, promoting the string to
-`x0k_types::EntityUri`. So a published bundle could ship the format and
+`x0k_types::EntityUri`. So a publication could ship the format and
 ship the vocabulary and still not be able to tell a well-formed id from
 a typo, because the type that knew the grammar lived in a sixty-module
 crate pulling ed25519, tokio, rkyv and postcard, and pulling that in
@@ -467,7 +467,6 @@ mod tests {
             "x0k:commitment/no-shortcuts",
             "x0k:design/publish-a-region-as-a-repository",
             "x0k:architecture/publication-projection",
-            "x0k:bundle/messenger",
             "x0k:wiki/pattern-language-of-computing",
             "x0k:literate-spec/agent_messaging",
             "x0k:affordance/publish_region_as_repository",

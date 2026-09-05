@@ -168,6 +168,19 @@ mod tests {
                 // so it lands in the slice; its two admissible targets span
                 // `document` and `product` and are a shape.
                 ("excludes", "excludes"),
+                // Placed here by its `x0k:Decision` domain, with the union of
+                // `Decision`, `Techne` and `SoftwareModule` it used to declare
+                // as a range now three `x0k:targetClass` facts. That union
+                // spans three modules and was the whole reason the term sat in
+                // `product` — a build shipping the subject class could not
+                // spell the predicate.
+                ("constrains", "constrains"),
+                // Declared 2026-09-04, the counterpart authored from the
+                // constrained end. Domain `Implementation`, which is where
+                // every one of the corpus's 95 uses has its subject, so it
+                // lands in the slice beside `implements`; range-free like
+                // `implements`, with the Architecture expectation a shape.
+                ("constrained_by", "constrainedBy"),
             ],
         ),
         (
@@ -187,7 +200,6 @@ mod tests {
         (
             "product",
             &[
-                ("constrains", "constrains"),
                 ("serves", "serves"),
                 ("depends_on", "dependsOn"),
             ],
@@ -258,7 +270,7 @@ mod tests {
             ("document", "x0k:Decision"),
             ("work", "x0k:Intent"),
             ("actor", "x0k:Actor"),
-            ("software", "x0k:Bundle"),
+            ("software", "x0k:Affordance"),
             ("product", "x0k:SoftwareModule"),
         ] {
             if let Some(tables) = MODULE_TABLES.iter().find(|t| t.name == module) {

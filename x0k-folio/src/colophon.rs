@@ -50,8 +50,8 @@ pub fn normalize_body_format(raw: Option<&str>) -> String {
 }
 
 /// Genus types per `ontology/`. Decision subtypes (commitment / design /
-/// architecture / bundle) live here directly — for those, `DocType` IS the
-/// decision subtype because each has its own review workflow. Knowledge
+/// architecture / publication) live here directly — for those, `DocType` IS
+/// the decision subtype because each has its own review workflow. Knowledge
 /// genus types (Wiki today) carry their page-kind in the optional
 /// `subtype` field on the parsed envelope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +59,6 @@ pub enum DocType {
     Commitment,
     Design,
     Architecture,
-    Bundle,
     Publication,
     /// Authored long-form content — an author's *corpus* of composed works,
     /// independent of whether any Publication makes them public. File-canonical
@@ -101,7 +100,6 @@ impl DocType {
             DocType::Commitment => "commitment",
             DocType::Design => "design",
             DocType::Architecture => "architecture",
-            DocType::Bundle => "bundle",
             DocType::Publication => "publication",
             DocType::Manuscript => "manuscript",
             DocType::Wiki => "wiki",
@@ -121,7 +119,6 @@ impl DocType {
             "commitment" => DocType::Commitment,
             "design" => DocType::Design,
             "architecture" => DocType::Architecture,
-            "bundle" => DocType::Bundle,
             "publication" => DocType::Publication,
             "manuscript" => DocType::Manuscript,
             "wiki" => DocType::Wiki,
@@ -270,7 +267,7 @@ impl std::fmt::Display for FolioError {
             }
             Self::InvalidType { got } => write!(
                 f,
-                "`x0k.type` must be one of commitment|design|architecture|bundle|publication|manuscript|wiki|implementation|seed|intent|affordance, got `{got}`"
+                "`x0k.type` must be one of commitment|design|architecture|publication|manuscript|wiki|implementation|seed|intent|affordance, got `{got}`"
             ),
             Self::InvalidStatus { got } => write!(
                 f,
