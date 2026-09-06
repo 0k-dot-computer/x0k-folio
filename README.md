@@ -74,6 +74,60 @@ pays immediately instead of paying at the end or never. On top of that,
 enforcement: CI re-derives every generated file on each run and fails if what is
 committed is not byte-for-byte what the document says.
 
+## Start here, with your agent
+
+Nobody does this by hand, and you are not meant to. Point the agent you already
+work with — in your editor, in your terminal — at a clone of this repository and
+say what you want in your own words:
+
+> Read the AGENTS.md in this checkout of x0k-folio. Then type the documents in
+> `docs/decisions` of my project the way it describes, and tell me which of
+> their relationships point at documents I have not written yet.
+
+What the agent does with that is written down, not improvised: `AGENTS.md` here
+is a procedure, and "type a document" is one of its branches. The agent reads
+the vocabulary this repository ships, and for each of your documents puts an
+envelope like this at the top:
+
+```yaml
+---
+x0k:
+  format: folio/v1
+  id: x0k:design/retry-budget
+  type: design
+  status: accepted
+  summary: Retries draw from a budget per caller; an exhausted budget is a signal, not a stall.
+  edges:
+    refined_by:
+      - x0k:architecture/retry-queue
+---
+```
+
+Then it runs the check, from this repository, against your folder:
+
+```sh
+cargo run -p x0k-tangle -- check ../myproject/docs/decisions
+```
+
+Two kinds of thing come back, and the agent keeps them apart when it reports
+to you. A **defect** fails the check: a `type` the format does not know, an id
+without its scheme, a predicate no shipped module declares. A **note** fails
+nothing: ``edge `refined_by` → `x0k:architecture/retry-queue` names no document
+here`` means the edge is well formed and its target does not exist yet. So what
+you hear back is a sentence like *six documents are typed; two of their edges
+name decisions you have not written, the retry queue and the caller budget*.
+That is the first result, and it is the whole idea: your documents are nodes
+with typed edges, and the gaps are the next things worth writing.
+
+For when you read what the agent wrote: `type` names what the document is —
+`commitment`, `architecture`, or `design` for a decision, `implementation` for
+one that tangles code, `wiki`, `manuscript`, `publication` for the rest — and
+`x0k-ontology/ontology/modules/document.ttl` defines each kind and each
+predicate in one `rdfs:comment` line, which is also where the agent looked.
+`status` is `proposed`, `accepted`, or `superseded`. The id carries the `x0k:`
+scheme because that is where the format was born; the parser admits no other
+yet, which is a limit of the tool and not a claim on your document.
+
 ## How to read the implementation
 
 Nobody reads this front to back. You come to it to change one thing — fix how
@@ -98,8 +152,8 @@ a document of the corpus lands on the copy shipped here, the original name
 kept as the link's title. The corpus document is the source, and the projection
 records that, so an edit made here can be routed back to it. Pointing an agent
 at the repository is a first-class way in — the typed envelopes and the shipped
-vocabulary are much of what makes that work — but the map below is for a
-person deciding where to look.
+vocabulary are much of what makes that work — but the map below is for you
+and your agent deciding where to look.
 
 **What it can do.** Each capability is declared once, in the design that owns it, and has a page projected from that declaration: who it is for, the cues that reach it, the chapters that realize it, and the tests that prove it, bodies and all.
 
@@ -223,62 +277,6 @@ A publication names a region of the graph; these chapters turn one into a reader
 - [`x0k-ontology/ontology/modules/core.ttl`](x0k-ontology/ontology/modules/core.ttl) — The self-typed root every x0k vocabulary module stands on: Concept, the one meta-level that every class and property occupies.
 - [`x0k-ontology/ontology/modules/document.ttl`](x0k-ontology/ontology/modules/document.ttl) — The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with the document-to-document edges and the folio/v1 envelope properties that stay inside the genus.
 - [`x0k-ontology/ontology/modules/software.ttl`](x0k-ontology/ontology/modules/software.ttl) — The publishable slice of the infrastructure domain: Affordance, Signifier, Surface, and the edges among them and the document genus. Split out of product (ontology-modules §2) so a publication that ships core and document can ship the affordance vocabulary its documents use without importing work or actor. Keeps the base namespace, like product. SoftwareModule stays in product: it is rdfs:subClassOf Artifact, which work defines.
-
-## Your first typed document
-
-Take one document you already have — a design note in your own repository, the
-kind the opening paragraph describes — and put this at the top of it:
-
-```yaml
----
-x0k:
-  format: folio/v1
-  id: x0k:design/retry-budget
-  type: design
-  status: accepted
-  summary: Retries draw from a budget per caller; an exhausted budget is a signal, not a stall.
-  edges:
-    refined_by:
-      - x0k:architecture/retry-queue
----
-```
-
-Nothing else is required. `type` names what the document is — `commitment`,
-`architecture`, or `design` for a decision; `implementation` for one that
-tangles code; `wiki`, `manuscript`, `publication` for the rest — and
-`x0k-ontology/ontology/modules/document.ttl` defines each kind and each
-predicate in one `rdfs:comment` line. `status` is `proposed`, `accepted`, or
-`superseded`. The id carries the `x0k:` scheme because that is where the format
-was born; the parser admits no other yet, which is a limit of the tool and not
-a claim on your document. The edge is the line worth looking at: `refined_by`
-says a more specific architecture decision fills this one in, and the decision
-it names does not exist. Leave it that way.
-
-Then, from a clone of this repository, with the path to your own folder:
-
-```sh
-cargo run -p x0k-tangle -- check ../myproject/docs/decisions
-```
-
-It reads every `.md` under that path whose frontmatter claims `folio/v1` and
-ignores the rest. Two kinds of thing come back, and they are kept apart. A
-**defect** fails the check: a `type` the format does not know, an id without
-its scheme, or a predicate no shipped module declares — write `refines`
-instead of `refined_by` and the line reads ``edge predicate `refines` is
-declared by no ontology module in this build``. A **note** does not fail
-anything: ``note: edge `refined_by` → `x0k:architecture/retry-queue` names no
-document here`` says the target is well formed and absent. The note's wording
-was written for this repository's own edges, which leave for a private corpus;
-on your folder it means a document you have not typed yet, and the checker
-treats that as the ordinary state of a set of documents rather than as an
-error. The last line counts what it read and how many edges left the set. That
-is the whole of the first result: one document of yours is a typed node, with
-one edge pointing at the next one.
-
-If a coding agent works in your repository, `AGENTS.md` here gives it this
-procedure as a branch of its own: point it at this repository and ask it to
-type a folder, and it writes the envelope, runs the check, and tells you which
-edges dangle and why.
 
 ## Contributing
 
