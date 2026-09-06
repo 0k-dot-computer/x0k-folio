@@ -27,13 +27,13 @@ edges:
     - x0k:software-module/x0k-ontology
 ```
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="../../../../affordances/for-a-person-and-an-agent-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/status-proven-dark.svg"><img alt="proven" src="../../../../affordances/status-proven-light.svg" height="16"></picture> *proven* · for a person, an agent · reachable through `cli` `x0k-tangle check`, `sdk` `check_envelope`
+<picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/actor-dark.svg"><img alt="Actor" src="../../../../affordances/actor-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/proven-dark.svg"><img alt="proven" src="../../../../affordances/proven-light.svg" height="16"></picture> *proven* · for a person, an agent · reachable through `cli` `x0k-tangle check`, `sdk` `check_envelope`
 
-*realized in* [Checking a document against what shipped with it](../../../../knowledge/implementation/folio/checking.md) · [Entities authored inside prose](../../../../knowledge/implementation/folio/inline-entities.md) · [The faces behind `check` and `affordances`](../../../../knowledge/implementation/tangle/cli-faces.md) · [x0k-tangle: the crate and its CLI](../../../../knowledge/implementation/tangle/crate.md)
+*realized in* [Checking a document against what shipped with it](../../../../knowledge/implementation/folio/checking.md) · [Entities authored inside prose](../../../../knowledge/implementation/folio/inline-entities.md) · [The faces behind `check`, `affordances` and `icon`](../../../../knowledge/implementation/tangle/cli-faces.md) · [x0k-tangle: the crate and its CLI](../../../../knowledge/implementation/tangle/crate.md)
 
 *proven by* each test below, as its chapter tangles it and as it ran at projection.
 
-<details><summary><code>check_notes_an_edge_out_of_the_set_and_passes</code> · passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check` and `affordances`</summary>
+<details><summary><code>check_notes_an_edge_out_of_the_set_and_passes</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
 
 ```rust
 #[test]
@@ -57,7 +57,7 @@ fn check_notes_an_edge_out_of_the_set_and_passes() {
 
 </details>
 
-<details><summary><code>check_names_an_undeclared_predicate_and_fails</code> · passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check` and `affordances`</summary>
+<details><summary><code>check_names_an_undeclared_predicate_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
 
 ```rust
 #[test]
@@ -77,7 +77,7 @@ fn check_names_an_undeclared_predicate_and_fails() {
 
 </details>
 
-<details><summary><code>check_reports_an_envelope_that_does_not_parse</code> · passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check` and `affordances`</summary>
+<details><summary><code>check_reports_an_envelope_that_does_not_parse</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
 
 ```rust
 #[test]
@@ -108,7 +108,7 @@ fn lonely_doc(actors: &str) -> String {
 
 </details>
 
-<details><summary><code>check_names_a_human_claim_no_signifier_signifies_and_fails</code> · passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check` and `affordances`</summary>
+<details><summary><code>check_names_a_human_claim_no_signifier_signifies_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
 
 ```rust
 #[test]
@@ -128,7 +128,7 @@ fn check_names_a_human_claim_no_signifier_signifies_and_fails() {
 
 </details>
 
-<details><summary><code>check_passes_an_agent_only_claim_with_no_signifier</code> · passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check` and `affordances`</summary>
+<details><summary><code>check_passes_an_agent_only_claim_with_no_signifier</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
 
 ```rust
 #[test]
@@ -144,3 +144,16 @@ fn check_passes_an_agent_only_claim_with_no_signifier() {
 
 </details>
 
+
+Its mark, in the icon profile: a document beside a small seal carrying
+one tick.
+
+```svg x0k:icon
+<svg viewBox="0 0 16 16">
+  <path d="M2 1.5 H7.5 L10 4 V14.5 H2 Z" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M7.5 1.5 V4 H10" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M3.5 6.5 H8 M3.5 8.5 H8" fill="none" stroke="line" stroke-width="1"/>
+  <circle cx="11.5" cy="11" r="3.5" fill="paper" stroke="ink" stroke-width="1.5"/>
+  <path d="M9.5 11 L11 12.5 L13.5 9.5" fill="none" stroke="ink" stroke-width="1.5"/>
+</svg>
+```

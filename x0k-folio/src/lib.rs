@@ -50,7 +50,7 @@ pub use envelope_check::{
 };
 pub use inline_entity::{
     declared_facts, declared_facts_with, defined_in_fact, document_edges, extract_from_markdown,
-    inline_entity_facts, prose_edges, InlineEntity, InlineEntityError,
+    inline_entity_facts, prose_edges, InlineEntity, InlineEntityError, ICON_CLASS,
 };
 pub use canonical_patch::{
     apply_body_patches, apply_folio_patches, apply_markdown_patches,

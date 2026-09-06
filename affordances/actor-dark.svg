@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Actor" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="5" cy="5" r="2" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
+  <path d="M1.5 13.5 V12 Q1.5 8.5 5 8.5 Q8.5 8.5 8.5 12 V13.5" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
+  <rect x="9" y="7.5" width="5.5" height="5.5" rx="0.5" fill="#1e293b" stroke="#e2e8f0" stroke-width="1.5"/>
+  <path d="M10.5 7.5 V6 M13 7.5 V6 M10.5 13 V14.5 M13 13 V14.5" fill="none" stroke="#96b4dc" stroke-width="1"/>
+  <rect x="11" y="9.5" width="1.5" height="1.5" fill="#e2e8f0"/>
+</svg>

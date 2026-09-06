@@ -223,7 +223,7 @@ Four of the verbs read the publication corpus itself — the
 `decisions/publications/` manifests and the decision documents they
 name — and so need a corpus checkout. A projected repository carries
 only the literate documents under `knowledge/implementation/`, which is
-all the literate verbs need; the other eight verbs, `workspace`
+all the literate verbs need; the other nine verbs, `workspace`
 included, run there unchanged.
 
 Those four are marked `[corpus-only]` in the *first* line of their help,
@@ -275,15 +275,15 @@ struct Cli {
 ```
 
 The subcommands fall into two groups. The literate verbs operate on
-documents in place: `tangle`, `check`, `affordances`, `sync`, `index`,
-`weave`, `list`, and `workspace`. The publication verbs operate on a
+documents in place: `tangle`, `check`, `affordances`, `icon`, `sync`,
+`index`, `weave`, `list`, and `workspace`. The publication verbs operate on a
 region: `weave-region` and `project-repo` are the two projection
 backends, `publish-repo` the pipeline that makes a projection public,
 and `receive-repo` the inbound door. Each variant's doc comment is its
 `--help` text, so the clap derive below is also the user-facing
 contract.
 
-<a name="chunk-command-enum"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [weave-region-command](#chunk-weave-region-command) · [project-repo-command](#chunk-project-repo-command) · [publish-repo-command](#chunk-publish-repo-command) · [receive-repo-command](#chunk-receive-repo-command) · [list-command](#chunk-list-command) · [workspace-command](#chunk-workspace-command)</sub>
+<a name="chunk-command-enum"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [weave-region-command](#chunk-weave-region-command) · [project-repo-command](#chunk-project-repo-command) · [publish-repo-command](#chunk-publish-repo-command) · [receive-repo-command](#chunk-receive-repo-command) · [list-command](#chunk-list-command) · [workspace-command](#chunk-workspace-command)</sub>
 
 ```rust {#command-enum file="src/main.rs"}
 #[derive(Subcommand)]
@@ -291,6 +291,7 @@ enum Command {
     <<tangle-command>>
     <<check-command>>
     <<affordances-command>>
+    <<icon-command>>
     <<sync-command>>
     <<index-command>>
     <<weave-command>>
@@ -303,7 +304,7 @@ enum Command {
 }
 ```
 
-Four of the verbs are the perceivable cue for an affordance a
+Five of the verbs are the perceivable cue for an affordance a
 publication of this crate claims for a human, and each declares that
 under its own heading: a signifier is recorded where the face lives,
 so the chapter that ships carries the cue with it
@@ -416,6 +417,51 @@ edges:
 Affordances {
     /// Paths to scan for folio/v1 documents
     paths: Vec<PathBuf>,
+},
+```
+
+
+### `x0k-tangle icon`
+
+Check every `svg x0k:icon` declaration under the paths against the
+icon profile, and, given a publication's palette, write each as its
+light and dark files: the affordances of [checking an icon against the
+profile](../../../decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md "x0k:affordance/check_an_icon_against_the_profile") and
+[showing it on a surface](../../../decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md "x0k:affordance/show_an_icon_on_a_surface"),
+from a shell. A drawing outside the profile is printed with the rule it
+broke and the element, and fails the run; the verb never redraws.
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-tangle-icon
+cue: x0k-tangle icon
+edges:
+  signifies:
+    - x0k:affordance/check_an_icon_against_the_profile
+    - x0k:affordance/show_an_icon_on_a_surface
+  presentedOn:
+    - x0k:surface/cli
+```
+
+<a name="chunk-icon-command"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#icon-command`</sub>
+
+```rust {#icon-command file="src/main.rs"}
+/// Check every `svg x0k:icon` declaration in the folio/v1 documents
+/// under the paths against the icon profile, and with `--out` write
+/// each as its light and dark files bound to a publication's palette.
+///
+/// A drawing outside the profile is printed with the rule it broke and
+/// the element, and fails the run; nothing is redrawn. `--out` needs
+/// `--palette`: the publication document whose envelope carries the
+/// `palette:` block the four paint roles are bound with.
+Icon {
+    /// Paths to scan for folio/v1 documents
+    paths: Vec<PathBuf>,
+    /// Directory to write `<stem>-light.svg` and `<stem>-dark.svg` into
+    #[arg(long, requires = "palette")]
+    out: Option<PathBuf>,
+    /// The publication document whose `palette:` binds the roles
+    #[arg(long, requires = "out")]
+    palette: Option<PathBuf>,
 },
 ```
 
@@ -682,7 +728,7 @@ is reserved for data (`index` and `weave` without an output path,
 projection fails to build or test, `receive-repo` when any change was
 refused.
 
-<a name="chunk-main-fn"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
+<a name="chunk-main-fn"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
 
 ```rust {#main-fn file="src/main.rs"}
 fn main() -> Result<()> {
@@ -696,6 +742,8 @@ fn main() -> Result<()> {
         <<dispatch-check>>
 
         <<dispatch-affordances>>
+
+        <<dispatch-icon>>
 
         <<dispatch-index>>
 
@@ -867,6 +915,44 @@ Command::Affordances { paths } => {
         eprintln!("{path}: skipped: {reason}");
     }
     println!("{}", serde_json::to_string_pretty(&report.records)?);
+}
+```
+
+
+`icon` prints each refusal under where it was declared, one rule per
+line as the checker names them, then one summary line; a refusal fails
+the run. Writing is the second half of the same verb rather than a verb
+of its own because a file is only ever written from an accepted
+drawing.
+
+<a name="chunk-dispatch-icon"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-icon`</sub>
+
+```rust {#dispatch-icon file="src/main.rs"}
+Command::Icon { paths, out, palette } => {
+    let report = x0k_tangle::faces::declared_icons(&paths)?;
+    for (path, reason) in &report.skipped {
+        eprintln!("{path}: skipped: {reason}");
+    }
+    for (place, refusal) in &report.refused {
+        eprintln!("{place}:\n{refusal}");
+    }
+    let mut written = 0;
+    if let (Some(out), Some(palette)) = (out, palette) {
+        let content = std::fs::read_to_string(&palette)
+            .with_context(|| format!("reading {}", palette.display()))?;
+        let palette = x0k_tangle::region_repo::envelope_palette(&content)?.ok_or_else(|| {
+            anyhow::anyhow!("{} carries no `palette:` in its envelope", palette.display())
+        })?;
+        written = x0k_tangle::faces::write_icon_files(&report, &palette, &out)?.len();
+    }
+    eprintln!(
+        "{} icon(s) checked, {} refused, {written} file(s) written",
+        report.accepted.len() + report.refused.len(),
+        report.refused.len()
+    );
+    if !report.refused.is_empty() {
+        std::process::exit(1);
+    }
 }
 ```
 

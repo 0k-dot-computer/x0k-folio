@@ -4,6 +4,54 @@
   <img alt="folio" src="docs/plate-light.svg">
 </picture>
 
+Paste this to the agent you work with:
+
+> Clone or read `https://github.com/0k-dot-computer/x0k-folio`, then read its
+> `AGENTS.md` and `INTEGRATING.md`. Tell me whether typed documents, checked
+> edges, and literate tangling would add value to my project, and where
+> concretely — which folder, which files. Then tell me what the first step
+> would be and what adopting it would cost.
+
+What comes back is a fit assessment against your own tree, not a pitch,
+because the agent reads the vocabulary and the procedure rather than this page.
+
+## Start here, with your agent
+
+Nobody does this by hand, and you are not meant to. The agent reads the
+vocabulary this repository ships and puts an envelope like this at the top of
+a document you already have:
+
+```yaml
+---
+x0k:
+  format: folio/v1
+  id: x0k:design/retry-budget
+  type: design
+  status: accepted
+  summary: Retries draw from a budget per caller; an exhausted budget is a signal, not a stall.
+  edges:
+    refined_by:
+      - x0k:architecture/retry-queue
+---
+```
+
+Then it runs the check, from a clone of this repository, against your folder:
+
+```sh
+cargo run -p x0k-tangle -- check ../myproject/docs/decisions
+```
+
+Two kinds of thing come back, and the agent keeps them apart when it reports
+to you. A **defect** fails the check: a `type` the format does not know, an id
+without its scheme, a predicate no shipped module declares. A **note** fails
+nothing: ``edge `refined_by` → `x0k:architecture/retry-queue` names no document
+here`` means the edge is well formed and its target does not exist yet. That is
+the first result, and it is the whole idea: your documents are nodes with typed
+edges, and the gaps are the next things worth writing. What each line of the
+envelope means, and where the tool stops short today, is in `INTEGRATING.md`.
+
+## What this is
+
 Organizations run on documents that are not interchangeable: a decision,
 specification, and design note each has a distinct role, lifecycle, and review
 path. In a directory of Markdown none of that is written where a program can
@@ -74,60 +122,6 @@ pays immediately instead of paying at the end or never. On top of that,
 enforcement: CI re-derives every generated file on each run and fails if what is
 committed is not byte-for-byte what the document says.
 
-## Start here, with your agent
-
-Nobody does this by hand, and you are not meant to. Point the agent you already
-work with — in your editor, in your terminal — at a clone of this repository and
-say what you want in your own words:
-
-> Read the AGENTS.md in this checkout of x0k-folio. Then type the documents in
-> `docs/decisions` of my project the way it describes, and tell me which of
-> their relationships point at documents I have not written yet.
-
-What the agent does with that is written down, not improvised: `AGENTS.md` here
-is a procedure, and "type a document" is one of its branches. The agent reads
-the vocabulary this repository ships, and for each of your documents puts an
-envelope like this at the top:
-
-```yaml
----
-x0k:
-  format: folio/v1
-  id: x0k:design/retry-budget
-  type: design
-  status: accepted
-  summary: Retries draw from a budget per caller; an exhausted budget is a signal, not a stall.
-  edges:
-    refined_by:
-      - x0k:architecture/retry-queue
----
-```
-
-Then it runs the check, from this repository, against your folder:
-
-```sh
-cargo run -p x0k-tangle -- check ../myproject/docs/decisions
-```
-
-Two kinds of thing come back, and the agent keeps them apart when it reports
-to you. A **defect** fails the check: a `type` the format does not know, an id
-without its scheme, a predicate no shipped module declares. A **note** fails
-nothing: ``edge `refined_by` → `x0k:architecture/retry-queue` names no document
-here`` means the edge is well formed and its target does not exist yet. So what
-you hear back is a sentence like *six documents are typed; two of their edges
-name decisions you have not written, the retry queue and the caller budget*.
-That is the first result, and it is the whole idea: your documents are nodes
-with typed edges, and the gaps are the next things worth writing.
-
-For when you read what the agent wrote: `type` names what the document is —
-`commitment`, `architecture`, or `design` for a decision, `implementation` for
-one that tangles code, `wiki`, `manuscript`, `publication` for the rest — and
-`x0k-ontology/ontology/modules/document.ttl` defines each kind and each
-predicate in one `rdfs:comment` line, which is also where the agent looked.
-`status` is `proposed`, `accepted`, or `superseded`. The id carries the `x0k:`
-scheme because that is where the format was born; the parser admits no other
-yet, which is a limit of the tool and not a claim on your document.
-
 ## How to read the implementation
 
 Nobody reads this front to back. You come to it to change one thing — fix how
@@ -137,7 +131,9 @@ the chapter that owns that thing, enough of its neighbours to work on it
 safely, and the ideas it rests on. The rest of this section is built for that:
 first what the repository can do, each capability linking to its own page —
 the declaration, who it is for, the cues that reach it, the chapters that
-realize it, and the tests that prove it, bodies and all; then every chapter it
+realize it, and the tests that prove it, bodies and all — with the mark
+declared beside each capability, and the same ring family beside every
+status and every test; then every chapter it
 ships, grouped by what the chapter is about rather than which crate its code
 lands in, each group naming the concepts a reader needs first — so the whole
 of the implementation is on this page and the part you need is one link away.
@@ -152,15 +148,17 @@ a document of the corpus lands on the copy shipped here, the original name
 kept as the link's title. The corpus document is the source, and the projection
 records that, so an edit made here can be routed back to it. Pointing an agent
 at the repository is a first-class way in — the typed envelopes and the shipped
-vocabulary are much of what makes that work — but the map below is for you
-and your agent deciding where to look.
+vocabulary are much of what makes that work — but the map below is for a
+person deciding where to look.
 
 **What it can do.** Each capability is declared once, in the design that owns it, and has a page projected from that declaration: who it is for, the cues that reach it, the chapters that realize it, and the tests that prove it, bodies and all.
 
-- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/status-proven-dark.svg"><img alt="proven" src="affordances/status-proven-light.svg" height="16"></picture> **[Project source code out of a document](decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)** — for a person, an agent
-- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-dark.svg"><img alt="for a person" src="affordances/for-a-person-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/status-proven-dark.svg"><img alt="proven" src="affordances/status-proven-light.svg" height="16"></picture> **[Read a document as the woven artifact](decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)** — for a person
-- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/status-proven-dark.svg"><img alt="proven" src="affordances/status-proven-light.svg" height="16"></picture> **[Check a document against its vocabulary](decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)** — for a person, an agent
-- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="affordances/for-a-person-and-an-agent-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/status-proven-dark.svg"><img alt="proven" src="affordances/status-proven-light.svg" height="16"></picture> **[Read an affordance out of a document](decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md)** — for a person, an agent
+- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/tangle-source-from-a-document-dark.svg"><img alt="Project source code out of a document" src="affordances/tangle-source-from-a-document-light.svg" height="20"></picture> **[Project source code out of a document](decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)** — `cli` `x0k-tangle tangle`, `sdk` `tangle_document` · proven
+- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/weave-a-document-dark.svg"><img alt="Read a document as the woven artifact" src="affordances/weave-a-document-light.svg" height="20"></picture> **[Read a document as the woven artifact](decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)** — `cli` `x0k-tangle weave`, `sdk` `weave_chapter`, `sdk` `weave_html` · proven
+- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/check-a-document-against-shipped-vocabulary-dark.svg"><img alt="Check a document against its vocabulary" src="affordances/check-a-document-against-shipped-vocabulary-light.svg" height="20"></picture> **[Check a document against its vocabulary](decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)** — `cli` `x0k-tangle check`, `sdk` `check_envelope` · proven
+- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/read-declared-affordances-dark.svg"><img alt="Read an affordance out of a document" src="affordances/read-declared-affordances-light.svg" height="20"></picture> **[Read an affordance out of a document](decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md)** — `cli` `x0k-tangle affordances`, `sdk` `extract_from_markdown` · proven
+- **[Check an icon against the profile](decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md)** — `cli` `x0k-tangle icon`, `sdk` `check` · proven
+- **[Show an icon on any surface](decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md)** — `cli` `x0k-tangle icon`, `sdk` `files` · proven
 
 **What it ships.** Every chapter, grouped by what it is about rather than which crate its code lands in; under a group, *rests on* names the concepts a reader needs first.
 
@@ -235,7 +233,7 @@ The plugin contract every projection goes through, identity tangling as one plug
 - [Identity tangling as a plugin](knowledge/implementation/tangle/identity-pipeline.md) — The plugin that makes the `tangle:` block ordinary: a synthesized declaration routed through the same loop as every other codegen, so identity tangling keeps no private code path.
 - [The pipeline dispatcher](knowledge/implementation/tangle/dispatcher.md) — The three entry points — one document, a directory, the whole workspace — and the loop between them that resolves inputs, runs each declared pipeline, writes outputs and records the sidecar.
 - [x0k-tangle: the crate and its CLI](knowledge/implementation/tangle/crate.md) — The crate's contract rather than a mechanism — the module list and re-exports that say what a consumer may name, and the plugin-less CLI that puts those verbs in a shell.
-- [The faces behind `check` and `affordances`](knowledge/implementation/tangle/cli-faces.md) — The two verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, and an affordance declaration read out as data — each proven by running the binary the repository ships.
+- [The faces behind `check`, `affordances` and `icon`](knowledge/implementation/tangle/cli-faces.md) — The three verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, an affordance declaration read out as data, and an icon declaration checked against the profile and written bound to a publication's palette — each proven by running the binary the repository ships.
 
 ### Back the other way
 
@@ -271,6 +269,16 @@ A publication names a region of the graph; these chapters turn one into a reader
 - [Weaving a chapter for a forge](knowledge/implementation/tangle/region-gfm.md) — A chapter woven for a forge's renderer — a caption over every named fence, x0k: links rewritten to shipped paths — under two tested invariants, the same tangle and line-for-line inversion; and an affordance's section woven with the evidence its record holds.
 - [Publishing a projected repository](knowledge/implementation/tangle/publishing.md) — The stages between a repository-shaped artifact and a public one, arranged so everything reversible runs by default and the irreversible acts — `cargo publish`, a push to a public remote — sit behind one explicit flag.
 - [Receiving a contribution from a projected repository](knowledge/implementation/tangle/receiving.md) — The door the world comes back through: a contributor's clone read as patches against the corpus files it was projected from, because a contribution is a proposal against the graph and never a merge into the projection.
+
+### One icon language
+
+The small drawing language every mark on these pages is declared in: a declaration read into a tree, refused by rule or accepted, its four paint roles bound to a palette, and written in the forms a surface consumes.
+
+- [x0k-icon: the crate](knowledge/implementation/icon/crate.md) — The crate's contract rather than a mechanism — the four chapters composed, the one face that checks a declaration end to end, the design's worked-example icons carried as fixtures every chapter tests against, and what a consumer may name.
+- [Reading a declaration](knowledge/implementation/icon/parse.md) — Reading an icon-profile declaration into its typed form — the two grids and their numbers, the four roles, the six elements and their geometry — permissive enough to carry what the checker will refuse, so that every refusal can name its rule and its element.
+- [The checker](knowledge/implementation/icon/validate.md) — The checker: every refusal rule of the icon profile read against a parsed declaration in one pass, each broken rule reported as a typed defect naming the rule and the element, and an accepted icon made a type the rest of the crate can trust.
+- [Binding roles](knowledge/implementation/icon/bind.md) — Binding an accepted icon's four roles to strings — a publication's palette block read by serde, one colour per role per scheme; the theme's CSS variables; or the role names themselves — so the emitter writes one form of SVG whatever a surface resolves a paint to.
+- [Writing an icon out](knowledge/implementation/icon/emit.md) — One writer for every textual form of an icon — the normalized declaration, a standalone SVG file per scheme, inline SVG over CSS variables, and a symbol sprite of many — deterministic to the byte, with a fixed attribute order and one way to write a number, so that a declaration round-trips and two builds agree.
 
 ### Vocabulary modules
 

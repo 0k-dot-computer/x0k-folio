@@ -1,0 +1,17 @@
+{
+  "source": "knowledge/implementation/icon/bind.md",
+  "source_hash": "21c2762b8ec4f9ba",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "d10de941048aba9e",
+      "outputs": [
+        {
+          "path": "x0k-icon/src/bind.rs",
+          "hash": "6397342c320ce963"
+        }
+      ]
+    }
+  ]
+}

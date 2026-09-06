@@ -33,6 +33,12 @@ x0k-folio = { path = "../x0k-folio" , version = "0.1.0" }
 # Shared renderer-agnostic syntax tokenizer; weave uses it to emit
 # highlighted <span class="tok-*"> spans in the HTML output.
 x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
+# The icon profile's one implementation: the repository projector reads
+# every mark it shows — an affordance's own, the actor and status marks —
+# from its `svg x0k:icon` declaration through this crate's checker, binds
+# it to the publication's palette, and writes the per-scheme files. Nothing
+# in this crate draws a mark.
+x0k-icon = { path = "../x0k-icon" , version = "0.1.0" }
 
 pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
 # TeX → MathML at weave time. Browsers (the Chromium-only 0k.computer target)
@@ -43,6 +49,9 @@ tree-sitter-rust = "0.23"
 
 serde = { workspace = true }
 serde_json = { workspace = true }
+# A publication's `palette:` block is read out of its envelope as YAML into
+# x0k-icon's own palette type.
+serde_norway = "0.9"
 anyhow = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }

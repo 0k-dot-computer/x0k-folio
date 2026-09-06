@@ -1,13 +1,16 @@
 {
-  "corpus_commit": "7ec0b5e694f7be8a850980b3f2fa96043e838030",
-  "corpus_rev": "vrxstkpyxkoyovpykspxpvookyporzvv",
+  "corpus_commit": "f45a6668ffa620976602a3a90af60977286f94a8",
+  "corpus_rev": "klxqvtpznzqnqrxkspproyyzwowzozkr",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
     "x0k-syntax",
-    "x0k-tangle"
+    "x0k-tangle",
+    "x0k-icon"
   ],
   "documents": {
+    "x0k:design/icon-profile#check-an-icon-against-the-profile": "decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md",
+    "x0k:design/icon-profile#show-an-icon-on-any-surface": "decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md",
     "x0k:design/literate-programming#project-source-code-out-of-a-document": "decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md",
     "x0k:design/literate-programming#read-a-document-as-the-woven-artifact": "decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md",
     "x0k:design/publish-a-region-as-a-repository#check-a-document-against-its-vocabulary": "decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md",
@@ -29,7 +32,8 @@
   ],
   "excluded": [
     "x0k-surface-build",
-    "x0k-types"
+    "x0k-types",
+    "x0k-ui-draw"
   ],
   "excluded_docs": [
     "x0k:implementation/ontology/admission-grant",
@@ -57,6 +61,11 @@
     "knowledge/implementation/folio/segmentation.md",
     "knowledge/implementation/folio/structural.md",
     "knowledge/implementation/folio/transclusion.md",
+    "knowledge/implementation/icon/bind.md",
+    "knowledge/implementation/icon/crate.md",
+    "knowledge/implementation/icon/emit.md",
+    "knowledge/implementation/icon/parse.md",
+    "knowledge/implementation/icon/validate.md",
     "knowledge/implementation/ontology/concept-facts.md",
     "knowledge/implementation/ontology/module-bootstrap.md",
     "knowledge/implementation/ontology/views.md",
@@ -103,6 +112,8 @@
     "decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md": "decisions/design/corpus/literate-programming.md",
     "decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md": "decisions/design/corpus/publish-a-region-as-a-repository.md",
     "decisions/design/corpus/publish-a-region-as-a-repository/read-an-affordance-out-of-a-document.md": "decisions/design/corpus/publish-a-region-as-a-repository.md",
+    "decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md": "decisions/design/presentation/icon-profile.md",
+    "decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md": "decisions/design/presentation/icon-profile.md",
     "knowledge/implementation/folio/canonical-patch.md": "knowledge/implementation/folio/canonical-patch.md",
     "knowledge/implementation/folio/checking.md": "knowledge/implementation/folio/checking.md",
     "knowledge/implementation/folio/colophon.md": "knowledge/implementation/folio/colophon.md",
@@ -115,6 +126,11 @@
     "knowledge/implementation/folio/segmentation.md": "knowledge/implementation/folio/segmentation.md",
     "knowledge/implementation/folio/structural.md": "knowledge/implementation/folio/structural.md",
     "knowledge/implementation/folio/transclusion.md": "knowledge/implementation/folio/transclusion.md",
+    "knowledge/implementation/icon/bind.md": "knowledge/implementation/icon/bind.md",
+    "knowledge/implementation/icon/crate.md": "knowledge/implementation/icon/crate.md",
+    "knowledge/implementation/icon/emit.md": "knowledge/implementation/icon/emit.md",
+    "knowledge/implementation/icon/parse.md": "knowledge/implementation/icon/parse.md",
+    "knowledge/implementation/icon/validate.md": "knowledge/implementation/icon/validate.md",
     "knowledge/implementation/ontology/concept-facts.md": "knowledge/implementation/ontology/concept-facts.md",
     "knowledge/implementation/ontology/module-bootstrap.md": "knowledge/implementation/ontology/module-bootstrap.md",
     "knowledge/implementation/ontology/views.md": "knowledge/implementation/ontology/views.md",
@@ -148,6 +164,26 @@
     "knowledge/wiki/loro.md": "knowledge/wiki/loro.md"
   },
   "proofs": {
+    "x0k:test/x0k-icon/src/bind.rs::a_fifth_role_or_a_missing_scheme_does_not_read": "passed",
+    "x0k:test/x0k-icon/src/bind.rs::the_css_binding_writes_variables_and_the_name_binding_writes_roles": "passed",
+    "x0k:test/x0k-icon/src/bind.rs::the_publications_palette_block_reads_as_written": "passed",
+    "x0k:test/x0k-icon/src/bind.rs::the_tangle_icon_binds_to_the_folio_palette": "passed",
+    "x0k:test/x0k-icon/src/emit.rs::a_label_is_escaped_where_xml_needs_it": "passed",
+    "x0k:test/x0k-icon/src/emit.rs::a_terse_declaration_normalizes_to_the_canonical_form": "passed",
+    "x0k:test/x0k-icon/src/emit.rs::inline_svg_writes_the_roles_as_variables": "passed",
+    "x0k:test/x0k-icon/src/emit.rs::the_per_scheme_files_differ_only_in_their_colours": "passed",
+    "x0k:test/x0k-icon/src/emit.rs::the_sprite_holds_one_symbol_per_icon_under_its_stem": "passed",
+    "x0k:test/x0k-icon/src/emit.rs::the_stem_is_the_entity_ids_last_segment_in_file_form": "passed",
+    "x0k:test/x0k-icon/src/emit.rs::the_tangle_icon_normalizes_to_the_designs_bytes": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::a_corner_past_the_safe_area_is_refused_by_rule_11": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::a_literal_colour_is_refused_by_rule_5": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::a_page_over_budget_is_refused_by_rule_12": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::a_paint_inherited_from_a_group_counts_as_painted": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::a_second_icon_on_one_grid_is_refused_by_rule_15": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::a_translation_moves_the_safe_area_check_with_its_subtree": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::each_rule_has_a_drawing_that_breaks_only_it": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::every_broken_rule_is_reported_in_one_pass": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::the_tangle_icon_is_accepted": "passed",
     "x0k:test/x0k-tangle/src/pipeline_runner.rs::identity_pipeline_registered_in_default_registry": "passed",
     "x0k:test/x0k-tangle/src/pipeline_runner.rs::tangle_document_errors_on_unknown_kind": "passed",
     "x0k:test/x0k-tangle/src/pipeline_runner.rs::tangle_document_passes_through_when_no_blocks": "passed",
@@ -188,13 +224,17 @@
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_names_an_undeclared_predicate_and_fails": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_notes_an_edge_out_of_the_set_and_passes": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_passes_an_agent_only_claim_with_no_signifier": "passed",
-    "x0k:test/x0k-tangle/tests/cli_faces.rs::check_reports_an_envelope_that_does_not_parse": "passed"
+    "x0k:test/x0k-tangle/tests/cli_faces.rs::check_reports_an_envelope_that_does_not_parse": "passed",
+    "x0k:test/x0k-tangle/tests/cli_faces.rs::icon_accepts_a_declaration_in_the_profile": "passed",
+    "x0k:test/x0k-tangle/tests/cli_faces.rs::icon_refuses_a_drawing_by_rule_naming_the_element_and_fails": "passed",
+    "x0k:test/x0k-tangle/tests/cli_faces.rs::icon_writes_each_declaration_as_its_light_and_dark_files": "passed"
   },
   "proofs_run": true,
   "publication_uri": "x0k:publication/x0k-folio",
   "relicensed_from": {
     "declared": {
       "x0k-folio": "LicenseRef-Proprietary",
+      "x0k-icon": "LicenseRef-Proprietary",
       "x0k-ontology": "LicenseRef-Proprietary",
       "x0k-syntax": "LicenseRef-Proprietary",
       "x0k-tangle": "LicenseRef-Proprietary"

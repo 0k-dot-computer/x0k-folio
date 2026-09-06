@@ -25,13 +25,13 @@ edges:
     - x0k:software-module/x0k-folio
 ```
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/for-a-person-and-an-agent-dark.svg"><img alt="for a person and an agent" src="../../../../affordances/for-a-person-and-an-agent-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/status-proven-dark.svg"><img alt="proven" src="../../../../affordances/status-proven-light.svg" height="16"></picture> *proven* · for a person, an agent · reachable through `cli` `x0k-tangle tangle`, `sdk` `tangle_document`
+<picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/actor-dark.svg"><img alt="Actor" src="../../../../affordances/actor-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/proven-dark.svg"><img alt="proven" src="../../../../affordances/proven-light.svg" height="16"></picture> *proven* · for a person, an agent · reachable through `cli` `x0k-tangle tangle`, `sdk` `tangle_document`
 
 *realized in* [x0k-tangle: the crate and its CLI](../../../../knowledge/implementation/tangle/crate.md) · [The pipeline dispatcher](../../../../knowledge/implementation/tangle/dispatcher.md)
 
 *proven by* each test below, as its chapter tangles it and as it ran at projection.
 
-<details><summary><code>tangle_document_runs_registered_pipeline</code> · passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
+<details><summary><code>tangle_document_runs_registered_pipeline</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
 
 ```rust
 #[test]
@@ -86,7 +86,7 @@ foo = "bar"
 
 </details>
 
-<details><summary><code>tangle_document_errors_on_unknown_kind</code> · passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
+<details><summary><code>tangle_document_errors_on_unknown_kind</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
 
 ```rust
 #[test]
@@ -118,7 +118,7 @@ x = 1
 
 </details>
 
-<details><summary><code>tangle_document_passes_through_when_no_blocks</code> · passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
+<details><summary><code>tangle_document_passes_through_when_no_blocks</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
 
 ```rust
 #[test]
@@ -140,7 +140,7 @@ fn tangle_document_passes_through_when_no_blocks() {
 
 </details>
 
-<details><summary><code>identity_pipeline_registered_in_default_registry</code> · passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
+<details><summary><code>identity_pipeline_registered_in_default_registry</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
 
 ```rust
 #[test]
@@ -159,7 +159,7 @@ fn identity_pipeline_registered_in_default_registry() {
 
 </details>
 
-<details><summary><code>tangle_document_routes_tangle_block_through_identity_plugin</code> · passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
+<details><summary><code>tangle_document_routes_tangle_block_through_identity_plugin</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
 
 ```rust
 #[test]
@@ -227,7 +227,7 @@ hello world
 
 </details>
 
-<details><summary><code>tangle_document_routes_per_language_roots</code> · passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
+<details><summary><code>tangle_document_routes_per_language_roots</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
 
 ```rust
 #[test]
@@ -288,3 +288,16 @@ let main = body
 
 </details>
 
+
+Its mark, in the icon profile: a document with its fenced block sliding
+out to the right, as a file.
+
+```svg x0k:icon
+<svg viewBox="0 0 16 16">
+  <path d="M2.5 1.5 H8.5 L11 4 V14.5 H2.5 Z" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M8.5 1.5 V4 H11" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M4.5 6.5 H9 M4.5 8.5 H7" fill="none" stroke="line" stroke-width="1"/>
+  <rect x="6.5" y="9.5" width="7" height="4" rx="0.5" fill="paper" stroke="ink" stroke-width="1.5"/>
+  <path d="M8 11.5 H12" fill="none" stroke="ink" stroke-width="1"/>
+</svg>
+```

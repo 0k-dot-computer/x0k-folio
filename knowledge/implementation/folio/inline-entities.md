@@ -106,8 +106,11 @@ bare string there is malformed in a way any reader can see.
 //!   `title:` field; the heading provides it.
 //! - **All prose under the heading until the next heading at any level =
 //!   description.** The YAML block itself is excised from it.
-//! - **Exactly one `yaml x0k:<type>` block per section.** A second is an
-//!   error against that block, not against the section.
+//! - **Exactly one block per class per section.** A second of the same
+//!   class is an error against that block, not against the section. An
+//!   icon beside an affordance is two classes, and admitted; two icons in
+//!   one section are bounded by the icon profile's own rule (one per
+//!   grid), which is the checker's to apply and not this walk's.
 //! - **No enclosing heading** is an error — an inline entity needs a
 //!   title, and the heading is where it lives.
 //!
@@ -118,7 +121,9 @@ bare string there is malformed in a way any reader can see.
 //! Split on ASCII whitespace, token 0 must be `yaml` (the content format,
 //! so editors highlight it) and token 1 must be `x0k:<type>` (the entity
 //! marker). Nothing else is accepted; the info string is shaped, not
-//! free-form.
+//! free-form. One class is drawn rather than written: an icon's block is
+//! `svg x0k:icon` (`x0k:design/icon-profile`), and `svg` is the content
+//! format admitted for that class alone.
 //!
 //! HTML bodies use the equivalent `<pre><code class="language-yaml"
 //! data-x0k-type="<type>">` shape. This module parses markdown only.
@@ -141,6 +146,7 @@ use tracing::warn;
 
 use crate::entity_id::EntityId;
 use crate::structural_block::FenceInfo;
+use crate::transclusion::heading_slug;
 ```
 
 ## The record
@@ -154,6 +160,10 @@ them was wrong.
 <a name="chunk-inline-entity"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#inline-entity`</sub>
 
 ```rust {#inline-entity}
+/// The one class whose block is a drawing: `svg x0k:icon`, in the icon
+/// profile. Its id is the section's, `x0k:icon/<heading anchor>`.
+pub const ICON_CLASS: &str = "icon";
+
 /// A single inline entity extracted from a parent document's body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InlineEntity {
@@ -164,7 +174,9 @@ pub struct InlineEntity {
     /// Prose under that heading, with the YAML block excised. Trimmed.
     pub description: String,
     /// The YAML mapping as authored. Top-level only — nested maps
-    /// (`edges:`) are flattened by whoever emits facts.
+    /// (`edges:`) are flattened by whoever emits facts. An icon's block
+    /// is not YAML: its mapping is synthesized, one key `svg` carrying
+    /// the drawing as written.
     pub yaml: serde_norway::Mapping,
     /// Placement demands the entity declared, **as declared**. Shape is
     /// checked (each is a mapping); meaning is not. Interpreting these
@@ -337,20 +349,38 @@ it is `None` for the same reason a fence with no marker at all is, which
 is the point: there is one question, asked one way, with no flag beside
 it for this module to forget.
 
+The language is the one place the grammar has two answers. Every
+declared entity is written in YAML except an icon, which is drawn: the
+[icon profile](x0k:design/icon-profile) declares a mark as an
+`svg x0k:icon` block in the section of the thing it depicts, so `svg` is
+admitted for that class and refused for every other, and `yaml` is
+refused for it. The pairing is checked here, at the fence, so a block
+that pairs them wrongly is not a block at all rather than a record with
+a body the wrong shape.
+
 <a name="chunk-info-string"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#info-string`</sub>
 
 ```rust {#info-string}
 /// Parse a fence info string into `Some(marker_class)` when it matches
-/// `yaml x0k:<type>`, else `None`. Whitespace-insensitive between the
-/// tokens; case-insensitive on `yaml`; trailing tokens are refused; an
+/// `yaml x0k:<type>` — or `svg x0k:icon`, the one class that is drawn —
+/// else `None`. Whitespace-insensitive between the tokens;
+/// case-insensitive on the language; trailing tokens are refused; an
 /// illustrative marker (`x0k:!<type>`) declares nothing and is refused
 /// with it.
 fn parse_info_string(info: &str) -> Option<String> {
     let carrier = FenceInfo::parse(info);
-    if !carrier.language()?.eq_ignore_ascii_case("yaml") || carrier.info().is_some() {
+    let language = carrier.language()?;
+    if carrier.info().is_some() {
         return None;
     }
-    carrier.x0k_type().map(str::to_string)
+    let class = carrier.x0k_type()?;
+    let drawn = class == ICON_CLASS;
+    let admitted = if drawn {
+        language.eq_ignore_ascii_case("svg")
+    } else {
+        language.eq_ignore_ascii_case("yaml")
+    };
+    admitted.then(|| class.to_string())
 }
 ```
 
@@ -419,7 +449,8 @@ pub fn extract_from_markdown(
     }
     struct PendingBlock {
         marker_class: String,
-        yaml: String,
+        /// The block's text as authored: YAML, or an icon's SVG.
+        text: String,
         block_start: usize,
         block_end: usize,
     }
@@ -429,7 +460,7 @@ pub fn extract_from_markdown(
 
     let mut active_marker: Option<String> = None;
     let mut active_block_byte_start: usize = 0;
-    let mut active_yaml = String::new();
+    let mut active_text = String::new();
 
     let mut in_heading: bool = false;
     let mut active_heading_buf = String::new();
@@ -466,18 +497,18 @@ pub fn extract_from_markdown(
                     } else {
                         active_marker = Some(marker);
                         active_block_byte_start = range.start;
-                        active_yaml.clear();
+                        active_text.clear();
                     }
                 }
             }
-            Event::Text(t) if active_marker.is_some() => active_yaml.push_str(&t),
+            Event::Text(t) if active_marker.is_some() => active_text.push_str(&t),
             Event::End(TagEnd::CodeBlock) => {
                 let Some(marker_class) = active_marker.take() else {
                     continue;
                 };
                 blocks.push(PendingBlock {
                     marker_class,
-                    yaml: std::mem::take(&mut active_yaml),
+                    text: std::mem::take(&mut active_text),
                     block_start: active_block_byte_start,
                     block_end: range.end,
                 });
@@ -507,28 +538,37 @@ pub fn extract_from_markdown(
             None => body.len(),
         };
 
-        // Earlier qualifying blocks inside the same section make this one
-        // the second, which is the error case.
-        let section_block_count = match enclosing {
-            Some(h) => blocks
+        let section_prose_start = enclosing.map(|h| h.end).unwrap_or(0);
+        let in_section =
+            |b: &&PendingBlock| b.block_start >= section_prose_start && b.block_start < section_end;
+        // An earlier block of the same class inside the same section makes
+        // this one the second, which is the error case. Icons are bounded
+        // by the profile instead — one per grid — so they are not counted.
+        let section_block_count = if block.marker_class == ICON_CLASS {
+            0
+        } else {
+            blocks
                 .iter()
                 .take(block_idx)
-                .filter(|prev| prev.block_start >= h.end && prev.block_start < section_end)
-                .count(),
-            None => 0,
+                .filter(in_section)
+                .filter(|prev| prev.marker_class == block.marker_class)
+                .count()
         };
+        // Every qualifying block in the section leaves the description,
+        // not only this one: the prose is what is left when the
+        // declarations are lifted out.
+        let block_spans: Vec<(usize, usize)> =
+            blocks.iter().filter(in_section).map(|b| (b.block_start, b.block_end)).collect();
 
-        let section_prose_start = enclosing.map(|h| h.end).unwrap_or(0);
         if let Some(record) = finalize_block(
             &block.marker_class,
-            &block.yaml,
+            &block.text,
             enclosing.map(|h| h.text.as_str()),
             section_block_count,
             body,
             section_prose_start,
             section_end,
-            block.block_start,
-            block.block_end,
+            &block_spans,
         ) {
             out.push(record);
         }
@@ -555,14 +595,13 @@ one fact is how they come to disagree.
 #[allow(clippy::too_many_arguments)]
 fn finalize_block(
     marker_class: &str,
-    yaml_text: &str,
+    text: &str,
     heading: Option<&str>,
     section_block_count: usize,
     body: &str,
     section_prose_start: usize,
     section_prose_end: usize,
-    block_byte_start: usize,
-    block_byte_end: usize,
+    block_spans: &[(usize, usize)],
 ) -> Option<Result<InlineEntity, InlineEntityError>> {
     let heading_text = match heading {
         Some(h) if !h.is_empty() => h,
@@ -580,6 +619,13 @@ fn finalize_block(
         }));
     }
 
+    let description = section_description(body, section_prose_start, section_prose_end, block_spans);
+
+    if marker_class == ICON_CLASS {
+        return Some(Ok(icon_record(text, heading_text, description)));
+    }
+
+    let yaml_text = text;
     let invalid_yaml = |reason: String| InlineEntityError::InvalidYaml {
         marker_class: marker_class.to_string(),
         heading: heading_text.to_string(),
@@ -652,14 +698,6 @@ fn finalize_block(
             Err(e) => return Some(Err(e)),
         };
 
-    let description = section_description(
-        body,
-        section_prose_start,
-        section_prose_end,
-        block_byte_start,
-        block_byte_end,
-    );
-
     Some(Ok(InlineEntity {
         uri,
         title: heading_text.to_string(),
@@ -671,35 +709,73 @@ fn finalize_block(
 }
 ```
 
-The description is the section with a hole in it, and the two remaining
-fragments are joined by a blank line so the result reads as markdown
-rather than as two paragraphs run together.
+An icon has no fields to check. The profile's rules — the grid, the
+paints, the budget — are the checker's (`x0k-icon`), applied by whoever
+shows the mark, and this module hands the drawing over as written. What
+it does decide is the identity: the icon depicts the thing its section
+declares, and the edge is the embedding, so the record's id is the
+section's own: `x0k:icon/<anchor>`, the heading slugged by the same
+rule a transclusion reference and a publication's section selector
+spell it with ([`transclusion.md`](transclusion.md)). A consumer that
+knows the section's entity — a projector joining the icon to the
+affordance declared beside it — names the outputs after that entity, as
+the profile asks; a consumer that knows only the section has a name that
+is still stable and still the section's.
+
+<a name="chunk-icon-record"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#icon-record`</sub>
+
+```rust {#icon-record}
+/// The record of an `svg x0k:icon` block: the drawing under one `svg`
+/// key, the section's heading as the title, and an id derived from the
+/// heading — the entity the icon depicts is the section's, implicit in
+/// the embedding as `definedIn` is.
+fn icon_record(svg: &str, heading: &str, description: String) -> InlineEntity {
+    let uri: EntityId = format!("x0k:{ICON_CLASS}/{}", heading_slug(heading))
+        .parse()
+        .expect("a heading slug is non-empty and carries no whitespace");
+    let mut yaml = serde_norway::Mapping::new();
+    yaml.insert("svg".into(), serde_norway::Value::String(svg.to_string()));
+    InlineEntity {
+        uri,
+        title: heading.to_string(),
+        description,
+        yaml,
+        requires_resources: Vec::new(),
+        marker_class: ICON_CLASS.to_string(),
+    }
+}
+```
+
+The description is the section with holes in it — one per declaring
+block, so an affordance's prose does not carry the icon drawn beside it
+— and the remaining fragments are joined by blank lines so the result
+reads as markdown rather than as paragraphs run together.
 
 <a name="chunk-description"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#description`</sub>
 
 ```rust {#description}
-/// Section prose with the YAML block's span excised. Prose before and
-/// after the block are both kept — the corpus writes it both ways — and
-/// rejoined with a blank line.
+/// Section prose with every declaring block's span excised. Prose before,
+/// between and after the blocks is all kept — the corpus writes it every
+/// way — and rejoined with blank lines.
 fn section_description(
     body: &str,
     section_prose_start: usize,
     section_prose_end: usize,
-    block_byte_start: usize,
-    block_byte_end: usize,
+    block_spans: &[(usize, usize)],
 ) -> String {
-    let pre = body
-        .get(section_prose_start..block_byte_start)
-        .unwrap_or("");
-    let post = body.get(block_byte_end..section_prose_end).unwrap_or("");
-    let mut description = String::with_capacity(pre.len() + post.len() + 2);
-    description.push_str(pre.trim());
-    let post_trimmed = post.trim();
-    if !description.is_empty() && !post_trimmed.is_empty() {
-        description.push_str("\n\n");
+    let mut fragments: Vec<&str> = Vec::new();
+    let mut cursor = section_prose_start;
+    for &(start, end) in block_spans {
+        fragments.push(body.get(cursor..start).unwrap_or(""));
+        cursor = end;
     }
-    description.push_str(post_trimmed);
-    description.trim().to_string()
+    fragments.push(body.get(cursor..section_prose_end).unwrap_or(""));
+    fragments
+        .iter()
+        .map(|f| f.trim())
+        .filter(|f| !f.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 ```
 
@@ -1213,6 +1289,71 @@ status: wip
         assert!(extract_from_markdown(&illustrating, &allowed_set()).is_empty());
     }
 
+    // The icon profile's carried example: an affordance with its mark
+    // declared beside it. Two records from one section — the affordance,
+    // and an icon whose id is the section's and whose `svg` is the
+    // drawing as written — and neither description carries the other's
+    // block.
+    #[test]
+    fn an_icon_is_declared_beside_the_thing_it_depicts() {
+        let body = "### Tangle a document\n\nI project code out of a document.\n\n```yaml x0k:affordance\nid: x0k:affordance/tangle\nactors: [human]\n```\n\nIts mark: a document with a block sliding out.\n\n```svg x0k:icon\n<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n```\n\nAfter both.\n";
+        let mut allowed = allowed_set();
+        allowed.insert(ICON_CLASS.to_string());
+        let results: Vec<InlineEntity> = extract_from_markdown(body, &allowed)
+            .into_iter()
+            .map(|r| r.expect("both records parse"))
+            .collect();
+        assert_eq!(results.len(), 2);
+        let affordance = &results[0];
+        let icon = &results[1];
+        assert_eq!(affordance.uri.to_string(), "x0k:affordance/tangle");
+        assert_eq!(icon.uri.to_string(), "x0k:icon/tangle-a-document");
+        assert_eq!(icon.marker_class, ICON_CLASS);
+        assert_eq!(icon.title, "Tangle a document");
+        assert_eq!(
+            yaml_get(&icon.yaml, "svg"),
+            Some(&serde_norway::Value::String(
+                "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n".to_string()
+            ))
+        );
+        let expected = "I project code out of a document.\n\nIts mark: a document with a block sliding out.\n\nAfter both.";
+        assert_eq!(affordance.description, expected, "the icon's drawing is not the affordance's prose");
+        assert_eq!(icon.description, expected);
+    }
+
+    // The language and the class are paired at the fence: `svg` is for
+    // the icon and nothing else, and an icon is not written in YAML. Two
+    // icons in one section are the profile's business, not this walk's.
+    #[test]
+    fn svg_is_admitted_for_the_icon_class_alone() {
+        assert_eq!(parse_info_string("svg x0k:icon"), Some("icon".to_string()));
+        assert_eq!(parse_info_string("SVG x0k:icon"), Some("icon".to_string()));
+        assert_eq!(parse_info_string("yaml x0k:icon"), None);
+        assert_eq!(parse_info_string("svg x0k:affordance"), None);
+        assert_eq!(parse_info_string("svg x0k:!icon"), None);
+        assert_eq!(parse_info_string("svg x0k:icon extra"), None);
+
+        let body = "### Both grids\n\n```svg x0k:icon\n<svg viewBox=\"0 0 16 16\"/>\n```\n\n```svg x0k:icon\n<svg viewBox=\"0 0 24 24\"/>\n```\n";
+        let allowed: HashSet<String> = HashSet::from([ICON_CLASS.to_string()]);
+        let results = extract_from_markdown(body, &allowed);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(Result::is_ok), "two icons are two records: {results:?}");
+    }
+
+    // A second block of the same class is still the error it was; a block
+    // of another class beside it is not.
+    #[test]
+    fn one_block_per_class_per_section() {
+        let body = "### Authenticate\n\n```yaml x0k:affordance\nid: x0k:affordance/authenticate\n```\n\n```yaml x0k:signifier\nid: x0k:signifier/login\n```\n\n```yaml x0k:affordance\nid: x0k:affordance/authenticate_again\n```\n";
+        let allowed: HashSet<String> =
+            HashSet::from(["affordance".to_string(), "signifier".to_string()]);
+        let results = extract_from_markdown(body, &allowed);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_ok(), "a signifier beside an affordance: {:?}", results[1]);
+        assert!(matches!(results[2], Err(InlineEntityError::MultipleBlocksInSection { .. })));
+    }
+
     #[test]
     fn description_captures_prose_before_the_block_too() {
         let body = r#"### Authenticate
@@ -1507,7 +1648,7 @@ edges:
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [inline-entity](#chunk-inline-entity) · [error](#chunk-error) · [info-string](#chunk-info-string) · [extract](#chunk-extract) · [finalize](#chunk-finalize) · [description](#chunk-description) · [resources](#chunk-resources) · [facts](#chunk-facts) · [emit-value](#chunk-emit-value) · [claimed-for](#chunk-claimed-for) · [prose-edges](#chunk-prose-edges) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/inline_entity.rs`](../../../x0k-folio/src/inline_entity.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [inline-entity](#chunk-inline-entity) · [error](#chunk-error) · [info-string](#chunk-info-string) · [extract](#chunk-extract) · [finalize](#chunk-finalize) · [icon-record](#chunk-icon-record) · [description](#chunk-description) · [resources](#chunk-resources) · [facts](#chunk-facts) · [emit-value](#chunk-emit-value) · [claimed-for](#chunk-claimed-for) · [prose-edges](#chunk-prose-edges) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -1521,6 +1662,8 @@ edges:
 <<extract>>
 
 <<finalize>>
+
+<<icon-record>>
 
 <<description>>
 

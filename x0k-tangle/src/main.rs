@@ -60,6 +60,24 @@ enum Command {
         /// Paths to scan for folio/v1 documents
         paths: Vec<PathBuf>,
     },
+    /// Check every `svg x0k:icon` declaration in the folio/v1 documents
+    /// under the paths against the icon profile, and with `--out` write
+    /// each as its light and dark files bound to a publication's palette.
+    ///
+    /// A drawing outside the profile is printed with the rule it broke and
+    /// the element, and fails the run; nothing is redrawn. `--out` needs
+    /// `--palette`: the publication document whose envelope carries the
+    /// `palette:` block the four paint roles are bound with.
+    Icon {
+        /// Paths to scan for folio/v1 documents
+        paths: Vec<PathBuf>,
+        /// Directory to write `<stem>-light.svg` and `<stem>-dark.svg` into
+        #[arg(long, requires = "palette")]
+        out: Option<PathBuf>,
+        /// The publication document whose `palette:` binds the roles
+        #[arg(long, requires = "out")]
+        palette: Option<PathBuf>,
+    },
     /// Sync from= chunks: populate code blocks from source files
     Sync {
         /// Paths to scan for documents with from= chunks
@@ -359,6 +377,33 @@ fn main() -> Result<()> {
                 eprintln!("{path}: skipped: {reason}");
             }
             println!("{}", serde_json::to_string_pretty(&report.records)?);
+        }
+
+        Command::Icon { paths, out, palette } => {
+            let report = x0k_tangle::faces::declared_icons(&paths)?;
+            for (path, reason) in &report.skipped {
+                eprintln!("{path}: skipped: {reason}");
+            }
+            for (place, refusal) in &report.refused {
+                eprintln!("{place}:\n{refusal}");
+            }
+            let mut written = 0;
+            if let (Some(out), Some(palette)) = (out, palette) {
+                let content = std::fs::read_to_string(&palette)
+                    .with_context(|| format!("reading {}", palette.display()))?;
+                let palette = x0k_tangle::region_repo::envelope_palette(&content)?.ok_or_else(|| {
+                    anyhow::anyhow!("{} carries no `palette:` in its envelope", palette.display())
+                })?;
+                written = x0k_tangle::faces::write_icon_files(&report, &palette, &out)?.len();
+            }
+            eprintln!(
+                "{} icon(s) checked, {} refused, {written} file(s) written",
+                report.accepted.len() + report.refused.len(),
+                report.refused.len()
+            );
+            if !report.refused.is_empty() {
+                std::process::exit(1);
+            }
         }
 
         Command::Index {

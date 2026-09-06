@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/tangle/region-gfm.md",
-  "source_hash": "2a5fdab5b7bb5db3",
+  "source_hash": "1303a35b4f406ce4",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "x0k-tangle/src/region_gfm.rs",
-          "hash": "8a2e56ebed8b049b"
+          "hash": "767aecb4d18c94df"
         }
       ]
     }

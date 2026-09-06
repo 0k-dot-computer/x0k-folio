@@ -5,6 +5,7 @@ members = [
     "x0k-ontology",
     "x0k-syntax",
     "x0k-tangle",
+    "x0k-icon",
 ]
 
 [workspace.package]

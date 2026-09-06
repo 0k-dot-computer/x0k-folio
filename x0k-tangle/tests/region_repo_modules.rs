@@ -58,6 +58,11 @@ fn publication_publishing(crates: &[&str], documents: &[&str]) -> String {
     publication_full(crates, &[], true, &[], documents)
 }
 
+/// The publication's `palette:` block, in the icon profile's shape — the
+/// `x0k-folio` publication's own literals, so the fixture's icons are
+/// bound the way the real ones are.
+const PALETTE: &str = "  palette:\n    light: { ink: \"#111111\", line: \"#b88e44\", paper: \"#fffff8\", accent: \"#b88e44\" }\n    dark:  { ink: \"#e2e8f0\", line: \"#96b4dc\", paper: \"#1e293b\", accent: \"#96b4dc\" }\n";
+
 fn publication_full(
     crates: &[&str],
     modules: &[&str],
@@ -90,7 +95,7 @@ fn publication_full(
         b
     };
     format!(
-        "---\nx0k:\n  format: folio/v1\n  type: publication\n  id: x0k:publication/demo\n  status: proposed\n  license: MIT\n  copyright: Demo Authors\n  edges:\n    publishes:\n{publishes}{excluded}{entry}  tangle:\n    root: README.md\n---\n# Demo\n\n```markdown {{#readme}}\n# Demo\n\nA demo publication.\n\n## What is here\n\n<!-- x0k:contents -->\n\n## Afterwards\n\nText after the contents.\n```\n"
+        "---\nx0k:\n  format: folio/v1\n  type: publication\n  id: x0k:publication/demo\n  status: proposed\n  license: MIT\n  copyright: Demo Authors\n  edges:\n    publishes:\n{publishes}{excluded}{entry}  tangle:\n    root: README.md\n{PALETTE}---\n# Demo\n\n```markdown {{#readme}}\n# Demo\n\nA demo publication.\n\n## What is here\n\n<!-- x0k:contents -->\n\n## Afterwards\n\nText after the contents.\n```\n"
     )
 }
 
@@ -139,6 +144,7 @@ fn workspace(modules: &[&str], entry_point: bool) -> tempfile::TempDir {
     // cross unless a publication says so.
     std::fs::create_dir_all(ws.join(DESIGN_REL).parent().unwrap()).unwrap();
     std::fs::write(ws.join(DESIGN_REL), demo_design()).unwrap();
+    declare_marks(ws);
     std::fs::create_dir_all(ws.join(PUB_REL).parent().unwrap()).unwrap();
     std::fs::write(
         ws.join(PUB_REL),
@@ -149,10 +155,72 @@ fn workspace(modules: &[&str], entry_point: bool) -> tempfile::TempDir {
     tmp
 }
 
+/// An icon declaration: the profile's drawing in its fence.
+fn icon(svg: &str) -> String {
+    format!("```svg x0k:icon\n{svg}```\n\n")
+}
+
+/// The icon profile's own drawings (`x0k:design/icon-profile` § "The
+/// first inhabitants"), verbatim: the tangle mark for the shippable
+/// affordance, the three actors, and the two ring families. The fixture
+/// declares the design's marks so the projection is judged against what
+/// it will really show.
+const TANGLE_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <path d=\"M2.5 1.5 H8.5 L11 4 V14.5 H2.5 Z\" fill=\"none\" stroke=\"line\" stroke-width=\"1\"/>\n  <path d=\"M8.5 1.5 V4 H11\" fill=\"none\" stroke=\"line\" stroke-width=\"1\"/>\n  <path d=\"M4.5 6.5 H9 M4.5 8.5 H7\" fill=\"none\" stroke=\"line\" stroke-width=\"1\"/>\n  <rect x=\"6.5\" y=\"9.5\" width=\"7\" height=\"4\" rx=\"0.5\" fill=\"paper\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M8 11.5 H12\" fill=\"none\" stroke=\"ink\" stroke-width=\"1\"/>\n</svg>\n";
+const PERSON_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"4.5\" r=\"2.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M2.5 14.5 V13 Q2.5 9 8 9 Q13.5 9 13.5 13 V14.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n";
+const AGENT_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <rect x=\"4\" y=\"4\" width=\"8\" height=\"8\" rx=\"1\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M6 4 V2 M10 4 V2 M6 12 V14 M10 12 V14 M4 6 H2 M4 10 H2 M12 6 H14 M12 10 H14\" fill=\"none\" stroke=\"line\" stroke-width=\"1\"/>\n  <rect x=\"6.5\" y=\"6.5\" width=\"3\" height=\"3\" fill=\"ink\"/>\n</svg>\n";
+const ACTOR_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"5\" cy=\"5\" r=\"2\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M1.5 13.5 V12 Q1.5 8.5 5 8.5 Q8.5 8.5 8.5 12 V13.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <rect x=\"9\" y=\"7.5\" width=\"5.5\" height=\"5.5\" rx=\"0.5\" fill=\"paper\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M10.5 7.5 V6 M13 7.5 V6 M10.5 13 V14.5 M13 13 V14.5\" fill=\"none\" stroke=\"line\" stroke-width=\"1\"/>\n  <rect x=\"11\" y=\"9.5\" width=\"1.5\" height=\"1.5\" fill=\"ink\"/>\n</svg>\n";
+const PROVEN_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <circle cx=\"8\" cy=\"8\" r=\"3\" fill=\"ink\"/>\n</svg>\n";
+const DECLARED_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n";
+const CLAIMED_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"line\" stroke-width=\"1\" stroke-dasharray=\"1 2\"/>\n</svg>\n";
+const PASSED_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M5 8 L7 10.5 L11 5.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n";
+const FAILED_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M5.5 5.5 L10.5 10.5 M10.5 5.5 L5.5 10.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n";
+const NOT_RUN_ICON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"line\" stroke-width=\"1\" stroke-dasharray=\"1 2\"/>\n  <path d=\"M5.5 8 H10.5\" fill=\"none\" stroke=\"line\" stroke-width=\"1\"/>\n</svg>\n";
+
+/// The marks a row shows that are not an affordance's own, declared where
+/// the design places them: the actor marks on the pages that are their
+/// classes, the status words' in the design that defines the words, the
+/// test outcomes' in the chapter that derives them. Every projection here
+/// has them, because every row shows a status.
+fn declare_marks(ws: &Path) {
+    std::fs::create_dir_all(ws.join("ontology/classes")).unwrap();
+    for (class, label, svg) in [
+        ("Human", "Human", PERSON_ICON),
+        ("AIAgent", "AI Agent Actor", AGENT_ICON),
+        ("Actor", "Actor", ACTOR_ICON),
+    ] {
+        std::fs::write(
+            ws.join(format!("ontology/classes/{class}.md")),
+            format!("---\nclass: x0k:{class}\nlabel: {label}\nregister: actor\n---\n\nA kind of actor.\n\n{}", icon(svg)),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        ws.join("decisions/design/corpus/publish-a-region-as-a-repository.md"),
+        format!(
+            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/publish-a-region-as-a-repository\n  type: design\n  status: proposed\n---\n# Publishing\n\n## Affordance status\n\n### proven\n\n{}### declared\n\n{}### claimed\n\n{}",
+            icon(PROVEN_ICON),
+            icon(DECLARED_ICON),
+            icon(CLAIMED_ICON)
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(ws.join("knowledge/implementation/tangle")).unwrap();
+    std::fs::write(
+        ws.join("knowledge/implementation/tangle/region-repo.md"),
+        format!(
+            "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/tangle/region-repo\n  type: implementation\n  status: draft\n  summary: The chapter that derives what a test did.\n---\n# The projector\n\n#### passed\n\n{}#### failed\n\n{}#### not run\n\n{}",
+            icon(PASSED_ICON),
+            icon(FAILED_ICON),
+            icon(NOT_RUN_ICON)
+        ),
+    )
+    .unwrap();
+}
+
 /// The decision-document fixture: a design whose `## Affordances` heading
-/// holds two `###` sections, the shippable one claimed for a human. Built
-/// rather than kept as a constant so the affordance fences read as
-/// themselves.
+/// holds two `###` sections, the shippable one claimed for a human and
+/// carrying its mark. Built rather than kept as a constant so the
+/// affordance fences read as themselves.
 fn demo_design() -> String {
     let mut d = String::new();
     d.push_str("---\nx0k:\n  format: folio/v1\n  id: x0k:design/demo-design\n  type: design\n  status: proposed\n---\n");
@@ -160,6 +228,8 @@ fn demo_design() -> String {
     d.push_str("### Affordances\n\n");
     d.push_str("### Read a line out of a document\n\nI read the first line, and the shipped crate is what lets me.\n\n");
     d.push_str("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nstatus: wip\nactors: [human]\nedges:\n  enabledBy:\n    - x0k:software-module/demo-crate\n```\n\n");
+    d.push_str("Its mark: a document with its block sliding out.\n\n");
+    d.push_str(&icon(TANGLE_ICON));
     d.push_str("### Run the whole fleet\n\nI do a thing this bundle cannot do.\n\n");
     d.push_str("```yaml x0k:affordance\nid: x0k:affordance/run_the_whole_fleet\nstatus: wip\nedges:\n  enabledBy:\n    - x0k:software-module/unshipped-crate\n```\n");
     d
@@ -962,7 +1032,7 @@ fn the_contents_page_opens_with_the_affordances_the_publication_publishes() {
 
 **What it can do.** Each capability is declared once, in the design that owns it, and has a page projected from that declaration: who it is for, the cues that reach it, the chapters that realize it, and the tests that prove it, bodies and all.
 
-- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-declared-dark.svg\"><img alt=\"declared\" src=\"affordances/status-declared-light.svg\" height=\"16\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — for a person
+- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/read-a-line-dark.svg\"><img alt=\"Read a line out of a document\" src=\"affordances/read-a-line-light.svg\" height=\"20\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — `cli` `demo-line` · declared
 
 ### `demo-crate`
 ";
@@ -970,36 +1040,50 @@ fn the_contents_page_opens_with_the_affordances_the_publication_publishes() {
     let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
     assert!(page.contains("*declared* · for a person · reachable through `cli` `demo-line`\n\n*realized in* [The demo verbs](../../../../knowledge/implementation/demo/verbs.md)\n"), "the cue and the chapter are on the page:\n{page}");
 
-    let light = std::fs::read_to_string(out.path().join("affordances/for-a-person-light.svg"))
-        .expect("the light glyph is written");
-    let dark = std::fs::read_to_string(out.path().join("affordances/for-a-person-dark.svg"))
-        .expect("the dark glyph is written");
+    let light = std::fs::read_to_string(out.path().join("affordances/read-a-line-light.svg"))
+        .expect("the light icon is written");
+    let dark = std::fs::read_to_string(out.path().join("affordances/read-a-line-dark.svg"))
+        .expect("the dark icon is written");
     for svg in [&light, &dark] {
-        assert!(svg.contains("role=\"img\" aria-label=\"for a person\""), "{svg}");
-        assert!(svg.contains("height=\"20\""), "a little over text height: {svg}");
-        assert!(svg.contains("<path") && !svg.contains("<rect"), "the eye alone: {svg}");
+        assert!(svg.contains("role=\"img\" aria-label=\"Read a line out of a document\""), "{svg}");
+        assert!(
+            svg.contains("<rect x=\"6.5\" y=\"9.5\" width=\"7\" height=\"4\" rx=\"0.5\""),
+            "the design's tangle mark, as declared: {svg}"
+        );
+        assert!(svg.contains("stroke-linecap=\"round\""), "the profile's caps: {svg}");
     }
-    // The README's own two palettes, on a transparent ground.
-    assert!(light.contains("#b88e44") && light.contains("#111111"), "gold and ink:\n{light}");
-    assert!(dark.contains("#96b4dc") && dark.contains("#e2e8f0"), "blue and slate:\n{dark}");
-    assert!(!out.path().join("affordances/for-an-agent-light.svg").exists(), "only the glyphs used");
+    // Bound to the publication's palette, light and dark, on a
+    // transparent ground.
+    assert!(light.contains("stroke=\"#b88e44\"") && light.contains("stroke=\"#111111\""), "gold and ink:\n{light}");
+    assert!(dark.contains("stroke=\"#96b4dc\"") && dark.contains("stroke=\"#e2e8f0\""), "blue and slate:\n{dark}");
+    // The person's mark from the class page, for the page's header; and
+    // only the marks used.
+    let person = std::fs::read_to_string(out.path().join("affordances/human-light.svg"))
+        .expect("the actor mark is written");
+    assert!(person.contains("aria-label=\"Human\""), "{person}");
+    assert!(person.contains("<circle cx=\"8\" cy=\"4.5\" r=\"2.5\""), "the design's bust: {person}");
+    assert!(page.contains("affordances/human-light.svg\" height=\"20\""), "the actor mark is on the page: {page}");
+    assert!(!out.path().join("affordances/aiagent-light.svg").exists(), "only the icons used");
+    assert!(!out.path().join("affordances/actor-light.svg").exists());
     // A signifier and no proof: the open ring, and only that ring.
-    let ring = std::fs::read_to_string(out.path().join("affordances/status-declared-light.svg"))
+    let ring = std::fs::read_to_string(out.path().join("affordances/declared-light.svg"))
         .expect("the status ring is written");
-    assert!(ring.contains("aria-label=\"declared\"") && ring.contains("height=\"16\""), "{ring}");
+    assert!(ring.contains("aria-label=\"declared\""), "{ring}");
     assert_eq!(ring.matches("<circle").count(), 1, "an open ring: {ring}");
-    assert!(!out.path().join("affordances/status-claimed-light.svg").exists());
+    assert!(page.contains("affordances/declared-light.svg\" height=\"16\""), "the ring is on the page: {page}");
+    assert!(!out.path().join("affordances/claimed-light.svg").exists());
 
     assert_eq!(
         report.figures,
         std::collections::BTreeMap::from([
-            ("for-a-person".to_string(), "affordances/for-a-person-light.svg".to_string()),
-            ("status-declared".to_string(), "affordances/status-declared-light.svg".to_string()),
+            ("declared".to_string(), "affordances/declared-light.svg".to_string()),
+            ("human".to_string(), "affordances/human-light.svg".to_string()),
+            ("read-a-line".to_string(), "affordances/read-a-line-light.svg".to_string()),
         ])
     );
     assert!(report.proofs.is_empty() && report.proofs_run, "nothing to run, and nothing skipped");
     let prov = std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap();
-    assert!(!prov.contains("affordances/"), "a glyph has no corpus source to record: {prov}");
+    assert!(!prov.contains("affordances/"), "a bound icon has no corpus source to record: {prov}");
 }
 
 #[test]
@@ -1021,18 +1105,21 @@ fn a_claim_on_both_actors_gets_both_marks_and_an_unreached_face_a_dash() {
     let report = project(ws.path(), out.path()).expect("projection");
 
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    let row = "- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-and-an-agent-dark.svg\"><img alt=\"for a person and an agent\" src=\"affordances/for-a-person-and-an-agent-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-claimed-dark.svg\"><img alt=\"claimed\" src=\"affordances/status-claimed-light.svg\" height=\"16\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — for a person, an agent\n";
-    assert!(readme.contains(row), "both actors on the line, and nothing else claimed:\n{readme}");
+    let row = "- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/read-a-line-dark.svg\"><img alt=\"Read a line out of a document\" src=\"affordances/read-a-line-light.svg\" height=\"20\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — claimed\n";
+    assert!(readme.contains(row), "no cue, and nothing else claimed:\n{readme}");
 
-    let svg = std::fs::read_to_string(out.path().join("affordances/for-a-person-and-an-agent-light.svg"))
-        .expect("the glyph for both is written");
-    assert!(svg.contains("<path") && svg.contains("<rect"), "the eye and the machine: {svg}");
+    let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
+    assert!(page.contains("affordances/actor-light.svg\" height=\"20\""), "the genus mark on the page: {page}");
+    let svg = std::fs::read_to_string(out.path().join("affordances/actor-light.svg"))
+        .expect("the mark for both is written");
+    assert!(svg.contains("aria-label=\"Actor\""), "{svg}");
+    assert!(svg.contains("<circle") && svg.contains("<rect"), "the person and the chip: {svg}");
     // Neither signifier nor proof: the dotted ring.
-    let ring = std::fs::read_to_string(out.path().join("affordances/status-claimed-light.svg"))
+    let ring = std::fs::read_to_string(out.path().join("affordances/claimed-light.svg"))
         .expect("the status ring is written");
-    assert!(ring.contains("aria-label=\"claimed\"") && ring.contains("stroke-dasharray"), "{ring}");
-    assert_eq!(report.figures.len(), 2, "one actor glyph and one status ring: {:?}", report.figures);
-    assert!(!out.path().join("affordances/for-a-person-light.svg").exists());
+    assert!(ring.contains("aria-label=\"claimed\"") && ring.contains("stroke-dasharray=\"1 2\""), "{ring}");
+    assert_eq!(report.figures.len(), 3, "the affordance's own mark, one actor mark and one ring: {:?}", report.figures);
+    assert!(!out.path().join("affordances/human-light.svg").exists());
 }
 
 #[test]
@@ -1123,8 +1210,8 @@ fn a_proving_chunk_lists_its_test_and_the_row_reads_proven() {
     let report = project(ws.path(), out.path()).expect("projection");
 
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    let line = "- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/status-proven-dark.svg\"><img alt=\"proven\" src=\"affordances/status-proven-light.svg\" height=\"16\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — for a person\n";
-    assert!(readme.contains(line), "the filled ring, and the page linked:\n{readme}");
+    let line = "- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"affordances/read-a-line-dark.svg\"><img alt=\"Read a line out of a document\" src=\"affordances/read-a-line-light.svg\" height=\"20\"></picture> **[Read a line out of a document](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — proven\n";
+    assert!(readme.contains(line), "proven, and the page linked:\n{readme}");
 
     assert!(report.proofs_run);
     assert_eq!(report.proofs.get(PROOF_TEST), Some(&ProofOutcome::Passed), "{:?}", report.proofs);
@@ -1134,12 +1221,17 @@ fn a_proving_chunk_lists_its_test_and_the_row_reads_proven() {
     assert_eq!(prov["proofs"][PROOF_TEST], serde_json::json!("passed"));
     assert_eq!(prov["proofs_run"], serde_json::json!(true));
 
-    let ring = std::fs::read_to_string(out.path().join("affordances/status-proven-light.svg"))
+    let ring = std::fs::read_to_string(out.path().join("affordances/proven-light.svg"))
         .expect("the status ring is written");
     assert!(ring.contains("aria-label=\"proven\""), "{ring}");
     assert_eq!(ring.matches("<circle").count(), 2, "a ring with its centre filled: {ring}");
-    assert_eq!(report.figures.get("status-proven").map(String::as_str), Some("affordances/status-proven-light.svg"));
-    assert!(!out.path().join("affordances/status-declared-light.svg").exists(), "only the rings used");
+    assert_eq!(report.figures.get("proven").map(String::as_str), Some("affordances/proven-light.svg"));
+    assert!(!out.path().join("affordances/declared-light.svg").exists(), "only the rings used");
+    // The test's own mark, for its row on the page.
+    let passed = std::fs::read_to_string(out.path().join("affordances/passed-light.svg"))
+        .expect("the test mark is written");
+    assert!(passed.contains("aria-label=\"passed\"") && passed.contains("<path d=\"M5 8 L7 10.5 L11 5.5\""), "the tick: {passed}");
+    assert!(!out.path().join("affordances/not-run-light.svg").exists());
     // The test crossed with its chapter, as any tangled output does.
     assert!(out.path().join("demo-crate/tests/proof.rs").exists());
     assert!(report.unpublished_proof_targets.is_empty());
@@ -1177,9 +1269,11 @@ fn skipped_proofs_are_listed_and_prove_nothing() {
     let out = tempfile::tempdir().unwrap();
     let report = project_with(ws.path(), out.path(), &Proofs::Skip).expect("projection");
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    assert!(readme.contains("alt=\"claimed\"") && !readme.contains("alt=\"proven\""), "{readme}");
+    assert!(readme.contains(" — claimed\n") && !readme.contains("proven"), "{readme}");
     let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
-    assert!(page.contains("<code>a_line_is_read</code> · not run ·"), "{page}");
+    assert!(page.contains("alt=\"claimed\"") && !page.contains("alt=\"proven\""), "{page}");
+    assert!(page.contains("<code>a_line_is_read</code> · <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/not-run-dark.svg\"><img alt=\"not run\" src=\"../../../../affordances/not-run-light.svg\" height=\"16\"></picture> not run ·"), "{page}");
+    assert!(out.path().join("affordances/not-run-light.svg").exists() && !out.path().join("affordances/passed-light.svg").exists());
     assert!(!report.proofs_run && report.proofs.is_empty());
 }
 
@@ -1206,7 +1300,7 @@ fn the_real_cargo_runs_the_demo_proof_when_it_is_on_path() {
     let report = project_with(ws.path(), out.path(), &Proofs::Cargo).expect("projection");
     assert_eq!(report.proofs.get(PROOF_TEST), Some(&ProofOutcome::Passed), "{:?}", report.proofs);
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    assert!(readme.contains("alt=\"proven\""), "{readme}");
+    assert!(readme.contains("](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — proven\n"), "{readme}");
 }
 
 #[test]
@@ -1227,7 +1321,7 @@ fn a_proof_of_an_unpublished_affordance_is_noted_and_the_row_unchanged() {
     );
     assert!(report.proofs.is_empty(), "nothing was asked for: {:?}", report.proofs);
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
-    assert!(readme.contains("** — for a person\n") && readme.contains("alt=\"claimed\""), "{readme}");
+    assert!(readme.contains("](decisions/design/corpus/demo-design/read-a-line-out-of-a-document.md)** — claimed\n"), "the line says claimed and nothing else: {readme}");
     let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
     assert!(!page.contains("<details>"), "no proof reaches the page: {page}");
 }
@@ -1336,9 +1430,46 @@ fn the_affordance_page_carries_its_evidence() {
     project(ws.path(), out.path()).expect("projection");
 
     let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
-    let expected = "```\n\n<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/for-a-person-dark.svg\"><img alt=\"for a person\" src=\"../../../../affordances/for-a-person-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/status-proven-dark.svg\"><img alt=\"proven\" src=\"../../../../affordances/status-proven-light.svg\" height=\"16\"></picture> *proven* · for a person\n\n*realized in* [Proving the demo](../../../../knowledge/implementation/demo/proof.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · passed · <a href=\"../../../../knowledge/implementation/demo/proof.md#chunk-root\">#root</a> in Proving the demo</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}\n```\n\n</details>\n";
+    let expected = "```\n\n<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/human-dark.svg\"><img alt=\"Human\" src=\"../../../../affordances/human-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/proven-dark.svg\"><img alt=\"proven\" src=\"../../../../affordances/proven-light.svg\" height=\"16\"></picture> *proven* · for a person\n\n*realized in* [Proving the demo](../../../../knowledge/implementation/demo/proof.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/passed-dark.svg\"><img alt=\"passed\" src=\"../../../../affordances/passed-light.svg\" height=\"16\"></picture> passed · <a href=\"../../../../knowledge/implementation/demo/proof.md#chunk-root\">#root</a> in Proving the demo</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}\n```\n\n</details>\n";
     assert!(page.contains(expected), "the evidence under the declaration:\n{page}");
     assert!(page.contains("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\n"), "the declaration stays as written: {page}");
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
     assert!(!readme.contains("a_line_is_read"), "the test is on the page, not the README: {readme}");
+}
+
+#[test]
+fn an_icon_outside_the_profile_refuses_the_projection_naming_the_rule() {
+    let ws = workspace(&[], true);
+    let design = std::fs::read_to_string(ws.path().join(DESIGN_REL)).unwrap();
+    std::fs::write(
+        ws.path().join(DESIGN_REL),
+        design.replacen("stroke=\"ink\"", "stroke=\"#111111\"", 1),
+    )
+    .unwrap();
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("rule 5 (a literal paint)"), "the rule is named: {err}");
+    assert!(err.contains("read-a-line-out-of-a-document.md § Read a line out of a document"), "and where: {err}");
+}
+
+#[test]
+fn a_publication_whose_rows_show_marks_needs_a_palette() {
+    let ws = workspace(&[], true);
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    let doc = publication_publishing(&["demo-crate"], &[reference.as_str()]).replace(PALETTE, "");
+    std::fs::write(ws.path().join(PUB_REL), doc).unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("no `palette:`"), "{err}");
+
+    // A publication that names no affordance shows no mark, and asks for none.
+    let ws = workspace(&[], true);
+    let doc = publication(&["demo-crate"], &[], true).replace(PALETTE, "");
+    std::fs::write(ws.path().join(PUB_REL), doc).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("no rows, no palette needed");
 }

@@ -28,13 +28,13 @@ edges:
     - x0k:affordance/tangle_source_from_a_document
 ```
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/for-a-person-dark.svg"><img alt="for a person" src="../../../../affordances/for-a-person-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/status-proven-dark.svg"><img alt="proven" src="../../../../affordances/status-proven-light.svg" height="16"></picture> *proven* · for a person · reachable through `cli` `x0k-tangle weave`, `sdk` `weave_chapter`, `sdk` `weave_html`
+<picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/human-dark.svg"><img alt="Human" src="../../../../affordances/human-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/proven-dark.svg"><img alt="proven" src="../../../../affordances/proven-light.svg" height="16"></picture> *proven* · for a person · reachable through `cli` `x0k-tangle weave`, `sdk` `weave_chapter`, `sdk` `weave_html`
 
 *realized in* [x0k-tangle: the crate and its CLI](../../../../knowledge/implementation/tangle/crate.md) · [Weaving literate documents into HTML](../../../../knowledge/implementation/tangle/weave.md) · [Weaving a chapter for a forge](../../../../knowledge/implementation/tangle/region-gfm.md)
 
 *proven by* each test below, as its chapter tangles it and as it ran at projection.
 
-<details><summary><code>the_weave_inverts_line_for_line</code> · passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
+<details><summary><code>the_weave_inverts_line_for_line</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
 
 ```rust
 #[test]
@@ -45,7 +45,7 @@ fn the_weave_inverts_line_for_line() {
 
 </details>
 
-<details><summary><code>the_woven_chapter_tangles_to_the_same_chunks</code> · passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
+<details><summary><code>the_woven_chapter_tangles_to_the_same_chunks</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
 
 ```rust
 #[test]
@@ -69,7 +69,7 @@ fn the_woven_chapter_tangles_to_the_same_chunks() {
 
 </details>
 
-<details><summary><code>captions_say_file_name_proof_and_assembly_and_links_land</code> · passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
+<details><summary><code>captions_say_file_name_proof_and_assembly_and_links_land</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
 
 ```rust
 #[test]
@@ -87,7 +87,7 @@ fn captions_say_file_name_proof_and_assembly_and_links_land() {
 
 </details>
 
-<details><summary><code>a_string_literal_naming_an_id_is_not_a_woven_line</code> · passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
+<details><summary><code>a_string_literal_naming_an_id_is_not_a_woven_line</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
 
 ```rust
 #[test]
@@ -106,7 +106,7 @@ fn a_string_literal_naming_an_id_is_not_a_woven_line() {
 
 </details>
 
-<details><summary><code>a_source_holding_a_woven_line_is_refused</code> · passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
+<details><summary><code>a_source_holding_a_woven_line_is_refused</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
 
 ```rust
 #[test]
@@ -121,7 +121,7 @@ fn a_source_holding_a_woven_line_is_refused() {
 
 </details>
 
-<details><summary><code>the_affordance_section_carries_the_evidence_under_its_block</code> · passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
+<details><summary><code>the_affordance_section_carries_the_evidence_under_its_block</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
 
 ```rust
 #[test]
@@ -129,7 +129,7 @@ fn the_affordance_section_carries_the_evidence_under_its_block() {
     let page = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/demo-design#read-a-line\n  type: design\n---\n\n### Read a line\n\nI read a line.\n\n```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\nAfter.\n";
     let ev = AffordanceEvidence {
         id: "x0k:affordance/read_a_line".to_string(),
-        glyphs: "<img alt=\"proven\">".to_string(),
+        marks: "<img alt=\"proven\">".to_string(),
         status: "proven".to_string(),
         actors: "a person".to_string(),
         cues: vec![("cli".to_string(), "demo read".to_string())],
@@ -137,13 +137,14 @@ fn the_affordance_section_carries_the_evidence_under_its_block() {
         proofs: vec![ProofEvidence {
             test: "a_line_is_read".to_string(),
             outcome: Some("passed".to_string()),
+            mark: "<img alt=\"passed\">".to_string(),
             chapter: ("Lines".to_string(), "../../../knowledge/implementation/demo/lines.md".to_string()),
             chunk: "tests".to_string(),
             source: "#[test]\nfn a_line_is_read() {}\n".to_string(),
         }],
     };
     let out = weave_affordance_section(page, &[ev]);
-    let expected = "```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\n<img alt=\"proven\"> *proven* · for a person · reachable through `cli` `demo read`\n\n*realized in* [Lines](../../../knowledge/implementation/demo/lines.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · passed · <a href=\"../../../knowledge/implementation/demo/lines.md#chunk-tests\">#tests</a> in Lines</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {}\n```\n\n</details>\n\n\nAfter.\n";
+    let expected = "```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\n<img alt=\"proven\"> *proven* · for a person · reachable through `cli` `demo read`\n\n*realized in* [Lines](../../../knowledge/implementation/demo/lines.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · <img alt=\"passed\"> passed · <a href=\"../../../knowledge/implementation/demo/lines.md#chunk-tests\">#tests</a> in Lines</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {}\n```\n\n</details>\n\n\nAfter.\n";
     assert!(out.ends_with(expected), "{out}");
     assert_eq!(weave_affordance_section(page, &[]), page, "no evidence, no change");
 }
@@ -151,7 +152,7 @@ fn the_affordance_section_carries_the_evidence_under_its_block() {
 
 </details>
 
-<details><summary><code>relative_links_climb_out_and_descend</code> · passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
+<details><summary><code>relative_links_climb_out_and_descend</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
 
 ```rust
 #[test]
@@ -165,7 +166,7 @@ fn relative_links_climb_out_and_descend() {
 
 </details>
 
-<details><summary><code>single_language_chunk_renders_without_tabs</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>single_language_chunk_renders_without_tabs</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -193,7 +194,7 @@ use std::io;
 
 </details>
 
-<details><summary><code>multi_language_chunk_renders_tabs</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>multi_language_chunk_renders_tabs</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -239,7 +240,7 @@ pub fn zoom_toward(&mut self, sx: f32, sy: f32, delta: f32) { }
 
 </details>
 
-<details><summary><code>mixed_single_and_multi_lang_chunks</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>mixed_single_and_multi_lang_chunks</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -274,7 +275,7 @@ fn render() {}
 
 </details>
 
-<details><summary><code>params_block_renders_data_div</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>params_block_renders_data_div</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -310,7 +311,7 @@ default: 4
 
 </details>
 
-<details><summary><code>tab_buttons_have_onclick</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>tab_buttons_have_onclick</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -335,7 +336,7 @@ let x = 1;
 
 </details>
 
-<details><summary><code>rust_chunk_emits_highlight_spans</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>rust_chunk_emits_highlight_spans</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -358,7 +359,7 @@ fn main() { let x = 42; }
 
 </details>
 
-<details><summary><code>classify_comment_kinds</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>classify_comment_kinds</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -380,7 +381,7 @@ fn classify_comment_kinds() {
 
 </details>
 
-<details><summary><code>comment_run_grouping_wraps_and_classifies</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>comment_run_grouping_wraps_and_classifies</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -463,7 +464,7 @@ let c = 3;
 
 </details>
 
-<details><summary><code>render_doc_markdown_strips_markers_and_renders</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>render_doc_markdown_strips_markers_and_renders</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -482,7 +483,7 @@ fn render_doc_markdown_strips_markers_and_renders() {
 
 </details>
 
-<details><summary><code>math_renders_to_mathml</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>math_renders_to_mathml</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -503,7 +504,7 @@ fn math_renders_to_mathml() {
 
 </details>
 
-<details><summary><code>bad_math_falls_back_to_raw_tex</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>bad_math_falls_back_to_raw_tex</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -527,7 +528,7 @@ fn bad_math_falls_back_to_raw_tex() {
 
 </details>
 
-<details><summary><code>doc_comment_lifts_to_symbol_and_card</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>doc_comment_lifts_to_symbol_and_card</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -561,7 +562,7 @@ pub fn bar() {}
 
 </details>
 
-<details><summary><code>doc_comment_skips_attribute_to_reach_symbol</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>doc_comment_skips_attribute_to_reach_symbol</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -596,7 +597,7 @@ pub fn bar() {}
 
 </details>
 
-<details><summary><code>inner_doc_anchors_to_chunk_header</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>inner_doc_anchors_to_chunk_header</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -626,7 +627,7 @@ fn f() {}
 
 </details>
 
-<details><summary><code>doc_comment_without_symbol_falls_back_inline</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>doc_comment_without_symbol_falls_back_inline</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -655,7 +656,7 @@ fn f() {
 
 </details>
 
-<details><summary><code>comment_run_preserves_indentation_bytes</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>comment_run_preserves_indentation_bytes</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -686,7 +687,7 @@ let x = 1;
 
 </details>
 
-<details><summary><code>ref_line_is_not_highlighted</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>ref_line_is_not_highlighted</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -711,7 +712,7 @@ let y = 1;
 
 </details>
 
-<details><summary><code>escaped_ref_line_renders_as_the_literal_without_an_anchor</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>escaped_ref_line_renders_as_the_literal_without_an_anchor</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -738,7 +739,7 @@ Put this line where the listing says so:
 
 </details>
 
-<details><summary><code>headings_get_slug_ids</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>headings_get_slug_ids</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -763,7 +764,7 @@ more prose
 
 </details>
 
-<details><summary><code>duplicate_headings_get_deduped_ids</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>duplicate_headings_get_deduped_ids</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -788,7 +789,7 @@ second
 
 </details>
 
-<details><summary><code>heading_with_inline_markup_slugs_and_preserves_markup</code> · passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+<details><summary><code>heading_with_inline_markup_slugs_and_preserves_markup</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ```rust
 #[test]
@@ -806,3 +807,16 @@ fn heading_with_inline_markup_slugs_and_preserves_markup() {
 
 </details>
 
+
+Its mark: a document opening into a page, the source on the left and a
+leaf swung open to the right carrying the rendered text.
+
+```svg x0k:icon
+<svg viewBox="0 0 16 16">
+  <path d="M2 1.5 H6 L7.5 3 V14.5 H2 Z" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M6 1.5 V3 H7.5" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M3.5 6 H6 M3.5 8 H6" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M7.5 1.5 L13.5 4 V12 L7.5 14.5 Z" fill="paper" stroke="ink" stroke-width="1.5"/>
+  <path d="M9 6.5 H12 M9 8.5 H12 M9 10.5 H11" fill="none" stroke="ink" stroke-width="1"/>
+</svg>
+```

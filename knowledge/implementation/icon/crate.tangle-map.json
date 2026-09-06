@@ -1,0 +1,21 @@
+{
+  "source": "knowledge/implementation/icon/crate.md",
+  "source_hash": "f215aa141b327195",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "b0636dad229f1f48",
+      "outputs": [
+        {
+          "path": "x0k-icon/src/lib.rs",
+          "hash": "ac12a27ae8b192f8"
+        },
+        {
+          "path": "x0k-icon/src/fixtures.rs",
+          "hash": "9531305d44c64206"
+        }
+      ]
+    }
+  ]
+}

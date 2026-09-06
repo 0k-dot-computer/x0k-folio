@@ -15,7 +15,7 @@
 //! `<!-- x0k:contents -->` marker is replaced by the generated contents
 //! page, grouped by the concepts that marker names and opening with one
 //! row per affordance declaration the publication publishes, drawn from
-//! the extracted record, its actor glyphs under `affordances/`), a committed
+//! the extracted record, the icons its rows show under `affordances/`), a committed
 //! `Cargo.lock`, and a forge-agnostic `tools/ci` that re-tangles and diffs
 //! against the committed generated files. It realizes
 //! `x0k:design/publish-a-region-as-a-repository`.
@@ -65,9 +65,10 @@ use std::sync::Arc;
 
 use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
 use x0k_folio::transclusion::extract_section;
-use x0k_folio::{EntityId, InlineEntity};
+use x0k_folio::{EntityId, InlineEntity, ICON_CLASS};
+use x0k_icon::{emit, Accepted, Label, Palette};
 
-use crate::faces::proving_chunks;
+use crate::faces::{check_section, icon_svg, proving_chunks};
 use crate::parser::parse_document;
 use crate::pipeline::PipelineRegistry;
 use crate::pipeline_runner::{content_hash, tangle_document, TangleSidecar};
@@ -241,14 +242,13 @@ pub struct RepoProjectReport {
     /// published, `ontology/modules` when it is not (`modules_rel_dir`).
     /// `None` when no module ships.
     pub modules_dir: Option<String>,
-    /// The actor glyphs the contents page's affordance rows use: glyph
-    /// stem (`for-a-person`, `for-an-agent`, `for-a-person-and-an-agent`)
-    /// → the projection-relative path of its light file, the dark twin
-    /// beside it as `-dark.svg`. Empty when the publication names no
-    /// affordance. Not in `PROVENANCE.json`'s `path_map`: a glyph has no
-    /// corpus source to route an edit back to. The status marks beside
-    /// them (`status-proven`, `status-declared`, `status-claimed`) are
-    /// recorded the same way.
+    /// The icons the contents page's rows and the affordance pages show
+    /// — each affordance's own, the actor marks, the status and test
+    /// marks — by stem → the projection-relative path of the light file,
+    /// the dark twin beside it as `-dark.svg`. Empty when the publication
+    /// names no affordance. Not in `PROVENANCE.json`'s `path_map`: an
+    /// icon is read from its declaration and written bound, and an edit
+    /// to the bound file has no corpus source to route back to.
     pub figures: BTreeMap<String, String>,
     /// Every proof test run this projection, by its id
     /// (`x0k:test/<crate>/<file>::<fn>`) → what it did. Recorded in
@@ -415,6 +415,11 @@ pub fn project_publication_repo_with(
     let excluded_docs: BTreeSet<String> = excluded.docs.into_iter().collect();
     let excluded: BTreeSet<String> = excluded.crates.into_iter().collect();
     let published: BTreeSet<String> = crates.iter().cloned().collect();
+
+    // The palette the icons on the contents page and the affordance pages
+    // are bound with — the profile's four roles as colours, per scheme.
+    // Read now; required only once a row has a mark to show.
+    let palette = envelope_palette(&content)?;
 
     // Licensing is part of the act of publishing: the publication doc's
     // `license:` field is authoritative, and an explicit caller override is
@@ -590,6 +595,7 @@ pub fn project_publication_repo_with(
     let projected_docs = project_named_documents(workspace, &documents)?;
     affordance_closure(&projected_docs, &published, &excluded)?;
     let mut affordances = affordance_records(&projected_docs, workspace, &literate, &mut report)?;
+    let icons = read_icons(workspace, &affordances, palette)?;
 
     // A prior projection (a `.git`, or a PROVENANCE.json) is projected INTO,
     // not beside: the overlay paths are stashed, the regenerated region is
@@ -670,7 +676,7 @@ pub fn project_publication_repo_with(
     std::fs::write(output_dir.join(".gitignore"), "/target\n**/target\n.direnv/\n")?;
     generate_lockfile(output_dir)?;
     run_proofs(output_dir, &mut affordances, proofs, &mut report)?;
-    weave_affordance_pages(output_dir, &projected_docs, &affordances)?;
+    weave_affordance_pages(output_dir, &projected_docs, &affordances, icons.as_ref())?;
     emit_provenance(
         output_dir,
         &env.id,
@@ -687,6 +693,7 @@ pub fn project_publication_repo_with(
         &vocab_modules,
         &modules_rel,
         &affordances,
+        icons.as_ref(),
         &projected_docs,
         &mut report,
     )?;
@@ -957,6 +964,42 @@ fn envelope_string_list(content: &str, key: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Read the `palette:` block out of a publication doc's `x0k:` envelope
+/// — the icon profile's four roles bound to colours, per scheme — as the
+/// binder's own type. `None` when the envelope carries none; a block
+/// that does not read as one refuses, naming why.
+pub fn envelope_palette(content: &str) -> Result<Option<Palette>> {
+    let Some((yaml, _)) = split_frontmatter(content) else {
+        return Ok(None);
+    };
+    let mut block = String::new();
+    let mut in_block = false;
+    for line in yaml.lines() {
+        let indent = line.len() - line.trim_start().len();
+        if in_block {
+            if line.trim().is_empty() || indent > 2 {
+                block.push_str(line);
+                block.push('\n');
+                continue;
+            }
+            break;
+        }
+        if indent == 2 && line.trim_start().starts_with("palette:") {
+            in_block = true;
+        }
+    }
+    if !in_block {
+        return Ok(None);
+    }
+    let palette: Palette = serde_norway::from_str(&block).map_err(|e| {
+        anyhow!(
+            "the publication's `palette:` block does not read as the icon profile's four \
+             roles (ink, line, paper, accent) per scheme (light, dark): {e}"
+        )
+    })?;
+    Ok(Some(palette))
 }
 
 fn manifest_package_str(doc: &toml_edit::DocumentMut, key: &str) -> Option<String> {
@@ -1938,6 +1981,10 @@ struct AffordanceRecord {
     proofs: Vec<Proof>,
     /// What each proof test did, by test id, once the proofs have run.
     outcomes: BTreeMap<String, ProofOutcome>,
+    /// The `svg x0k:icon` declarations in the section that declares it —
+    /// its own mark, as written, in declaration order. Usually one; the
+    /// profile allows one per grid.
+    icons: Vec<String>,
 }
 
 /// One chunk that tangles tests for an affordance: the chapter it is in
@@ -2086,14 +2133,18 @@ fn affordance_record(entity: &InlineEntity, document: &str) -> AffordanceRecord 
         chapters: Vec::new(),
         proofs: Vec::new(),
         outcomes: BTreeMap::new(),
+        icons: Vec::new(),
     }
 }
 
-/// Read the declarations in one body: affordances when `declarations` is
-/// on, signifiers always. `document` is the projection-relative path of
-/// the body being read, and `chapter` the name and path a signifier's row
-/// links to. A malformed block is the extractor's report, not the
-/// table's, and is skipped here as the closure guard skips it.
+/// Read the declarations in one body: affordances and the icons beside
+/// them when `declarations` is on, signifiers always. `document` is the
+/// projection-relative path of the body being read, and `chapter` the
+/// name and path a signifier's row links to. An icon is recorded under
+/// the section it is declared in — `(document, heading, drawing)` — and
+/// joined to the affordance declared there once every record is known.
+/// A malformed block is the extractor's report, not the table's, and is
+/// skipped here as the closure guard skips it.
 fn read_declarations(
     body: &str,
     declarations: bool,
@@ -2101,13 +2152,22 @@ fn read_declarations(
     chapter: &(String, String),
     records: &mut Vec<AffordanceRecord>,
     signifiers: &mut Vec<Signifier>,
+    icons: &mut Vec<(String, String, String)>,
 ) {
-    let classes: HashSet<String> =
-        HashSet::from(["affordance".to_string(), "signifier".to_string()]);
+    let classes: HashSet<String> = HashSet::from([
+        "affordance".to_string(),
+        "signifier".to_string(),
+        ICON_CLASS.to_string(),
+    ]);
     for record in x0k_folio::extract_from_markdown(body, &classes) {
         let Ok(entity) = record else { continue };
         match entity.marker_class.as_str() {
             "affordance" if declarations => records.push(affordance_record(&entity, document)),
+            ICON_CLASS if declarations => {
+                if let Some(svg) = icon_svg(&entity) {
+                    icons.push((document.to_string(), entity.title.clone(), svg));
+                }
+            }
             "signifier" => {
                 let facts = x0k_folio::declared_facts(&entity);
                 // The cue is the heading the block sits under, unless the
@@ -2146,6 +2206,7 @@ fn affordance_records(
 ) -> Result<Vec<AffordanceRecord>> {
     let mut records: Vec<AffordanceRecord> = Vec::new();
     let mut signifiers: Vec<Signifier> = Vec::new();
+    let mut icons: Vec<(String, String, String)> = Vec::new();
     // `(chapter, chunk, crate, file, tests)` per `proves=` target, joined
     // to the records once they are all known.
     let mut proofs: Vec<(String, Proof)> = Vec::new();
@@ -2156,7 +2217,7 @@ fn affordance_records(
         // A projected section is named by its own heading, which is what
         // the row would link a reader to.
         let chapter = (heading_title_any(&body).unwrap_or_else(|| doc.reference.clone()), rel.clone());
-        read_declarations(&body, true, &rel, &chapter, &mut records, &mut signifiers);
+        read_declarations(&body, true, &rel, &chapter, &mut records, &mut signifiers, &mut icons);
     }
     for doc in literate {
         let text = std::fs::read_to_string(workspace.join(&doc.rel))
@@ -2164,7 +2225,7 @@ fn affordance_records(
         let rel = doc.rel.to_string_lossy().to_string();
         let chapter = (doc.title.clone(), rel.clone());
         if let Some((_, body)) = split_frontmatter(&text) {
-            read_declarations(body, false, &rel, &chapter, &mut records, &mut signifiers);
+            read_declarations(body, false, &rel, &chapter, &mut records, &mut signifiers, &mut icons);
         }
         // The proofs, read with the tangler's own parser so the chunk's
         // file target and bodies are the ones the tangle used.
@@ -2205,6 +2266,15 @@ fn affordance_records(
                  one row",
                 record.id
             );
+        }
+    }
+    // An icon depicts the thing its section declares: the join is the
+    // section, which is the document and the heading.
+    for (document, title, svg) in icons {
+        if let Some(record) =
+            records.iter_mut().find(|r| r.document == document && r.title == title)
+        {
+            record.icons.push(svg);
         }
     }
     for (target, proof) in proofs {
@@ -2459,52 +2529,61 @@ which crate its code lands in";
 const SHIPS_LEAD_RESTS_ON: &str =
     "; under a group, *rests on* names the concepts a reader needs first.";
 
-/// The `<picture>` a glyph is shown through: the dark file under the
-/// dark scheme, the light one otherwise, `alt` saying what it means.
-fn glyph_picture(dir: &str, stem: &str, alt: &str, height: u32) -> String {
+/// The `<picture>` an icon is shown through: the dark file under the
+/// dark scheme, the light one otherwise, the icon's title as `alt`.
+fn icon_picture(dir: &str, label: &Label, height: u32) -> String {
     format!(
         "<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{stem}-dark.svg\">\
          <img alt=\"{alt}\" src=\"{dir}/{stem}-light.svg\" height=\"{height}\"></picture>",
-        alt = xml_escape(alt),
+        stem = label.stem,
+        alt = xml_escape(&label.title),
     )
 }
 
-/// The actor glyph and the status ring for one record, as shown from a
-/// page whose glyph directory is at `dir`.
-fn record_glyphs(rec: &AffordanceRecord, dir: &str) -> String {
-    let status = rec.status();
-    let mut glyph = match glyph_stem(&rec.actors) {
-        Some(stem) => format!("{} ", glyph_picture(dir, stem, &glyph_label(stem), ACTOR_GLYPH_HEIGHT)),
-        None => String::new(),
+/// The actor mark and the status mark for one record, as shown from a
+/// page whose icon directory is at `dir`.
+fn record_marks(rec: &AffordanceRecord, icons: Option<&Icons>, dir: &str) -> String {
+    let Some(icons) = icons else {
+        return String::new();
     };
-    glyph.push_str(&glyph_picture(dir, &status_glyph_stem(status), status.as_str(), STATUS_GLYPH_HEIGHT));
-    glyph
+    let mut marks: Vec<String> = Vec::new();
+    if let Some(label) = actor_mark(&rec.actors).and_then(|class| icons.label(class)) {
+        marks.push(icon_picture(dir, label, SUBJECT_ICON_HEIGHT));
+    }
+    if let Some(label) = icons.label(rec.status().as_str()) {
+        marks.push(icon_picture(dir, label, STATUS_ICON_HEIGHT));
+    }
+    marks.join(" ")
 }
 
 /// The affordance list: the lead, and one line per record in `publishes`
-/// order — the glyphs, the name linked to its page, who it is for. Every
-/// other thing the record knows is on the page. Empty when there is no
-/// record, so a publication that names no declaration gets exactly the
-/// contents page it always had.
-fn render_affordances(records: &[AffordanceRecord]) -> String {
+/// order — its own mark, the name linked to its page, and after the dash
+/// the cues that reach it and its status. Every other thing the record
+/// knows is on the page. Empty when there is no record, so a publication
+/// that names no declaration gets exactly the contents page it always
+/// had.
+fn render_affordances(records: &[AffordanceRecord], icons: Option<&Icons>) -> String {
     if records.is_empty() {
         return String::new();
     }
     let mut out = format!("{AFFORDANCES_LEAD}\n\n");
     for rec in records {
-        let actors = if rec.actors.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " — for {}",
-                rec.actors.iter().map(|k| actor_phrase(k)).collect::<Vec<_>>().join(", ")
-            )
-        };
+        let icon = icons
+            .and_then(|i| i.label(&rec.id))
+            .map(|label| format!("{} ", icon_picture(AFFORDANCES_DIR, label, SUBJECT_ICON_HEIGHT)))
+            .unwrap_or_default();
+        let mut tail: Vec<String> = Vec::new();
+        if !rec.surfaces.is_empty() {
+            let cues: Vec<String> =
+                rec.surfaces.iter().map(|(s, c)| format!("`{s}` `{c}`")).collect();
+            tail.push(cues.join(", "));
+        }
+        tail.push(rec.status().as_str().to_string());
         out.push_str(&format!(
-            "- {} **[{}]({})**{actors}\n",
-            record_glyphs(rec, AFFORDANCES_DIR),
+            "- {icon}**[{}]({})** — {}\n",
             rec.title,
-            rec.document
+            rec.document,
+            tail.join(" · ")
         ));
     }
     out.push('\n');
@@ -2521,13 +2600,14 @@ fn weave_affordance_pages(
     output_dir: &Path,
     docs: &[ProjectedDoc],
     records: &[AffordanceRecord],
+    icons: Option<&Icons>,
 ) -> Result<()> {
     for doc in docs {
         let rel = doc.rel.to_string_lossy().to_string();
         let evidence: Vec<AffordanceEvidence> = records
             .iter()
             .filter(|r| r.document == rel)
-            .map(|r| affordance_evidence(r, &rel))
+            .map(|r| affordance_evidence(r, icons, &rel))
             .collect();
         if evidence.is_empty() {
             continue;
@@ -2540,12 +2620,17 @@ fn weave_affordance_pages(
     Ok(())
 }
 
-/// One record as its page shows it, every link made relative to `page`.
-fn affordance_evidence(rec: &AffordanceRecord, page: &str) -> AffordanceEvidence {
-    let glyph_dir = relative_link(page, AFFORDANCES_DIR);
+/// One record as its page shows it, every link made relative to `page`:
+/// the actor and status marks beside the status word, and each test's
+/// mark beside what it did.
+fn affordance_evidence(rec: &AffordanceRecord, icons: Option<&Icons>, page: &str) -> AffordanceEvidence {
+    let icon_dir = relative_link(page, AFFORDANCES_DIR);
+    // Borrowed once here so the per-test closure below copies a reference
+    // rather than moving the string.
+    let icon_dir: &str = &icon_dir;
     AffordanceEvidence {
         id: rec.id.clone(),
-        glyphs: record_glyphs(rec, &glyph_dir),
+        marks: record_marks(rec, icons, icon_dir),
         status: rec.status().as_str().to_string(),
         actors: rec.actors.iter().map(|k| actor_phrase(k)).collect::<Vec<_>>().join(", "),
         cues: rec.surfaces.clone(),
@@ -2554,64 +2639,90 @@ fn affordance_evidence(rec: &AffordanceRecord, page: &str) -> AffordanceEvidence
             .proofs
             .iter()
             .flat_map(|p| {
-                p.tests.iter().zip(p.sources.iter()).map(move |(test, source)| ProofEvidence {
-                    test: test.clone(),
-                    outcome: rec.outcomes.get(&p.test_id(test)).map(|o| o.as_str().to_string()),
-                    chapter: (p.chapter.0.clone(), relative_link(page, &p.chapter.1)),
-                    chunk: p.chunk.clone(),
-                    source: source.clone(),
+                p.tests.iter().zip(p.sources.iter()).map(move |(test, source)| {
+                    let outcome = rec.outcomes.get(&p.test_id(test)).copied();
+                    ProofEvidence {
+                        test: test.clone(),
+                        outcome: outcome.map(|o| o.as_str().to_string()),
+                        mark: icons
+                            .and_then(|i| i.label(test_mark(outcome)))
+                            .map(|label| icon_picture(icon_dir, label, STATUS_ICON_HEIGHT))
+                            .unwrap_or_default(),
+                        chapter: (p.chapter.0.clone(), relative_link(page, &p.chapter.1)),
+                        chunk: p.chunk.clone(),
+                        source: source.clone(),
+                    }
                 })
             })
             .collect(),
     }
 }
 
-/// Projection-relative directory the glyphs are written to. Not `docs/`:
+/// Projection-relative directory the icons are written to. Not `docs/`:
 /// in the carried example that is an overlay path the public side owns
-/// and the projector never regenerates, and a generated glyph is the
-/// opposite kind of file.
+/// and the projector never regenerates, and a bound icon is the opposite
+/// kind of file.
 const AFFORDANCES_DIR: &str = "affordances";
-/// The height an actor mark is shown at, and drawn at.
-const ACTOR_GLYPH_HEIGHT: u32 = 20;
-/// The height a status ring is shown at, and drawn at.
-const STATUS_GLYPH_HEIGHT: u32 = 16;
+/// The height a subject's mark — an affordance's own icon, an actor
+/// mark — is shown at: a little over the text.
+const SUBJECT_ICON_HEIGHT: u32 = 20;
+/// The height a status mark is shown at: level with the text.
+const STATUS_ICON_HEIGHT: u32 = 16;
 
-/// The stem of the glyph file for an actor set: a person, an agent, or
-/// both. Any actor kind that is not `human` is drawn as the machine, as a
-/// structured actor. No actor, no glyph.
-fn glyph_stem(actors: &[String]) -> Option<&'static str> {
+/// Where a mark that is not an affordance's own is declared
+/// (`x0k:design/icon-profile` § "Where an icon is declared"): an actor
+/// set's on the page that is its class, a status word's in the section
+/// that defines the word.
+enum MarkSource {
+    /// `ontology/classes/<Class>.md` — the page that is the class, one
+    /// section.
+    Class(&'static str),
+    /// A section of a document, by the document's id and its heading.
+    Section { document: &'static str, heading: &'static str },
+}
+
+/// The marks, under the name a row asks for each by: the class of an
+/// actor set, a status word, what a test did.
+const MARKS: &[(&str, MarkSource)] = &[
+    ("Human", MarkSource::Class("Human")),
+    ("AIAgent", MarkSource::Class("AIAgent")),
+    ("Actor", MarkSource::Class("Actor")),
+    ("proven", MarkSource::Section { document: STATUS_DESIGN, heading: "proven" }),
+    ("declared", MarkSource::Section { document: STATUS_DESIGN, heading: "declared" }),
+    ("claimed", MarkSource::Section { document: STATUS_DESIGN, heading: "claimed" }),
+    ("passed", MarkSource::Section { document: TEST_STATUS_CHAPTER, heading: "passed" }),
+    ("failed", MarkSource::Section { document: TEST_STATUS_CHAPTER, heading: "failed" }),
+    ("not run", MarkSource::Section { document: TEST_STATUS_CHAPTER, heading: "not run" }),
+];
+/// The design that defines the three status words, and declares their
+/// marks with them.
+const STATUS_DESIGN: &str = "x0k:design/publish-a-region-as-a-repository";
+/// This chapter, which derives what a test did and declares the marks
+/// with the outcomes (§ "Test status: passed, failed, not run").
+const TEST_STATUS_CHAPTER: &str = "x0k:implementation/tangle/region-repo";
+
+/// The class whose mark an actor set shows: a person, an agent, or the
+/// genus for a claim on both. Any actor kind that is not `human` is
+/// drawn as the agent, a structured actor. No actor, no mark.
+fn actor_mark(actors: &[String]) -> Option<&'static str> {
     let person = actors.iter().any(|k| k == "human");
     let machine = actors.iter().any(|k| k != "human");
     match (person, machine) {
-        (true, true) => Some("for-a-person-and-an-agent"),
-        (true, false) => Some("for-a-person"),
-        (false, true) => Some("for-an-agent"),
+        (true, true) => Some("Actor"),
+        (true, false) => Some("Human"),
+        (false, true) => Some("AIAgent"),
         (false, false) => None,
     }
 }
 
-/// The stem of the glyph file for a status: `status-proven`,
-/// `status-declared`, `status-claimed`.
-fn status_glyph_stem(status: AffordanceStatus) -> String {
-    format!("status-{}", status.as_str())
+/// The mark for what a test did — `passed`, `failed` — or `not run`
+/// when the proofs were not asked.
+fn test_mark(outcome: Option<ProofOutcome>) -> &'static str {
+    match outcome {
+        Some(outcome) => outcome.as_str(),
+        None => "not run",
+    }
 }
-
-/// What a glyph says it is — its `aria-label`, and the `alt` of the image
-/// showing it.
-fn glyph_label(stem: &str) -> String {
-    stem.replace('-', " ")
-}
-
-/// The two strokes a glyph is drawn in: the plate's line colour and its ink.
-struct GlyphPalette {
-    stroke: &'static str,
-    ink: &'static str,
-}
-
-/// Gold and ink, as on the paper plates.
-const GLYPH_LIGHT: GlyphPalette = GlyphPalette { stroke: "#b88e44", ink: "#111111" };
-/// Blue and slate, as on the dark plates.
-const GLYPH_DARK: GlyphPalette = GlyphPalette { stroke: "#96b4dc", ink: "#e2e8f0" };
 
 /// Escape text for an XML attribute or text node.
 fn xml_escape(s: &str) -> String {
@@ -2621,138 +2732,201 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// The eye from the plates, 30 wide by 20 tall with its left edge at `x`:
-/// a person. One closed curve for the lid at the plates' line weight, a
-/// ring for the iris, the pupil in ink, and a catchlight the size of the
-/// stroke.
-fn eye_mark(x: f64, p: &GlyphPalette) -> String {
-    let cx = x + 15.0;
-    format!(
-        "<path d=\"M{x0},10 C{x1},2.6 {x2},2.6 {x3},10 C{x2},17.4 {x1},17.4 {x0},10 Z\" \
-         fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1.3\" stroke-linejoin=\"round\"/>\
-         <circle cx=\"{cx}\" cy=\"10\" r=\"4.6\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1.1\"/>\
-         <circle cx=\"{cx}\" cy=\"10\" r=\"2.1\" fill=\"{ink}\"/>\
-         <circle cx=\"{hx}\" cy=\"8.6\" r=\"0.65\" fill=\"{stroke}\"/>",
-        x0 = x + 1.5,
-        x1 = x + 8.5,
-        x2 = x + 21.5,
-        x3 = x + 28.5,
-        hx = cx + 1.3,
-        stroke = p.stroke,
-        ink = p.ink,
-    )
+/// Every icon the rows and pages may show, checked against the profile
+/// and labelled — each record's own under the record's id, the marks
+/// under their names — with the palette they are bound with.
+struct Icons {
+    by_name: BTreeMap<String, (Label, Accepted)>,
+    palette: Palette,
 }
 
-/// The machine from the plates — a row of four chips on a trace, one of
-/// them carrying its token — 32 wide by 20 tall with its left edge at
-/// `x`: an agent.
-fn machine_mark(x: f64, p: &GlyphPalette) -> String {
-    let mut s = format!(
-        "<line x1=\"{x0}\" y1=\"15.4\" x2=\"{x1}\" y2=\"15.4\" stroke=\"{stroke}\" \
-         stroke-width=\"0.8\" stroke-dasharray=\"2 1.6\" stroke-linecap=\"round\"/>",
-        x0 = x + 1.5,
-        x1 = x + 30.5,
-        stroke = p.stroke,
-    );
-    for i in 0..4 {
-        let cx = x + 1.0 + 7.6 * i as f64;
-        s.push_str(&format!(
-            "<rect x=\"{cx}\" y=\"6.4\" width=\"6.2\" height=\"6.2\" rx=\"1\" fill=\"none\" \
-             stroke=\"{}\" stroke-width=\"1.1\"/>",
-            p.stroke
-        ));
-        if i == 1 {
-            s.push_str(&format!(
-                "<rect x=\"{}\" y=\"8.3\" width=\"2.4\" height=\"2.4\" fill=\"{}\"/>",
-                cx + 1.9,
-                p.ink
-            ));
-        }
+impl Icons {
+    /// The label of an icon the projection holds, by the name a row asks
+    /// for it under; `None` for an affordance that declared no mark.
+    fn label(&self, name: &str) -> Option<&Label> {
+        self.by_name.get(name).map(|(label, _)| label)
     }
-    s
 }
 
-/// One actor glyph, in one palette: the eye, the machine, or the two
-/// side by side, on a transparent ground, 20 tall.
-fn actor_glyph(stem: &str, p: &GlyphPalette) -> String {
-    let (width, marks) = match stem {
-        "for-a-person" => (30.0, eye_mark(0.0, p)),
-        "for-an-agent" => (32.0, machine_mark(0.0, p)),
-        _ => (68.0, format!("{}{}", eye_mark(0.0, p), machine_mark(36.0, p))),
+/// Read every icon the rows may show and check each: the records' own
+/// from the records, the marks from the pages the design places them
+/// on. `None` when the publication names no affordance — there is
+/// nothing to show, and no palette is asked for. A publication whose
+/// rows show marks and whose envelope binds them to nothing refuses.
+fn read_icons(
+    workspace: &Path,
+    records: &[AffordanceRecord],
+    palette: Option<Palette>,
+) -> Result<Option<Icons>> {
+    if records.is_empty() {
+        return Ok(None);
+    }
+    let Some(palette) = palette else {
+        bail!(
+            "repository projection refused — the publication names affordances, whose rows \
+             show icons, and its envelope carries no `palette:` to bind them with (a projected \
+             repository has no theme document; x0k:design/icon-profile § \"The paints\")"
+        );
     };
-    format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width} {h}\" width=\"{width}\" \
-         height=\"{h}\" role=\"img\" aria-label=\"{}\">{marks}</svg>\n",
-        xml_escape(&glyph_label(stem)),
-        h = ACTOR_GLYPH_HEIGHT,
-    )
+    let mut by_name: BTreeMap<String, (Label, Accepted)> = BTreeMap::new();
+    for rec in records {
+        if rec.icons.is_empty() {
+            continue;
+        }
+        let place = format!("{} § {}", rec.document, rec.title);
+        let icon = check_declared(&place, &rec.icons)?;
+        by_name.insert(rec.id.clone(), (Label::for_entity(&rec.id, &rec.title), icon));
+    }
+    for (name, source) in MARKS {
+        let (label, svgs, place) = mark_declaration(workspace, name, source)?;
+        let icon = check_declared(&place, &svgs)?;
+        by_name.insert(name.to_string(), (label, icon));
+    }
+    Ok(Some(Icons { by_name, palette }))
 }
 
-/// One status ring, in one palette, 16 square: a ring with its centre
-/// filled for `proven`, an open ring for `declared`, a dotted ring for
-/// `claimed`. The same radius and weight in all three, so the eye reads
-/// the difference as a change of state and not of mark; the dotted ring's
-/// period divides its circumference into twelve, so the dots close evenly.
-fn status_glyph(status: AffordanceStatus, p: &GlyphPalette) -> String {
-    let ring = "cx=\"8\" cy=\"8\" r=\"5.4\" fill=\"none\" stroke-width=\"1.2\"";
-    let marks = match status {
-        AffordanceStatus::Proven => format!(
-            "<circle {ring} stroke=\"{s}\"/><circle cx=\"8\" cy=\"8\" r=\"2.7\" fill=\"{s}\"/>",
-            s = p.stroke
-        ),
-        AffordanceStatus::Declared => format!("<circle {ring} stroke=\"{}\"/>", p.stroke),
-        AffordanceStatus::Claimed => format!(
-            "<circle {ring} stroke=\"{}\" stroke-dasharray=\"0.1 2.7274\" stroke-linecap=\"round\"/>",
-            p.stroke
-        ),
+/// A section's icons through the checker — the `icon` verb's own
+/// reading ([`cli-faces.md`](cli-faces.md)), so the projector and the
+/// verb accept and refuse the same drawings. A refusal names the rule
+/// and the element, and is the projection's.
+fn check_declared(place: &str, svgs: &[String]) -> Result<Accepted> {
+    check_section(svgs).map_err(|refusal| {
+        anyhow!(
+            "repository projection refused — the icon declared on {place} is outside the \
+             profile:\n{refusal}"
+        )
+    })
+}
+
+/// One mark's declaration: its label, the drawings in its section, and
+/// where that is, for a refusal. A class page is not a folio document —
+/// its frontmatter is `class:` and `label:`, and its body opens on prose
+/// — so its label stands as the one section's heading, which is what the
+/// extractor's section rule needs and what the mark's `alt` says. A mark
+/// nothing declares refuses, naming where it was looked for.
+fn mark_declaration(
+    workspace: &Path,
+    name: &str,
+    source: &MarkSource,
+) -> Result<(Label, Vec<String>, String)> {
+    let (label, body, heading, place) = match source {
+        MarkSource::Class(class) => {
+            let rel = format!("ontology/classes/{class}.md");
+            let text = std::fs::read_to_string(workspace.join(&rel))
+                .with_context(|| format!("reading {rel}, the class page declaring the `{name}` mark"))?;
+            let (yaml, body) = split_frontmatter(&text)
+                .ok_or_else(|| anyhow!("{rel} carries no frontmatter"))?;
+            let title = yaml
+                .lines()
+                .find_map(|l| l.strip_prefix("label:"))
+                .map(|v| v.trim().trim_matches('"').to_string())
+                .unwrap_or_else(|| class.to_string());
+            let label = Label::for_entity(&format!("x0k:class/{class}"), &title);
+            (label, format!("# {title}\n\n{body}"), title, rel)
+        }
+        MarkSource::Section { document, heading } => {
+            let path = find_document(workspace, document)
+                .with_context(|| format!("locating the document declaring the `{name}` mark"))?;
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let (_, body) = split_frontmatter(&text)
+                .ok_or_else(|| anyhow!("{} carries no frontmatter", path.display()))?;
+            let rel = path.strip_prefix(workspace).unwrap_or(&path).display().to_string();
+            let entity = format!("x0k:{ICON_CLASS}/{}", x0k_folio::transclusion::heading_slug(heading));
+            (Label::for_entity(&entity, heading), body.to_string(), heading.to_string(), format!("{rel} § {heading}"))
+        }
     };
-    format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {h} {h}\" width=\"{h}\" \
-         height=\"{h}\" role=\"img\" aria-label=\"{}\">{marks}</svg>\n",
-        status.as_str(),
-        h = STATUS_GLYPH_HEIGHT,
-    )
+    let svgs = declared_icons(&body, &heading);
+    if svgs.is_empty() {
+        bail!(
+            "repository projection refused — the `{name}` mark is declared by no `svg x0k:icon` \
+             block under {place}"
+        );
+    }
+    Ok((label, svgs, place))
 }
 
-/// Write one glyph in both palettes and record it in the report by stem.
-fn write_glyph_pair(
-    output_dir: &Path,
-    stem: &str,
-    draw: impl Fn(&GlyphPalette) -> String,
-    report: &mut RepoProjectReport,
-) -> Result<()> {
-    let light = format!("{AFFORDANCES_DIR}/{stem}-light.svg");
-    let dark = format!("{AFFORDANCES_DIR}/{stem}-dark.svg");
-    std::fs::write(output_dir.join(&light), draw(&GLYPH_LIGHT))
-        .with_context(|| format!("writing glyph {light}"))?;
-    std::fs::write(output_dir.join(&dark), draw(&GLYPH_DARK))
-        .with_context(|| format!("writing glyph {dark}"))?;
-    report.figures.insert(stem.to_string(), light.clone());
-    tracing::info!(glyph = %stem, figure = %light, "region_repo.glyph.written");
-    Ok(())
+/// The `svg x0k:icon` declarations under `heading` in a body, each the
+/// drawing as written. Every declaring class is admitted to the walk so
+/// the affordance beside an icon is not logged as a stray; only the
+/// icons are kept.
+fn declared_icons(body: &str, heading: &str) -> Vec<String> {
+    let classes: HashSet<String> = ["affordance", "signifier", "interface", ICON_CLASS]
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+    x0k_folio::extract_from_markdown(body, &classes)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.marker_class == ICON_CLASS && e.title == heading)
+        .filter_map(|e| icon_svg(&e))
+        .collect()
 }
 
-/// Write the glyphs the table's rows use — actor marks and status rings
-/// — once each. Nothing is written for a publication that names no
-/// affordance: no directory, no report line.
-fn write_actor_glyphs(
+/// The tree file declaring `id`: under `knowledge/implementation/` for a
+/// literate document, found by its envelope; under `decisions/` for the
+/// rest, by the lookup a named document gets.
+fn find_document(workspace: &Path, id: &str) -> Result<PathBuf> {
+    if id.starts_with(IMPLEMENTATION_DOC_PREFIX) {
+        let root = workspace.join("knowledge/implementation");
+        for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+            if entry.path().extension().is_none_or(|e| e != "md") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            if parse_envelope(&text).map(|(env, _)| env.id == id).unwrap_or(false) {
+                return Ok(entry.path().to_path_buf());
+            }
+        }
+        bail!("no document under knowledge/implementation/ declares `{id}` as its `id:`");
+    }
+    let entity: EntityId =
+        id.parse().map_err(|e| anyhow!("`{id}` is not a readable x0k id: {e}"))?;
+    resolve_named_document(workspace, &DocSelection { reference: id.to_string(), id: entity })
+}
+
+/// Write the icons the rows and pages use — each record's own, the actor
+/// marks, the status marks, the marks for what each test did — once
+/// each, light and dark, bound to the publication's palette, and record
+/// each in the report by stem. Nothing is written for a publication that
+/// names no affordance: no directory, no report line.
+fn write_icons(
     output_dir: &Path,
     records: &[AffordanceRecord],
+    icons: Option<&Icons>,
     report: &mut RepoProjectReport,
 ) -> Result<()> {
-    if records.is_empty() {
+    let Some(icons) = icons else {
         return Ok(());
+    };
+    let mut used: BTreeSet<String> = BTreeSet::new();
+    for rec in records {
+        if icons.by_name.contains_key(&rec.id) {
+            used.insert(rec.id.clone());
+        }
+        used.extend(actor_mark(&rec.actors).map(str::to_string));
+        used.insert(rec.status().as_str().to_string());
+        for proof in &rec.proofs {
+            for test in &proof.tests {
+                let outcome = rec.outcomes.get(&proof.test_id(test)).copied();
+                used.insert(test_mark(outcome).to_string());
+            }
+        }
     }
     std::fs::create_dir_all(output_dir.join(AFFORDANCES_DIR))?;
-    let stems: BTreeSet<&str> = records.iter().filter_map(|r| glyph_stem(&r.actors)).collect();
-    for stem in stems {
-        write_glyph_pair(output_dir, stem, |p| actor_glyph(stem, p), report)?;
-    }
-    let mut statuses: Vec<AffordanceStatus> = records.iter().map(|r| r.status()).collect();
-    statuses.sort_by_key(|s| s.as_str());
-    statuses.dedup();
-    for status in statuses {
-        write_glyph_pair(output_dir, &status_glyph_stem(status), |p| status_glyph(status, p), report)?;
+    for name in used {
+        let Some((label, icon)) = icons.by_name.get(&name) else {
+            continue;
+        };
+        for (file, text) in emit::files(icon, &icons.palette, label) {
+            std::fs::write(output_dir.join(AFFORDANCES_DIR).join(&file), text)
+                .with_context(|| format!("writing icon {file}"))?;
+        }
+        let light = format!("{AFFORDANCES_DIR}/{}-light.svg", label.stem);
+        report.figures.insert(label.stem.clone(), light.clone());
+        tracing::info!(icon = %name, figure = %light, "region_repo.icon.written");
     }
     Ok(())
 }
@@ -3426,16 +3600,18 @@ fn render_by_area(docs: &[LiterateDoc], order: &[(String, Vec<String>)]) -> Resu
 /// publication does not ship are collected in `unpublished`); then the
 /// shipped vocabulary modules, each described by its own module fact's
 /// `rdfs:comment`.
+#[allow(clippy::too_many_arguments)] // the page's inputs, named; a struct would only rename the list
 fn render_contents(
     docs: &[LiterateDoc],
     plan: &ContentsPlan,
     modules: &[VocabModule],
     modules_rel: &Path,
     affordances: &[AffordanceRecord],
+    icons: Option<&Icons>,
     concepts: &BTreeMap<String, (String, String)>,
     unpublished: &mut Vec<String>,
 ) -> Result<String> {
-    let mut out = render_affordances(affordances);
+    let mut out = render_affordances(affordances, icons);
     out.push_str(&match plan {
         ContentsPlan::Groups(groups) => render_by_group(docs, groups, concepts, unpublished)?,
         ContentsPlan::Spine(order) => render_by_area(docs, order)?,
@@ -3469,15 +3645,18 @@ fn render_contents(
 }
 
 /// Replace the README's contents marker with the generated page, writing
-/// the actor glyphs its affordance rows use. A projection with documents,
-/// modules or affordances to list and no marker refuses: the alternative is
-/// a public README that silently says less than the repository ships.
+/// the icons its affordance rows and their pages show. A projection with
+/// documents, modules or affordances to list and no marker refuses: the
+/// alternative is a public README that silently says less than the
+/// repository ships.
+#[allow(clippy::too_many_arguments)]
 fn write_readme_contents(
     output_dir: &Path,
     docs: &[LiterateDoc],
     modules: &[VocabModule],
     modules_rel: &Path,
     affordances: &[AffordanceRecord],
+    icons: Option<&Icons>,
     projected: &[ProjectedDoc],
     report: &mut RepoProjectReport,
 ) -> Result<()> {
@@ -3505,6 +3684,7 @@ fn write_readme_contents(
         modules,
         modules_rel,
         affordances,
+        icons,
         &concepts,
         &mut unpublished,
     )?;
@@ -3512,7 +3692,7 @@ fn write_readme_contents(
         tracing::info!(concept = %id, "region_repo.concept.unpublished");
     }
     report.unpublished_concepts = unpublished;
-    write_actor_glyphs(output_dir, affordances, report)?;
+    write_icons(output_dir, affordances, icons, report)?;
     let mut out = String::new();
     out.extend(lines[..marker.start].iter().copied());
     out.push_str(&contents);
@@ -4138,7 +4318,7 @@ mod tests {
     /// The page for `docs` under `plan`, with no modules, no affordances,
     /// and no concept pages shipped.
     fn render(docs: &[LiterateDoc], plan: &ContentsPlan) -> Result<String> {
-        render_contents(docs, plan, &[], Path::new("ontology/modules"), &[], &BTreeMap::new(), &mut Vec::new())
+        render_contents(docs, plan, &[], Path::new("ontology/modules"), &[], None, &BTreeMap::new(), &mut Vec::new())
     }
 
     fn marker_of(text: &str) -> Result<Option<ContentsMarker>> {
@@ -4359,7 +4539,7 @@ mod tests {
             ("First lines".to_string(), "knowledge/wiki/first-lines.md".to_string()),
         )]);
         let mut unpublished = Vec::new();
-        let page = render_contents(&[a, b, c], &plan, &[], Path::new("ontology/modules"), &[], &concepts, &mut unpublished).unwrap();
+        let page = render_contents(&[a, b, c], &plan, &[], Path::new("ontology/modules"), &[], None, &concepts, &mut unpublished).unwrap();
         let expected = [
             "**What it ships.** Every chapter, grouped by what it is about rather than which crate its code lands in; under a group, *rests on* names the concepts a reader needs first.",
             "",
@@ -4425,6 +4605,7 @@ mod tests {
             chapters: Vec::new(),
             outcomes: outcomes.iter().map(|(t, o)| (proof.test_id(t), *o)).collect(),
             proofs: if tests.is_empty() { Vec::new() } else { vec![proof] },
+            icons: Vec::new(),
         }
     }
 

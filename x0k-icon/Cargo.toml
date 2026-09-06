@@ -1,0 +1,30 @@
+[package]
+name = "x0k-icon"
+version = "0.1.0"
+edition = { workspace = true }
+description = "The icon profile's one implementation: parse, validate, bind and emit a constrained, role-painted SVG mark for every surface."
+license = "MIT"
+keywords = ["svg", "icons", "themes", "publishing"]
+categories = ["parser-implementations", "rendering::data-formats"]
+rust-version = { workspace = true }
+repository = "https://github.com/0k-dot-computer/x0k-folio"
+readme = "../README.md"
+
+[lib]
+name = "x0k_icon"
+
+[dependencies]
+# The profile is a subset of SVG, and SVG is XML: `parse.rs` reads a
+# declaration with roxmltree (MIT OR Apache-2.0, no dependencies), which
+# is all the XML this crate needs. No usvg, resvg or vello: the path form
+# the shell paints is x0k-ui-draw's adapter, and the raster a favicon
+# needs is behind a feature this crate does not carry.
+roxmltree = "0.20"
+
+# A publication's palette block (`bind.rs`) is read by serde.
+serde = { workspace = true }
+
+[dev-dependencies]
+# The design writes the palette block in YAML flow style; the test that
+# proves it reads as written parses that YAML.
+serde_norway = "0.9"

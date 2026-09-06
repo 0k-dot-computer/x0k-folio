@@ -455,7 +455,7 @@ it, and what each proof test did when the projector ran it. The weave
 writes that under the declaration's block, and puts each test's body
 under `<details>`, so the page reads as a claim with the evidence one
 click down. The record arrives already rendered where rendering is the
-projector's business (the glyphs, the actor phrase) and as data where it
+projector's business (the marks, the actor phrase) and as data where it
 is not.
 
 <a name="chunk-affordance-evidence"></a><sub>[`src/region_gfm.rs`](../../../x0k-tangle/src/region_gfm.rs) · `#affordance-evidence`</sub>
@@ -466,8 +466,9 @@ is not.
 pub struct AffordanceEvidence {
     /// The declared id, matched against the `id:` line of the block.
     pub id: String,
-    /// The actor and status glyphs, rendered.
-    pub glyphs: String,
+    /// The actor mark and the status mark, rendered; empty when the
+    /// projection holds no icons.
+    pub marks: String,
     /// `proven`, `declared` or `claimed`.
     pub status: String,
     /// "a person, an agent" — empty when the declaration claims no actor.
@@ -481,11 +482,14 @@ pub struct AffordanceEvidence {
 }
 
 /// One proof test: its name, what it did at projection (`None` when the
-/// proofs did not run), the chapter and chunk that tangle it, and its
-/// body as the chapter tangles it.
+/// proofs did not run) with the mark for that rendered, the chapter and
+/// chunk that tangle it, and its body as the chapter tangles it.
 pub struct ProofEvidence {
     pub test: String,
     pub outcome: Option<String>,
+    /// The mark for `outcome` — passed, failed, not run — rendered; empty
+    /// when the projection holds no icons.
+    pub mark: String,
     pub chapter: (String, String),
     pub chunk: String,
     pub source: String,
@@ -532,7 +536,11 @@ pub fn weave_affordance_section(text: &str, evidence: &[AffordanceEvidence]) -> 
 /// The evidence, as the page shows it.
 fn render_evidence(ev: &AffordanceEvidence) -> String {
     let mut out = String::new();
-    let mut line = format!("{} *{}*", ev.glyphs, ev.status);
+    let mut line = if ev.marks.is_empty() {
+        format!("*{}*", ev.status)
+    } else {
+        format!("{} *{}*", ev.marks, ev.status)
+    };
     if !ev.actors.is_empty() {
         line.push_str(&format!(" · for {}", ev.actors));
     }
@@ -551,8 +559,9 @@ fn render_evidence(ev: &AffordanceEvidence) -> String {
         out.push_str("*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n");
         for p in &ev.proofs {
             let outcome = p.outcome.as_deref().unwrap_or("not run");
+            let mark = if p.mark.is_empty() { String::new() } else { format!("{} ", p.mark) };
             out.push_str(&format!(
-                "<details><summary><code>{}</code> · {outcome} · <a href=\"{}#chunk-{}\">#{}</a> in {}</summary>\n\n```rust\n{}\n```\n\n</details>\n\n",
+                "<details><summary><code>{}</code> · {mark}{outcome} · <a href=\"{}#chunk-{}\">#{}</a> in {}</summary>\n\n```rust\n{}\n```\n\n</details>\n\n",
                 p.test,
                 p.chapter.1,
                 p.chunk,
@@ -703,7 +712,7 @@ mod tests {
         let page = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/demo-design#read-a-line\n  type: design\n---\n\n### Read a line\n\nI read a line.\n\n```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\nAfter.\n";
         let ev = AffordanceEvidence {
             id: "x0k:affordance/read_a_line".to_string(),
-            glyphs: "<img alt=\"proven\">".to_string(),
+            marks: "<img alt=\"proven\">".to_string(),
             status: "proven".to_string(),
             actors: "a person".to_string(),
             cues: vec![("cli".to_string(), "demo read".to_string())],
@@ -711,13 +720,14 @@ mod tests {
             proofs: vec![ProofEvidence {
                 test: "a_line_is_read".to_string(),
                 outcome: Some("passed".to_string()),
+                mark: "<img alt=\"passed\">".to_string(),
                 chapter: ("Lines".to_string(), "../../../knowledge/implementation/demo/lines.md".to_string()),
                 chunk: "tests".to_string(),
                 source: "#[test]\nfn a_line_is_read() {}\n".to_string(),
             }],
         };
         let out = weave_affordance_section(page, &[ev]);
-        let expected = "```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\n<img alt=\"proven\"> *proven* · for a person · reachable through `cli` `demo read`\n\n*realized in* [Lines](../../../knowledge/implementation/demo/lines.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · passed · <a href=\"../../../knowledge/implementation/demo/lines.md#chunk-tests\">#tests</a> in Lines</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {}\n```\n\n</details>\n\n\nAfter.\n";
+        let expected = "```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\n<img alt=\"proven\"> *proven* · for a person · reachable through `cli` `demo read`\n\n*realized in* [Lines](../../../knowledge/implementation/demo/lines.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · <img alt=\"passed\"> passed · <a href=\"../../../knowledge/implementation/demo/lines.md#chunk-tests\">#tests</a> in Lines</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {}\n```\n\n</details>\n\n\nAfter.\n";
         assert!(out.ends_with(expected), "{out}");
         assert_eq!(weave_affordance_section(page, &[]), page, "no evidence, no change");
     }

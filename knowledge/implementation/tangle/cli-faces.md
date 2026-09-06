@@ -4,7 +4,7 @@ x0k:
   id: x0k:implementation/tangle/cli-faces
   type: implementation
   status: draft
-  summary: "The two verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, and an affordance declaration read out as data — each proven by running the binary the repository ships."
+  summary: "The three verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, an affordance declaration read out as data, and an icon declaration checked against the profile and written bound to a publication's palette — each proven by running the binary the repository ships."
   concerns: [tangle, cli, folio, vocabulary, affordance, publishing]
   tangle:
     crate: x0k-tangle
@@ -12,14 +12,18 @@ x0k:
   edges:
     implements:
       - x0k:design/publish-a-region-as-a-repository
+      - x0k:design/icon-profile
       - x0k:affordance/check_a_document_against_shipped_vocabulary
       - x0k:affordance/read_declared_affordances
+      - x0k:affordance/check_an_icon_against_the_profile
+      - x0k:affordance/show_an_icon_on_a_surface
     cites:
       - x0k:implementation/tangle/crate
       - x0k:implementation/folio/checking
       - x0k:implementation/folio/inline-entities
+      - x0k:implementation/icon/crate
 ---
-# The faces behind `check` and `affordances`
+# The faces behind `check`, `affordances` and `icon`
 
 Two of the affordances the `x0k-folio` publication ships claim a human:
 [checking a document against the vocabulary that shipped beside it](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary"), and
@@ -32,11 +36,15 @@ printed a declaration. A claim on a perception-dependent actor with
 nothing to perceive is a false claim, and the design now says so
 (`x0k:design/publish-a-region-as-a-repository`, amendment of
 2026-09-05). This module is what makes the two claims true from a
-shell.
+shell — and a third pair, from the [icon profile](x0k:design/icon-profile):
+[checking an icon against the profile](../../../decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md "x0k:affordance/check_an_icon_against_the_profile")
+and [showing it on a surface](../../../decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md "x0k:affordance/show_an_icon_on_a_surface"),
+which the `icon` verb makes true for the one surface a shell can
+reach, a directory of files.
 
 It holds the mechanism and none of the printing. Both binaries — the
 protocol-only `x0k-tangle/src/main.rs` the repository ships and the
-monorepo's bundle mirror — call the two functions here and format the
+monorepo's bundle mirror — call the functions here and format the
 reports themselves, so the verbs stay identical across the pair without
 the bundle growing a dependency on `x0k-folio`. The signifiers for the
 verbs live in [`crate.md`](crate.md), under each verb's own heading,
@@ -45,11 +53,12 @@ because a signifier is declared where its face lives.
 <a name="chunk-doc"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#doc`</sub>
 
 ```rust {#doc}
-//! The mechanism behind the `check` and `affordances` CLI verbs: every
-//! folio/v1 envelope under a set of paths read against the vocabulary
-//! this build compiled, and every inline affordance declaration read
-//! out as a record. Both `x0k-tangle` binaries call these and do their
-//! own printing.
+//! The mechanism behind the `check`, `affordances` and `icon` CLI verbs:
+//! every folio/v1 envelope under a set of paths read against the
+//! vocabulary this build compiled, every inline affordance declaration
+//! read out as a record, and every icon declaration checked against the
+//! profile and written bound. Both `x0k-tangle` binaries call these and
+//! do their own printing.
 ```
 
 <a name="chunk-imports"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#imports`</sub>
@@ -64,8 +73,9 @@ use x0k_folio::colophon::{is_colophon, parse_envelope, Colophon, DocType};
 use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::{
     check_corpus, check_declarations, declared_facts, document_edges, extract_from_markdown,
-    CorpusReport, DeclarationReport, InlineEntity,
+    CorpusReport, DeclarationReport, InlineEntity, ICON_CLASS,
 };
+use x0k_icon::{check, emit, one_per_grid, Accepted, Grid, Label, Palette};
 
 use crate::parser::{parse_document, ParsedDocument};
 ```
@@ -552,9 +562,179 @@ fn record_of(entity: &InlineEntity, defined_in: &str) -> AffordanceRecord {
 }
 ```
 
+
+## The icons
+
+An icon is declared where the thing it depicts is declared — an
+`svg x0k:icon` block in the section of an affordance, a class, a status
+word — and the [profile](x0k:design/icon-profile) says what may be drawn
+there. The `icon` verb asks two things of a set of documents. Does every
+declaration keep the profile: each drawing goes through the checker
+(`x0k-icon`) and comes back accepted or refused rule by rule, and the
+verb never redraws. And, given a palette, what does each look like on a
+surface that cannot resolve a variable: the per-scheme files a
+repository's pages show through a `<picture>`.
+
+An icon has no id of its own; it is named after what it depicts. The
+extractor gives an icon the id of its section, and the verb looks in
+the same section for the entity declared beside it — an affordance, a
+signifier — and names the outputs after that, as the profile asks, so a
+file written here is the file the projector writes. A section that
+declares only the icon keeps the section's name.
+
+<a name="chunk-icon-report"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#icon-report`</sub>
+
+```rust {#icon-report}
+/// One icon declaration under the paths, accepted: the document and
+/// section it is declared in, the label its outputs carry — the stem
+/// from the entity declared beside it, or the section's own, and the
+/// heading as the title — and the drawing.
+#[derive(Debug)]
+pub struct IconRecord {
+    pub document: String,
+    pub section: String,
+    pub label: Label,
+    pub icon: Accepted,
+}
+
+/// What `icon` found under a set of paths.
+#[derive(Debug, Default)]
+pub struct IconReport {
+    /// Every declaration the checker accepted, in the order met.
+    pub accepted: Vec<IconRecord>,
+    /// Every section whose declaration the checker refused: where
+    /// (`<path> § <heading>`) and the refusal, rule by rule.
+    pub refused: Vec<(String, String)>,
+    /// Documents the parser refused and blocks the extractor refused,
+    /// each with its path and the reason. Reported and skipped.
+    pub skipped: Vec<(String, String)>,
+}
+```
+
+One section may declare two icons, on the two grids; the profile refuses
+a second on the same grid. The check for a section is therefore over its
+drawings together, and where both grids are drawn the 16 — the working
+size, the one every page shows — is the one a consumer gets. The
+projector checks a section the same way, through this function.
+
+<a name="chunk-check-section"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#check-section`</sub>
+
+```rust {#check-section}
+/// A section's icons through the checker: every drawing accepted, one
+/// per grid, and the 16 drawing where a section declares both. `Err` is
+/// every refusal, rule by rule, as the checker names them.
+pub fn check_section(svgs: &[String]) -> Result<Accepted, String> {
+    let mut accepted: Vec<Accepted> = Vec::new();
+    let mut refusals: Vec<String> = Vec::new();
+    for svg in svgs {
+        match check(svg) {
+            Ok(icon) => accepted.push(icon),
+            Err(refusal) => refusals.push(refusal.to_string()),
+        }
+    }
+    for defect in one_per_grid(&accepted.iter().collect::<Vec<_>>()) {
+        refusals.push(defect.to_string());
+    }
+    if !refusals.is_empty() {
+        return Err(refusals.join("\n"));
+    }
+    if accepted.is_empty() {
+        return Err("no drawing".to_string());
+    }
+    let sixteen = accepted.iter().position(|icon| icon.grid() == Grid::Sixteen).unwrap_or(0);
+    Ok(accepted.swap_remove(sixteen))
+}
+
+/// The drawing an icon record carries: the extractor hands an
+/// `svg x0k:icon` block back under one `svg` key, as written.
+pub fn icon_svg(entity: &InlineEntity) -> Option<String> {
+    match entity.yaml.get("svg") {
+        Some(serde_norway::Value::String(svg)) => Some(svg.clone()),
+        _ => None,
+    }
+}
+```
+
+<a name="chunk-declared-icons"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#declared-icons`</sub>
+
+```rust {#declared-icons}
+/// Read and check every icon declaration under `paths`.
+pub fn declared_icons(paths: &[PathBuf]) -> Result<IconReport> {
+    let classes: HashSet<String> = ["affordance", "signifier", "interface", ICON_CLASS]
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+    let mut report = IconReport::default();
+    for path in discover_folio_documents(paths)? {
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let name = path.display().to_string();
+        let (_, body) = match parse_envelope(&content) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                report.skipped.push((name, e.to_string()));
+                continue;
+            }
+        };
+        // Every declaration of the body, because an icon is named after
+        // the entity declared in its section.
+        let mut entities: Vec<InlineEntity> = Vec::new();
+        for extracted in extract_from_markdown(&body, &classes) {
+            match extracted {
+                Ok(entity) => entities.push(entity),
+                Err(e) => report.skipped.push((name.clone(), e.to_string())),
+            }
+        }
+        let mut sections: Vec<&str> = Vec::new();
+        for entity in entities.iter().filter(|e| e.marker_class == ICON_CLASS) {
+            if !sections.contains(&entity.title.as_str()) {
+                sections.push(&entity.title);
+            }
+        }
+        for section in sections {
+            let in_section = |e: &&InlineEntity| e.title == section;
+            let icons: Vec<&InlineEntity> =
+                entities.iter().filter(in_section).filter(|e| e.marker_class == ICON_CLASS).collect();
+            let depicted = entities
+                .iter()
+                .filter(in_section)
+                .find(|e| e.marker_class != ICON_CLASS)
+                .unwrap_or(icons[0]);
+            let svgs: Vec<String> = icons.iter().filter_map(|e| icon_svg(e)).collect();
+            match check_section(&svgs) {
+                Ok(icon) => report.accepted.push(IconRecord {
+                    document: name.clone(),
+                    section: section.to_string(),
+                    label: Label::for_entity(&depicted.uri.to_string(), section),
+                    icon,
+                }),
+                Err(refusal) => report.refused.push((format!("{name} § {section}"), refusal)),
+            }
+        }
+    }
+    Ok(report)
+}
+
+/// Write every accepted icon as its light and dark files under `out`,
+/// bound to `palette` — the form a surface that cannot resolve a variable
+/// shows. The paths written, in order.
+pub fn write_icon_files(report: &IconReport, palette: &Palette, out: &Path) -> Result<Vec<PathBuf>> {
+    std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
+    let mut written = Vec::new();
+    for record in &report.accepted {
+        for (file, text) in emit::files(&record.icon, palette, &record.label) {
+            let path = out.join(&file);
+            std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+            written.push(path);
+        }
+    }
+    Ok(written)
+}
+```
+
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances)</sub>
+<a name="chunk-root"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances) · [icon-report](#chunk-icon-report) · [check-section](#chunk-check-section) · [declared-icons](#chunk-declared-icons)</sub>
 
 ```rust {#root}
 <<doc>>
@@ -574,6 +754,12 @@ fn record_of(entity: &InlineEntity, defined_in: &str) -> AffordanceRecord {
 <<affordance-record>>
 
 <<declared-affordances>>
+
+<<icon-report>>
+
+<<check-section>>
+
+<<declared-icons>>
 ```
 
 ## Proving the faces
@@ -595,7 +781,7 @@ runtime; the defective one uses a term no module will ever declare.
 <a name="chunk-tests-doc"></a><sub>[`tests/cli_faces.rs`](../../../x0k-tangle/tests/cli_faces.rs) · `#tests-doc`</sub>
 
 ```rust {#tests-doc file="tests/cli_faces.rs"}
-//! Pins for the `check` and `affordances` faces of the shipped CLI
+//! Pins for the `check`, `affordances` and `icon` faces of the shipped CLI
 //! (`x0k:implementation/tangle/cli-faces`): the built binary is run
 //! over a temp fixture, and what it prints and how it exits is the
 //! claim.
@@ -859,6 +1045,92 @@ fn check_notes_a_proof_naming_no_affordance_here_and_passes() {
 }
 ```
 
+
+The icon verb, on the same fixture with a mark declared beside the
+affordance — the design's own person, so the verb is measured against a
+drawing the profile accepts. Accepted, it says so and exits clean; with
+one stroke painted as a colour instead of a role, it names the rule and
+the element and where, and fails.
+
+```rust {#tests-icon file="tests/cli_faces.rs" proves="x0k:affordance/check_an_icon_against_the_profile"}
+/// The design's mark for a person (`x0k:design/icon-profile` § "The
+/// first inhabitants"), verbatim.
+const PERSON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"4.5\" r=\"2.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M2.5 14.5 V13 Q2.5 9 8 9 Q13.5 9 13.5 13 V14.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n";
+
+/// The fixture design with `svg` declared as the affordance's mark,
+/// beside its block.
+fn design_doc_with_icon(svg: &str) -> String {
+    design_doc(shipped_predicate()).replace(
+        "actors: [human]\n```\n",
+        &format!("actors: [human]\n```\n\nIts mark.\n\n```svg x0k:icon\n{svg}```\n"),
+    )
+}
+
+#[test]
+fn icon_accepts_a_declaration_in_the_profile() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc_with_icon(PERSON));
+
+    let out = run(&["icon"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the design's own mark was refused: {stderr}");
+    assert!(stderr.contains("1 icon(s) checked, 0 refused"), "{stderr}");
+}
+
+#[test]
+fn icon_refuses_a_drawing_by_rule_naming_the_element_and_fails() {
+    let tmp = TempDir::new().unwrap();
+    let literal = PERSON.replacen("stroke=\"ink\"", "stroke=\"#111111\"", 1);
+    write(tmp.path(), "docs/fixture.md", &design_doc_with_icon(&literal));
+
+    let out = run(&["icon"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a literal paint passed: {stderr}");
+    assert!(stderr.contains("rule 5 (a literal paint): circle #1"), "the rule and the element: {stderr}");
+    assert!(stderr.contains("fixture.md § Frob the widget"), "and where: {stderr}");
+    assert!(stderr.contains("1 icon(s) checked, 1 refused"), "{stderr}");
+}
+```
+
+Shown on a surface: with `--out` and a publication's `--palette`, each
+accepted declaration becomes its light and dark files, named after the
+affordance declared in its section and bound to the publication's
+colours — the same pair the repository projector writes.
+
+```rust {#tests-icon-files file="tests/cli_faces.rs" proves="x0k:affordance/show_an_icon_on_a_surface"}
+/// A publication document carrying the palette block in the profile's
+/// shape — the `x0k-folio` publication's own literals.
+const PUBLICATION: &str = "---\nx0k:\n  format: folio/v1\n  type: publication\n  id: x0k:publication/fixture\n  status: proposed\n  palette:\n    light: { ink: \"#111111\", line: \"#b88e44\", paper: \"#fffff8\", accent: \"#b88e44\" }\n    dark:  { ink: \"#e2e8f0\", line: \"#96b4dc\", paper: \"#1e293b\", accent: \"#96b4dc\" }\n---\n# Fixture\n";
+
+#[test]
+fn icon_writes_each_declaration_as_its_light_and_dark_files() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc_with_icon(PERSON));
+    write(tmp.path(), "publication.md", PUBLICATION);
+    let out_dir = tmp.path().join("icons");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .args(["icon", "--out"])
+        .arg(&out_dir)
+        .arg("--palette")
+        .arg(tmp.path().join("publication.md"))
+        .arg(tmp.path().join("docs"))
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("2 file(s) written"), "{stderr}");
+
+    let light = fs::read_to_string(out_dir.join("frob-the-widget-light.svg"))
+        .expect("named after the affordance declared in the section");
+    let dark = fs::read_to_string(out_dir.join("frob-the-widget-dark.svg")).unwrap();
+    assert!(light.contains("aria-label=\"Frob the widget\""), "{light}");
+    assert!(light.contains("stroke=\"#111111\""), "bound to the light scheme: {light}");
+    assert!(dark.contains("stroke=\"#e2e8f0\""), "bound to the dark scheme: {dark}");
+    assert!(!light.contains("\"ink\""), "roles are bound, never written: {light}");
+}
+```
+
 ```rust {#tests-root file="tests/cli_faces.rs"}
 <<tests-doc>>
 
@@ -871,6 +1143,10 @@ fn check_notes_a_proof_naming_no_affordance_here_and_passes() {
 <<tests-affordances>>
 
 <<tests-proofs>>
+
+<<tests-icon>>
+
+<<tests-icon-files>>
 ```
 
 What this chapter deliberately leaves to the binaries is the wording.
