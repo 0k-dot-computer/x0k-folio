@@ -4,6 +4,14 @@
   <img alt="folio" src="docs/plate-light.svg">
 </picture>
 
+A folio document is Markdown with a YAML envelope: an identity, a kind, a
+stage in a lifecycle, and relationships to other documents named by predicate
+rather than by file path. The predicates are terms in an OWL vocabulary that
+ships beside the format, so a program checks them. Code is generated from the
+documents that describe it and committed beside them, so the two cannot drift.
+This repository is itself a projection of the corpus it documents: the tool,
+the format library, the vocabulary, and the chapters they are written in.
+
 Paste this to the agent you work with:
 
 > Clone or read `https://github.com/0k-dot-computer/x0k-folio`, then read its
@@ -14,41 +22,10 @@ Paste this to the agent you work with:
 
 What comes back is a fit assessment against your own tree, not a pitch,
 because the agent reads the vocabulary and the procedure rather than this page.
-
-## Start here, with your agent
-
-Nobody does this by hand, and you are not meant to. The agent reads the
-vocabulary this repository ships and puts an envelope like this at the top of
-a document you already have:
-
-```yaml
----
-x0k:
-  format: folio/v1
-  id: x0k:design/retry-budget
-  type: design
-  status: accepted
-  summary: Retries draw from a budget per caller; an exhausted budget is a signal, not a stall.
-  edges:
-    refined_by:
-      - x0k:architecture/retry-queue
----
-```
-
-Then it runs the check, from a clone of this repository, against your folder:
-
-```sh
-cargo run -p x0k-tangle -- check ../myproject/docs/decisions
-```
-
-Two kinds of thing come back, and the agent keeps them apart when it reports
-to you. A **defect** fails the check: a `type` the format does not know, an id
-without its scheme, a predicate no shipped module declares. A **note** fails
-nothing: ``edge `refined_by` → `x0k:architecture/retry-queue` names no document
-here`` means the edge is well formed and its target does not exist yet. That is
-the first result, and it is the whole idea: your documents are nodes with typed
-edges, and the gaps are the next things worth writing. What each line of the
-envelope means, and where the tool stops short today, is in `INTEGRATING.md`.
+Doing it yourself is `INTEGRATING.md`: an envelope, then
+`cargo run -p x0k-tangle -- check <your folder>`, which separates **defects**
+that fail from **notes** that do not — an edge naming a document you have not
+written yet is a note, and the next thing worth writing.
 
 ## What this is
 
