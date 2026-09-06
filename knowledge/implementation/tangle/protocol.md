@@ -63,7 +63,7 @@ knowledge/implementation/tangle/
   identity-pipeline.md → x0k-tangle/src/identity_pipeline.rs
   dispatcher.md        → x0k-tangle/src/pipeline_runner.rs
   weave.md             → x0k-tangle/src/weave.rs
-  bundle.md            → x0k-tangle-bundle/src/{lib.rs, bin/x0k-tangle.rs}
+  crate.md             → x0k-tangle/src/{lib.rs, main.rs}
 ```
 
 Each `<slug>.md` declares a `tangle:` block in its frontmatter naming
@@ -106,8 +106,8 @@ One line shape is exempt from expansion. `<<!name>>` — the `!`
 directly inside the brackets, indentation allowed — is the verbatim
 escape: it tangles to the literal line `<<name>>` (indent kept) and
 weaves to the same text with no anchor. It exists so a document can
-show the reference syntax in what it produces, as the x0k-folio README
-does when it teaches the `<<greet>>` line. The `!` prefix is reserved
+show the reference syntax in what it produces, as the chapters of this
+area do wherever a doc comment quotes a `<<name>>`. The `!` prefix is reserved
 by the reference scanner rather than forbidden by the fence parser's
 name grammar; the scanner ([chunk.md](chunk.md)) says exactly which,
 the resolver ([resolution.md](resolution.md)) emits the literal, and
@@ -183,8 +183,11 @@ If you're trying to understand the protocol from scratch:
    freshness, collision detection.
 7. [weave.md](weave.md) — the HTML rendering side that turns the same
    literate doc into the page you might be looking at right now.
-8. [bundle.md](bundle.md) — how first-party plugins compose into the
-   canonical binary, why the bundle crate exists.
+8. [crate.md](crate.md) — the crate's contract: the module list a
+   consumer may name, and the plugin-less CLI that puts the verbs in a
+   shell. The `x0k-tangle-bundle` crate that composes first-party
+   plugins into the operational binary has its own chapter in the
+   corpus, and that chapter travels only where that crate does.
 
 If you only want to find a specific surface: each page's frontmatter
 declares its tangle target, so grep for the source file name in
