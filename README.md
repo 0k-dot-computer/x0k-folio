@@ -4,21 +4,33 @@
   <img alt="folio" src="docs/plate-light.svg">
 </picture>
 
-A folio document is Markdown with a YAML envelope: an identity, a kind, a
-stage in a lifecycle, and relationships to other documents named by predicate
-rather than by file path. The predicates are terms in an OWL vocabulary that
-ships beside the format, so a program checks them. Code is generated from the
-documents that describe it and committed beside them, so the two cannot drift.
-This repository is itself a projection of the corpus it documents: the tool,
-the format library, the vocabulary, and the chapters they are written in.
+Organizations run on documents that are not interchangeable: a decision, a
+specification, and a design note each has its own role, lifecycle, and review
+path. In a directory of Markdown none of that is written where a program can
+read it — the kind lives in a naming convention, the relationships live in
+people's heads, and the code a design describes drifts away from it because
+nothing compares the two files. A folio document writes it down: Markdown with
+a YAML envelope that gives it an identity, names its kind and its stage in a
+lifecycle, and names its relationships by predicate rather than by file path —
+this one **supports** that one, that one is **refined_by** a third. Those
+predicates are terms in an OWL vocabulary shipped beside the format, so a
+program checks them instead of a team agreeing to remember them. That program
+ships here.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/triangle-dark.svg">
+  <img alt="an implementation is constrained by an architecture and implements a design; architecture supports design" src="docs/triangle-light.svg">
+</picture>
 
 Paste this to the agent you work with:
 
-> Clone or read `https://github.com/0k-dot-computer/x0k-folio`, then read its
-> `AGENTS.md` and `INTEGRATING.md`. Tell me whether typed documents, checked
-> edges, and literate tangling would add value to my project, and where
-> concretely — which folder, which files. Then tell me what the first step
-> would be and what adopting it would cost.
+```
+Clone or read https://github.com/0k-dot-computer/x0k-folio, then read its
+AGENTS.md and INTEGRATING.md. Tell me whether typed documents, checked edges,
+and literate tangling would add value to my project, and where concretely —
+which folder, which files. Then tell me what the first step would be and what
+adopting it would cost.
+```
 
 What comes back is a fit assessment against your own tree, not a pitch,
 because the agent reads the vocabulary and the procedure rather than this page.
@@ -28,26 +40,6 @@ that fail from **notes** that do not — an edge naming a document you have not
 written yet is a note, and the next thing worth writing.
 
 ## What this is
-
-Organizations run on documents that are not interchangeable: a decision,
-specification, and design note each has a distinct role, lifecycle, and review
-path. In a directory of Markdown none of that is written where a program can
-read it: the
-kind lives in a naming convention, the relationships live in people's heads, and
-the code a design describes drifts away from it because they are two files and
-nothing compares them.
-
-A folio document writes it down. It is Markdown with a YAML envelope that gives
-it an identity, names its kind and its stage in a lifecycle, and names its
-relationships to other documents by predicate rather than by file path — this one
-**supports** that one, that one is **refined_by** a third. Those predicates are
-terms in an OWL vocabulary shipped beside the format, so a program checks them
-instead of a team agreeing to remember them. That program ships here too.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/triangle-dark.svg">
-  <img alt="an implementation is constrained by an architecture and implements a design; architecture supports design" src="docs/triangle-light.svg">
-</picture>
 
 Three things are derived from such a document. **Tangling** and **weaving** are
 the same content in two orders — one a compiler can build, one a person can read.
