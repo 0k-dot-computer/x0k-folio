@@ -73,6 +73,72 @@ fn check_names_an_undeclared_predicate_and_fails() {
         "the defect names the predicate and the document: {stderr}"
     );
 }
+
+/// A vocabulary a reader could write: `mycorp` in its own namespace,
+/// declaring one genus class. The smallest set that closes — `core` has
+/// no imports, and `mycorp` imports it.
+fn write_scratch_vocabulary(dir: &Path) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        dir.join("core.ttl"),
+        "<https://0k.computer/ontology/core> \
+         <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> \
+         <http://www.w3.org/2002/07/owl#Ontology> .\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("mycorp.ttl"),
+        concat!(
+            "<https://0k.computer/ontology/mycorp> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+            "<https://0k.computer/ontology/mycorp> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .\n",
+            "<https://0k.computer/ontology/mycorp> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://mycorp.example/ontology#\" .\n",
+            "<https://mycorp.example/ontology#Brief> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+            "<https://mycorp.example/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/mycorp> .\n",
+            "<https://mycorp.example/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#label> \"Brief\" .\n",
+        ),
+    )
+    .unwrap();
+}
+```
+
+</details>
+
+<details><summary><code>check_reads_a_document_against_the_vocabulary_it_is_pointed_at</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../affordances/passed-dark.svg"><img alt="passed" src="../../../../affordances/passed-light.svg" height="16"></picture> passed · <a href="../../../../knowledge/implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+
+```rust
+#[test]
+fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
+    let tmp = TempDir::new().unwrap();
+    let modules = tmp.path().join("vocab/modules");
+    write_scratch_vocabulary(&modules);
+    write(
+        tmp.path(),
+        "docs/brief.md",
+        "---\nx0k:\n  format: folio/v1\n  id: mycorp:brief/tender-process\n  \
+         type: brief\n  status: proposed\n---\n# A brief\n",
+    );
+    let docs = tmp.path().join("docs");
+
+    let out = run(
+        &["check", "--vocabulary", modules.to_str().unwrap()],
+        &docs,
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a genus and a namespace the named vocabulary declares must check clean: {stderr}"
+    );
+
+    // The same document against the vocabulary this build compiled: the
+    // genus is not a class it declares, so the envelope does not parse.
+    let out = run(&["check"], &docs);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the shipped vocabulary declares no `brief` genus: {stderr}"
+    );
+    assert!(stderr.contains("brief.md"), "the document is named: {stderr}");
+}
 ```
 
 </details>

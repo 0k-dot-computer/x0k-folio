@@ -13,9 +13,14 @@
 //! not assume which modules a build shipped — a publication compiles a
 //! subset, and only `core` is certain to be present.
 //!
-//! The runtime crate graph never sees `oxttl` — the TTL parser is a
-//! build-only dependency, and a consumer only ever sees the generated
-//! `&[&str]` constant slices and the `snake_to_camel` match function.
+//! Which vocabulary a caller asks is a parameter, not a property of the
+//! binary: `OntologyModel::shipped` is the set this build compiled, and
+//! `OntologyModel::load` (in [`crate::load`]) reads any other off a
+//! directory. The TTL
+//! parser rides the default-on `load` feature; a consumer that wants only
+//! the tables takes this crate with `default-features = false` and gets
+//! the generated `&[&str]` slices and `snake_to_camel` with no parser at
+//! all.
 //!
 //! The hand-authored vocabularies that spell x0k's own internal
 //! subjects live behind the off-by-default `product` feature; a build
@@ -28,6 +33,9 @@
 //! letter boundaries (excluding position 0) and lowercasing.
 
 pub mod concept_facts;
+
+#[cfg(feature = "load")]
+pub mod load;
 
 #[cfg(feature = "product")]
 pub mod admission_grant;
@@ -47,6 +55,17 @@ pub mod settlement;
 pub mod usage_vocab;
 
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+
+impl concept_facts::OntologyModel {
+    /// The vocabulary this build compiled, as a model.
+    ///
+    /// The same facts the generated tables were emitted from, folded back.
+    /// A caller with no vocabulary of its own uses this; a caller handed a
+    /// module directory uses `OntologyModel::load` instead.
+    pub fn shipped() -> Self {
+        Self::new(bootstrap_concept_facts())
+    }
+}
 
 /// The `rdfs:label` for a class URI (bare `x0k:` form), or `None` if the
 /// URI is not a vocabulary class (e.g. a synthetic UI-only class like

@@ -366,6 +366,31 @@ impl OntologyModel {
         self.facts.iter().filter(|fact| owners.contains(&fact.entity)).collect()
     }
 }
+impl OntologyModel {
+    /// Every class the model declares, named as a document spells it: the
+    /// kebab-case of the term's local name. `x0k:LiterateSpec` and
+    /// `paracosm:Place` are `literate-spec` and `place`.
+    pub fn class_names(&self) -> BTreeSet<String> {
+        self.classes().into_iter()
+            .map(|class| camel_to_kebab(class.uri.rsplit(':').next().unwrap_or(&class.uri)))
+            .collect()
+    }
+
+    /// The identifier schemes this model licenses: `x0k` for the base
+    /// namespace, plus every module that declares its own
+    /// (`vann:preferredNamespaceUri`).
+    pub fn schemes(&self) -> BTreeSet<String> {
+        let mut out = BTreeSet::from(["x0k".to_string()]);
+        out.extend(self.modules().into_iter()
+            .filter(|module| module.namespace.is_some())
+            .map(|module| module.name));
+        out
+    }
+}
+pub fn camel_to_kebab(camel: &str) -> String {
+    camel_to_snake(camel).replace('_', "-")
+}
+
 pub fn bare_c0k(iri: &str) -> String {
     iri.strip_prefix(X0K_NS).map(|local| format!("x0k:{local}")).unwrap_or_else(|| iri.to_string())
 }

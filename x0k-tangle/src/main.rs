@@ -32,11 +32,11 @@ enum Command {
         workspace: Option<PathBuf>,
     },
     /// Verify chunk references resolve and no cycles exist, and read every
-    /// folio/v1 envelope against the vocabulary this build compiled.
+    /// folio/v1 envelope against a vocabulary.
     ///
     /// Two things can go wrong with an envelope, and they are reported
     /// apart. A defect — a malformed id or edge target, a predicate no
-    /// shipped ontology module declares, an envelope that does not parse —
+    /// module of the vocabulary declares, an envelope that does not parse —
     /// is a gap in what this publication selected, and fails the check. An
     /// edge whose target names no document under the paths is an edge into
     /// the corpus this was projected from: expected, printed as a note,
@@ -46,6 +46,11 @@ enum Command {
     Check {
         /// Paths to scan
         paths: Vec<PathBuf>,
+        /// Directory of ontology module files (*.ttl) to check against.
+        /// Defaults to the modules this projection's PROVENANCE.json names,
+        /// then to the set this build compiled.
+        #[arg(long)]
+        vocabulary: Option<PathBuf>,
     },
     /// Print every affordance the folio/v1 documents under the paths
     /// declare, as a JSON array on stdout.
@@ -324,7 +329,8 @@ fn main() -> Result<()> {
             );
         }
 
-        Command::Check { paths } => {
+        Command::Check { paths, vocabulary } => {
+            let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref())?;
             let docs = discover_documents(&paths)?;
             let mut has_errors = false;
 
@@ -339,20 +345,20 @@ fn main() -> Result<()> {
                 }
             }
 
-            let vocabulary = x0k_tangle::faces::check_vocabulary(&paths)?;
-            for (path, reason) in &vocabulary.unparsed {
+            let report = x0k_tangle::faces::check_vocabulary(&model, &paths)?;
+            for (path, reason) in &report.unparsed {
                 eprintln!("{path}: envelope does not parse: {reason}");
                 has_errors = true;
             }
-            for (path, defect) in &vocabulary.corpus.defects {
+            for (path, defect) in &report.corpus.defects {
                 eprintln!("{path}: {defect}");
                 has_errors = true;
             }
-            for defect in &vocabulary.declarations.defects {
+            for defect in &report.declarations.defects {
                 eprintln!("{defect}");
                 has_errors = true;
             }
-            for edge in &vocabulary.corpus.dangling {
+            for edge in &report.corpus.dangling {
                 eprintln!(
                     "{}: note: edge `{}` → `{}` names no document here (an edge into the corpus this was projected from; expected)",
                     edge.source, edge.predicate, edge.target
@@ -363,10 +369,10 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             } else {
                 eprintln!(
-                    "all references OK; {} envelope(s) read against the shipped vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
-                    vocabulary.corpus.checked,
-                    vocabulary.declarations.checked,
-                    vocabulary.corpus.dangling.len()
+                    "all references OK; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
+                    report.corpus.checked,
+                    report.declarations.checked,
+                    report.corpus.dangling.len()
                 );
             }
         }

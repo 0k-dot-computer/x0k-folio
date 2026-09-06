@@ -12,6 +12,14 @@ repository = "https://github.com/0k-dot-computer/x0k-folio"
 readme = "../README.md"
 
 [features]
+# The runtime Turtle loader (`src/load.rs`): reading a vocabulary module set
+# off a directory rather than only the one this build compiled. On by
+# default — a crate whose subject is vocabulary should be able to read one —
+# and switchable off by a consumer for whom the generated tables are the
+# whole story, which is how `x0k-folio` takes it.
+default = ["load"]
+load = ["dep:oxttl", "dep:oxrdf"]
+
 # The hand-authored vocabularies for x0k's own internal subjects — grants,
 # calendars, declarations, entries, findings, proposals, settlements, usage.
 # Off by default: a plain build is the concept-fact fold and its views.
@@ -23,9 +31,18 @@ product = ["blake3"]
 # That vocabulary is behind `product`, and so is the hash.
 blake3 = { version = "1.5", optional = true }
 
+# The TTL parser behind the `load` feature. Also a build dependency below:
+# `build.rs` compiles `src/load.rs` in by path, so a build that switches the
+# feature off still parses the modules it emits tables from.
+oxttl = { version = "0.2", optional = true }
+oxrdf = { version = "0.3", optional = true }
+
 [build-dependencies]
-# The checked Turtle is parsed only to bootstrap an empty concept region.
-# Runtime consumers fold ordinary facts and never pull an RDF parser into
-# their dependency graph.
+# `build.rs` pulls `src/load.rs` in by path and loads the module set through
+# it, so the parser is a build dependency whatever the `load` feature says.
 oxttl = "0.2"
 oxrdf = "0.3"
+
+[dev-dependencies]
+# Scratch module directories for the loader's refusal tests.
+tempfile = "3"

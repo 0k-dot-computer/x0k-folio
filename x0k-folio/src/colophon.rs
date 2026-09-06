@@ -16,6 +16,8 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+use x0k_ontology::concept_facts::OntologyModel;
+
 /// Frontmatter format token authoritative for this parser.
 pub const FORMAT_FOLIO_V1: &str = "folio/v1";
 
@@ -54,7 +56,7 @@ pub fn normalize_body_format(raw: Option<&str>) -> String {
 /// the decision subtype because each has its own review workflow. Knowledge
 /// genus types (Wiki today) carry their page-kind in the optional
 /// `subtype` field on the parsed envelope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocType {
     Commitment,
     Design,
@@ -92,10 +94,15 @@ pub enum DocType {
     /// addressed `x0k:affordance/<id>`. Title + description are the
     /// curated body; per-context status claims stay FACT-only.
     Affordance,
+    /// A genus a loaded vocabulary declares that this crate has no variant
+    /// for, holding the `type:` keyword as written. Produced only by
+    /// [`DocType::declared_in`]; nothing dispatches on it, because nothing
+    /// compiled in knows what it means.
+    Declared(String),
 }
 
 impl DocType {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             DocType::Commitment => "commitment",
             DocType::Design => "design",
@@ -107,6 +114,7 @@ impl DocType {
             DocType::Seed => "seed",
             DocType::Intent => "intent",
             DocType::Affordance => "affordance",
+            DocType::Declared(name) => name.as_str(),
         }
     }
 
@@ -128,6 +136,25 @@ impl DocType {
             "affordance" => DocType::Affordance,
             _ => return None,
         })
+    }
+
+    /// Parse a genus name against a vocabulary: one of the ten this crate
+    /// names, or any other class `model` declares, kept as
+    /// [`DocType::Declared`].
+    ///
+    /// The vocabulary carries no genus marker — a class is a class, and
+    /// `Design`, `Seed` and `Affordance` are marked no differently from
+    /// `Place` — so what this asks is whether the model declares a class of
+    /// that name at all. Narrowing it would mean minting a marker the
+    /// corpus does not have.
+    pub fn declared_in(model: &OntologyModel, s: &str) -> Option<Self> {
+        if let Some(known) = Self::from_str(s) {
+            return Some(known);
+        }
+        model
+            .class_names()
+            .contains(s)
+            .then(|| DocType::Declared(s.to_string()))
     }
 }
 
@@ -296,7 +323,8 @@ pub struct Colophon {
     /// The document's identity: an `x0k:<genus>/<stem>` URI, kept as a
     /// string (see the type-level note).
     pub id: String,
-    /// The document's genus, from the closed [`DocType`] set.
+    /// The document's genus: one of the ten [`DocType`] names, or a
+    /// class a loaded vocabulary declared.
     pub doc_type: DocType,
     /// Optional CURIE-form subtype for genera with agent-curated page-kinds
     /// (e.g. `wiki:Methodology`). For decision subtypes the type IS the
@@ -450,6 +478,24 @@ pub fn is_colophon(content: &str) -> bool {
 /// `status`) ARE validated against the known closed sets, so unknown values
 /// fail loudly.
 pub fn parse_envelope(content: &str) -> Result<(Colophon, String), FolioError> {
+    parse_envelope_with(content, DocType::from_str)
+}
+
+/// Parse an envelope against a vocabulary rather than the ten genera this
+/// crate names: a `type:` naming any class `model` declares is admitted,
+/// carried as [`DocType::Declared`]. This is how a reader whose own
+/// vocabulary module declares a genus gets a document of it read.
+pub fn parse_envelope_in(
+    model: &OntologyModel,
+    content: &str,
+) -> Result<(Colophon, String), FolioError> {
+    parse_envelope_with(content, |type_str| DocType::declared_in(model, type_str))
+}
+
+fn parse_envelope_with(
+    content: &str,
+    genus: impl Fn(&str) -> Option<DocType>,
+) -> Result<(Colophon, String), FolioError> {
     let (yaml_block, body) = split_frontmatter(content).ok_or(FolioError::NoFrontmatter)?;
     let root: WireRoot =
         serde_norway::from_str(yaml_block).map_err(|e| FolioError::InvalidYaml(e.to_string()))?;
@@ -467,7 +513,7 @@ pub fn parse_envelope(content: &str) -> Result<(Colophon, String), FolioError> {
     let type_str = block
         .doc_type
         .ok_or(FolioError::MissingField { field: "type" })?;
-    let doc_type = DocType::from_str(&type_str).ok_or(FolioError::InvalidType { got: type_str })?;
+    let doc_type = genus(&type_str).ok_or(FolioError::InvalidType { got: type_str })?;
 
     let status = match block.status {
         Some(s) => Some(Status::from_str(&s).ok_or(FolioError::InvalidStatus { got: s })?),
@@ -863,6 +909,63 @@ x0k:
 "#;
         let err = parse_envelope(content).expect_err("unknown type must reject");
         assert!(matches!(err, FolioError::InvalidType { .. }));
+    }
+
+    /// The smallest vocabulary that adds a genus: a `mycorp` module and one
+    /// class in it. Written to a scratch directory and loaded, because the
+    /// thing under test is that a genus arrives from *files* — the shape a
+    /// reader's own module actually has.
+    fn scratch_vocabulary(dir: &std::path::Path) -> OntologyModel {
+        const CORE: &str = "\
+<https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+";
+        const MYCORP: &str = "\
+<https://0k.computer/ontology/mycorp> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<https://0k.computer/ontology/mycorp> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#Brief> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/mycorp> .
+<https://0k.computer/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#label> \"Brief\" .
+";
+        std::fs::create_dir_all(dir).expect("scratch module directory");
+        std::fs::write(dir.join("core.ttl"), CORE).expect("write core");
+        std::fs::write(dir.join("mycorp.ttl"), MYCORP).expect("write mycorp");
+        OntologyModel::load(dir).expect("the scratch module set loads")
+    }
+
+    #[test]
+    fn a_genus_a_loaded_module_declares_parses() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = scratch_vocabulary(&tmp.path().join("modules"));
+        let content = r#"---
+x0k:
+  format: folio/v1
+  id: x0k:brief/tender-process
+  type: brief
+  status: proposed
+---
+Body.
+"#;
+        // The closed set still refuses it — this crate names no `brief`.
+        assert!(matches!(
+            parse_envelope(content),
+            Err(FolioError::InvalidType { .. })
+        ));
+        let (env, _) = parse_envelope_in(&model, content).expect("a declared genus parses");
+        assert_eq!(env.doc_type, DocType::Declared("brief".to_string()));
+        assert_eq!(env.doc_type.as_str(), "brief");
+
+        // A keyword the module does not declare is still a parse error, so
+        // the loaded set widens the genus rather than opening it.
+        let unknown = content.replace("type: brief", "type: pamphlet");
+        assert!(matches!(
+            parse_envelope_in(&model, &unknown),
+            Err(FolioError::InvalidType { .. })
+        ));
+
+        // The ten this crate names keep their own variants under a model.
+        let known = content.replace("type: brief", "type: design");
+        let (env, _) = parse_envelope_in(&model, &known).expect("a named genus parses");
+        assert_eq!(env.doc_type, DocType::Design);
     }
 
     #[test]

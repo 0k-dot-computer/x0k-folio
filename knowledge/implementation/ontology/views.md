@@ -14,6 +14,7 @@ x0k:
       - x0k:architecture/state-representation
     cites:
       - x0k:implementation/ontology/concept-facts
+      - x0k:implementation/ontology/load
       - x0k:implementation/ontology/module-bootstrap
       - x0k:implementation/ontology/concept-region
       - x0k:implementation/ontology/declaration
@@ -34,11 +35,21 @@ carrying the same tables restricted to what that module defines. This
 chapter is that root — the Rust module list, the `include!` of the
 generated code, and the lookups over the generated tables.
 
-The reason the root is this thin is dependency weight. The TTL parser
-(`oxttl`) is a build-only dependency; the runtime crate graph never sees it.
-A consumer that needs `KNOWN_EDGE_PREDICATES` gets a `&[&str]`, and a folio
-envelope that needs to know that `motivated_by` is `x0k:motivatedBy` calls
-`snake_to_camel` — a generated `match`, not a parser.
+The reason the root is this thin is dependency weight. A consumer that
+needs `KNOWN_EDGE_PREDICATES` gets a `&[&str]`, and a folio envelope that
+needs to know that `motivated_by` is `x0k:motivatedBy` calls `snake_to_camel`
+— a generated `match`, not a parser.
+
+The tables are no longer the only answer, though, and the root is where that
+shows. [`load.md`](load.md) reads a module set off a directory at run time, so
+a caller can ask a vocabulary the build did not compile: a reader's own
+extension module, or the modules a bundle actually shipped. That costs a TTL
+parser in the runtime graph, which is why it is the `load` feature — on by
+default, because a crate whose whole subject is vocabulary should be able to
+read one, and switchable off by a consumer for whom the tables are the whole
+story. `x0k-folio` is exactly that consumer and takes this crate with
+`default-features = false`: it holds `OntologyModel` values other people
+loaded and never opens a file itself.
 
 ## The two spellings
 
@@ -65,9 +76,14 @@ so the two forms can never drift apart from the TTL they were emitted from.
 //! not assume which modules a build shipped — a publication compiles a
 //! subset, and only `core` is certain to be present.
 //!
-//! The runtime crate graph never sees `oxttl` — the TTL parser is a
-//! build-only dependency, and a consumer only ever sees the generated
-//! `&[&str]` constant slices and the `snake_to_camel` match function.
+//! Which vocabulary a caller asks is a parameter, not a property of the
+//! binary: `OntologyModel::shipped` is the set this build compiled, and
+//! `OntologyModel::load` (in [`crate::load`]) reads any other off a
+//! directory. The TTL
+//! parser rides the default-on `load` feature; a consumer that wants only
+//! the tables takes this crate with `default-features = false` and gets
+//! the generated `&[&str]` slices and `snake_to_camel` with no parser at
+//! all.
 //!
 //! The hand-authored vocabularies that spell x0k's own internal
 //! subjects live behind the off-by-default `product` feature; a build
@@ -113,6 +129,9 @@ adopter for whom that is the better answer.
 ```rust {#modules}
 pub mod concept_facts;
 
+#[cfg(feature = "load")]
+pub mod load;
+
 #[cfg(feature = "product")]
 pub mod admission_grant;
 #[cfg(feature = "product")]
@@ -131,6 +150,31 @@ pub mod settlement;
 pub mod usage_vocab;
 
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+```
+
+## The set this build compiled, as a model
+
+Every consumer that takes a model needs a default, and the honest default is
+the vocabulary this build was compiled from. `shipped` folds the emitted
+bootstrap facts back into an `OntologyModel` — the same fold a loaded
+directory goes through, over the same facts, which is what
+[`load.md`](load.md)'s parity test pins. It is the answer a caller gives when
+nobody handed it a better one, and it is a model like any other: nothing
+downstream may assume it is *the* vocabulary.
+
+<a name="chunk-shipped"></a><sub>[`src/lib.rs`](../../../x0k-ontology/src/lib.rs) · `#shipped`</sub>
+
+```rust {#shipped}
+impl concept_facts::OntologyModel {
+    /// The vocabulary this build compiled, as a model.
+    ///
+    /// The same facts the generated tables were emitted from, folded back.
+    /// A caller with no vocabulary of its own uses this; a caller handed a
+    /// module directory uses `OntologyModel::load` instead.
+    pub fn shipped() -> Self {
+        Self::new(bootstrap_concept_facts())
+    }
+}
 ```
 
 ## Lookups over the generated tables
@@ -442,12 +486,14 @@ mod tests {
 
 ## The file
 
-<a name="chunk-root"></a><sub>[`src/lib.rs`](../../../x0k-ontology/src/lib.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [modules](#chunk-modules) · [lookups](#chunk-lookups) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/lib.rs`](../../../x0k-ontology/src/lib.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [modules](#chunk-modules) · [shipped](#chunk-shipped) · [lookups](#chunk-lookups) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
 
 <<modules>>
+
+<<shipped>>
 
 <<lookups>>
 

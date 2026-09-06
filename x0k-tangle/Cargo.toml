@@ -30,6 +30,11 @@ motifs = [] # severed in this publication: its dependency is not published; enab
 
 [dependencies]
 x0k-folio = { path = "../x0k-folio" , version = "0.1.0" }
+# The vocabulary a `check` reads documents against. Default features carry
+# the runtime module loader, which is what `--vocabulary <dir>` and the
+# PROVENANCE-recorded default are: a projected repository checks its own
+# documents against the module files it actually shipped.
+x0k-ontology = { path = "../x0k-ontology" , version = "0.1.0" }
 # Shared renderer-agnostic syntax tokenizer; weave uses it to emit
 # highlighted <span class="tok-*"> spans in the HTML output.
 x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
@@ -70,7 +75,3 @@ tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"
-# The CLI-face tests (tests/cli_faces.rs, from cli-faces.md) take their
-# well-formed edge predicate from the compiled vocabulary slice so they
-# measure the face and not the module selection.
-x0k-ontology = { path = "../x0k-ontology" , version = "0.1.0" }

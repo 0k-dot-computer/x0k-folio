@@ -1,6 +1,6 @@
 {
-  "corpus_commit": "a3b892ccb4b6ef6c96accf70d1cf324418958d18",
-  "corpus_rev": "qqwktxxqwomvyqxmtrwstyqnrtpuylml",
+  "corpus_commit": "7a16bf522bbfa7ce4a91064c79b3e6335df99a2b",
+  "corpus_rev": "psvurkrwprspnykswqrmkywxsmzloqrx",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
@@ -67,6 +67,7 @@
     "knowledge/implementation/icon/parse.md",
     "knowledge/implementation/icon/validate.md",
     "knowledge/implementation/ontology/concept-facts.md",
+    "knowledge/implementation/ontology/load.md",
     "knowledge/implementation/ontology/module-bootstrap.md",
     "knowledge/implementation/ontology/views.md",
     "knowledge/implementation/syntax/tokenizer.md",
@@ -132,6 +133,7 @@
     "knowledge/implementation/icon/parse.md": "knowledge/implementation/icon/parse.md",
     "knowledge/implementation/icon/validate.md": "knowledge/implementation/icon/validate.md",
     "knowledge/implementation/ontology/concept-facts.md": "knowledge/implementation/ontology/concept-facts.md",
+    "knowledge/implementation/ontology/load.md": "knowledge/implementation/ontology/load.md",
     "knowledge/implementation/ontology/module-bootstrap.md": "knowledge/implementation/ontology/module-bootstrap.md",
     "knowledge/implementation/ontology/views.md": "knowledge/implementation/ontology/views.md",
     "knowledge/implementation/syntax/tokenizer.md": "knowledge/implementation/syntax/tokenizer.md",
@@ -224,6 +226,7 @@
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_names_an_undeclared_predicate_and_fails": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_notes_an_edge_out_of_the_set_and_passes": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_passes_an_agent_only_claim_with_no_signifier": "passed",
+    "x0k:test/x0k-tangle/tests/cli_faces.rs::check_reads_a_document_against_the_vocabulary_it_is_pointed_at": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_reports_an_envelope_that_does_not_parse": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::icon_accepts_a_declaration_in_the_profile": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::icon_refuses_a_drawing_by_rule_naming_the_element_and_fails": "passed",

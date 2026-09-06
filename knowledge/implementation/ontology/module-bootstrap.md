@@ -4,7 +4,7 @@ x0k:
   id: x0k:implementation/ontology/module-bootstrap
   type: implementation
   status: draft
-  summary: The build script that reads the checked vocabulary modules, refuses a set whose imports do not close, and emits the constant tables the crate root re-exports — so nothing at runtime carries a Turtle parser.
+  summary: The build script that loads the checked vocabulary modules through the library's own loader and emits the constant tables the crate root re-exports — so a consumer gets a linked table without folding anything.
   concerns: [ontology, vocabulary, bootstrap, turtle, build-script, codegen]
   tangle:
     crate: x0k-ontology
@@ -15,78 +15,74 @@ x0k:
     cites:
       - x0k:architecture/ontology-modules
       - x0k:implementation/ontology/concept-facts
+      - x0k:implementation/ontology/load
       - x0k:implementation/ontology/views
 ---
 
-# The vocabulary, parsed once, at build time
+# The vocabulary, folded once, at build time
 
 Nearly every crate in the tree spells an ontology predicate at some point,
-and none of them should link a Turtle parser to do it. That is the whole reason
-this build script exists. The vocabulary — [RDF and
+and most of them want the answer as a `&[&str]` and a `match`. That is the whole
+reason this build script exists. The vocabulary — [RDF and
 OWL](x0k:wiki/rdf-and-owl), written as Turtle — lives in the fact plane and is
 materialized out to `ontology/modules/*.ttl`
-([`concept-facts.md`](concept-facts.md)); consumers want `&[&str]` and a
-`match` ([`views.md`](views.md)). This script is the one place the two meet: it
-runs once per build, reads the checked module files, and writes
-`$OUT_DIR/generated.rs`. `oxttl` is a build dependency and the runtime crate
-graph never sees it.
+([`concept-facts.md`](concept-facts.md)); consumers want tables
+([`views.md`](views.md)). This script is the one place the two meet: it runs
+once per build, loads the checked module files, and writes
+`$OUT_DIR/generated.rs`.
 
-It does one thing more, and it is the more interesting one. A publication ships
-a *set* of modules, chosen per build (`x0k:architecture/ontology-modules` §3),
-and a set whose `owl:imports` name a module that is not present is not a
-vocabulary — it is a vocabulary with a hole in it, which will fail somewhere
-later and further from the cause. This script is where the set is first
-checked, and it refuses rather than emits.
+It does not read them itself. [`load.md`](load.md) owns the parse, the fold,
+and the refusals, because a caller at run time needs exactly the same three and
+two readings of one vocabulary is the drift this crate exists to prevent. The
+script pulls that module in by path, the same way it pulls
+[`concept-facts.md`](concept-facts.md)'s fold, and what remains here is the
+emission: eleven `emit_*` functions that turn a folded model into Rust text.
 
 One example carries the chapter. The `work` module declares itself an
 `owl:Ontology`, imports `core`, and defines terms like `x0k:Intent` that say so
 with `rdfs:isDefinedBy`. Build a tree holding `work` and `core` and both files
 are parsed, unioned, ordered `core` before `work`, and emitted as two `pub mod`s
-of tables. Build a tree holding `work` alone and the build stops.
+of tables. Build a tree holding `work` alone and the build stops — the loader
+returns the missing import and this script turns it into a panic.
 
 ## Contract
 
 Every failure here is a panic. A build script has one channel, and a
 half-emitted table is worse than a build that stopped: consumers would compile
-against a vocabulary missing terms and only notice at the point of use. So the
-script reads the module directory, writes exactly one file, panics on anything
-it cannot account for, and touches nothing else — no network, no clock, no state
-between runs.
+against a vocabulary missing terms and only notice at the point of use. That is
+the one place this script and the loader part company — a `LoadError` is a
+`Result` there and a stopped build here — so the script reads the module
+directory, writes exactly one file, panics on anything it cannot account for,
+and touches nothing else: no network, no clock, no state between runs.
 
 <a name="chunk-module-doc"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
-//! Bootstrap `ontology/modules/*.ttl` into concept facts, fold the
-//! compatibility registry views from those facts, and emit them into
-//! `$OUT_DIR/generated.rs`.
+//! Load `ontology/modules/*.ttl` through the crate's own loader and emit
+//! the compatibility registry views into `$OUT_DIR/generated.rs`.
 //!
 //! The checked Turtle is not the authority: the module files are the
 //! bootstrap/materialized view used when a profile has no self-typed
-//! `x0k:Concept` root. Keeping the parser in the build graph lets existing
-//! static-table consumers compile while the entry-spine fold becomes
-//! canonical at runtime. The build reads every module file and every shape
-//! file (sorted), unions the facts, and refuses a set whose `owl:imports`
-//! name a module that is not in it or form a cycle — a publication ships a
-//! set, and this is where the set is first checked. Shapes join the union but
-//! not the closure check: a shape is applied to a document rather than
-//! imported by a term, so it names classes from anywhere
-//! (`x0k:architecture/vocabulary-shapes` §4).
+//! `x0k:Concept` root. Emitting the fold as constants lets a consumer link
+//! a table instead of folding one, while the entry-spine fold becomes
+//! canonical at runtime. Which files are read, and which sets are refused,
+//! is `src/load.rs`'s answer and not this script's — a publication ships a
+//! set, and the set is checked in one place so a build and a run agree
+//! about it.
 ```
 
-`src/concept_facts.rs` is pulled in by path rather than by dependency. The
-fold this script performs is the same fold the crate performs at runtime, and
-compiling one copy of it into the build script is what keeps them from drifting
-into two. `dead_code` is allowed because the build script uses a proper subset
-of what the runtime module offers.
+Two of the crate's own source files are pulled in by path rather than by
+dependency: the fold in `src/concept_facts.rs` and the loader in
+`src/load.rs`. Both are the code the crate runs, and compiling one copy of
+each into the build script is what keeps a build and a run from becoming two
+readings of the same bytes. `dead_code` is allowed on both because the build
+script uses a proper subset of what each offers.
 
 <a name="chunk-imports"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#imports`</sub>
 
 ```rust {#imports}
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
-use std::path::{Path, PathBuf};
-
-use oxttl::TurtleParser;
+use std::path::PathBuf;
 ```
 
 <a name="chunk-concept-facts-by-path"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#concept-facts-by-path`</sub>
@@ -96,46 +92,11 @@ use oxttl::TurtleParser;
 #[allow(dead_code)]
 mod concept_facts;
 
+#[path = "src/load.rs"]
+#[allow(dead_code)]
+mod load;
+
 use concept_facts::{ModuleRecord, OntologyFact, OntologyModel, OntologyValue};
-```
-
-Turtle carries typed literals, and the fact plane at present carries only
-text. Rather than lose the distinction silently, the parser below refuses
-anything that is not a plain `xsd:string`:
-
-<a name="chunk-xsd-string"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#xsd-string`</sub>
-
-```rust {#xsd-string}
-const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
-```
-
-The parse has its own vocabulary, deliberately separate from
-[`OntologyFact`](concept-facts.md). A raw triple still distinguishes an IRI from
-a blank node, because blank-node labels are file-scoped and have to be
-namespaced before the files are unioned; an `OntologyFact` has already lost that
-distinction, and should have.
-
-<a name="chunk-raw-terms"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#raw-terms`</sub>
-
-```rust {#raw-terms}
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum RawNode {
-    Iri(String),
-    Blank(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum RawTerm {
-    Entity(RawNode),
-    Text(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct RawTriple {
-    subject: RawNode,
-    predicate: String,
-    object: RawTerm,
-}
 ```
 
 ## The run
@@ -159,38 +120,21 @@ fn main() {
 }
 ```
 
-Where the modules are depends on who is building. A packaged crate has to be
-self-contained, so the repository projector vendors a copy of the module files
-inside the crate ([`region-repo.md`](../tangle/region-repo.md)) and a published
-tarball builds from that. The monorepo has no in-crate copy and reads the
-canonical directory one level up. The in-crate copy wins when it exists, which
-is the only rule that makes both builds work without a feature flag:
+Where the modules are depends on who is building, and the loader answers
+that: a packaged crate carries a vendored copy inside itself, the monorepo
+reads the canonical directory one level up, and the in-crate copy wins when
+it exists ([`load.md`](load.md)). The script asks rather than deciding, so a
+test can ask the same question and get the same answer.
 
 <a name="chunk-locate-modules"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#locate-modules`</sub>
 
 ```rust {#locate-modules}
 let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-// A packaged crate is self-contained: the repository projector vendors a
-// copy of the module files at `<crate>/ontology/modules/`, and a published
-// tarball builds from that. The monorepo (and the projected workspace's
-// dev build) has no in-crate copy and reads the canonical
-// `<repo-root>/ontology/` one level up.
-let in_crate = manifest.join("ontology");
-let ontology_dir = if in_crate.join("modules").is_dir() {
-    in_crate
-} else {
-    let repo_root = manifest.parent().expect("x0k-ontology has a parent");
-    repo_root.join("ontology")
-};
-let modules_dir = ontology_dir.join("modules");
-// Shapes are the second half of the same bootstrap. They are read here and
-// nowhere else in the build: a shape constrains a document, so nothing the
-// crate compiles depends on one, and the set-closure checks below stay over
-// the module files alone (`x0k:architecture/vocabulary-shapes` §4).
-let shapes_dir = ontology_dir.join("shapes");
+let modules_dir = load::shipped_modules_dir(&manifest);
+let shapes_dir = load::shapes_dir_for(&modules_dir);
 ```
 
-The rerun declarations name the directory *and* every file in it. The
+The rerun declarations name the directories *and* every file in them. A
 directory alone would miss an edit to a file already present; the files alone
 would miss a module being added:
 
@@ -201,33 +145,35 @@ println!("cargo:rerun-if-changed={}", modules_dir.display());
 println!("cargo:rerun-if-changed={}", shapes_dir.display());
 println!("cargo:rerun-if-changed=build.rs");
 println!("cargo:rerun-if-changed=src/concept_facts.rs");
+println!("cargo:rerun-if-changed=src/load.rs");
 ```
+
+The file lists are the script's own because it needs them twice over: once to
+declare the reruns, and once to `include_str!` each file's bytes into the
+emitted tables.
 
 <a name="chunk-collect-module-paths"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#collect-module-paths`</sub>
 
 ```rust {#collect-module-paths}
-let module_paths = module_file_paths(&modules_dir);
-let shape_paths = shape_file_paths(&shapes_dir);
+let module_paths = load::module_file_paths(&modules_dir)
+    .unwrap_or_else(|error| panic!("{error}"));
+let shape_paths = load::shape_file_paths(&shapes_dir);
 for path in module_paths.iter().chain(shape_paths.iter()) {
     println!("cargo:rerun-if-changed={}", path.display());
 }
 ```
 
-The four lines that follow are the check this script exists for.
-`import_order` refuses a set whose imports name an absent module or form a
-cycle, and `check_module_files` refuses a set whose declared modules and whose
-files disagree — a file with no module fact, or a module fact with no file, is a
-materialization the tree did not receive in full. `check_shape_files` asks the
-weaker question a shape file admits: a shape belongs to a module, so its file
-must name one of the set, but a module owing no shapes owes no file.
+The two lines that follow are the check this script used to own and now
+delegates. `load_files` refuses a set whose imports name an absent module or
+form a cycle, a set whose declared modules and whose files disagree, and a
+shape file naming no module of the set. All three are the same refusals a
+caller loading a bundle's own vocabulary gets; here they are a stopped build.
 
 <a name="chunk-fold-and-check"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#fold-and-check`</sub>
 
 ```rust {#fold-and-check}
-let model = parse_bootstrap_model(&module_paths, &shape_paths);
-let modules = model.import_order().unwrap_or_else(|error| panic!("ontology module set under {}: {error}", modules_dir.display()));
-check_module_files(&modules, &module_paths, &modules_dir);
-check_shape_files(&modules, &shape_paths, &shapes_dir);
+let model = OntologyModel::load_files(&module_paths, &shape_paths)
+    .unwrap_or_else(|error| panic!("ontology module set under {}: {error}", modules_dir.display()));
 let out = emit_generated(&model, &module_paths, &shape_paths);
 ```
 
@@ -238,282 +184,6 @@ let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
 let out_path = out_dir.join("generated.rs");
 std::fs::write(&out_path, out)
     .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
-```
-
-## Reading the files
-
-The module files are read in sorted order and unioned into one fact set.
-Sorting is what makes the emitted file reproducible: `read_dir` order is a
-filesystem detail, and a table whose row order follows it would produce a
-different `generated.rs` on two machines holding identical trees.
-
-<a name="chunk-module-file-paths"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#module-file-paths`</sub>
-
-```rust {#module-file-paths}
-/// Every `<name>.ttl` under the module directory, sorted by name.
-fn module_file_paths(modules_dir: &Path) -> Vec<PathBuf> {
-    let entries = std::fs::read_dir(modules_dir)
-        .unwrap_or_else(|e| panic!("read module directory {}: {e}", modules_dir.display()));
-    let mut paths: Vec<PathBuf> = entries
-        .map(|entry| entry.expect("module directory entry").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "ttl"))
-        .collect();
-    paths.sort();
-    assert!(!paths.is_empty(), "no ontology module files under {}", modules_dir.display());
-    paths
-}
-
-fn module_file_name(path: &Path) -> String {
-    path.file_stem().expect("module file stem").to_string_lossy().into_owned()
-}
-
-/// Every `<name>.ttl` under the shape directory, sorted by name. A tree with
-/// no shapes at all has no directory, and that is not an error: a shape file
-/// exists only for a module that constrains something.
-fn shape_file_paths(shapes_dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(shapes_dir) else {
-        return Vec::new();
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .map(|entry| entry.expect("shape directory entry").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "ttl"))
-        .collect();
-    paths.sort();
-    paths
-}
-```
-
-<a name="chunk-check-module-files"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#check-module-files`</sub>
-
-```rust {#check-module-files}
-/// The module set the facts declare must be exactly the set of files: a file
-/// whose module fact is missing, or a module fact without its file, is a
-/// materialization the tree did not receive in full.
-fn check_module_files(modules: &[ModuleRecord], module_paths: &[PathBuf], modules_dir: &Path) {
-    let declared: BTreeSet<&str> = modules.iter().map(|module| module.name.as_str()).collect();
-    let files: BTreeSet<String> = module_paths.iter().map(|path| module_file_name(path)).collect();
-    let files: BTreeSet<&str> = files.iter().map(String::as_str).collect();
-    assert!(
-        declared == files,
-        "ontology module facts {declared:?} do not match the module files {files:?} under {}",
-        modules_dir.display()
-    );
-}
-
-/// A shape file is named for the module whose shapes it holds, so every file
-/// must name a module of the set. The converse does not hold: a module that
-/// constrains nothing has no file, which is why this is a subset test where
-/// `check_module_files` is an equality.
-fn check_shape_files(modules: &[ModuleRecord], shape_paths: &[PathBuf], shapes_dir: &Path) {
-    let declared: BTreeSet<&str> = modules.iter().map(|module| module.name.as_str()).collect();
-    for path in shape_paths {
-        let name = module_file_name(path);
-        assert!(
-            declared.contains(name.as_str()),
-            "shape file {}/{name}.ttl names no module of the set {declared:?}",
-            shapes_dir.display()
-        );
-    }
-}
-```
-
-Blank-node labels are scoped to the file that contains them, so two module
-files may each hand out `_:b0000n0000`. Namespacing every label by its module
-before the union keeps them apart even when a materializer bug hands out the
-same label twice:
-
-<a name="chunk-parse-bootstrap-model"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#parse-bootstrap-model`</sub>
-
-```rust {#parse-bootstrap-model}
-fn parse_bootstrap_model(module_paths: &[PathBuf], shape_paths: &[PathBuf]) -> OntologyModel {
-    let mut triples = Vec::new();
-    for path in module_paths.iter().chain(shape_paths.iter()) {
-        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        // Blank-node labels are file-scoped in Turtle; namespacing them by
-        // file keeps two files' `_:b0000n0000` apart even when a
-        // materializer bug hands out the same label twice. The scope carries
-        // the directory as well as the stem, because `modules/document.ttl`
-        // and `shapes/document.ttl` share a stem.
-        let scope = file_scope(path);
-        parse_module_file(&bytes, path, &scope, &mut triples);
-    }
-
-    let blank_uris = assign_structural_uris(&triples);
-    let facts = triples.into_iter().map(|triple| {
-        let entity = node_entity(&triple.subject, &blank_uris);
-        match triple.object {
-            RawTerm::Entity(node) => {
-                OntologyFact::entity(entity, triple.predicate, node_entity(&node, &blank_uris))
-            }
-            RawTerm::Text(value) => OntologyFact::text(entity, triple.predicate, value),
-        }
-    });
-    OntologyModel::new(facts).with_fact_plane_root()
-}
-```
-
-<a name="chunk-parse-module-file"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#parse-module-file`</sub>
-
-```rust {#parse-module-file}
-fn parse_module_file(bytes: &[u8], path: &Path, scope: &str, triples: &mut Vec<RawTriple>) {
-    for triple in TurtleParser::new().for_slice(bytes) {
-        let triple = triple.unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
-        let subject = named_or_blank(triple.subject, scope);
-        let predicate = triple.predicate.into_string();
-        let object = match triple.object {
-            oxrdf::Term::NamedNode(node) => RawTerm::Entity(RawNode::Iri(node.into_string())),
-            oxrdf::Term::BlankNode(node) => RawTerm::Entity(RawNode::Blank(format!("{scope}:{}", node.into_string()))),
-            oxrdf::Term::Literal(literal) => {
-                assert!(
-                    literal.language().is_none() && literal.datatype().as_str() == XSD_STRING,
-                    "{} contains a non-string literal at predicate {predicate}; the fact plane needs a typed-value decision before this can be projected",
-                    path.display()
-                );
-                RawTerm::Text(literal.value().to_string())
-            }
-        };
-        triples.push(RawTriple {
-            subject,
-            predicate,
-            object,
-        });
-    }
-}
-
-fn named_or_blank(node: oxrdf::NamedOrBlankNode, scope: &str) -> RawNode {
-    match node {
-        oxrdf::NamedOrBlankNode::NamedNode(node) => RawNode::Iri(node.into_string()),
-        oxrdf::NamedOrBlankNode::BlankNode(node) => RawNode::Blank(format!("{scope}:{}", node.into_string())),
-    }
-}
-```
-
-## Blank nodes get durable names
-
-A blank node is Turtle syntax, not an identity. It cannot go into the fact
-plane as a label, because the label means nothing outside the file it came from
-— and the fact plane has no files. The answer is a skolem URI per connected
-blank-node component, assigned deterministically so the same tree always yields
-the same URIs, and the renderer turns the prefix back into blank labels when it
-materializes the file again.
-
-The determinism is bought by ordering: the roots are the IRI-subject triples
-that point at a blank node, sorted and deduped, so component numbering follows
-the vocabulary rather than the parse. Any blank node the roots did not reach —
-one reachable only from another blank node, which a well-formed file should not
-produce — is numbered after them rather than left unassigned.
-
-<a name="chunk-assign-structural-uris"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#assign-structural-uris`</sub>
-
-```rust {#assign-structural-uris}
-/// Blank nodes are Turtle syntax, not durable identities. Give every
-/// connected blank-node component a deterministic skolem URI while it is in
-/// the fact plane; the renderer turns this prefix back into blank labels.
-fn assign_structural_uris(triples: &[RawTriple]) -> BTreeMap<String, String> {
-    let mut roots: Vec<(String, String, String)> = triples
-        .iter()
-        .filter_map(|triple| match (&triple.subject, &triple.object) {
-            (RawNode::Iri(subject), RawTerm::Entity(RawNode::Blank(blank))) => {
-                Some((subject.clone(), triple.predicate.clone(), blank.clone()))
-            }
-            _ => None,
-        })
-        .collect();
-    roots.sort();
-    roots.dedup();
-
-    let mut assigned = BTreeMap::new();
-    for (root_index, (_, _, blank)) in roots.iter().enumerate() {
-        assign_blank_component(triples, blank, root_index, &mut assigned);
-    }
-
-    let mut all_blanks = BTreeSet::new();
-    for triple in triples {
-        if let RawNode::Blank(blank) = &triple.subject {
-            all_blanks.insert(blank.clone());
-        }
-        if let RawTerm::Entity(RawNode::Blank(blank)) = &triple.object {
-            all_blanks.insert(blank.clone());
-        }
-    }
-    let mut next_root = roots.len();
-    for blank in all_blanks {
-        if !assigned.contains_key(&blank) {
-            assign_blank_component(triples, &blank, next_root, &mut assigned);
-            next_root += 1;
-        }
-    }
-    assigned
-}
-```
-
-Within a component the walk is breadth-first with sorted children, for the
-same reason: node numbering must not depend on triple order in the file.
-
-<a name="chunk-assign-blank-component"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#assign-blank-component`</sub>
-
-```rust {#assign-blank-component}
-fn assign_blank_component(
-    triples: &[RawTriple],
-    root: &str,
-    root_index: usize,
-    assigned: &mut BTreeMap<String, String>,
-) {
-    let mut queue = VecDeque::from([root.to_string()]);
-    let mut node_index = 0usize;
-    while let Some(blank) = queue.pop_front() {
-        if assigned.contains_key(&blank) {
-            continue;
-        }
-        assigned.insert(
-            blank.clone(),
-            format!(
-                "{}b{root_index:04}n{node_index:04}",
-                concept_facts::STRUCTURAL_NODE_PREFIX
-            ),
-        );
-        node_index += 1;
-
-        let mut children: Vec<String> = triples
-            .iter()
-            .filter_map(|triple| match (&triple.subject, &triple.object) {
-                (RawNode::Blank(subject), RawTerm::Entity(RawNode::Blank(child)))
-                    if subject == &blank =>
-                {
-                    Some(child.clone())
-                }
-                _ => None,
-            })
-            .collect();
-        children.sort();
-        children.dedup();
-        queue.extend(children);
-    }
-}
-```
-
-<a name="chunk-node-entity"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#node-entity`</sub>
-
-```rust {#node-entity}
-/// A blank-node namespace unique per file: `<parent>/<stem>`.
-fn file_scope(path: &Path) -> String {
-    let parent = path
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    format!("{parent}/{}", module_file_name(path))
-}
-
-fn node_entity(node: &RawNode, blank_uris: &BTreeMap<String, String>) -> String {
-    match node {
-        RawNode::Iri(iri) => iri.clone(),
-        RawNode::Blank(blank) => blank_uris
-            .get(blank)
-            .unwrap_or_else(|| panic!("unassigned ontology blank node {blank}"))
-            .clone(),
-    }
-}
 ```
 
 ## Emitting the tables
@@ -578,7 +248,7 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
         let absolute = path.canonicalize().unwrap_or_else(|e| panic!("canonicalize {}: {e}", path.display()));
         out.push_str(&format!(
             "    ({:?}, include_str!({:?})),\n",
-            module_file_name(path),
+            load::module_file_name(path),
             absolute.to_string_lossy()
         ));
     }
@@ -593,7 +263,7 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
         let absolute = path.canonicalize().unwrap_or_else(|e| panic!("canonicalize {}: {e}", path.display()));
         out.push_str(&format!(
             "    ({:?}, include_str!({:?})),\n",
-            module_file_name(path),
+            load::module_file_name(path),
             absolute.to_string_lossy()
         ));
     }
@@ -799,7 +469,7 @@ fn option_literal(value: Option<&str>) -> String {
 
 ## Composing the file
 
-<a name="chunk-root"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [xsd-string](#chunk-xsd-string) · [raw-terms](#chunk-raw-terms) · [main](#chunk-main) · [module-file-paths](#chunk-module-file-paths) · [check-module-files](#chunk-check-module-files) · [parse-bootstrap-model](#chunk-parse-bootstrap-model) · [parse-module-file](#chunk-parse-module-file) · [assign-structural-uris](#chunk-assign-structural-uris) · [assign-blank-component](#chunk-assign-blank-component) · [node-entity](#chunk-node-entity) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [emit-module](#chunk-emit-module) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes)</sub>
+<a name="chunk-root"></a><sub>[`build.rs`](../../../x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [main](#chunk-main) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [emit-module](#chunk-emit-module) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -808,25 +478,7 @@ fn option_literal(value: Option<&str>) -> String {
 
 <<concept-facts-by-path>>
 
-<<xsd-string>>
-
-<<raw-terms>>
-
 <<main>>
-
-<<module-file-paths>>
-
-<<check-module-files>>
-
-<<parse-bootstrap-model>>
-
-<<parse-module-file>>
-
-<<assign-structural-uris>>
-
-<<assign-blank-component>>
-
-<<node-entity>>
 
 <<emit-generated>>
 
@@ -842,9 +494,9 @@ fn option_literal(value: Option<&str>) -> String {
 The file this script writes is a *view*, and saying so is not a hedge. The
 authority is the self-typed `x0k:Concept` root in the fact plane; the module
 files are the checked bootstrap that seeds an empty region; these tables are
-what a linker can hold. Keeping the parser in the build graph is what lets the
+what a linker can hold. Emitting the fold as constants is what lets the
 static-table consumers compile unchanged while the runtime fold becomes
-canonical underneath them — and it is why the closure check lives here rather
-than at the publication boundary. A set that does not close cannot be projected
-into a repository someone else builds, and this is the earliest place anyone
-can be told.
+canonical underneath them — and running the check at the earliest moment is
+why a set that does not close is caught here rather than at the publication
+boundary. A set that does not close cannot be projected into a repository
+someone else builds, and a stopped build is the earliest anyone can be told.

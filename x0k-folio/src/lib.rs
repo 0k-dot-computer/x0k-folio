@@ -10,8 +10,8 @@
 //! Modules:
 //!
 //! - [`colophon`] — envelope parser and types (`Colophon`, `DocType`, `Status`, `Materialization`)
-//! - [`entity_id`] — the id grammar: `x0k:<class>/<slug>`, parsed and rendered
-//! - [`envelope_check`] — an envelope read against the vocabulary this build compiled
+//! - [`entity_id`] — the id grammar: `<scheme>:<class>/<slug>`, parsed and rendered
+//! - [`envelope_check`] — an envelope read against a vocabulary the caller names
 //! - [`inline_entity`] — entities authored inside a document body, extracted
 //! - [`html_canonical`] — HTML canonicalizer for folio/v1 HTML bodies (stable attribute ordering, whitespace policy, behavior stripping)
 //! - `projection` — the `ColophonProjection` projection plugin. Compiled only

@@ -19,10 +19,11 @@
 //! - **weave** — [`weave::weave_html`]: render the document, prose and
 //!   highlighted code together, as a single HTML page.
 //! - **check** — [`resolve::check_all_refs`] and
-//!   [`faces::check_vocabulary`]: verify every chunk reference resolves
+//!   [`faces::vocabulary`] + [`faces::check_vocabulary`]: verify every chunk reference resolves
 //!   and no reference cycle exists, and read every folio/v1 envelope
-//!   against the vocabulary this build compiled, without writing
-//!   anything.
+//!   against a vocabulary — one named with `--vocabulary`, one a
+//!   projection recorded, or the set this build compiled — without
+//!   writing anything.
 //!
 //! A fourth, **affordances** — [`faces::declared_affordances`] — reads
 //! the affordance declarations out of a document as data.

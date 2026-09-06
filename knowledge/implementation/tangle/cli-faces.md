@@ -22,6 +22,7 @@ x0k:
       - x0k:implementation/folio/checking
       - x0k:implementation/folio/inline-entities
       - x0k:implementation/icon/crate
+      - x0k:implementation/ontology/load
 ---
 # The faces behind `check`, `affordances` and `icon`
 
@@ -54,11 +55,11 @@ because a signifier is declared where its face lives.
 
 ```rust {#doc}
 //! The mechanism behind the `check`, `affordances` and `icon` CLI verbs:
-//! every folio/v1 envelope under a set of paths read against the
-//! vocabulary this build compiled, every inline affordance declaration
-//! read out as a record, and every icon declaration checked against the
-//! profile and written bound. Both `x0k-tangle` binaries call these and
-//! do their own printing.
+//! every folio/v1 envelope under a set of paths read against a named
+//! vocabulary, every inline affordance declaration read out as a record,
+//! and every icon declaration checked against the profile and written
+//! bound. Both `x0k-tangle` binaries call these and do their own
+//! printing.
 ```
 
 <a name="chunk-imports"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#imports`</sub>
@@ -69,13 +70,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use x0k_folio::colophon::{is_colophon, parse_envelope, Colophon, DocType};
+use x0k_folio::colophon::{is_colophon, parse_envelope, parse_envelope_in, Colophon, DocType};
 use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::{
     check_corpus, check_declarations, declared_facts, document_edges, extract_from_markdown,
-    CorpusReport, DeclarationReport, InlineEntity, ICON_CLASS,
+    CorpusReport, DeclarationReport, EntityId, InlineEntity, ICON_CLASS,
 };
 use x0k_icon::{check, emit, one_per_grid, Accepted, Grid, Label, Palette};
+use x0k_ontology::concept_facts::OntologyModel;
 
 use crate::parser::{parse_document, ParsedDocument};
 ```
@@ -229,11 +231,63 @@ fn claims_folio(path: &Path) -> bool {
 }
 ```
 
+## Which vocabulary
+
+The check reads documents against a vocabulary, and until now there was
+only one to read against: whichever ontology modules the binary was
+compiled with. That answer is wrong in the one place the check matters
+most. A projected repository ships its own module files — the projector
+writes them and records where in `PROVENANCE.json`'s `modules_dir`
+([`region-repo.md`](region-repo.md)) — and a reader who builds the CLI in
+that repository was, until this function, checking those documents
+against a vocabulary compiled from a *different* copy of the tree.
+
+So the vocabulary is resolved in three steps, most specific first: the
+directory the caller named, else the one this projection recorded, else
+the set this build compiled. The middle step is what makes a projected
+repository check itself: the files are right there, the record says
+where, and nothing has to be passed.
+
+<a name="chunk-vocabulary"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#vocabulary`</sub>
+
+```rust {#vocabulary}
+/// The vocabulary a check reads against.
+///
+/// `explicit` is `--vocabulary <dir>`, a directory of `*.ttl` module
+/// files. With none given, a projection's own `PROVENANCE.json` names the
+/// modules it shipped and those are loaded; with neither, the set this
+/// build compiled.
+pub fn vocabulary(explicit: Option<&Path>) -> Result<OntologyModel> {
+    if let Some(dir) = explicit {
+        return OntologyModel::load(dir)
+            .with_context(|| format!("loading a vocabulary from {}", dir.display()));
+    }
+    match projected_modules_dir(Path::new("PROVENANCE.json")) {
+        Some(dir) => OntologyModel::load(&dir).with_context(|| {
+            format!("loading the modules this projection shipped, from {}", dir.display())
+        }),
+        None => Ok(OntologyModel::shipped()),
+    }
+}
+
+/// The module directory a projection recorded, when the record is here and
+/// the directory is too. Every other case — no record, no `modules_dir`
+/// (the projection shipped no vocabulary), a directory since removed — is
+/// `None` rather than an error: this is a default being looked for, not a
+/// file being required.
+fn projected_modules_dir(provenance: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(provenance).ok()?;
+    let record: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let dir = PathBuf::from(record.get("modules_dir")?.as_str()?);
+    dir.is_dir().then_some(dir)
+}
+```
+
 ## The check
 
 The affordance's text names the two outcomes, and
 [`checking.md`](../folio/checking.md) keeps them structurally apart: a
-**defect** is the shipped vocabulary failing to express what a document
+**defect** is the vocabulary failing to express what a document
 says, and a **dangling edge** is a well-formed target naming no
 document in the set — the publication boundary doing its job. The
 report here adds one thing in front of the corpus report: a document
@@ -267,8 +321,7 @@ malformed edge target is.
 <a name="chunk-vocabulary-report"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#vocabulary-report`</sub>
 
 ```rust {#vocabulary-report}
-/// What `check` found reading a set of envelopes against the shipped
-/// vocabulary.
+/// What `check` found reading a set of envelopes against a vocabulary.
 #[derive(Debug, Default)]
 pub struct VocabularyReport {
     /// Documents whose frontmatter claims folio/v1 but does not parse
@@ -287,9 +340,8 @@ pub struct VocabularyReport {
 }
 
 impl VocabularyReport {
-    /// True when every envelope parsed and the shipped vocabulary
-    /// expressed everything every document said. Dangling edges do not
-    /// affect this.
+    /// True when every envelope parsed and the vocabulary expressed
+    /// everything every document said. Dangling edges do not affect this.
     pub fn is_clean(&self) -> bool {
         self.unparsed.is_empty() && self.corpus.is_clean()
     }
@@ -299,10 +351,9 @@ impl VocabularyReport {
 <a name="chunk-check-vocabulary"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#check-vocabulary`</sub>
 
 ```rust {#check-vocabulary}
-/// Read every folio/v1 document under `paths` against the vocabulary
-/// this build compiled. Documents are named by their path in the
-/// report.
-pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
+/// Read every folio/v1 document under `paths` against `model`. Documents
+/// are named by their path in the report.
+pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<VocabularyReport> {
     let mut unparsed = Vec::new();
     let mut envelopes: Vec<(String, Colophon)> = Vec::new();
     let classes: HashSet<String> =
@@ -315,7 +366,7 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
         let name = path.display().to_string();
-        match parse_envelope(&content) {
+        match parse_envelope_in(model, &content) {
             Ok((envelope, body)) => {
                 // A chapter's prose link is an edge — `presupposes` to a
                 // wiki page, `realizes` to an affordance — and is checked as
@@ -340,7 +391,7 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
             Err(e) => unparsed.push((name, e.to_string())),
         }
     }
-    let mut corpus = check_corpus(envelopes.iter().map(|(name, env)| (name.as_str(), env)));
+    let mut corpus = check_corpus(model, envelopes.iter().map(|(name, env)| (name.as_str(), env)));
     let declarations = check_declarations(entities.iter());
     let declared: HashSet<String> = entities
         .iter()
@@ -352,7 +403,10 @@ pub fn check_vocabulary(paths: &[PathBuf]) -> Result<VocabularyReport> {
             if declared.contains(&target) {
                 continue;
             }
-            match (doc_id.parse(), target.parse()) {
+            match (
+                EntityId::parse_in(model, &doc_id),
+                EntityId::parse_in(model, &target),
+            ) {
                 (Ok(subject), Ok(target)) => corpus.dangling.push(DanglingEdge {
                     source: name.clone(),
                     subject,
@@ -734,7 +788,7 @@ pub fn write_icon_files(report: &IconReport, palette: &Palette, out: &Path) -> R
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances) · [icon-report](#chunk-icon-report) · [check-section](#chunk-check-section) · [declared-icons](#chunk-declared-icons)</sub>
+<a name="chunk-root"></a><sub>[`src/faces.rs`](../../../x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [vocabulary](#chunk-vocabulary) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances) · [icon-report](#chunk-icon-report) · [check-section](#chunk-check-section) · [declared-icons](#chunk-declared-icons)</sub>
 
 ```rust {#root}
 <<doc>>
@@ -746,6 +800,8 @@ pub fn write_icon_files(report: &IconReport, palette: &Palette, out: &Path) -> R
 <<discover>>
 
 <<vocabulary-report>>
+
+<<vocabulary>>
 
 <<check-vocabulary>>
 
@@ -842,6 +898,12 @@ The check's two outcomes, each on its own fixture: an edge into the
 private corpus is noted and passes; a predicate no module declares is
 named and fails.
 
+The last of them is the one `--vocabulary` exists for. A document whose
+genus and whose namespace come from a module directory nobody compiled
+passes when the verb is pointed at that directory and fails when it is
+not — which is the affordance's own promise, said about a vocabulary the
+reader chose rather than one the binary was born with.
+
 <a name="chunk-tests-check"></a><sub>[`tests/cli_faces.rs`](../../../x0k-tangle/tests/cli_faces.rs) · `#tests-check` · proves [Check a document against its vocabulary](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)</sub>
 
 ```rust {#tests-check file="tests/cli_faces.rs" proves="x0k:affordance/check_a_document_against_shipped_vocabulary"}
@@ -875,6 +937,66 @@ fn check_names_an_undeclared_predicate_and_fails() {
         stderr.contains("frobnicates") && stderr.contains("fixture.md"),
         "the defect names the predicate and the document: {stderr}"
     );
+}
+
+/// A vocabulary a reader could write: `mycorp` in its own namespace,
+/// declaring one genus class. The smallest set that closes — `core` has
+/// no imports, and `mycorp` imports it.
+fn write_scratch_vocabulary(dir: &Path) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        dir.join("core.ttl"),
+        "<https://0k.computer/ontology/core> \
+         <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> \
+         <http://www.w3.org/2002/07/owl#Ontology> .\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("mycorp.ttl"),
+        concat!(
+            "<https://0k.computer/ontology/mycorp> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+            "<https://0k.computer/ontology/mycorp> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .\n",
+            "<https://0k.computer/ontology/mycorp> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://mycorp.example/ontology#\" .\n",
+            "<https://mycorp.example/ontology#Brief> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+            "<https://mycorp.example/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/mycorp> .\n",
+            "<https://mycorp.example/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#label> \"Brief\" .\n",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
+    let tmp = TempDir::new().unwrap();
+    let modules = tmp.path().join("vocab/modules");
+    write_scratch_vocabulary(&modules);
+    write(
+        tmp.path(),
+        "docs/brief.md",
+        "---\nx0k:\n  format: folio/v1\n  id: mycorp:brief/tender-process\n  \
+         type: brief\n  status: proposed\n---\n# A brief\n",
+    );
+    let docs = tmp.path().join("docs");
+
+    let out = run(
+        &["check", "--vocabulary", modules.to_str().unwrap()],
+        &docs,
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a genus and a namespace the named vocabulary declares must check clean: {stderr}"
+    );
+
+    // The same document against the vocabulary this build compiled: the
+    // genus is not a class it declares, so the envelope does not parse.
+    let out = run(&["check"], &docs);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the shipped vocabulary declares no `brief` genus: {stderr}"
+    );
+    assert!(stderr.contains("brief.md"), "the document is named: {stderr}");
 }
 
 #[test]

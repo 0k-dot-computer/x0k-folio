@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/folio/colophon.md",
-  "source_hash": "eb15767d27cf015a",
+  "source_hash": "3f0c7eadd798e4fb",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "x0k-folio/src/colophon.rs",
-          "hash": "676f764d15df9fab"
+          "hash": "a8e215e11ad08751"
         }
       ]
     }

@@ -139,7 +139,7 @@ The envelope at the top, the identity it declares, and the block tree beneath it
 
 - [x0k-folio: the format library](knowledge/implementation/folio/format.md) — The crate root — its chapter map, and the one feature flag that severs the substrate-facing half so a standalone build is pure functions over strings.
 - [The colophon: one envelope, one parser, one renderer](knowledge/implementation/folio/colophon.md) — The envelope's single parser and renderer, permissive about keys it does not own and closed about the keywords it does, consumed by every crate that touches a folio file.
-- [Who a document says it is](knowledge/implementation/folio/identity.md) — The identity half of an x0k URI — class, slug, and the fragment that names a part of what the slug names — parsed and rendered by the format library itself, so a document can say who it is without a substrate underneath it.
+- [Who a document says it is](knowledge/implementation/folio/identity.md) — The identity half of an x0k URI — scheme, class, slug, and the fragment that names a part of what the slug names — parsed and rendered by the format library itself, so a document can say who it is without a substrate underneath it.
 - [The structural block tree](knowledge/implementation/folio/structural.md) — The parser-agnostic block tree both the markdown and the HTML sides parse into: syntactic, orthogonal to the editorial axis, and owned here so two renderer crates can share it without a dependency cycle.
 
 ### The vocabulary a document is written in
@@ -149,9 +149,10 @@ Where the terms an envelope uses come from, how they reach the code as tables, a
 *rests on:* open-world-assumption · rdf-and-owl
 
 - [Concepts Are Facts](knowledge/implementation/ontology/concept-facts.md) — Why the vocabulary lives as facts in the concept region rather than compiled from a schema file, and how the module files are materialized back out of it.
-- [The vocabulary, parsed once, at build time](knowledge/implementation/ontology/module-bootstrap.md) — The build script that reads the checked vocabulary modules, refuses a set whose imports do not close, and emits the constant tables the crate root re-exports — so nothing at runtime carries a Turtle parser.
+- [The vocabulary, folded once, at build time](knowledge/implementation/ontology/module-bootstrap.md) — The build script that loads the checked vocabulary modules through the library's own loader and emits the constant tables the crate root re-exports — so a consumer gets a linked table without folding anything.
+- [Reading a vocabulary the build did not compile](knowledge/implementation/ontology/load.md) — Reading a set of vocabulary module files into an OntologyModel at run time — the same parse, the same fold, and the same refusals the build script applies, returned as a Result instead of a panic.
 - [The crate root is a compatibility view](knowledge/implementation/ontology/views.md) — How the crate root turns whichever module set is present into the class, property, and edge-predicate tables other crates check a document against.
-- [Checking a document against what shipped with it](knowledge/implementation/folio/checking.md) — Reading an envelope against the vocabulary the bundle actually ships — and keeping a missing term, which is a packaging defect, apart from a missing target, which is the boundary working.
+- [Checking a document against what shipped with it](knowledge/implementation/folio/checking.md) — Reading an envelope against a vocabulary the caller names — and keeping a missing term, which is a packaging defect, apart from a missing target, which is the boundary working.
 
 ### A document that reaches beyond itself
 

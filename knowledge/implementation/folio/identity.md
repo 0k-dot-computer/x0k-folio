@@ -4,7 +4,7 @@ x0k:
   id: x0k:implementation/folio/identity
   type: implementation
   status: draft
-  summary: The identity half of an x0k URI — class, slug, and the fragment that names a part of what the slug names — parsed and rendered by the format library itself, so a document can say who it is without a substrate underneath it.
+  summary: "The identity half of an x0k URI — scheme, class, slug, and the fragment that names a part of what the slug names — parsed and rendered by the format library itself, so a document can say who it is without a substrate underneath it."
   concerns: [folio, identity, uri, publishing, format]
   tangle:
     crate: x0k-folio
@@ -13,9 +13,11 @@ x0k:
     implements:
       - x0k:design/publish-a-region-as-a-repository
     cites:
+      - x0k:architecture/ontology-modules
       - x0k:architecture/publication-projection
       - x0k:implementation/folio/colophon
       - x0k:implementation/folio/checking
+      - x0k:implementation/ontology/load
 ---
 # Who a document says it is
 
@@ -66,9 +68,11 @@ envelope layer — the exact consumer at issue — never reads the field.
 The parity that must hold meanwhile is narrow and testable: for any URI
 carrying neither a locator nor a fragment, `EntityId` and `EntityUri`
 must parse the same string to the same class and identifier, and render
-the same string back. Both exceptions are deliberate and both are
-stated where they are made — the locator under *Parsing*, the fragment
-in the section after this one.
+the same string back. The three exceptions are deliberate and each is
+stated where it is made — the locator under *Parsing*, the fragment in
+the section after this one, and the scheme in the section after that,
+where `x0k:` stops being a constant and becomes whichever prefixes a
+vocabulary declares.
 
 <a name="chunk-module-doc"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#module-doc`</sub>
 
@@ -78,8 +82,13 @@ in the section after this one.
 //! Grammar:
 //!
 //! ```text
-//! x0k:<class>/<identifier>[#<fragment>]
+//! <scheme>:<class>/<identifier>[#<fragment>]
 //! ```
+//!
+//! The scheme is a vocabulary's compact namespace prefix — `x0k` for the
+//! base namespace, a module's own name where it declares one with
+//! `vann:preferredNamespaceUri`. [`EntityId::parse_in`] takes the
+//! licensed set from a loaded model; [`FromStr`] licenses `x0k` alone.
 //!
 //! This is `x0k_types::EntityUri` without its `locator` half. The
 //! locator pins a URI to a content state (a Loro frontier, a jj commit,
@@ -97,8 +106,11 @@ in the section after this one.
 //! tail, because silently dropping a pin would turn "this exact revision"
 //! into "whatever is current" without telling anyone.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
+
+use x0k_ontology::concept_facts::OntologyModel;
 ```
 
 ## A fragment names a part of what the identifier names
@@ -130,9 +142,33 @@ separator stays unambiguous — the same trade `@` already makes, and the
 second place this pair's grammar deliberately parts from `EntityUri`,
 which models neither.
 
+## The scheme is the reader's, not ours
+
+`x0k:` is not part of the grammar. It is the compact prefix of one
+namespace — the base namespace this corpus's own vocabulary lives in —
+and a domain extension owns another, declared on its module fact with
+`vann:preferredNamespaceUri` (`x0k:architecture/ontology-modules` §2).
+A reader who adds a `mycorp` module for their own subjects gets
+`mycorp:` as the prefix its terms compact to, and their documents
+should be able to say `mycorp:design/tender-process` and be read.
+
+So the parser takes the schemes it accepts from a vocabulary rather
+than from a constant. `EntityId::parse_in` asks a loaded
+[`OntologyModel`](../ontology/load.md) which prefixes its modules
+declare and accepts those; `FromStr` accepts `x0k:` alone, which is
+what a caller with no model in hand can honestly enforce. A scheme
+neither licenses is refused by name — `UnknownScheme` rather than
+`MissingScheme` — because "you used a namespace nothing here declares"
+and "you left the prefix off" are different mistakes with different
+fixes, and a reader whose own module was not loaded needs to be told
+which one they made.
+
+The rendered form carries whatever scheme was parsed, so an id
+round-trips in the namespace it was written in.
+
 ## The type
 
-Two owned `String`s and an optional third, all public, because every
+Three owned `String`s and an optional fourth, all public, because every
 consumer wants the parts rather than the whole: a checker compares the
 class against a vocabulary, a resolver looks the identifier up on disk,
 a projector reads the fragment to cut a section out, a renderer prints
@@ -141,10 +177,15 @@ them back.
 <a name="chunk-entity-id"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#entity-id`</sub>
 
 ```rust {#entity-id}
-/// A parsed x0k entity id: a class, a class-specific identifier, and an
-/// optional fragment naming a part of what the identifier names.
+/// A parsed x0k entity id: a scheme, a class, a class-specific
+/// identifier, and an optional fragment naming a part of what the
+/// identifier names.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntityId {
+    /// The compact namespace prefix, without the `:`. `x0k` for the base
+    /// vocabulary; a module's own name when it declares a namespace of
+    /// its own (`vann:preferredNamespaceUri`).
+    pub scheme: String,
     /// Kebab-case class name. Not validated at parse time so unknown
     /// classes round-trip; class registration happens above this layer.
     pub class: String,
@@ -160,10 +201,21 @@ pub struct EntityId {
 }
 
 impl EntityId {
-    /// Construct directly, addressing the whole entity. Does no class
-    /// validation.
+    /// Construct directly in the base namespace, addressing the whole
+    /// entity. Does no class validation.
     pub fn new(class: impl Into<String>, identifier: impl Into<String>) -> Self {
+        Self::in_scheme("x0k", class, identifier)
+    }
+
+    /// Construct directly in a named namespace — the module's own prefix
+    /// for a domain extension's entity.
+    pub fn in_scheme(
+        scheme: impl Into<String>,
+        class: impl Into<String>,
+        identifier: impl Into<String>,
+    ) -> Self {
         Self {
+            scheme: scheme.into(),
             class: class.into(),
             identifier: identifier.into(),
             fragment: None,
@@ -183,6 +235,7 @@ impl EntityId {
     /// no fragment, so a caller can ask unconditionally.
     pub fn without_fragment(&self) -> Self {
         Self {
+            scheme: self.scheme.clone(),
             class: self.class.clone(),
             identifier: self.identifier.clone(),
             fragment: None,
@@ -210,7 +263,8 @@ edge rather than a surprise.
 ```rust {#display}
 impl fmt::Display for EntityId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("x0k:")?;
+        f.write_str(&self.scheme)?;
+        f.write_str(":")?;
         f.write_str(&self.class)?;
         f.write_str("/")?;
         write_encoded(f, &self.identifier)?;
@@ -225,31 +279,53 @@ impl fmt::Display for EntityId {
 
 ## Parsing
 
-Four rejections, in the order a malformed string trips them: no scheme,
-no separator, an empty half, whitespace. The locator check comes before
-the fragment split, and deliberately: it is asked of everything after
-the class, so a pin hiding behind a fragment (`x0k:a/b#c@d`) is refused
-by the same rule rather than parsed into a fragment nobody can honour.
-It is the first of this parser's two deliberate differences from
-`EntityUri` — the substrate accepts `@<locator>` and resolves it; the
-format library sees a pin it cannot honour and says so. The fragment
-split is the second, and it is a *widening*: `EntityUri` reads
-`a/b#c` as an identifier of `b#c`, and this parser reads it as a part of
-`b`. An empty fragment (`x0k:a/b#`) refuses rather than degrading to
-`None`, for the reason the locator refuses: a `#` that was typed meant
-something, and the parse that quietly forgets it is the one nobody
-debugs.
+Five rejections, in the order a malformed string trips them: no scheme,
+a scheme nothing declares, no separator, an empty half, whitespace. The
+locator check comes before the fragment split, and deliberately: it is
+asked of everything after the class, so a pin hiding behind a fragment
+(`x0k:a/b#c@d`) is refused by the same rule rather than parsed into a
+fragment nobody can honour. It is the first of this parser's two
+deliberate differences from `EntityUri` — the substrate accepts
+`@<locator>` and resolves it; the format library sees a pin it cannot
+honour and says so. The fragment split is the second, and it is a
+*widening*: `EntityUri` reads `a/b#c` as an identifier of `b#c`, and
+this parser reads it as a part of `b`. An empty fragment (`x0k:a/b#`)
+refuses rather than degrading to `None`, for the reason the locator
+refuses: a `#` that was typed meant something, and the parse that
+quietly forgets it is the one nobody debugs.
+
+The scheme is split first because everything after it is read relative
+to it, and it is the one part whose legality comes from outside the
+string. `parse_in` takes the licensed set from a vocabulary; `from_str`
+licenses `x0k` alone.
 
 <a name="chunk-from-str"></a><sub>[`src/entity_id.rs`](../../../x0k-folio/src/entity_id.rs) · `#from-str`</sub>
 
 ```rust {#from-str}
-impl FromStr for EntityId {
-    type Err = EntityIdError;
+impl EntityId {
+    /// Parse an id, accepting `x0k:` and every namespace prefix `model`
+    /// declares. This is what lets a reader whose own vocabulary module
+    /// declares `mycorp:` write ids in it and have them read.
+    pub fn parse_in(model: &OntologyModel, input: &str) -> Result<Self, EntityIdError> {
+        Self::parse_with_schemes(input, &model.schemes())
+    }
 
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let rest = input
-            .strip_prefix("x0k:")
+    /// Parse against an explicit scheme set. `pub(crate)` so the checker
+    /// can fold a vocabulary's schemes once and parse a corpus against the
+    /// result rather than re-folding per id.
+    pub(crate) fn parse_with_schemes(
+        input: &str,
+        schemes: &BTreeSet<String>,
+    ) -> Result<Self, EntityIdError> {
+        let (scheme, rest) = input
+            .split_once(':')
             .ok_or_else(|| EntityIdError::MissingScheme(input.to_string()))?;
+        if !schemes.contains(scheme) {
+            return Err(EntityIdError::UnknownScheme {
+                input: input.to_string(),
+                scheme: scheme.to_string(),
+            });
+        }
 
         // Split off the class first: a bare `/` inside the identifier is
         // absorbed by the identifier, matching `EntityUri`.
@@ -306,10 +382,22 @@ impl FromStr for EntityId {
         };
 
         Ok(Self {
+            scheme: scheme.to_string(),
             class: class.to_string(),
             identifier,
             fragment,
         })
+    }
+}
+
+impl FromStr for EntityId {
+    type Err = EntityIdError;
+
+    /// Parse an id in the base namespace. A caller holding a vocabulary
+    /// uses [`EntityId::parse_in`] instead, which licenses whatever
+    /// namespaces that vocabulary's modules declare.
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        Self::parse_with_schemes(input, &BTreeSet::from(["x0k".to_string()]))
     }
 }
 ```
@@ -327,6 +415,10 @@ is useless.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntityIdError {
     MissingScheme(String),
+    /// The string carries a namespace prefix no loaded module declares.
+    /// Distinct from a missing one: the fix is to load the vocabulary
+    /// that declares it, not to add a prefix.
+    UnknownScheme { input: String, scheme: String },
     MissingSeparator(String),
     EmptyClass(String),
     EmptyIdentifier(String),
@@ -350,7 +442,12 @@ pub enum EntityIdError {
 impl fmt::Display for EntityIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingScheme(v) => write!(f, "id `{v}` is missing the `x0k:` scheme prefix"),
+            Self::MissingScheme(v) => write!(f, "id `{v}` is missing the `<scheme>:` prefix"),
+            Self::UnknownScheme { input, scheme } => write!(
+                f,
+                "id `{input}` uses the namespace prefix `{scheme}`, which no loaded \
+                 vocabulary module declares"
+            ),
             Self::MissingSeparator(v) => {
                 write!(f, "id `{v}` is missing the `/` separator after the class")
             }
@@ -548,6 +645,57 @@ mod tests {
     fn unknown_class_parses_and_round_trips() {
         let id = round_trip("x0k:hypothetical-future-class/some-id");
         assert_eq!(id.class, "hypothetical-future-class");
+        assert_eq!(id.scheme, "x0k");
+    }
+
+    /// A one-module vocabulary in its own namespace: the smallest thing a
+    /// reader can declare that makes their own prefix an id.
+    fn mycorp_model() -> OntologyModel {
+        use x0k_ontology::concept_facts::{OntologyFact, OWL_ONTOLOGY, RDF_TYPE, VANN_PREFERRED_NAMESPACE_URI};
+        OntologyModel::new([
+            OntologyFact::entity(
+                "https://0k.computer/ontology/mycorp",
+                RDF_TYPE,
+                OWL_ONTOLOGY,
+            ),
+            OntologyFact::text(
+                "https://0k.computer/ontology/mycorp",
+                VANN_PREFERRED_NAMESPACE_URI,
+                "https://mycorp.example/ontology#",
+            ),
+        ])
+    }
+
+    #[test]
+    fn a_module_that_declares_a_namespace_licenses_its_prefix_as_a_scheme() {
+        let model = mycorp_model();
+        let id = EntityId::parse_in(&model, "mycorp:design/tender-process")
+            .expect("a declared prefix is a scheme");
+        assert_eq!(id.scheme, "mycorp");
+        assert_eq!(id.class, "design");
+        assert_eq!(id.identifier, "tender-process");
+        // And it renders back in the namespace it was written in.
+        assert_eq!(id.to_string(), "mycorp:design/tender-process");
+
+        // The base namespace stays licensed whatever else a model declares.
+        assert!(EntityId::parse_in(&model, "x0k:design/other").is_ok());
+    }
+
+    #[test]
+    fn a_prefix_no_module_declares_is_refused_by_name() {
+        // Without the model, `mycorp:` is a scheme nothing licenses — and
+        // the error says so rather than claiming the prefix is missing.
+        let err = "mycorp:design/tender-process"
+            .parse::<EntityId>()
+            .expect_err("no model, no prefix");
+        assert!(
+            matches!(&err, EntityIdError::UnknownScheme { scheme, .. } if scheme == "mycorp"),
+            "wrong error: {err:?}"
+        );
+        assert!(matches!(
+            EntityId::parse_in(&mycorp_model(), "elsewhere:design/x"),
+            Err(EntityIdError::UnknownScheme { .. })
+        ));
     }
 
     #[test]

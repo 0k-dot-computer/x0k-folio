@@ -268,21 +268,25 @@ Said here so that nothing above has to imply it.
 - **A verb that writes the envelope.** `adopt <file> --type design` is
   designed and not built; today the envelope is written by hand or by your
   agent, and `check` is the first verb that touches it.
-- **Any scheme but `x0k:`.** The id parser admits one scheme. Whether the
-  scheme is the format's or ours is a decision not yet taken; until it is,
-  your ids carry it.
-- **A vocabulary module of your own.** `check` reads no vocabulary at run
-  time: the tables it checks against are compiled into `x0k-ontology` by its
-  build script, which reads every `.ttl` under
-  `x0k-ontology/ontology/modules/` and refuses a set whose `owl:imports` do
-  not close. So a module of yours would go in that directory beside the
-  shipped three, followed by a rebuild — and two limits make that a small
-  win. A new class does not become a document `type`: the ten names are a
-  closed list in `x0k-folio`. And a new predicate reaches `edges:` only if it
-  lives in the `https://0k.computer/ontology#` namespace with a `Decision`
-  domain; a predicate in a namespace of your own is compiled in and never
-  admitted as an edge. In practice the vocabulary you check against today is
-  the one that ships.
+- **A scheme no module declares.** The id parser admits `x0k:` and every
+  namespace prefix a loaded module declares with
+  `vann:preferredNamespaceUri` — so `mycorp:design/retry-budget` is a
+  well-formed id once a `mycorp` module declares a namespace, and is refused
+  by name until then. A prefix belonging to no module is still not a scheme,
+  and whether the format should have one of its own is a decision not yet
+  taken.
+- **A predicate of your own, in a namespace of your own.** A module of yours
+  now needs no rebuild: `x0k-tangle check --vocabulary <dir>` loads a
+  directory of `.ttl` files at run time and checks against those, refusing a
+  set whose `owl:imports` do not close. A class the module declares becomes a
+  usable document `type`, and a namespace it declares becomes an id scheme.
+  What a module of yours cannot yet add is an edge predicate: `edges:` admits
+  a predicate only if it lives in the `https://0k.computer/ontology#`
+  namespace with a `Decision` domain, so a predicate in a namespace of your
+  own is loaded and never admitted. And `type:` is wider than it should be —
+  the vocabulary marks no class as a document genus, so any class the loaded
+  modules declare is an accepted `type`, and narrowing that needs a marker
+  the vocabulary does not have.
 - **A literate root other than `knowledge/implementation/`** for the
   `workspace` verb and for `tools/ci` as emitted. Tangling by explicit path
   works anywhere under the workspace, as above; the discovery does not.

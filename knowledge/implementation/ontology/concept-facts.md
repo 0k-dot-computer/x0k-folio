@@ -586,9 +586,52 @@ impl OntologyModel {
 The small naming helpers are shared rather than duplicated between the build
 and runtime projections:
 
+A class's name in an id or a `type:` keyword is the kebab-case of its local
+name — `LiterateSpec` is `literate-spec`, `OpenQuestion` is `open-question`.
+That rule belongs to the vocabulary rather than to the format library that
+reads it, so `class_names` answers "which classes does this model declare, as
+a document spells them" for a caller that has a keyword and needs to know
+whether anything declares it.
+
+The identifier schemes are the other half of the same question. A term in the
+base namespace compacts to `x0k:`; a domain extension owns a namespace it
+declares on its module fact, and its terms compact to `<module>:`. Those
+prefixes are exactly the schemes an id may carry, which is what lets a reader
+with their own module write ids in their own namespace.
+
+<a name="chunk-vocabulary-names"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#vocabulary-names`</sub>
+
+```rust {#vocabulary-names}
+impl OntologyModel {
+    /// Every class the model declares, named as a document spells it: the
+    /// kebab-case of the term's local name. `x0k:LiterateSpec` and
+    /// `paracosm:Place` are `literate-spec` and `place`.
+    pub fn class_names(&self) -> BTreeSet<String> {
+        self.classes().into_iter()
+            .map(|class| camel_to_kebab(class.uri.rsplit(':').next().unwrap_or(&class.uri)))
+            .collect()
+    }
+
+    /// The identifier schemes this model licenses: `x0k` for the base
+    /// namespace, plus every module that declares its own
+    /// (`vann:preferredNamespaceUri`).
+    pub fn schemes(&self) -> BTreeSet<String> {
+        let mut out = BTreeSet::from(["x0k".to_string()]);
+        out.extend(self.modules().into_iter()
+            .filter(|module| module.namespace.is_some())
+            .map(|module| module.name));
+        out
+    }
+}
+```
+
 <a name="chunk-naming"></a><sub>[`src/concept_facts.rs`](../../../x0k-ontology/src/concept_facts.rs) · `#naming`</sub>
 
 ```rust {#naming}
+pub fn camel_to_kebab(camel: &str) -> String {
+    camel_to_snake(camel).replace('_', "-")
+}
+
 pub fn bare_c0k(iri: &str) -> String {
     iri.strip_prefix(X0K_NS).map(|local| format!("x0k:{local}")).unwrap_or_else(|| iri.to_string())
 }

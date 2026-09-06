@@ -1023,6 +1023,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "tempfile",
  "tracing",
  "x0k-ontology",
 ]
@@ -1043,6 +1044,7 @@ dependencies = [
  "blake3",
  "oxrdf",
  "oxttl",
+ "tempfile",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ x0k:
   id: x0k:implementation/folio/checking
   type: implementation
   status: draft
-  summary: Reading an envelope against the vocabulary the bundle actually ships — and keeping a missing term, which is a packaging defect, apart from a missing target, which is the boundary working.
+  summary: "Reading an envelope against a vocabulary the caller names — and keeping a missing term, which is a packaging defect, apart from a missing target, which is the boundary working."
   concerns: [folio, ontology, publishing, validation, vocabulary]
   tangle:
     crate: x0k-folio
@@ -17,6 +17,7 @@ x0k:
       - x0k:architecture/ontology-modules
       - x0k:implementation/folio/colophon
       - x0k:implementation/folio/identity
+      - x0k:implementation/ontology/load
 ---
 # Checking a document against what shipped with it
 
@@ -68,8 +69,12 @@ than a term filed in the wrong house.
 <a name="chunk-module-doc"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
-//! Reading a folio/v1 envelope against the vocabulary compiled into this
-//! build of `x0k-ontology`.
+//! Reading a folio/v1 envelope against a vocabulary the caller names.
+//!
+//! Every function here takes an [`OntologyModel`]: the set this build
+//! compiled (`OntologyModel::shipped()`), or one read off a module
+//! directory (`OntologyModel::load`). The vocabulary is a parameter, not
+//! a property of the binary.
 //!
 //! The check answers two different questions and never lets their
 //! answers mix:
@@ -84,10 +89,10 @@ than a term filed in the wrong house.
 //!   expected: a publication is a region of a graph, and an edge leaving
 //!   the region is the boundary working, not a failure.
 //!
-//! Which ontology modules a build compiled decides the first answer, so
-//! the same document checks differently in the monorepo and in a
-//! published bundle. That is the point: the check measures the bundle,
-//! not the corpus.
+//! Which modules the model holds decides the first answer, so the same
+//! document checks differently against a monorepo vocabulary and a
+//! published bundle's. That is the point: the check measures the
+//! vocabulary it was pointed at, not the corpus.
 //!
 //! A third question is asked of the entities declared *inside* the
 //! documents rather than of their envelopes — **does every claim made
@@ -96,21 +101,23 @@ than a term filed in the wrong house.
 //! signifier signifies, which is a promise to a perception-dependent
 //! actor with nothing to perceive.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+use x0k_ontology::concept_facts::OntologyModel;
 
 use crate::colophon::Colophon;
 use crate::entity_id::EntityId;
 use crate::inline_entity::{declared_facts, InlineEntity};
 ```
 
-## Standing: what a shipped module has to say about a predicate
+## Standing: what a module has to say about a predicate
 
-`x0k-ontology` exposes two tables, and the difference between them is
-the difference between two `no`s. `KNOWN_EDGE_PREDICATES` and
-`snake_to_camel` are the *Decision-domain slice* — the predicates whose
-`rdfs:domain` reaches `x0k:Decision`, which is what a decision document's
-`edges:` block normally draws from. `predicate_domain_range` covers every
-object property in the shipped modules, whatever its subject.
+A model answers two different questions about a predicate, and the
+difference between them is the difference between two `no`s. The
+*Decision-domain slice* is the predicates whose subject reaches
+`x0k:Decision`, which is what a decision document's `edges:` block
+normally draws from. The object-property table covers every object
+property the modules declare, whatever its subject.
 
 A predicate can therefore be outside the slice and still perfectly real:
 `child_of` has an `x0k:Intent` domain, and an intent's envelope is right
@@ -120,37 +127,92 @@ values, not two.
 <a name="chunk-standing"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#standing`</sub>
 
 ```rust {#standing}
-/// What the shipped ontology modules have to say about an `edges:`
-/// predicate, in its snake_case frontmatter form.
+/// What a vocabulary has to say about an `edges:` predicate, in its
+/// snake_case frontmatter form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicateStanding {
-    /// Declared by a shipped module with `x0k:Decision` in its domain —
-    /// the slice a decision document's `edges:` block draws from.
+    /// Declared with `x0k:Decision` in its domain — the slice a decision
+    /// document's `edges:` block draws from.
     DocumentEdge { uri: String },
-    /// Declared by a shipped module, but for some other subject
-    /// (`child_of` is an intent's edge, not a decision's). Real, and not
-    /// a defect on a document of the matching genus.
+    /// Declared, but for some other subject (`child_of` is an intent's
+    /// edge, not a decision's). Real, and not a defect on a document of
+    /// the matching genus.
     DeclaredElsewhere {
         uri: String,
-        domain: Option<&'static str>,
-        range: Option<&'static str>,
+        domain: Option<String>,
+        range: Option<String>,
     },
-    /// No shipped module declares it. Either the term is not vocabulary
-    /// at all, or the module that defines it was not selected.
+    /// No module of this vocabulary declares it. Either the term is not
+    /// vocabulary at all, or the module that defines it was not selected.
     Undeclared,
 }
 
-/// Ask the compiled vocabulary about one predicate.
-pub fn predicate_standing(snake: &str) -> PredicateStanding {
-    if let Some(camel) = x0k_ontology::snake_to_camel(snake) {
-        return PredicateStanding::DocumentEdge {
-            uri: format!("x0k:{camel}"),
-        };
+/// Ask a vocabulary about one predicate.
+pub fn predicate_standing(model: &OntologyModel, snake: &str) -> PredicateStanding {
+    Vocabulary::of(model).standing(snake)
+}
+```
+
+### One fold, not one per question
+
+A model is a fact list, and every view over it — the class table, the
+object properties, the Decision-domain slice — is a fold that walks the
+whole list. Asking it per predicate is fine for one document and
+quadratic over a corpus: a thousand documents with five edges apiece is
+five thousand folds of the same twelve hundred facts. So the folds happen
+once, into three lookup tables, and the rest of this module reads those.
+
+`Vocabulary` is private on purpose. It is a cache of `model`'s answers and
+nothing more — no judgment lives here that the model could not be asked
+directly — and making it public would invite a caller to hold one and
+outlive the vocabulary it came from.
+
+<a name="chunk-vocabulary"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#vocabulary`</sub>
+
+```rust {#vocabulary}
+/// The folds this module needs, taken once from a model.
+struct Vocabulary {
+    /// snake_case → camelCase for the Decision-domain slice.
+    document_edges: BTreeMap<String, String>,
+    /// Compact URI → `(domain, range)` for every declared object property.
+    properties: BTreeMap<String, (Option<String>, Option<String>)>,
+    /// The namespace prefixes an id may carry.
+    schemes: BTreeSet<String>,
+}
+
+impl Vocabulary {
+    fn of(model: &OntologyModel) -> Self {
+        Self {
+            document_edges: model.decision_edge_predicates().into_iter().collect(),
+            properties: model
+                .object_properties()
+                .into_iter()
+                .map(|property| (property.uri, (property.domain, property.range)))
+                .collect(),
+            schemes: model.schemes(),
+        }
     }
-    let uri = format!("x0k:{}", camel_form(snake));
-    match x0k_ontology::predicate_domain_range(&uri) {
-        Some((domain, range)) => PredicateStanding::DeclaredElsewhere { uri, domain, range },
-        None => PredicateStanding::Undeclared,
+
+    fn standing(&self, snake: &str) -> PredicateStanding {
+        if let Some(camel) = self.document_edges.get(snake) {
+            return PredicateStanding::DocumentEdge {
+                uri: format!("x0k:{camel}"),
+            };
+        }
+        let uri = format!("x0k:{}", camel_form(snake));
+        match self.properties.get(&uri) {
+            Some((domain, range)) => PredicateStanding::DeclaredElsewhere {
+                uri,
+                domain: domain.clone(),
+                range: range.clone(),
+            },
+            None => PredicateStanding::Undeclared,
+        }
+    }
+
+    /// Parse an id, licensing whatever namespaces this vocabulary declares.
+    fn id(&self, raw: &str) -> Result<EntityId, crate::entity_id::EntityIdError> {
+        EntityId::parse_with_schemes(raw, &self.schemes)
     }
 }
 ```
@@ -159,15 +221,15 @@ The camelCase form is derivable rather than looked up, because the two
 spellings are one deterministic rule — the ontology's own view inserts
 `_` before an interior uppercase and lowercases, so the inverse
 capitalizes the letter after each `_`. Deriving it is what lets the
-question reach properties outside the generated slice, which is the
+question reach properties outside the Decision-domain slice, which is the
 whole reason `DeclaredElsewhere` can exist.
 
 <a name="chunk-camel-form"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#camel-form`</sub>
 
 ```rust {#camel-form}
-/// snake_case → camelCase, the inverse of the rule `x0k-ontology`'s view
-/// applies. Used only to *ask* about a predicate outside the generated
-/// Decision-domain slice; inside it, the generated map is authoritative.
+/// snake_case → camelCase, the inverse of `camel_to_snake`. Used only to
+/// *ask* about a predicate outside the Decision-domain slice; inside it,
+/// the model's own map is authoritative.
 fn camel_form(snake: &str) -> String {
     let mut out = String::with_capacity(snake.len());
     let mut capitalize_next = false;
@@ -205,7 +267,7 @@ pub enum Defect {
         value: String,
         reason: String,
     },
-    /// No shipped ontology module declares this predicate. A packaging
+    /// No module of the vocabulary declares this predicate. A packaging
     /// fault, not a document fault: the module that defines the term was
     /// not selected, or the term is not vocabulary at all.
     UndeclaredPredicate { predicate: String },
@@ -227,7 +289,8 @@ impl std::fmt::Display for Defect {
             ),
             Self::UndeclaredPredicate { predicate } => write!(
                 f,
-                "edge predicate `{predicate}` is declared by no ontology module in this build; \
+                "edge predicate `{predicate}` is declared by no ontology module in this \
+                 vocabulary; \
                  either select the module that defines it or stop using the term"
             ),
         }
@@ -288,12 +351,17 @@ impl EnvelopeReport {
     }
 }
 
-/// Check one parsed envelope. Pure: no filesystem, no corpus, no
-/// resolution — a `DanglingEdge` cannot be found from one document.
-pub fn check_envelope(envelope: &Colophon) -> EnvelopeReport {
+/// Check one parsed envelope against `model`. Pure: no filesystem, no
+/// corpus, no resolution — a `DanglingEdge` cannot be found from one
+/// document.
+pub fn check_envelope(model: &OntologyModel, envelope: &Colophon) -> EnvelopeReport {
+    check_envelope_with(&Vocabulary::of(model), envelope)
+}
+
+fn check_envelope_with(vocabulary: &Vocabulary, envelope: &Colophon) -> EnvelopeReport {
     let mut report = EnvelopeReport::default();
 
-    match envelope.id.parse::<EntityId>() {
+    match vocabulary.id(&envelope.id) {
         Ok(id) => report.id = Some(id),
         Err(e) => report.defects.push(Defect::MalformedId {
             value: envelope.id.clone(),
@@ -302,13 +370,13 @@ pub fn check_envelope(envelope: &Colophon) -> EnvelopeReport {
     }
 
     for (predicate, targets) in &envelope.edges {
-        if matches!(predicate_standing(predicate), PredicateStanding::Undeclared) {
+        if matches!(vocabulary.standing(predicate), PredicateStanding::Undeclared) {
             report.defects.push(Defect::UndeclaredPredicate {
                 predicate: predicate.clone(),
             });
         }
         for target in targets {
-            match target.parse::<EntityId>() {
+            match vocabulary.id(target) {
                 Ok(id) => report.edges.push((predicate.clone(), id)),
                 Err(e) => report.defects.push(Defect::MalformedTarget {
                     predicate: predicate.clone(),
@@ -375,15 +443,17 @@ impl CorpusReport {
     }
 }
 
-/// Check a set of envelopes. Each item is the caller's name for a
-/// document paired with its parsed envelope.
-pub fn check_corpus<'a, I>(documents: I) -> CorpusReport
+/// Check a set of envelopes against `model`. Each item is the caller's
+/// name for a document paired with its parsed envelope. The vocabulary is
+/// folded once for the whole set.
+pub fn check_corpus<'a, I>(model: &OntologyModel, documents: I) -> CorpusReport
 where
     I: IntoIterator<Item = (&'a str, &'a Colophon)>,
 {
+    let vocabulary = Vocabulary::of(model);
     let reports: Vec<(&str, EnvelopeReport)> = documents
         .into_iter()
-        .map(|(source, envelope)| (source, check_envelope(envelope)))
+        .map(|(source, envelope)| (source, check_envelope_with(&vocabulary, envelope)))
         .collect();
 
     let present: BTreeSet<&EntityId> = reports
@@ -542,21 +612,29 @@ it is done, a check that fired would train its readers to ignore it.
 The information is in the report; the judgment is not yet the checker's
 to make.
 
-The document's own genus is likewise not checked against the shipped
-class table. `type` is already a closed keyword set the parser enforces
-(see [`colophon.md`](colophon.md)), and adding a second, differently-
-scoped answer to the same question would put two failure modes back
-into one report — which is the thing this module exists to avoid.
+The document's own genus is not checked here either, and now for a
+better reason than before: it is checked *earlier*, by the same model.
+`parse_envelope_in` admits a `type:` naming any class the vocabulary
+declares and refuses everything else ([`colophon.md`](colophon.md)), so a
+document that reached this module has already had its genus read against
+the same set its edges are about to be. Answering the question twice, in
+two reports, is the thing this module exists to avoid.
 
 ## Tests
 
-The vocabulary questions are asked against whatever modules this build
-compiled, and this crate lives in two builds that compile different
-sets. So the fixtures name no predicate: they take one from the
-compiled slice at runtime. Writing `motivated_by` into a fixture was
-the first version of these tests, and it passed in the monorepo and
-failed in the published bundle — correctly, which is the point, but a
-test that measures the module selection is not measuring the checker.
+The vocabulary questions are asked against whatever model the caller
+hands over, and the default model differs between the two builds this
+crate lives in. So the fixtures name no predicate: they take one from the
+model at runtime. Writing `motivated_by` into a fixture was the first
+version of these tests, and it passed in the monorepo and failed in the
+published bundle — correctly, which is the point, but a test that
+measures the module selection is not measuring the checker.
+
+The last test is the one the model-parameterization is for: a vocabulary
+written to a scratch directory, holding a genus and a namespace this
+build compiled nothing about, checks a document that uses both — and the
+shipped model, asked the same question, calls the same document
+undeclared.
 
 <a name="chunk-tests"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#tests`</sub>
 
@@ -572,6 +650,10 @@ mod tests {
     /// checker and not the module selection — which is the one thing
     /// that legitimately differs between the two builds this crate
     /// lives in.
+    fn shipped() -> OntologyModel {
+        OntologyModel::shipped()
+    }
+
     fn shipped_predicate() -> &'static str {
         x0k_ontology::KNOWN_EDGE_PREDICATES
             .first()
@@ -610,7 +692,10 @@ mod tests {
     fn generated_slice_members_stand_as_document_edges() {
         for snake in x0k_ontology::KNOWN_EDGE_PREDICATES {
             assert!(
-                matches!(predicate_standing(snake), PredicateStanding::DocumentEdge { .. }),
+                matches!(
+                    predicate_standing(&shipped(), snake),
+                    PredicateStanding::DocumentEdge { .. }
+                ),
                 "`{snake}` is in the generated slice but did not stand as a document edge"
             );
         }
@@ -619,7 +704,7 @@ mod tests {
     #[test]
     fn a_term_no_module_declares_is_undeclared() {
         assert_eq!(
-            predicate_standing("definitely_not_a_predicate"),
+            predicate_standing(&shipped(), "definitely_not_a_predicate"),
             PredicateStanding::Undeclared
         );
     }
@@ -634,7 +719,7 @@ mod tests {
         // and it carries neither a domain nor a range, which is what
         // `DeclaredElsewhere` with two `None`s means.
         assert_eq!(
-            predicate_standing("cites"),
+            predicate_standing(&shipped(), "cites"),
             PredicateStanding::DeclaredElsewhere {
                 uri: "x0k:cites".to_string(),
                 domain: None,
@@ -645,7 +730,7 @@ mod tests {
 
     #[test]
     fn a_clean_envelope_yields_its_id_and_edges() {
-        let report = check_envelope(&two_edged());
+        let report = check_envelope(&shipped(), &two_edged());
         assert!(report.is_clean(), "unexpected defects: {:?}", report.defects);
         assert_eq!(
             report.id.as_ref().map(ToString::to_string).as_deref(),
@@ -657,7 +742,7 @@ mod tests {
     #[test]
     fn a_malformed_id_is_a_defect_and_leaves_the_edges_checked() {
         let p = shipped_predicate();
-        let report = check_envelope(&doc(
+        let report = check_envelope(&shipped(), &doc(
             "not-an-id",
             &format!("  edges:\n    {p}:\n      - x0k:design/other\n"),
         ));
@@ -672,7 +757,7 @@ mod tests {
     #[test]
     fn an_undeclared_predicate_is_a_defect_and_a_bad_target_is_another() {
         let p = shipped_predicate();
-        let report = check_envelope(&doc(
+        let report = check_envelope(&shipped(), &doc(
             "x0k:design/example",
             &format!(
                 "  edges:\n    not_a_predicate:\n      - x0k:wiki/somewhere\n    {p}:\n      - design/missing-scheme\n"
@@ -691,7 +776,7 @@ mod tests {
     #[test]
     fn a_target_outside_the_set_dangles_and_is_not_a_defect() {
         let a = two_edged();
-        let report = check_corpus([("a.md", &a)]);
+        let report = check_corpus(&shipped(), [("a.md", &a)]);
         assert_eq!(report.checked, 1);
         assert!(report.is_clean(), "dangling must not be a defect");
         let targets: Vec<String> = report
@@ -709,7 +794,7 @@ mod tests {
     fn a_target_inside_the_set_does_not_dangle() {
         let a = two_edged();
         let b = doc("x0k:design/other", "");
-        let report = check_corpus([("a.md", &a), ("b.md", &b)]);
+        let report = check_corpus(&shipped(), [("a.md", &a), ("b.md", &b)]);
         assert_eq!(report.checked, 2);
         let targets: Vec<String> = report
             .dangling
@@ -717,6 +802,62 @@ mod tests {
             .map(|e| e.target.to_string())
             .collect();
         assert_eq!(targets, vec!["x0k:commitment/local-first"]);
+    }
+
+    /// A vocabulary a reader could write: a `mycorp` module in its own
+    /// namespace, declaring one genus class and one edge predicate over
+    /// it. Written to a scratch directory and loaded, because what is
+    /// under test is that a check can be made against files this build
+    /// compiled nothing about.
+    fn scratch_vocabulary(dir: &std::path::Path) -> OntologyModel {
+        const CORE: &str = "\
+<https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+";
+        const MYCORP: &str = "\
+<https://0k.computer/ontology/mycorp> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<https://0k.computer/ontology/mycorp> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology/mycorp> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://mycorp.example/ontology#\" .
+<https://mycorp.example/ontology#Brief> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://mycorp.example/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/mycorp> .
+<https://mycorp.example/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#label> \"Brief\" .
+";
+        std::fs::create_dir_all(dir).expect("scratch module directory");
+        std::fs::write(dir.join("core.ttl"), CORE).expect("write core");
+        std::fs::write(dir.join("mycorp.ttl"), MYCORP).expect("write mycorp");
+        OntologyModel::load(dir).expect("the scratch module set loads")
+    }
+
+    #[test]
+    fn a_document_in_a_loaded_vocabulary_checks_clean_and_fails_the_shipped_one() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = scratch_vocabulary(&tmp.path().join("modules"));
+        let content = "---\nx0k:\n  format: folio/v1\n  id: mycorp:brief/tender-process\n  \
+                       type: brief\n  status: proposed\n---\nBody.\n";
+
+        // The genus arrives from the loaded module, so the envelope parses.
+        let (envelope, _) = crate::colophon::parse_envelope_in(&model, content)
+            .expect("a genus the loaded vocabulary declares");
+        assert_eq!(
+            envelope.doc_type,
+            crate::colophon::DocType::Declared("brief".to_string())
+        );
+
+        // So does the scheme, so the id parses and the check is clean.
+        let report = check_envelope(&model, &envelope);
+        assert!(report.is_clean(), "unexpected defects: {:?}", report.defects);
+        assert_eq!(
+            report.id.as_ref().map(ToString::to_string).as_deref(),
+            Some("mycorp:brief/tender-process")
+        );
+
+        // Against the shipped vocabulary the same document is a defect —
+        // which is the check doing its job, not the document being wrong.
+        let report = check_envelope(&shipped(), &envelope);
+        assert!(
+            matches!(report.defects.as_slice(), [Defect::MalformedId { .. }]),
+            "expected the shipped vocabulary to refuse `mycorp:`, got {:?}",
+            report.defects
+        );
     }
 
     /// Inline declarations as a chapter would carry them: an affordance
@@ -787,12 +928,14 @@ edges:
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [standing](#chunk-standing) · [camel-form](#chunk-camel-form) · [defect](#chunk-defect) · [check-envelope](#chunk-check-envelope) · [check-corpus](#chunk-check-corpus) · [check-declarations](#chunk-check-declarations) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/envelope_check.rs`](../../../x0k-folio/src/envelope_check.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [standing](#chunk-standing) · [vocabulary](#chunk-vocabulary) · [camel-form](#chunk-camel-form) · [defect](#chunk-defect) · [check-envelope](#chunk-check-envelope) · [check-corpus](#chunk-check-corpus) · [check-declarations](#chunk-check-declarations) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
 
 <<standing>>
+
+<<vocabulary>>
 
 <<camel-form>>
 
@@ -811,7 +954,10 @@ The check is worth having mostly for what it makes visible about a
 *publication* rather than about a document. Run it over the bundle this
 crate ships in and the defect list is a reading of the module selection:
 empty means the vocabulary spans the corpus, and every entry names a
-term the selection left behind. That is a question nobody could ask from
+term the selection left behind. Since the vocabulary is a parameter, that
+question can now be asked of a selection nobody compiled — the modules a
+received bundle carries, or a reader's own — which is what makes the
+report about the publication rather than about the binary reading it. That is a question nobody could ask from
 outside the monorepo before, and it is the question a contributor
 arriving at the public repository is most likely to trip over first.
 

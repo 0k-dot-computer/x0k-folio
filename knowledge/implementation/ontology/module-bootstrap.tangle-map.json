@@ -1,6 +1,6 @@
 {
   "source": "knowledge/implementation/ontology/module-bootstrap.md",
-  "source_hash": "c3681ded141c9b18",
+  "source_hash": "88106af9b0b4605a",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "x0k-ontology/build.rs",
-          "hash": "f9d1a265c296b13d"
+          "hash": "5321bcb0420ae026"
         }
       ]
     }

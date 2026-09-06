@@ -128,10 +128,11 @@ user needs, and where the document format is specified.
 //! - **weave** — [`weave::weave_html`]: render the document, prose and
 //!   highlighted code together, as a single HTML page.
 //! - **check** — [`resolve::check_all_refs`] and
-//!   [`faces::check_vocabulary`]: verify every chunk reference resolves
+//!   [`faces::vocabulary`] + [`faces::check_vocabulary`]: verify every chunk reference resolves
 //!   and no reference cycle exists, and read every folio/v1 envelope
-//!   against the vocabulary this build compiled, without writing
-//!   anything.
+//!   against a vocabulary — one named with `--vocabulary`, one a
+//!   projection recorded, or the set this build compiled — without
+//!   writing anything.
 //!
 //! A fourth, **affordances** — [`faces::declared_affordances`] — reads
 //! the affordance declarations out of a document as data.
@@ -344,13 +345,20 @@ Tangle {
 ### `x0k-tangle check`
 
 Verify chunk references resolve and no cycles exist, and read every
-folio/v1 envelope under the paths against the vocabulary this build
-compiled. The second half is the affordance of [checking a document
-against the vocabulary that shipped beside it](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary"), and its help text names
+folio/v1 envelope under the paths against a vocabulary. The second half
+is the affordance of [checking a document against the vocabulary that
+shipped beside it](../../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary"), and its help text names
 the two outcomes the affordance promises to tell apart: a predicate no
-shipped module declares is a defect and fails the check; a target
-naming no document here is an edge into the corpus the repository was
-projected from, noted and expected.
+module of that vocabulary declares is a defect and fails the check; a
+target naming no document here is an edge into the corpus the repository
+was projected from, noted and expected.
+
+Which vocabulary is the argument `--vocabulary` takes: a directory of
+`*.ttl` module files, which is what "shipped beside it" now literally
+means — a reader points the verb at the modules a bundle carries and is
+told about *those*. Without the flag the verb finds the answer itself,
+from this projection's own `PROVENANCE.json` and then from the compiled
+set ([`cli-faces.md`](cli-faces.md)).
 
 ```yaml x0k:signifier
 id: x0k:signifier/x0k-tangle-check
@@ -365,11 +373,11 @@ edges:
 
 ```rust {#check-command file="src/main.rs"}
 /// Verify chunk references resolve and no cycles exist, and read every
-/// folio/v1 envelope against the vocabulary this build compiled.
+/// folio/v1 envelope against a vocabulary.
 ///
 /// Two things can go wrong with an envelope, and they are reported
 /// apart. A defect — a malformed id or edge target, a predicate no
-/// shipped ontology module declares, an envelope that does not parse —
+/// module of the vocabulary declares, an envelope that does not parse —
 /// is a gap in what this publication selected, and fails the check. An
 /// edge whose target names no document under the paths is an edge into
 /// the corpus this was projected from: expected, printed as a note,
@@ -379,6 +387,11 @@ edges:
 Check {
     /// Paths to scan
     paths: Vec<PathBuf>,
+    /// Directory of ontology module files (*.ttl) to check against.
+    /// Defaults to the modules this projection's PROVENANCE.json names,
+    /// then to the set this build compiled.
+    #[arg(long)]
+    vocabulary: Option<PathBuf>,
 },
 ```
 
@@ -854,7 +867,8 @@ left the set.
 <a name="chunk-dispatch-check"></a><sub>[`src/main.rs`](../../../x0k-tangle/src/main.rs) · `#dispatch-check`</sub>
 
 ```rust {#dispatch-check file="src/main.rs"}
-Command::Check { paths } => {
+Command::Check { paths, vocabulary } => {
+    let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref())?;
     let docs = discover_documents(&paths)?;
     let mut has_errors = false;
 
@@ -869,20 +883,20 @@ Command::Check { paths } => {
         }
     }
 
-    let vocabulary = x0k_tangle::faces::check_vocabulary(&paths)?;
-    for (path, reason) in &vocabulary.unparsed {
+    let report = x0k_tangle::faces::check_vocabulary(&model, &paths)?;
+    for (path, reason) in &report.unparsed {
         eprintln!("{path}: envelope does not parse: {reason}");
         has_errors = true;
     }
-    for (path, defect) in &vocabulary.corpus.defects {
+    for (path, defect) in &report.corpus.defects {
         eprintln!("{path}: {defect}");
         has_errors = true;
     }
-    for defect in &vocabulary.declarations.defects {
+    for defect in &report.declarations.defects {
         eprintln!("{defect}");
         has_errors = true;
     }
-    for edge in &vocabulary.corpus.dangling {
+    for edge in &report.corpus.dangling {
         eprintln!(
             "{}: note: edge `{}` → `{}` names no document here (an edge into the corpus this was projected from; expected)",
             edge.source, edge.predicate, edge.target
@@ -893,10 +907,10 @@ Command::Check { paths } => {
         std::process::exit(1);
     } else {
         eprintln!(
-            "all references OK; {} envelope(s) read against the shipped vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
-            vocabulary.corpus.checked,
-            vocabulary.declarations.checked,
-            vocabulary.corpus.dangling.len()
+            "all references OK; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
+            report.corpus.checked,
+            report.declarations.checked,
+            report.corpus.dangling.len()
         );
     }
 }
