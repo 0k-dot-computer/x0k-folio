@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+awk -v allowed='git+https://github.com/dialog-db/dialog-db?rev=3fac7ad3e691d401fb5c18c18ffb23de74342742#3fac7ad3e691d401fb5c18c18ffb23de74342742' '
+/^[[:space:]]*source[[:space:]]*=[[:space:]]*"git\+/ {
+    source = $0
+    sub(/^[^"]*"/, "", source)
+    sub(/"[[:space:]]*$/, "", source)
+    if (source != allowed) {
+        print "error: Cargo.lock contains an unapproved Git source or revision" > "/dev/stderr"
+        failed = 1
+    }
+}
+END { exit failed }
+' Cargo.lock

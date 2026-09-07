@@ -1,0 +1,130 @@
+{
+  "rules": [
+    {
+      "deduce": {
+        "with": {
+          "reachable": {
+            "the": "https://example.org/papers#reachable",
+            "as": "Entity",
+            "cardinality": "many"
+          }
+        }
+      },
+      "when": [
+        {
+          "assert": {
+            "with": {
+              "cites": {
+                "the": "https://example.org/papers#cites",
+                "as": "Entity",
+                "cardinality": "many"
+              }
+            }
+          },
+          "where": {
+            "this": {
+              "?": {
+                "name": "this"
+              }
+            },
+            "cites": {
+              "?": {
+                "name": "reachable"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "deduce": {
+        "with": {
+          "reachable": {
+            "the": "https://example.org/papers#reachable",
+            "as": "Entity",
+            "cardinality": "many"
+          }
+        }
+      },
+      "when": [
+        {
+          "assert": {
+            "with": {
+              "cites": {
+                "the": "https://example.org/papers#cites",
+                "as": "Entity",
+                "cardinality": "many"
+              }
+            }
+          },
+          "where": {
+            "this": {
+              "?": {
+                "name": "this"
+              }
+            },
+            "cites": {
+              "?": {
+                "name": "next"
+              }
+            }
+          }
+        },
+        {
+          "assert": {
+            "with": {
+              "reachable": {
+                "the": "https://example.org/papers#reachable",
+                "as": "Entity",
+                "cardinality": "many"
+              }
+            }
+          },
+          "where": {
+            "this": {
+              "?": {
+                "name": "next"
+              }
+            },
+            "reachable": {
+              "?": {
+                "name": "reachable"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "premises": [
+    {
+      "assert": {
+        "with": {
+          "reachable": {
+            "the": "https://example.org/papers#reachable",
+            "as": "Entity",
+            "cardinality": "many"
+          }
+        }
+      },
+      "where": {
+        "this": {
+          "?": {
+            "name": "paper"
+          }
+        },
+        "reachable": {
+          "?": {
+            "name": "cited"
+          }
+        }
+      }
+    }
+  ],
+  "select": [
+    "paper",
+    "cited"
+  ],
+  "max_rows": 1000,
+  "timeout_ms": 30000
+}

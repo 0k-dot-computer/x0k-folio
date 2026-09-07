@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/tangle/source-refs.md",
+  "source_hash": "db4a73e4bb55df7c",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "856417bf6b4b606e",
+      "outputs": [
+        {
+          "path": "x0k-tangle/src/source_ref.rs",
+          "hash": "dbc05260627ec43a"
+        }
+      ]
+    }
+  ]
+}

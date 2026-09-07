@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/folio/colophon.md",
+  "source_hash": "8012b5eaeb174113",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "de4797af17b1b6fd",
+      "outputs": [
+        {
+          "path": "x0k-folio/src/colophon.rs",
+          "hash": "3350bd8b4d075267"
+        }
+      ]
+    }
+  ]
+}

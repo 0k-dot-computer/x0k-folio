@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/folio/segmentation.md",
+  "source_hash": "974292752d83c177",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "9127506cc8b6055a",
+      "outputs": [
+        {
+          "path": "x0k-folio/src/block_segment.rs",
+          "hash": "8d8e911d85dadea5"
+        }
+      ]
+    }
+  ]
+}

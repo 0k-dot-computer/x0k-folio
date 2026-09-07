@@ -24,6 +24,8 @@ name = "x0k_folio"
 # x0k-macros, …).
 default = []
 plugins = [] # severed in this publication: its dependency is not published; enabling it does not build
+# Parse Turtle declarations carried by Markdown documents, using the shared loader.
+document-vocabulary = ["x0k-ontology/load"]
 
 [dependencies]
 
@@ -38,8 +40,9 @@ plugins = [] # severed in this publication: its dependency is not published; ena
 # standalone build stays small.
 # `default-features = false` drops the runtime Turtle loader: this crate
 # holds `OntologyModel` values its callers loaded and never opens a module
-# file itself, so the published format library carries no RDF parser. The
-# dev-dependency below switches the loader back on for the tests, which
+# file itself. The document-vocabulary feature explicitly enables that
+# loader for Turtle carried in documents. The dev-dependency below also
+# switches the loader on for the tests, which
 # build vocabularies out of scratch module directories.
 x0k-ontology = { path = "../x0k-ontology", default-features = false , version = "0.1.0" }
 

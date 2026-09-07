@@ -1,0 +1,21 @@
+{
+  "source": "corpora/x0k/implementation/folio/query-cli.md",
+  "source_hash": "4547006063783799",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "7695500bac4441a6",
+      "outputs": [
+        {
+          "path": "x0k-folio-cli/Cargo.toml",
+          "hash": "95c725268dea1da0"
+        },
+        {
+          "path": "x0k-folio-cli/src/main.rs",
+          "hash": "2fc8a52d3d379047"
+        }
+      ]
+    }
+  ]
+}

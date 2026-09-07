@@ -1,0 +1,42 @@
+{
+  "premises": [
+    {
+      "assert": {
+        "with": {
+          "pages": {
+            "the": "https://example.org/papers#pages",
+            "cardinality": "many"
+          },
+          "reviewed": {
+            "the": "https://example.org/papers#reviewed",
+            "cardinality": "many"
+          }
+        }
+      },
+      "where": {
+        "this": {
+          "?": {
+            "name": "paper"
+          }
+        },
+        "pages": {
+          "?": {
+            "name": "pages"
+          }
+        },
+        "reviewed": {
+          "?": {
+            "name": "reviewed"
+          }
+        }
+      }
+    }
+  ],
+  "select": [
+    "paper",
+    "pages",
+    "reviewed"
+  ],
+  "max_rows": 1000,
+  "timeout_ms": 30000
+}

@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/icon/validate.md",
+  "source_hash": "117b185a2f973622",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "a7a11c002a6acc94",
+      "outputs": [
+        {
+          "path": "x0k-icon/src/validate.rs",
+          "hash": "28e234c3c06bd828"
+        }
+      ]
+    }
+  ]
+}

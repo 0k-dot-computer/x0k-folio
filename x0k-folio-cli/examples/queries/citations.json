@@ -1,0 +1,65 @@
+{
+  "premises": [
+    {
+      "assert": {
+        "with": {
+          "cites": {
+            "the": "https://example.org/papers#cites",
+            "cardinality": "many"
+          },
+          "source": {
+            "the": "https://0k.computer/ontology#folio/sourceDocument",
+            "cardinality": "many"
+          }
+        }
+      },
+      "where": {
+        "this": {
+          "?": {
+            "name": "paper"
+          }
+        },
+        "cites": {
+          "?": {
+            "name": "cited"
+          }
+        },
+        "source": {
+          "?": {
+            "name": "document"
+          }
+        }
+      }
+    },
+    {
+      "assert": {
+        "with": {
+          "path": {
+            "the": "https://0k.computer/ontology#folio/sourcePath",
+            "cardinality": "many"
+          }
+        }
+      },
+      "where": {
+        "this": {
+          "?": {
+            "name": "document"
+          }
+        },
+        "path": {
+          "?": {
+            "name": "path"
+          }
+        }
+      }
+    }
+  ],
+  "select": [
+    "paper",
+    "cited",
+    "document",
+    "path"
+  ],
+  "max_rows": 1000,
+  "timeout_ms": 30000
+}

@@ -1,0 +1,21 @@
+{
+  "source": "corpora/x0k/implementation/tangle/region-weave.md",
+  "source_hash": "9c692cb187b1332e",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "eced294b32933baf",
+      "outputs": [
+        {
+          "path": "x0k-tangle/tests/region_weave.rs",
+          "hash": "f60f8950d5f10fc6"
+        },
+        {
+          "path": "x0k-tangle/src/region_weave.rs",
+          "hash": "99eac6550a6030c5"
+        }
+      ]
+    }
+  ]
+}

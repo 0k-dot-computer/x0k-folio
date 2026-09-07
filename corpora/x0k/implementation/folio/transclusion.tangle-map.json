@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/folio/transclusion.md",
+  "source_hash": "0f5596694b06638e",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "0d99916e4015344e",
+      "outputs": [
+        {
+          "path": "x0k-folio/src/transclusion.rs",
+          "hash": "85e2a9764a299463"
+        }
+      ]
+    }
+  ]
+}

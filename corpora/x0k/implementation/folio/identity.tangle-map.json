@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/folio/identity.md",
+  "source_hash": "de8fbb0d08b9c866",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "0debdf3c9846ff3e",
+      "outputs": [
+        {
+          "path": "x0k-folio/src/entity_id.rs",
+          "hash": "a5443de0006e7add"
+        }
+      ]
+    }
+  ]
+}

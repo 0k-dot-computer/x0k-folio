@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/tangle/publishing.md",
+  "source_hash": "6cdeb83b9014a133",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "038541494af66d3d",
+      "outputs": [
+        {
+          "path": "x0k-tangle/src/publish_repo.rs",
+          "hash": "82290348cc1faa9d"
+        }
+      ]
+    }
+  ]
+}

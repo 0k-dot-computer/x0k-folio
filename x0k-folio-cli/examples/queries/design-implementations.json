@@ -1,0 +1,42 @@
+{
+  "premises": [
+    {
+      "assert": {
+        "with": {
+          "implements": {
+            "the": "https://0k.computer/ontology#implements",
+            "cardinality": "many"
+          },
+          "path": {
+            "the": "https://0k.computer/ontology#folio/sourcePath",
+            "cardinality": "many"
+          }
+        }
+      },
+      "where": {
+        "this": {
+          "?": {
+            "name": "implementation"
+          }
+        },
+        "implements": {
+          "?": {
+            "name": "design"
+          }
+        },
+        "path": {
+          "?": {
+            "name": "path"
+          }
+        }
+      }
+    }
+  ],
+  "select": [
+    "design",
+    "implementation",
+    "path"
+  ],
+  "max_rows": 1000,
+  "timeout_ms": 30000
+}

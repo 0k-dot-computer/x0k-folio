@@ -1,0 +1,32 @@
+{
+  "premises": [
+    {
+      "assert": {
+        "with": {
+          "type": {
+            "the": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+            "cardinality": "many"
+          }
+        }
+      },
+      "where": {
+        "this": {
+          "?": {
+            "name": "entity"
+          }
+        },
+        "type": {
+          "?": {
+            "name": "concept"
+          }
+        }
+      }
+    }
+  ],
+  "select": [
+    "entity",
+    "concept"
+  ],
+  "max_rows": 1000,
+  "timeout_ms": 30000
+}

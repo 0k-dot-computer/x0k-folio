@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/tangle/instance-rendering.md",
+  "source_hash": "d4dd54acff2833b0",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "de030412c0066733",
+      "outputs": [
+        {
+          "path": "x0k-tangle/src/instance_rendering.rs",
+          "hash": "5ffa2cfae3c546d4"
+        }
+      ]
+    }
+  ]
+}

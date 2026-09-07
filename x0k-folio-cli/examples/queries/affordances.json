@@ -1,0 +1,52 @@
+{
+  "premises": [
+    {
+      "assert": {
+        "with": {
+          "enabled": {
+            "the": "https://0k.computer/ontology#enabledBy",
+            "cardinality": "many"
+          },
+          "source": {
+            "the": "https://0k.computer/ontology#folio/sourceDocument",
+            "cardinality": "many"
+          },
+          "start": {
+            "the": "https://0k.computer/ontology#folio/sourceStart",
+            "cardinality": "many"
+          }
+        }
+      },
+      "where": {
+        "this": {
+          "?": {
+            "name": "affordance"
+          }
+        },
+        "enabled": {
+          "?": {
+            "name": "module"
+          }
+        },
+        "source": {
+          "?": {
+            "name": "document"
+          }
+        },
+        "start": {
+          "?": {
+            "name": "start"
+          }
+        }
+      }
+    }
+  ],
+  "select": [
+    "affordance",
+    "module",
+    "document",
+    "start"
+  ],
+  "max_rows": 1000,
+  "timeout_ms": 30000
+}

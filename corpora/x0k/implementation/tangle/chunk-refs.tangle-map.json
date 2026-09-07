@@ -1,0 +1,17 @@
+{
+  "source": "corpora/x0k/implementation/tangle/chunk-refs.md",
+  "source_hash": "a590ea689f551d17",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "283da141ea5f3d1b",
+      "outputs": [
+        {
+          "path": "x0k-tangle/src/chunk_refs.rs",
+          "hash": "fb8539cdb5c1dd8d"
+        }
+      ]
+    }
+  ]
+}
