@@ -1,0 +1,17 @@
+{
+  "source": "implementation/tangle/presentation.md",
+  "source_hash": "db8f4fad2c94951e",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "f4a6fa2ba8f9c1de",
+      "outputs": [
+        {
+          "path": "crates/x0k-tangle/src/presentation.rs",
+          "hash": "a4e8772e577667b5"
+        }
+      ]
+    }
+  ]
+}

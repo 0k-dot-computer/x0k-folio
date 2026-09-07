@@ -1,0 +1,17 @@
+{
+  "source": "implementation/tangle/parsing.md",
+  "source_hash": "5e30bc3738296ed2",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "bfebc4a52d248f17",
+      "outputs": [
+        {
+          "path": "crates/x0k-tangle/src/parser.rs",
+          "hash": "54308d0014c4f013"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "source": "implementation/ontology/module-bootstrap.md",
+  "source_hash": "e5354f0f73dc732e",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "22253e57294657da",
+      "outputs": [
+        {
+          "path": "crates/x0k-ontology/build.rs",
+          "hash": "5d50562fb732d597"
+        }
+      ]
+    }
+  ]
+}

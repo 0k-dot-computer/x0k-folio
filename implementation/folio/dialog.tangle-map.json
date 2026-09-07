@@ -1,0 +1,37 @@
+{
+  "source": "implementation/folio/dialog.md",
+  "source_hash": "868a6875339be28a",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "2d2031d5448f1469",
+      "outputs": [
+        {
+          "path": "crates/x0k-folio-dialog/src/lib.rs",
+          "hash": "58508d0024576363"
+        },
+        {
+          "path": "crates/x0k-folio-dialog/src/storage.rs",
+          "hash": "f68d158214845dec"
+        },
+        {
+          "path": "crates/x0k-folio-dialog/Cargo.toml",
+          "hash": "d2cb12e9d3cac1a4"
+        },
+        {
+          "path": "crates/x0k-folio-dialog/src/database.rs",
+          "hash": "baabfb85ef44fb25"
+        },
+        {
+          "path": "crates/x0k-folio-dialog/src/query.rs",
+          "hash": "f64e7cc7d24ebb1c"
+        },
+        {
+          "path": "crates/x0k-folio-dialog/tests/store.rs",
+          "hash": "006d11e22c35e187"
+        }
+      ]
+    }
+  ]
+}

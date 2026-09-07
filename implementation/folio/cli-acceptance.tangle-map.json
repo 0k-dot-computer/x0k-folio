@@ -1,0 +1,17 @@
+{
+  "source": "implementation/folio/cli-acceptance.md",
+  "source_hash": "a9ef284987dcf072",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "f343b8995323d2c5",
+      "outputs": [
+        {
+          "path": "crates/x0k-folio-cli/tests/acceptance.rs",
+          "hash": "c81066f6f3611dd3"
+        }
+      ]
+    }
+  ]
+}

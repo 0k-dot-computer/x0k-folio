@@ -1,0 +1,1780 @@
+---
+x0k:
+  format: folio/v1
+  id: x0k:implementation/folio/inline-entities
+  type: implementation
+  status: draft
+  summary: Pulling an entity that was authored inside a document's prose back out of it — the section is the record, the heading is the title, and the extractor reads declarations without resolving them.
+  concerns:
+  - folio
+  - affordances
+  - extraction
+  - publishing
+  - markdown
+  tangle:
+    crate: crates/x0k-folio
+    root: src/inline_entity.rs
+  edges:
+    implements:
+    - x0k:design/publish-a-region-as-a-repository
+    cites:
+    - x0k:architecture/publication-projection
+    - x0k:implementation/folio/colophon
+    - x0k:implementation/folio/identity
+    - x0k:implementation/folio/segmentation
+---
+# Entities authored inside prose
+
+A design document does not merely mention the affordances it defines; it
+*defines* them, in place, as a run of sections:
+
+````markdown
+### Publish a region as a repository
+
+I project a demarcated region of my graph outward as a standalone
+repository: its literate documents and the code they tangle to,
+committed so anyone can clone, read, and build it.
+
+```yaml x0k:!affordance
+id: x0k:affordance/publish_region_as_repository
+status: wip
+actors: [human]
+edges:
+  requires:
+    - x0k:affordance/demarcate_publication
+```
+````
+
+The prose is the affordance's description, the heading is its title, and
+the fenced block is its structured half. Nothing about that arrangement
+is a convenience: an affordance exists *because* a design brought it into
+being, so putting the declaration anywhere else would let the two drift.
+The cost is that reading the affordance means reading the document, and
+this module is what does the reading.
+
+The `!` in that block's marker is the reason this chapter can show you
+the grammar at all. A real declaration reads `yaml x0k:affordance`;
+`yaml x0k:!affordance` is the same block held at arm's length — it
+parses and renders identically and declares nothing, the way the
+tangler's `<<!name>>` shows a chunk reference without expanding it.
+Without it, a document about the syntax would be a document *performing*
+the syntax, and this one would ship an affordance it has no means to
+deliver.
+
+It is one pure function — bytes in, structured records out. No store, no
+socket, no resolution. That is why it belongs to the format library and
+not to the daemon it grew up in: the question "what does this document
+declare?" is document semantics, answerable by anyone holding the
+document.
+
+## The extractor extracts; it does not resolve
+
+One field forces the boundary. An affordance may declare
+`requires_resources:` — a placement demand, saying the capability needs
+two CPU cores or a GPU or a Linux host. Turning that into typed fleet
+values is a different act from reading it: it means knowing what a
+`ResourceKind` is, which arches exist, which currencies and token kinds
+and periods the platform recognizes. Measured across the corpus at the
+cut: of 427 affordances in 82 documents, five declare
+`requires_resources`, and that one field accounted for ten of the eleven
+substrate types the extractor was importing.
+
+So the split runs through that field. This module reads the demands and
+hands them back **as declared** — well-formed YAML mappings, unresolved.
+Interpreting them is the host's job, above. The rule stated generally:
+*the extractor extracts; it does not resolve.* What survives here is the
+grammar every reader of a folio document agrees on; what leaves is the
+fleet's opinion about what the words mean.
+
+The shape is still checked, because shape is grammar: `requires_resources`
+must be a mapping or a list of mappings, and a document that writes a
+bare string there is malformed in a way any reader can see.
+
+<a name="chunk-module-doc"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#module-doc`</sub>
+
+```rust {#module-doc}
+//! Inline-entity extraction for folio/v1 bodies.
+//!
+//! Walks the markdown body of a folio document looking for fenced code
+//! blocks whose info string carries the marker `yaml x0k:<type>`. Each
+//! match is an *inline entity* — an entity authored inside its parent
+//! document rather than in a file of its own. The motivating case is an
+//! `affordance` defined within its parent `design`, but the mechanism is
+//! class-agnostic.
+//!
+//! ## Section-per-entity demarcation
+//!
+//! Each inline entity owns the heading section that encloses its YAML
+//! block:
+//!
+//! - **Heading text = entity title.** The YAML must not carry a
+//!   `title:` field; the heading provides it.
+//! - **All prose under the heading until the next heading at any level =
+//!   description.** The YAML block itself is excised from it.
+//! - **Exactly one block per class per section.** A second of the same
+//!   class is an error against that block, not against the section. An
+//!   icon beside an affordance is two classes, and admitted; two icons in
+//!   one section are bounded by the icon profile's own rule (one per
+//!   grid), which is the checker's to apply and not this walk's.
+//! - **No enclosing heading** is an error — an inline entity needs a
+//!   title, and the heading is where it lives.
+//!
+//! ## Info string format
+//!
+//! CommonMark exposes the text after the opening fence
+//! (` ```yaml x0k:affordance ` → `"yaml x0k:affordance"`) as one string.
+//! Split on ASCII whitespace, token 0 must be `yaml` (the content format,
+//! so editors highlight it) and token 1 must be `x0k:<type>` (the entity
+//! marker). Nothing else is accepted; the info string is shaped, not
+//! free-form. One class is drawn rather than written: an icon's block is
+//! `svg x0k:icon` (`x0k:design/icon-profile`), and `svg` is the content
+//! format admitted for that class alone.
+//!
+//! HTML bodies use the equivalent `<pre><code class="language-yaml"
+//! data-x0k-type="<type>">` shape. This module parses markdown only.
+//!
+//! A marker written `x0k:!<type>` is illustrative — a block that *shows*
+//! the grammar rather than declaring an entity — and is skipped here.
+//! See [`crate::FenceInfo`].
+//!
+//! ## What it does not do
+//!
+//! Pure: bytes in, records out. No IO, no global state, no resolution.
+//! `requires_resources` is handed back as declared — well-formed YAML,
+//! uninterpreted — because turning a placement demand into typed fleet
+//! values is the host's judgment, not the document's meaning.
+
+use std::collections::{BTreeMap, HashSet};
+
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use tracing::warn;
+
+use crate::entity_id::EntityId;
+use crate::structural_block::FenceInfo;
+use crate::transclusion::heading_slug;
+```
+
+## The record
+
+Six fields, and the two that look redundant are not. `uri` comes from
+the YAML `id:`; `marker_class` comes from the fence's info string. They
+must agree — the marker is the routing key and the id carries the
+identity — and keeping both is what lets the extractor say *which* of
+them was wrong.
+
+<a name="chunk-inline-entity"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#inline-entity`</sub>
+
+```rust {#inline-entity}
+/// The one class whose block is a drawing: `svg x0k:icon`, in the icon
+/// profile. Its id is the section's, `x0k:icon/<heading anchor>`.
+pub const ICON_CLASS: &str = "icon";
+
+/// A single inline entity extracted from a parent document's body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlineEntity {
+    /// Identity from the YAML `id:` field.
+    pub uri: EntityId,
+    /// Heading text of the enclosing section.
+    pub title: String,
+    /// Prose under that heading, with the YAML block excised. Trimmed.
+    pub description: String,
+    /// The YAML mapping as authored. Top-level only — nested maps
+    /// (`edges:`) are flattened by whoever emits facts. An icon's block
+    /// is not YAML: its mapping is synthesized, one key `svg` carrying
+    /// the drawing as written.
+    pub yaml: serde_norway::Mapping,
+    /// Placement demands the entity declared, **as declared**. Shape is
+    /// checked (each is a mapping); meaning is not. Interpreting these
+    /// as typed resources is a host concern above this layer.
+    pub requires_resources: Vec<serde_norway::Mapping>,
+    /// Class marker from the info string's second token (`x0k:<type>` →
+    /// `<type>`). Mirrors `uri.class` when the YAML is well-formed;
+    /// carried separately so a mismatch is reportable.
+    pub marker_class: String,
+}
+```
+
+## Errors, per block
+
+A malformed block disqualifies itself and nothing else: one bad
+affordance in a design does not cost the document its other seven. So
+extraction returns a `Result` per attempted record rather than a
+`Result` over the batch, and every variant carries enough to name the
+offending section in a log line.
+
+<a name="chunk-error"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#error`</sub>
+
+```rust {#error}
+/// Extraction error. Non-fatal at the document level: the caller logs
+/// and skips per record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InlineEntityError {
+    /// A marked block with no enclosing heading. Inline entities own a
+    /// heading section; without one there is no title.
+    MissingHeading { marker_class: String },
+    /// A second marked block under the same heading. One section, one
+    /// entity.
+    MultipleBlocksInSection {
+        marker_class: String,
+        heading: String,
+    },
+    /// The YAML did not parse, or its top level was not a mapping.
+    InvalidYaml {
+        marker_class: String,
+        heading: String,
+        reason: String,
+    },
+    /// No `id:` field, or its value was not a string.
+    MissingId {
+        marker_class: String,
+        heading: String,
+    },
+    /// The `id:` value is not a well-formed entity id.
+    InvalidUri {
+        marker_class: String,
+        heading: String,
+        value: String,
+        reason: String,
+    },
+    /// The `id:` URI's class disagrees with the info-string marker.
+    ClassMismatch {
+        marker_class: String,
+        heading: String,
+        uri_class: String,
+    },
+    /// The YAML declared a `definedIn` / `defined_in` edge. That edge is
+    /// implicit from embedding and must not appear in the source.
+    ExplicitDefinedIn {
+        marker_class: String,
+        heading: String,
+    },
+    /// The YAML carried a `title:` field. The heading is the title.
+    DuplicateTitle {
+        marker_class: String,
+        heading: String,
+    },
+    /// `requires_resources:` is not a mapping or a list of mappings.
+    /// A host that interprets the demands reuses this variant when a
+    /// well-shaped mapping still fails its own reading.
+    InvalidResources {
+        marker_class: String,
+        heading: String,
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for InlineEntityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingHeading { marker_class } => write!(
+                f,
+                "inline `{marker_class}` block has no enclosing heading; the section-per-entity rule requires a heading above the block"
+            ),
+            Self::MultipleBlocksInSection {
+                marker_class,
+                heading,
+            } => write!(
+                f,
+                "more than one `yaml x0k:{marker_class}` block in section `{heading}`; one entity per section"
+            ),
+            Self::InvalidYaml {
+                marker_class,
+                heading,
+                reason,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` has invalid YAML: {reason}"
+            ),
+            Self::MissingId {
+                marker_class,
+                heading,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` is missing the required `id:` field"
+            ),
+            Self::InvalidUri {
+                marker_class,
+                heading,
+                value,
+                reason,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` has invalid id `{value}`: {reason}"
+            ),
+            Self::ClassMismatch {
+                marker_class,
+                heading,
+                uri_class,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` carries a `{uri_class}` id; info-string marker and id class must agree"
+            ),
+            Self::ExplicitDefinedIn {
+                marker_class,
+                heading,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` declared `definedIn` (or `defined_in`) — that edge is implicit from embedding and must not appear in the YAML"
+            ),
+            Self::DuplicateTitle {
+                marker_class,
+                heading,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` carries a `title:` field — the heading is the title"
+            ),
+            Self::InvalidResources {
+                marker_class,
+                heading,
+                reason,
+            } => write!(
+                f,
+                "inline `{marker_class}` block in section `{heading}` has invalid resource requirements: {reason}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InlineEntityError {}
+```
+
+## Reading the fence
+
+The fence carrier is already parsed once, canonically, by
+[`FenceInfo`](structural.md) — the same type the markdown parser, the
+HTML parser and the renderers share. So this module does not re-scan the
+info string; it asks the carrier for the type the fence *declares* and
+then applies the two extra conditions that are this grammar's own: the
+language must be `yaml`, and there must be nothing trailing.
+
+Delegating is what makes the illustrative escape reach here for free.
+`FenceInfo::x0k_type` answers `None` for `x0k:!affordance`, so a block
+that shows the grammar is simply not a block this walk cares about — and
+it is `None` for the same reason a fence with no marker at all is, which
+is the point: there is one question, asked one way, with no flag beside
+it for this module to forget.
+
+The language is the one place the grammar has two answers. Every
+declared entity is written in YAML except an icon, which is drawn: the
+[icon profile](x0k:design/icon-profile) declares a mark as an
+`svg x0k:icon` block in the section of the thing it depicts, so `svg` is
+admitted for that class and refused for every other, and `yaml` is
+refused for it. The pairing is checked here, at the fence, so a block
+that pairs them wrongly is not a block at all rather than a record with
+a body the wrong shape.
+
+<a name="chunk-info-string"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#info-string`</sub>
+
+```rust {#info-string}
+/// Parse a fence info string into `Some(marker_class)` when it matches
+/// `yaml x0k:<type>` — or `svg x0k:icon`, the one class that is drawn —
+/// else `None`. Whitespace-insensitive between the tokens;
+/// case-insensitive on the language; trailing tokens are refused; an
+/// illustrative marker (`x0k:!<type>`) declares nothing and is refused
+/// with it.
+fn parse_info_string(info: &str) -> Option<String> {
+    let carrier = FenceInfo::parse(info);
+    let language = carrier.language()?;
+    if carrier.info().is_some() {
+        return None;
+    }
+    let class = carrier.x0k_type()?;
+    let drawn = class == ICON_CLASS;
+    let admitted = if drawn {
+        language.eq_ignore_ascii_case("svg")
+    } else {
+        language.eq_ignore_ascii_case("yaml")
+    };
+    admitted.then(|| class.to_string())
+}
+```
+
+## `extract_from_markdown`: two passes over the body
+
+`extract_from_markdown` is what a caller reaches for. Hand it a body and
+the set of classes its parent may host, and it returns one `Result` per
+attempted record: [the affordances a document declares, read back as
+data](../../decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md "x0k:affordance/read_declared_affordances"). Its rustdoc is the whole of the cue — a reader of this library
+finds the function by its name and its doc line, and nothing else
+announces that the affordance is reachable here. That is what the
+declaration below records. A human claim on
+`read_declared_affordances` is only true because this face exists, and
+the record of *via what* lives beside the face rather than on the
+affordance (`x0k:design/publish-a-region-as-a-repository`, "a face
+declares its signifier where the face lives"):
+
+<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d657874726163742d66726f6d2d6d61726b646f776e-1"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-folio-extract-from-markdown" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/folio/inline-entities.md"><strong>Signifier</strong> · extract_from_markdown: two passes over the body · <code>https://0k.computer/ontology#signifier/x0k-folio-extract-from-markdown</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d657874726163742d66726f6d2d6d61726b646f776e-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d657874726163742d66726f6d2d6d61726b646f776e-1"></a>
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-folio-extract-from-markdown
+cue: extract_from_markdown
+edges:
+  signifies:
+    - x0k:affordance/read_declared_affordances
+  presentedOn:
+    - x0k:surface/sdk
+```
+
+The description is "everything under the heading except the block", and
+that phrasing is why the walk is two passes rather than one. A streaming
+pass knows what came before the block but not what comes after, and the
+prose after a block is as much the entity's description as the prose
+before — the corpus writes it both ways. So the first pass records byte
+ranges for every heading and every qualifying block, and the second pass
+does arithmetic on them: the section runs from the heading's end to the
+next heading's start, minus the block's own span.
+
+Byte offsets are available because `into_offset_iter` gives each event
+its source range, which is also what makes the excision exact rather
+than a re-serialization of parsed events.
+
+<a name="chunk-extract"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#extract`</sub>
+
+```rust {#extract}
+/// Walk a markdown body and return one `Result` per attempted record, so
+/// a caller can warn per error without dropping the batch.
+///
+/// `allowed_inline_classes` is the eligible set for this parent: markers
+/// outside it are logged and skipped rather than reported as errors,
+/// because a class this document may not host is not this document's
+/// mistake.
+pub fn extract_from_markdown(
+    body: &str,
+    allowed_inline_classes: &HashSet<String>,
+) -> Vec<Result<InlineEntity, InlineEntityError>> {
+    extract_with_model(body, allowed_inline_classes, None)
+}
+
+/// Extract typed fences against a caller-selected vocabulary.
+/// Custom markers retain their namespace, e.g. `paper:paper`.
+pub fn extract_from_markdown_in(
+    body: &str,
+    model: &x0k_ontology::concept_facts::OntologyModel,
+) -> Vec<Result<InlineEntity, InlineEntityError>> {
+    extract_with_model(body, &HashSet::new(), Some(model))
+}
+
+fn extract_with_model(
+    body: &str,
+    allowed_inline_classes: &HashSet<String>,
+    model: Option<&x0k_ontology::concept_facts::OntologyModel>,
+) -> Vec<Result<InlineEntity, InlineEntityError>> {
+    let mut out: Vec<Result<InlineEntity, InlineEntityError>> = Vec::new();
+
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_HEADING_ATTRIBUTES;
+
+    struct PendingHeading {
+        text: String,
+        /// End offset of the heading line — where its section's prose starts.
+        end: usize,
+        /// Start offset of the heading line — the previous section's end.
+        start: usize,
+    }
+    struct PendingBlock {
+        marker_class: String,
+        /// The block's text as authored: YAML, or an icon's SVG.
+        text: String,
+        block_start: usize,
+        block_end: usize,
+    }
+
+    let mut headings: Vec<PendingHeading> = Vec::new();
+    let mut blocks: Vec<PendingBlock> = Vec::new();
+
+    let mut active_marker: Option<String> = None;
+    let mut active_block_byte_start: usize = 0;
+    let mut active_text = String::new();
+
+    let mut in_heading: bool = false;
+    let mut active_heading_buf = String::new();
+    let mut active_heading_start: usize = 0;
+
+    let parser = Parser::new_ext(body, options).into_offset_iter();
+    for (event, range) in parser {
+        match event {
+            Event::Start(Tag::Heading { .. }) => {
+                in_heading = true;
+                active_heading_buf.clear();
+                active_heading_start = range.start;
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                in_heading = false;
+                let text = active_heading_buf.trim().to_string();
+                active_heading_buf.clear();
+                headings.push(PendingHeading {
+                    text,
+                    end: range.end,
+                    start: active_heading_start,
+                });
+            }
+            Event::Text(t) if in_heading => active_heading_buf.push_str(&t),
+            Event::Code(c) if in_heading => active_heading_buf.push_str(&c),
+
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                let marker = if model.is_some() {
+                    declaration_marker(&info)
+                } else {
+                    parse_info_string(&info)
+                };
+                if let Some(marker) = marker {
+                    if model.is_none() && !allowed_inline_classes.contains(&marker) {
+                        warn!(
+                            marker_class = %marker,
+                            "inline-entity: marker class is not allowed under this parent class; skipping"
+                        );
+                    } else {
+                        active_marker = Some(marker);
+                        active_block_byte_start = range.start;
+                        active_text.clear();
+                    }
+                }
+            }
+            Event::Text(t) if active_marker.is_some() => active_text.push_str(&t),
+            Event::End(TagEnd::CodeBlock) => {
+                let Some(marker_class) = active_marker.take() else {
+                    continue;
+                };
+                blocks.push(PendingBlock {
+                    marker_class,
+                    text: std::mem::take(&mut active_text),
+                    block_start: active_block_byte_start,
+                    block_end: range.end,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    for (block_idx, block) in blocks.iter().enumerate() {
+        // The enclosing heading is the last one that closed before the
+        // block opened.
+        let mut enclosing: Option<&PendingHeading> = None;
+        for h in &headings {
+            if h.end <= block.block_start {
+                enclosing = Some(h);
+            } else {
+                break;
+            }
+        }
+
+        let section_end = match enclosing {
+            Some(h) => headings
+                .iter()
+                .find(|other| other.start > h.start)
+                .map(|next| next.start)
+                .unwrap_or(body.len()),
+            None => body.len(),
+        };
+
+        let section_prose_start = enclosing.map(|h| h.end).unwrap_or(0);
+        let in_section =
+            |b: &&PendingBlock| b.block_start >= section_prose_start && b.block_start < section_end;
+        // An earlier block of the same class inside the same section makes
+        // this one the second, which is the error case. Icons are bounded
+        // by the profile instead — one per grid — so they are not counted.
+        let section_block_count = if block.marker_class == ICON_CLASS {
+            0
+        } else {
+            blocks
+                .iter()
+                .take(block_idx)
+                .filter(in_section)
+                .filter(|prev| match model {
+                    Some(model) => {
+                        let qualified = |marker: &str| {
+                            let (scheme, class) = marker.split_once(':').unwrap_or(("x0k", marker));
+                            model.expand(&format!("{scheme}:{class}"))
+                        };
+                        qualified(&prev.marker_class) == qualified(&block.marker_class)
+                    }
+                    None => prev.marker_class == block.marker_class,
+                })
+                .count()
+        };
+        // Every qualifying block in the section leaves the description,
+        // not only this one: the prose is what is left when the
+        // declarations are lifted out.
+        let block_spans: Vec<(usize, usize)> =
+            blocks.iter().filter(in_section).map(|b| (b.block_start, b.block_end)).collect();
+
+        if let Some(record) = finalize_block(
+            &block.marker_class,
+            &block.text,
+            enclosing.map(|h| h.text.as_str()),
+            section_block_count,
+            body,
+            section_prose_start,
+            section_end,
+            &block_spans,
+            model,
+        ) {
+            out.push(record);
+        }
+    }
+
+    out
+}
+```
+
+## Turning one block into a record
+
+The checks run in the order that lets each one assume the last: a
+heading before a section, a mapping before a field, an id before a class
+comparison. Two of them are prohibitions rather than validations —
+`title:` and `definedIn` are both *forbidden*, because both would let a
+document state something the embedding already says, and two sources for
+one fact is how they come to disagree.
+
+<a name="chunk-finalize"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#finalize`</sub>
+
+```rust {#finalize}
+/// Convert one captured block plus its section state into a record, or
+/// the error that disqualifies it. `None` is the skip-after-warn branch.
+#[allow(clippy::too_many_arguments)]
+fn finalize_block(
+    marker_class: &str,
+    text: &str,
+    heading: Option<&str>,
+    section_block_count: usize,
+    body: &str,
+    section_prose_start: usize,
+    section_prose_end: usize,
+    block_spans: &[(usize, usize)],
+    model: Option<&x0k_ontology::concept_facts::OntologyModel>,
+) -> Option<Result<InlineEntity, InlineEntityError>> {
+    let heading_text = match heading {
+        Some(h) if !h.is_empty() => h,
+        _ => {
+            return Some(Err(InlineEntityError::MissingHeading {
+                marker_class: marker_class.to_string(),
+            }));
+        }
+    };
+
+    if section_block_count > 0 {
+        return Some(Err(InlineEntityError::MultipleBlocksInSection {
+            marker_class: marker_class.to_string(),
+            heading: heading_text.to_string(),
+        }));
+    }
+
+    let description = section_description(body, section_prose_start, section_prose_end, block_spans);
+
+    if marker_class == ICON_CLASS {
+        return Some(Ok(icon_record(text, heading_text, description)));
+    }
+
+    let yaml_text = text;
+    let invalid_yaml = |reason: String| InlineEntityError::InvalidYaml {
+        marker_class: marker_class.to_string(),
+        heading: heading_text.to_string(),
+        reason,
+    };
+
+    let mapping = match serde_norway::from_str::<serde_norway::Value>(yaml_text) {
+        Ok(serde_norway::Value::Mapping(m)) => m,
+        Ok(_) => return Some(Err(invalid_yaml("top-level YAML is not a mapping".into()))),
+        Err(e) => return Some(Err(invalid_yaml(e.to_string()))),
+    };
+
+    let id_value = match yaml_get(&mapping, "id") {
+        Some(serde_norway::Value::String(s)) => s.clone(),
+        Some(_) => return Some(Err(invalid_yaml("`id` must be a string".into()))),
+        None => {
+            return Some(Err(InlineEntityError::MissingId {
+                marker_class: marker_class.to_string(),
+                heading: heading_text.to_string(),
+            }));
+        }
+    };
+    let parsed = match model {
+        Some(model) => EntityId::parse_in(model, &id_value),
+        None => id_value.parse(),
+    };
+    let uri: EntityId = match parsed {
+        Ok(u) => u,
+        Err(e) => {
+            return Some(Err(InlineEntityError::InvalidUri {
+                marker_class: marker_class.to_string(),
+                heading: heading_text.to_string(),
+                value: id_value,
+                reason: e.to_string(),
+            }));
+        }
+    };
+
+    let (scheme, class) = marker_class.split_once(':').unwrap_or(("x0k", marker_class));
+    let namespace_matches = match model {
+        Some(model) => model.expand(&format!("{}:", uri.scheme)) == model.expand(&format!("{scheme}:")),
+        None => uri.scheme == scheme,
+    };
+    if uri.class != class || !namespace_matches {
+        return Some(Err(InlineEntityError::ClassMismatch {
+            marker_class: marker_class.to_string(),
+            heading: heading_text.to_string(),
+            uri_class: uri.class.clone(),
+        }));
+    }
+
+    if yaml_get(&mapping, "title").is_some() {
+        return Some(Err(InlineEntityError::DuplicateTitle {
+            marker_class: marker_class.to_string(),
+            heading: heading_text.to_string(),
+        }));
+    }
+
+    // `definedIn` is implicit from embedding. Look both at the top level
+    // and inside `edges:`, the canonical home for edge predicates.
+    let declared_defined_in = yaml_get(&mapping, "definedIn").is_some()
+        || yaml_get(&mapping, "defined_in").is_some()
+        || matches!(
+            yaml_get(&mapping, "edges"),
+            Some(serde_norway::Value::Mapping(edges))
+                if yaml_get(edges, "definedIn").is_some()
+                    || yaml_get(edges, "defined_in").is_some()
+        );
+    if declared_defined_in {
+        return Some(Err(InlineEntityError::ExplicitDefinedIn {
+            marker_class: marker_class.to_string(),
+            heading: heading_text.to_string(),
+        }));
+    }
+
+    let requires_resources =
+        match declared_resources(&mapping, marker_class, heading_text) {
+            Ok(r) => r,
+            Err(e) => return Some(Err(e)),
+        };
+
+    Some(Ok(InlineEntity {
+        uri,
+        title: heading_text.to_string(),
+        description,
+        yaml: mapping,
+        requires_resources,
+        marker_class: marker_class.to_string(),
+    }))
+}
+```
+
+An icon has no fields to check. The profile's rules — the grid, the
+paints, the budget — are the checker's (`x0k-icon`), applied by whoever
+shows the mark, and this module hands the drawing over as written. What
+it does decide is the identity: the icon depicts the thing its section
+declares, and the edge is the embedding, so the record's id is the
+section's own: `x0k:icon/<anchor>`, the heading slugged by the same
+rule a transclusion reference and a publication's section selector
+spell it with ([`transclusion.md`](transclusion.md)). A consumer that
+knows the section's entity — a projector joining the icon to the
+affordance declared beside it — names the outputs after that entity, as
+the profile asks; a consumer that knows only the section has a name that
+is still stable and still the section's.
+
+<a name="chunk-icon-record"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#icon-record`</sub>
+
+```rust {#icon-record}
+/// The record of an `svg x0k:icon` block: the drawing under one `svg`
+/// key, the section's heading as the title, and an id derived from the
+/// heading — the entity the icon depicts is the section's, implicit in
+/// the embedding as `definedIn` is.
+fn icon_record(svg: &str, heading: &str, description: String) -> InlineEntity {
+    let uri: EntityId = format!("x0k:{ICON_CLASS}/{}", heading_slug(heading))
+        .parse()
+        .expect("a heading slug is non-empty and carries no whitespace");
+    let mut yaml = serde_norway::Mapping::new();
+    yaml.insert("svg".into(), serde_norway::Value::String(svg.to_string()));
+    InlineEntity {
+        uri,
+        title: heading.to_string(),
+        description,
+        yaml,
+        requires_resources: Vec::new(),
+        marker_class: ICON_CLASS.to_string(),
+    }
+}
+```
+
+The description is the section with holes in it — one per declaring
+block, so an affordance's prose does not carry the icon drawn beside it
+— and the remaining fragments are joined by blank lines so the result
+reads as markdown rather than as paragraphs run together.
+
+<a name="chunk-description"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#description`</sub>
+
+```rust {#description}
+/// Section prose with every declaring block's span excised. Prose before,
+/// between and after the blocks is all kept — the corpus writes it every
+/// way — and rejoined with blank lines.
+fn section_description(
+    body: &str,
+    section_prose_start: usize,
+    section_prose_end: usize,
+    block_spans: &[(usize, usize)],
+) -> String {
+    let mut fragments: Vec<&str> = Vec::new();
+    let mut cursor = section_prose_start;
+    for &(start, end) in block_spans {
+        fragments.push(body.get(cursor..start).unwrap_or(""));
+        cursor = end;
+    }
+    fragments.push(body.get(cursor..section_prose_end).unwrap_or(""));
+    fragments
+        .iter()
+        .map(|f| f.trim())
+        .filter(|f| !f.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+```
+
+## Declared demands, unread
+
+Both spellings are accepted because both appear in the corpus, and a
+single mapping is accepted where a list would be because a one-element
+list is a papercut nobody should have to remember. Beyond that the
+mapping is passed through untouched.
+
+<a name="chunk-resources"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#resources`</sub>
+
+```rust {#resources}
+/// Read `requires_resources:` as declared. Shape only: each entry must
+/// be a mapping. What a mapping *means* is the host's reading.
+fn declared_resources(
+    mapping: &serde_norway::Mapping,
+    marker_class: &str,
+    heading: &str,
+) -> Result<Vec<serde_norway::Mapping>, InlineEntityError> {
+    let invalid = |reason: String| InlineEntityError::InvalidResources {
+        marker_class: marker_class.to_string(),
+        heading: heading.to_string(),
+        reason,
+    };
+
+    let value = yaml_get(mapping, "requires_resources")
+        .or_else(|| yaml_get(mapping, "requiresResources"));
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    match value {
+        serde_norway::Value::Mapping(one) => Ok(vec![one.clone()]),
+        serde_norway::Value::Sequence(seq) => seq
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| match item {
+                serde_norway::Value::Mapping(m) => Ok(m.clone()),
+                _ => Err(invalid(format!("resource #{} is not a mapping", idx + 1))),
+            })
+            .collect(),
+        _ => Err(invalid(
+            "`requires_resources` must be a resource mapping or a list of resource mappings"
+                .to_string(),
+        )),
+    }
+}
+
+/// String-keyed lookup, the only kind an envelope uses.
+fn yaml_get<'a>(
+    mapping: &'a serde_norway::Mapping,
+    key: &str,
+) -> Option<&'a serde_norway::Value> {
+    mapping.get(serde_norway::Value::String(key.to_string()))
+}
+```
+
+## Flattening a record to facts
+
+An extracted entity becomes a flat `(predicate, value)` list on the way
+to a fact store. Two decisions in that translation are worth naming.
+
+Unknown top-level keys are namespaced under the entity's own class
+(`x0k:affordance/status`) rather than dropped or promoted, so a
+declarative field a future vocabulary has not reached cannot collide
+with a structural predicate. And the `definedIn` edge is appended
+unconditionally, from the embedding location — the source never
+declares it, so the fact is minted rather than copied.
+
+One key is neither unknown nor an edge, and is read as the relation it
+is. `actors:` is the `claimedFor` relation written as a list of actor
+kinds, and it flattens to one `claimedFor` fact per element with an
+`x0k:actor/<kind>` target — `actors: [human, ai_agent]` is two claims,
+one for `x0k:actor/human` and one for `x0k:actor/ai_agent`. It used to
+flatten as `x0k:affordance/actors` over bare strings, which was a
+spelling only this corpus knew: a publication shipping the `software`
+module shipped `claimedFor` and could not say that any of its
+affordances claimed a human. Emitting the vocabulary's own word, with
+an entity target the vocabulary's range names, is what lets the shipped
+checker read the claim at all.
+
+The predicate mapping is a parameter because a host may know more terms
+than the compiled vocabulary does. The default answers from
+`x0k-ontology` alone, which is the right answer for a consumer holding
+only what this bundle ships.
+
+<a name="chunk-facts"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#facts`</sub>
+
+```rust {#facts}
+/// The declared half of an entity's facts: title, description, scalar
+/// fields, and `edges:` targets. No `definedIn` — that is the parent's
+/// to add, via [`defined_in_fact`] — and no resources, which a host
+/// emits from its own reading of `requires_resources`.
+///
+/// `predicate` maps a snake_case key to its camelCase ontology name.
+pub fn declared_facts_with<F>(entity: &InlineEntity, predicate: F) -> Vec<(String, String)>
+where
+    F: Fn(&str) -> Option<&'static str>,
+{
+    let mut out: Vec<(String, String)> = Vec::new();
+
+    out.push(("x0k:title".to_string(), format!("string:{}", entity.title)));
+    if !entity.description.is_empty() {
+        out.push((
+            "x0k:description".to_string(),
+            format!("string:{}", entity.description),
+        ));
+    }
+
+    for (key, value) in &entity.yaml {
+        let serde_norway::Value::String(key_str) = key else {
+            continue;
+        };
+        if matches!(
+            key_str.as_str(),
+            "id" | "edges" | "title" | "requires_resources" | "requiresResources"
+        ) {
+            continue;
+        }
+        if key_str == "actors" {
+            claimed_for_facts(value, &mut out);
+            continue;
+        }
+        let name = match predicate(key_str) {
+            Some(camel) => camel.to_string(),
+            None => format!("x0k:{}/{}", entity.marker_class, key_str),
+        };
+        emit_value(&name, value, &mut out);
+    }
+
+    if let Some(serde_norway::Value::Mapping(edges)) = yaml_get(&entity.yaml, "edges") {
+        for (pred_key, targets) in edges {
+            let serde_norway::Value::String(pred_snake) = pred_key else {
+                continue;
+            };
+            // Unknown predicates pass through verbatim — the same
+            // forward-compatibility the envelope path applies.
+            let name = predicate(pred_snake)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| pred_snake.clone());
+            let targets_seq: Vec<&serde_norway::Value> = match targets {
+                serde_norway::Value::Sequence(seq) => seq.iter().collect(),
+                single @ serde_norway::Value::String(_) => vec![single],
+                _ => continue,
+            };
+            for t in targets_seq {
+                if let serde_norway::Value::String(target) = t {
+                    out.push((name.clone(), format!("entity:{target}")));
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// [`declared_facts_with`] answering from the compiled vocabulary alone.
+pub fn declared_facts(entity: &InlineEntity) -> Vec<(String, String)> {
+    declared_facts_with(entity, x0k_ontology::snake_to_camel)
+}
+
+/// The implicit edge back to the document the entity was authored in.
+/// Minted from the embedding location; never read from the source.
+pub fn defined_in_fact(parent_uri: &str) -> (String, String) {
+    ("definedIn".to_string(), format!("entity:{parent_uri}"))
+}
+
+/// Declared facts plus the implicit `definedIn` edge — the whole record
+/// for a consumer that does not interpret `requires_resources`.
+pub fn inline_entity_facts(entity: &InlineEntity, parent_uri: &str) -> Vec<(String, String)> {
+    let mut out = declared_facts(entity);
+    out.push(defined_in_fact(parent_uri));
+    out
+}
+```
+
+A sequence under a scalar key flattens to one fact per element rather
+than one fact holding a list, because the fact store's value is a scalar
+and a list of three tags is three facts. Nested mappings under a scalar
+key are skipped: `edges:` is the only mapping with an agreed flattening,
+and guessing at the others would invent structure the document did not
+state.
+
+<a name="chunk-emit-value"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#emit-value`</sub>
+
+```rust {#emit-value}
+/// One fact per scalar; one per element for a sequence; nothing for a
+/// nested mapping, whose flattening this layer does not get to invent.
+fn emit_value(predicate: &str, value: &serde_norway::Value, out: &mut Vec<(String, String)>) {
+    match value {
+        serde_norway::Value::String(s) => {
+            out.push((predicate.to_string(), format!("string:{s}")));
+        }
+        serde_norway::Value::Bool(b) => {
+            out.push((predicate.to_string(), format!("string:{b}")));
+        }
+        serde_norway::Value::Number(n) => {
+            out.push((predicate.to_string(), format!("string:{n}")));
+        }
+        serde_norway::Value::Sequence(seq) => {
+            for item in seq {
+                emit_value(predicate, item, out);
+            }
+        }
+        serde_norway::Value::Mapping(_)
+        | serde_norway::Value::Null
+        | serde_norway::Value::Tagged(_) => {}
+    }
+}
+```
+
+The `claimedFor` emitter takes the same shape — a scalar or a list of
+them — and differs only in what it makes of the word: an entity target
+in the `actor` class, not a string.
+
+<a name="chunk-claimed-for"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#claimed-for`</sub>
+
+```rust {#claimed-for}
+/// The `actors:` list as the `claimedFor` relation: one fact per actor
+/// kind, each target an `x0k:actor/<kind>` id. Anything that is not a
+/// bare word (or a list of them) declares no claim.
+fn claimed_for_facts(value: &serde_norway::Value, out: &mut Vec<(String, String)>) {
+    match value {
+        serde_norway::Value::String(kind) => {
+            out.push(("claimedFor".to_string(), format!("entity:x0k:actor/{kind}")));
+        }
+        serde_norway::Value::Sequence(seq) => {
+            for item in seq {
+                claimed_for_facts(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+```
+
+## Links authored inside prose
+
+An affordance is not the only thing a document declares in its own
+prose. A chapter that says *the parser reads the fence grammar
+[literate programming](../../background/literate-programming.md "x0k:wiki/literate-programming") fixed* has named
+the concept a reader needs first, and a chapter that says *this is the
+[check](../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary") the
+CLI puts in a shell* has said which affordance it realizes. Each of those
+links is an edge of the graph, written in the sentence that needs it —
+the same rule that puts `proves=` on the fence tangling the test rather
+than in a design that names the test. The envelope's `edges:` block still
+admits both predicates; it is not where they live.
+
+Two link classes are edges and no other. A link whose target is a wiki
+page is `presupposes`; one whose target is an affordance is `realizes`.
+A link to an implementation or a design is a link — the corpus holds
+hundreds, and `cites` is a declaration the author makes, not a count of
+mentions. A wiki target loses its fragment, because a concept page
+crosses whole. Fenced code and inline code are not prose: a chapter
+showing the grammar is not presupposing what its example names.
+
+<a name="chunk-prose-edges"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#prose-edges`</sub>
+
+```rust {#prose-edges}
+/// The edges a body's prose links declare: `(predicate, target id)`, once
+/// each in first-seen order. A markdown link `[…](x0k:wiki/<stem>)` is a
+/// `presupposes` edge and `[…](x0k:affordance/<slug>)` a `realizes` edge;
+/// every other link is a link. Text inside a fenced block or an inline
+/// code span is not read.
+pub fn prose_edges(body: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        let fence_run = trimmed
+            .chars()
+            .next()
+            .filter(|c| *c == '`' || *c == '~')
+            .map(|c| (c, trimmed.chars().take_while(|x| *x == c).count()))
+            .filter(|(_, n)| *n >= 3);
+        match (fence, fence_run) {
+            (Some((c, n)), Some((c2, n2))) if c == c2 && n2 >= n => {
+                fence = None;
+                continue;
+            }
+            (Some(_), _) => continue,
+            (None, Some(open)) => {
+                fence = Some(open);
+                continue;
+            }
+            (None, None) => {}
+        }
+        for target in link_targets_outside_code(line) {
+            let edge = if let Some(rest) = target.strip_prefix("x0k:wiki/") {
+                let stem = rest.split('#').next().unwrap_or(rest);
+                Some(("presupposes", format!("x0k:wiki/{stem}")))
+            } else if target.starts_with("x0k:affordance/") {
+                Some(("realizes", target.to_string()))
+            } else {
+                None
+            };
+            if let Some((predicate, id)) = edge {
+                if !out.iter().any(|(p, t)| p == predicate && *t == id) {
+                    out.push((predicate.to_string(), id));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The `x0k:` link targets on one line of prose, with inline code spans
+/// (a run of backticks closed by a run of the same length) skipped. A
+/// target ends at `)` or at the space before a link title.
+fn link_targets_outside_code(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while !rest.is_empty() {
+        let next_code = rest.find('`');
+        let next_link = rest.find("](x0k:");
+        match (next_code, next_link) {
+            (Some(c), Some(l)) if c < l => rest = skip_code_span(&rest[c..]),
+            (Some(c), None) => rest = skip_code_span(&rest[c..]),
+            (_, Some(l)) => {
+                let after = &rest[l + 2..];
+                let end = after.find(|ch: char| ch == ')' || ch.is_whitespace()).unwrap_or(after.len());
+                out.push(&after[..end]);
+                rest = &after[end..];
+            }
+            (None, None) => break,
+        }
+    }
+    out
+}
+
+/// `s` starts with a backtick run; return what follows the matching
+/// closing run, or nothing when the span never closes.
+fn skip_code_span(s: &str) -> &str {
+    let n = s.chars().take_while(|c| *c == '`').count();
+    let body = &s[n..];
+    let mut i = 0;
+    while i < body.len() {
+        if body[i..].starts_with('`') {
+            let m = body[i..].chars().take_while(|c| *c == '`').count();
+            if m == n {
+                return &body[i + m..];
+            }
+            i += m;
+        } else {
+            i += body[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+        }
+    }
+    ""
+}
+
+/// The document's edges as one map: the envelope's `edges:` block and
+/// the edges its prose links declare, each target once per predicate,
+/// the envelope's first.
+pub fn document_edges(
+    envelope_edges: &BTreeMap<String, Vec<String>>,
+    body: &str,
+) -> BTreeMap<String, Vec<String>> {
+    let mut edges = envelope_edges.clone();
+    for (predicate, target) in prose_edges(body) {
+        let targets = edges.entry(predicate).or_default();
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    edges
+}
+```
+
+## Instances in a caller's vocabulary
+
+The model-aware entry point retains the same heading, YAML and implicit
+source-edge rules. Its marker includes a namespace: `yaml paper:paper`
+declares an instance whose class is the kebab-case name of `paper:Paper`.
+Namespace aliases compare by expanded IRI. The collection loader checks
+that the class exists; parsing an identity alone does not assert that.
+This entry point accepts YAML declarations only. The special SVG icon carrier
+continues through the legacy extractor and renderer.
+
+<a name="chunk-namespaced-marker"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#namespaced-marker`</sub>
+
+```rust {#namespaced-marker}
+pub(crate) fn declaration_marker(info: &str) -> Option<String> {
+    // Generic ontology declarations use YAML. SVG icons keep their separate
+    // legacy carrier and rendering path; they are not generic instances.
+    if !info.split_ascii_whitespace().next()?.eq_ignore_ascii_case("yaml") {
+        return None;
+    }
+    if let Some(marker) = parse_info_string(info) {
+        return Some(marker);
+    }
+    let mut tokens = info.split_ascii_whitespace();
+    if !tokens.next()?.eq_ignore_ascii_case("yaml") {
+        return None;
+    }
+    let marker = tokens.next()?;
+    if tokens.next().is_some() {
+        return None;
+    }
+    let (scheme, class) = marker.split_once(':')?;
+    if scheme == "x0k" || scheme.is_empty() || class.is_empty() || class.starts_with('!') || class.contains(':') {
+        return None;
+    }
+    Some(marker.to_string())
+}
+```
+
+## Tests
+
+The carried example is the affordance at the top of this document; the
+rest pin one refusal each, and one pins the boundary — that a declared
+resource comes back as a mapping and not as an interpretation.
+
+<a name="chunk-tests"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#tests`</sub>
+
+`````rust {#tests}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn allowed_set() -> HashSet<String> {
+        let mut s = HashSet::new();
+        s.insert("affordance".to_string());
+        s
+    }
+
+    fn one(body: &str) -> InlineEntity {
+        let mut results = extract_from_markdown(body, &allowed_set());
+        assert_eq!(results.len(), 1, "expected exactly one inline entity");
+        results.remove(0).expect("entity parsed")
+    }
+
+    #[test]
+    fn extracts_the_carried_example() {
+        let body = r#"## Affordances
+
+### Publish a region as a repository
+
+```yaml x0k:affordance
+id: x0k:affordance/publish_region_as_repository
+status: wip
+actors: [human]
+edges:
+  requires: [x0k:affordance/demarcate_publication]
+```
+
+I project a demarcated region of my graph outward as a standalone
+repository.
+"#;
+        let entity = one(body);
+        assert_eq!(entity.uri.class, "affordance");
+        assert_eq!(entity.uri.identifier, "publish_region_as_repository");
+        assert_eq!(entity.title, "Publish a region as a repository");
+        assert_eq!(entity.marker_class, "affordance");
+        assert!(
+            entity.description.contains("I project a demarcated region"),
+            "prose after the block belongs to the description; got `{}`",
+            entity.description
+        );
+
+        let facts = inline_entity_facts(&entity, "x0k:design/publish-a-region-as-a-repository");
+        assert!(facts
+            .iter()
+            .any(|(p, v)| p == "x0k:title" && v == "string:Publish a region as a repository"));
+        assert!(facts
+            .iter()
+            .any(|(p, v)| p == "x0k:affordance/status" && v == "string:wip"));
+        // `actors:` is the `claimedFor` relation, with an actor-class
+        // target rather than a bare word.
+        assert!(facts
+            .iter()
+            .any(|(p, v)| p == "claimedFor" && v == "entity:x0k:actor/human"));
+        assert!(!facts.iter().any(|(p, _)| p == "x0k:affordance/actors"));
+        // `requires` is already camelCase and not in the compiled slice,
+        // so it passes through verbatim.
+        assert!(facts
+            .iter()
+            .any(|(p, v)| p == "requires" && v == "entity:x0k:affordance/demarcate_publication"));
+        assert_eq!(
+            facts.last(),
+            Some(&(
+                "definedIn".to_string(),
+                "entity:x0k:design/publish-a-region-as-a-repository".to_string()
+            ))
+        );
+    }
+
+    // Two actor kinds are two claims, each one the vocabulary can
+    // range-check against `Actor`.
+    #[test]
+    fn each_actor_is_its_own_claimed_for_fact() {
+        let body = r#"### Check a document against its vocabulary
+
+```yaml x0k:affordance
+id: x0k:affordance/check_a_document_against_shipped_vocabulary
+status: wip
+actors: [human, ai_agent]
+```
+"#;
+        let claims: Vec<String> = declared_facts(&one(body))
+            .into_iter()
+            .filter(|(p, _)| p == "claimedFor")
+            .map(|(_, v)| v)
+            .collect();
+        assert_eq!(
+            claims,
+            vec!["entity:x0k:actor/human", "entity:x0k:actor/ai_agent"]
+        );
+    }
+
+    // A document that teaches the grammar writes the block with a `!`
+    // and stays a document about affordances rather than a document
+    // declaring one. This chapter's own carried example does exactly
+    // that; if the escape ever stopped working, the published bundle
+    // would claim `publish_region_as_repository`.
+    #[test]
+    fn an_illustrative_fence_declares_nothing() {
+        let body = r#"### Publish a region as a repository
+
+```yaml x0k:!affordance
+id: x0k:affordance/publish_region_as_repository
+status: wip
+```
+
+Prose that merely shows the reader what a declaration looks like.
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(
+            results.is_empty(),
+            "an escaped marker must not be extracted; got {} record(s)",
+            results.len()
+        );
+    }
+
+    // The escape is a property of the marker, not of the block's
+    // contents: nothing else about the fence changes.
+    #[test]
+    fn the_escape_is_the_only_difference() {
+        let declaring = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+```
+"#;
+        let illustrating = declaring.replace("x0k:affordance\n", "x0k:!affordance\n");
+        assert_eq!(extract_from_markdown(declaring, &allowed_set()).len(), 1);
+        assert!(extract_from_markdown(&illustrating, &allowed_set()).is_empty());
+    }
+
+    // The icon profile's carried example: an affordance with its mark
+    // declared beside it. Two records from one section — the affordance,
+    // and an icon whose id is the section's and whose `svg` is the
+    // drawing as written — and neither description carries the other's
+    // block.
+    #[test]
+    fn an_icon_is_declared_beside_the_thing_it_depicts() {
+        let body = "### Tangle a document\n\nI project code out of a document.\n\n```yaml x0k:affordance\nid: x0k:affordance/tangle\nactors: [human]\n```\n\nIts mark: a document with a block sliding out.\n\n```svg x0k:icon\n<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n```\n\nAfter both.\n";
+        let mut allowed = allowed_set();
+        allowed.insert(ICON_CLASS.to_string());
+        let results: Vec<InlineEntity> = extract_from_markdown(body, &allowed)
+            .into_iter()
+            .map(|r| r.expect("both records parse"))
+            .collect();
+        assert_eq!(results.len(), 2);
+        let affordance = &results[0];
+        let icon = &results[1];
+        assert_eq!(affordance.uri.to_string(), "x0k:affordance/tangle");
+        assert_eq!(icon.uri.to_string(), "x0k:icon/tangle-a-document");
+        assert_eq!(icon.marker_class, ICON_CLASS);
+        assert_eq!(icon.title, "Tangle a document");
+        assert_eq!(
+            yaml_get(&icon.yaml, "svg"),
+            Some(&serde_norway::Value::String(
+                "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"8\" r=\"6\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n".to_string()
+            ))
+        );
+        let expected = "I project code out of a document.\n\nIts mark: a document with a block sliding out.\n\nAfter both.";
+        assert_eq!(affordance.description, expected, "the icon's drawing is not the affordance's prose");
+        assert_eq!(icon.description, expected);
+    }
+
+    // The language and the class are paired at the fence: `svg` is for
+    // the icon and nothing else, and an icon is not written in YAML. Two
+    // icons in one section are the profile's business, not this walk's.
+    #[test]
+    fn svg_is_admitted_for_the_icon_class_alone() {
+        assert_eq!(parse_info_string("svg x0k:icon"), Some("icon".to_string()));
+        assert_eq!(parse_info_string("SVG x0k:icon"), Some("icon".to_string()));
+        assert_eq!(parse_info_string("yaml x0k:icon"), None);
+        assert_eq!(parse_info_string("svg x0k:affordance"), None);
+        assert_eq!(parse_info_string("svg x0k:!icon"), None);
+        assert_eq!(parse_info_string("svg x0k:icon extra"), None);
+
+        let body = "### Both grids\n\n```svg x0k:icon\n<svg viewBox=\"0 0 16 16\"/>\n```\n\n```svg x0k:icon\n<svg viewBox=\"0 0 24 24\"/>\n```\n";
+        let allowed: HashSet<String> = HashSet::from([ICON_CLASS.to_string()]);
+        let results = extract_from_markdown(body, &allowed);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(Result::is_ok), "two icons are two records: {results:?}");
+    }
+
+    // A second block of the same class is still the error it was; a block
+    // of another class beside it is not.
+    #[test]
+    fn one_block_per_class_per_section() {
+        let body = "### Authenticate\n\n```yaml x0k:affordance\nid: x0k:affordance/authenticate\n```\n\n```yaml x0k:signifier\nid: x0k:signifier/login\n```\n\n```yaml x0k:affordance\nid: x0k:affordance/authenticate_again\n```\n";
+        let allowed: HashSet<String> =
+            HashSet::from(["affordance".to_string(), "signifier".to_string()]);
+        let results = extract_from_markdown(body, &allowed);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_ok(), "a signifier beside an affordance: {:?}", results[1]);
+        assert!(matches!(results[2], Err(InlineEntityError::MultipleBlocksInSection { .. })));
+    }
+
+    #[test]
+    fn description_captures_prose_before_the_block_too() {
+        let body = r#"### Authenticate
+
+Some intro prose under the heading, before the block.
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+```
+"#;
+        assert!(one(body)
+            .description
+            .contains("Some intro prose under the heading"));
+    }
+
+    #[test]
+    fn declared_resources_come_back_as_declared() {
+        let body = r#"### Run an agent
+
+```yaml x0k:affordance
+id: x0k:affordance/run_agent
+status: wip
+requires_resources:
+  - kind: { os: linux }
+    quantity: { qualitative: linux }
+    origin: operator_declared
+  - kind: cpu_cores
+    quantity: { numeric: 2 }
+    origin: operator_declared
+```
+"#;
+        let entity = one(body);
+        assert_eq!(entity.requires_resources.len(), 2);
+        // Handed back as authored — a mapping, not a typed value.
+        assert_eq!(
+            yaml_get(&entity.requires_resources[1], "kind"),
+            Some(&serde_norway::Value::String("cpu_cores".to_string()))
+        );
+        // And never re-emitted as a class-namespaced scalar: a host that
+        // interprets them owns their facts.
+        let facts = inline_entity_facts(&entity, "x0k:design/test-doc");
+        assert!(!facts
+            .iter()
+            .any(|(p, _)| p == "x0k:affordance/requires_resources"));
+    }
+
+    #[test]
+    fn a_single_resource_mapping_is_accepted_without_a_list() {
+        let body = r#"### Run an agent
+
+```yaml x0k:affordance
+id: x0k:affordance/run_agent
+status: wip
+requires_resources:
+  kind: cpu_cores
+  quantity: { numeric: 2 }
+  origin: operator_declared
+```
+"#;
+        assert_eq!(one(body).requires_resources.len(), 1);
+    }
+
+    #[test]
+    fn a_resource_that_is_not_a_mapping_is_an_error() {
+        let body = r#"### Run an agent
+
+```yaml x0k:affordance
+id: x0k:affordance/run_agent
+status: wip
+requires_resources: two cores
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::InvalidResources { .. })
+        ));
+    }
+
+    #[test]
+    fn a_block_without_a_heading_errors() {
+        let body = r#"```yaml x0k:affordance
+id: x0k:affordance/orphan
+status: wip
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert_eq!(results.len(), 1);
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::MissingHeading { .. })
+        ));
+    }
+
+    #[test]
+    fn a_second_block_in_one_section_errors_and_the_first_survives() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+```
+
+```yaml x0k:affordance
+id: x0k:affordance/another
+status: wip
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert_eq!(results.len(), 2);
+        results[0].as_ref().expect("first block survives");
+        match &results[1] {
+            Err(InlineEntityError::MultipleBlocksInSection { heading, .. }) => {
+                assert_eq!(heading, "Authenticate");
+            }
+            other => panic!("expected MultipleBlocksInSection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_class_this_parent_may_not_host_is_skipped_not_reported() {
+        let body = r#"### Foo
+
+```yaml x0k:unknown-class
+id: x0k:unknown-class/foo
+```
+"#;
+        assert!(extract_from_markdown(body, &allowed_set()).is_empty());
+    }
+
+    #[test]
+    fn an_unmarked_yaml_block_is_an_ordinary_code_block() {
+        let body = r#"### Some section
+
+```yaml
+key: value
+```
+"#;
+        assert!(extract_from_markdown(body, &allowed_set()).is_empty());
+    }
+
+    #[test]
+    fn marker_and_id_class_must_agree() {
+        let body = r#"### Section
+
+```yaml x0k:affordance
+id: x0k:design/not-an-affordance
+status: wip
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        match &results[0] {
+            Err(InlineEntityError::ClassMismatch {
+                uri_class,
+                marker_class,
+                ..
+            }) => {
+                assert_eq!(marker_class, "affordance");
+                assert_eq!(uri_class, "design");
+            }
+            other => panic!("expected ClassMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn declaring_the_implicit_edge_errors() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+edges:
+  definedIn: [x0k:design/foo]
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::ExplicitDefinedIn { .. })
+        ));
+    }
+
+    #[test]
+    fn declaring_a_title_errors() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+title: "Some other title"
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::DuplicateTitle { .. })
+        ));
+    }
+
+    #[test]
+    fn an_id_carrying_a_content_state_pin_errors() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate@file-content:abcd
+status: wip
+```
+"#;
+        let results = extract_from_markdown(body, &allowed_set());
+        assert!(matches!(
+            results[0],
+            Err(InlineEntityError::InvalidUri { .. })
+        ));
+    }
+
+    #[test]
+    fn info_string_shape_is_enforced() {
+        assert_eq!(
+            parse_info_string("yaml x0k:affordance"),
+            Some("affordance".to_string())
+        );
+        assert_eq!(
+            parse_info_string("yaml   x0k:affordance"),
+            Some("affordance".to_string())
+        );
+        assert_eq!(
+            parse_info_string("YAML x0k:affordance"),
+            Some("affordance".to_string())
+        );
+        assert_eq!(parse_info_string("yaml x0k:affordance extra"), None);
+        assert_eq!(parse_info_string("yaml"), None);
+        assert_eq!(parse_info_string("yaml x0k:"), None);
+        assert_eq!(parse_info_string("json x0k:affordance"), None);
+    }
+
+    #[test]
+    fn a_host_vocabulary_can_extend_the_predicate_mapping() {
+        let body = r#"### Authenticate
+
+```yaml x0k:affordance
+id: x0k:affordance/authenticate
+status: wip
+edges:
+  refined_from: [x0k:affordance/older]
+```
+"#;
+        let entity = one(body);
+        // The compiled vocabulary does not know `refined_from`, so the
+        // default emitter passes it through verbatim.
+        assert!(declared_facts(&entity)
+            .iter()
+            .any(|(p, _)| p == "refined_from"));
+        // A host that does know it maps it.
+        let facts = declared_facts_with(&entity, |snake| {
+            (snake == "refined_from").then_some("refinedFrom")
+        });
+        assert!(facts.iter().any(|(p, _)| p == "refinedFrom"));
+    }
+    #[test]
+    fn prose_links_to_wiki_and_affordance_are_edges_and_nothing_else_is() {
+        let body = "Reads [literate programming](x0k:wiki/literate-programming#history) and\n\
+                    [the design](x0k:design/some-design); it is the\n\
+                    [check](x0k:affordance/check_it \"the check\") face.\n\
+                    Again [lp](x0k:wiki/literate-programming).\n";
+        assert_eq!(
+            prose_edges(body),
+            vec![
+                ("presupposes".to_string(), "x0k:wiki/literate-programming".to_string()),
+                ("realizes".to_string(), "x0k:affordance/check_it".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_links_inside_code_are_not_read() {
+        let body = "Write `[x](x0k:wiki/in-span)` like so:\n\n\
+                    ````markdown\n```\n[y](x0k:wiki/in-fence)\n```\n````\n\n\
+                    but [z](x0k:wiki/real) counts.\n";
+        assert_eq!(prose_edges(body), vec![("presupposes".to_string(), "x0k:wiki/real".to_string())]);
+    }
+
+    #[test]
+    fn document_edges_unions_the_envelope_and_the_prose_once_each() {
+        let mut envelope = BTreeMap::new();
+        envelope.insert("presupposes".to_string(), vec!["x0k:wiki/a".to_string()]);
+        let edges = document_edges(&envelope, "See [a](x0k:wiki/a) and [b](x0k:wiki/b).");
+        assert_eq!(edges["presupposes"], vec!["x0k:wiki/a".to_string(), "x0k:wiki/b".to_string()]);
+    }
+}
+`````
+
+## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [inline-entity](#chunk-inline-entity) · [error](#chunk-error) · [info-string](#chunk-info-string) · [extract](#chunk-extract) · [finalize](#chunk-finalize) · [icon-record](#chunk-icon-record) · [description](#chunk-description) · [resources](#chunk-resources) · [facts](#chunk-facts) · [emit-value](#chunk-emit-value) · [claimed-for](#chunk-claimed-for) · [prose-edges](#chunk-prose-edges) · [namespaced-marker](#chunk-namespaced-marker) · [tests](#chunk-tests)</sub>
+
+```rust {#root}
+<<module-doc>>
+
+<<inline-entity>>
+
+<<error>>
+
+<<info-string>>
+
+<<extract>>
+
+<<finalize>>
+
+<<icon-record>>
+
+<<description>>
+
+<<resources>>
+
+<<facts>>
+
+<<emit-value>>
+
+<<claimed-for>>
+
+<<prose-edges>>
+
+<<namespaced-marker>>
+
+<<tests>>
+```
+
+The section-per-entity rule is the load-bearing idea and it is worth
+saying what it costs. Binding an entity to a heading means renaming a
+heading renames the entity, and moving a block between sections
+re-parents it — the document's shape *is* the data model, with no
+indirection to absorb an edit. That is the trade the design took
+deliberately: an affordance that cannot drift from the design that
+defines it, at the price of a document whose structure has to be edited
+with that in mind.
+

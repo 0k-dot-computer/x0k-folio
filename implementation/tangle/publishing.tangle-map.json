@@ -1,0 +1,17 @@
+{
+  "source": "implementation/tangle/publishing.md",
+  "source_hash": "2dd76ad014f21c9f",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "31dbf03c02d084e4",
+      "outputs": [
+        {
+          "path": "crates/x0k-tangle/src/publish_repo.rs",
+          "hash": "e19f0315d15576aa"
+        }
+      ]
+    }
+  ]
+}

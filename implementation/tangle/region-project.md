@@ -1,0 +1,1142 @@
+---
+x0k:
+  format: folio/v1
+  id: x0k:implementation/tangle/region-project
+  type: implementation
+  status: draft
+  summary: The filesystem half the pure region weaver leaves out — resolving a publication's members with nothing but the envelope parser and a corpus layout read from the class registry, shared by the CLI and the MCP tool so the two cannot drift.
+  concerns:
+  - tangle
+  - publication
+  - projection
+  - io
+  tangle:
+    crate: crates/x0k-tangle
+    root: src/region_project.rs
+  edges:
+    implements:
+    - x0k:design/author-and-publish-the-same-surface
+    cites:
+    - x0k:architecture/monorepo-layout
+    - x0k:implementation/tangle/region-weave
+    - x0k:implementation/tangle/presentation
+    - x0k:implementation/folio/colophon
+---
+
+# Region projection: the filesystem side
+
+The region weaver is pure — content in, bytes out. Something still has to
+read the publication doc, find each member's file, write the artifact, and
+copy the wasm the canvas shell boots from. This chapter is that something,
+and it is shared by the CLI and the MCP tool so the two surfaces cannot
+drift: both call `project_publication`, and the report they return has one
+shape.
+
+The central idea is that the projector stays *thin and decoupled*. It
+resolves a publication region with nothing but the shared envelope parser
+from `x0k-folio` and a statement of where each document class lives in the
+corpus, rather than depending on the corpus's own graph service. That
+statement is the invariant every other reader of the corpus must agree
+with: a member URI `x0k:<class>/<stem>` names the file `<stem>.md` under
+the class's directory. What this chapter is careful about is that the
+statement is *read*, not compiled in — [`CorpusLayout`](#the-corpus-layout)
+resolves it from the class registry, so the projector serves a corpus whose
+directories it has never been told about. The module says so where the
+table is loaded.
+
+<a name="chunk-module-doc"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#module-doc`</sub>
+
+```rust {#module-doc}
+//! Region projection I/O layer — the filesystem side of region projection.
+//!
+//! [`region_weave`](crate::region_weave) is pure: it turns a [`RegionInput`]
+//! into in-memory artifact files. This module is the I/O orchestration around
+//! it, shared by both the `x0k-tangle weave-region` CLI and the
+//! `tangle_weave_region` MCP tool so the two surfaces behave identically:
+//!
+//! 1. Parse the publication decision doc into a [`RegionInput`]
+//!    ([`parse_publication_region`]) — resolving its `publishes:` edge to
+//!    member files with the shared envelope parser from `x0k-folio`.
+//! 2. Call [`weave_region`].
+//! 3. Write each [`ArtifactFile`](crate::ArtifactFile).
+//! 4. (Unless `no_motifs`, and only with the `motifs` feature) content-address
+//!    + copy the region's surface wasm, vendoring a static `host.js` shim.
+//!
+//! # The corpus layout invariant
+//!
+//! Region resolution needs one fact about the corpus: where each document
+//! class lives. A member URI `x0k:<class>/<stem>` names the file
+//! `<stem>.md` under the class's directory, topic subdirectories included.
+//! That directory is never compiled in. [`CorpusLayout`] reads it from the
+//! class registry — the one resolver table for a folio document
+//! (`x0k:architecture/monorepo-layout` §5) — and every other tool that
+//! resolves member URIs against the corpus reads the same table.
+```
+
+<a name="chunk-uses"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#uses`</sub>
+
+```rust {#uses}
+use crate::region_weave::{weave_region, RegionInput, RegionMember};
+use anyhow::{anyhow, Context, Result};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+```
+
+## The carried example
+
+`x0k-tangle weave-region decisions/publications/foo.md --output-dir out`
+reads the publication doc, resolves its `publishes:` edge to member files
+under whatever roots the registry gives their classes, weaves them, wraps the
+result in the presentation shell, writes every file under `out/`, and — with
+the `motifs` feature on — copies the render-vello bundle and each embedded
+motif's wasm into `out/wasm/`. The report says how many pages were written,
+which embeds degraded, and whether the wasm was found.
+
+## The report
+
+<a name="chunk-report"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#report`</sub>
+
+```rust {#report}
+/// Summary of a region-projection run. Mirrors the MCP `tangle_weave_region`
+/// result shape so the CLI and MCP surfaces report identically.
+#[derive(Debug, Clone)]
+pub struct RegionProjectReport {
+    /// Absolute (or output-dir-relative) entry page path the reader lands on.
+    pub entry_rel_path: PathBuf,
+    /// Number of HTML pages written.
+    pub page_count: usize,
+    /// Deduped union of `x0k:media` refs across members.
+    pub media_refs: Vec<String>,
+    /// Refs that show their static `.media-label` fallback (not bundled as
+    /// canvas wasm).
+    pub degraded_embeds: Vec<String>,
+    /// Links that pointed outside the region (kept verbatim in the HTML).
+    pub unresolved_links: Vec<String>,
+    /// Atlas node count (members positioned in the time×thread plane).
+    pub atlas_node_count: usize,
+    /// Atlas influence-edge count.
+    pub atlas_edge_count: usize,
+    /// Distinct thread lanes present in the atlas.
+    pub atlas_threads: Vec<String>,
+    /// Member URIs whose year could not be resolved (flagged, off the plane).
+    pub atlas_unresolved_years: Vec<String>,
+    /// Whether the render-vello wasm renderer was bundled into `wasm/`. When
+    /// false the artifact still serves the semantic fallback pages; the canvas
+    /// shell just can't boot (and redirects to the fallback).
+    pub wasm_bundled: bool,
+    /// Size in bytes of the bundled render-vello `_bg.wasm` (0 if not bundled).
+    pub wasm_bytes: u64,
+    /// Whether a `narrative.json` trail sidecar was found and bundled (vs. the
+    /// empty-station stub).
+    pub narrative_bundled: bool,
+}
+```
+
+## Entry points
+
+The path-based entry reads the doc and its optional `narrative.json` sidecar;
+the content-based entry is what the MCP tool calls once it has already read
+the doc. The narrative is read here so the presentation layer stays
+disk-free.
+
+<a name="chunk-project-publication"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#project-publication`</sub>
+
+```rust {#project-publication}
+/// Project a publication doc into a self-contained multi-page artifact under
+/// `output_dir`. The single I/O entry point shared by the CLI and MCP tool.
+pub fn project_publication(
+    region_doc: &Path,
+    output_dir: &Path,
+    workspace: &Path,
+    no_motifs: bool,
+) -> Result<RegionProjectReport> {
+    let content = std::fs::read_to_string(region_doc)
+        .with_context(|| format!("reading publication doc {}", region_doc.display()))?;
+    // The narrative trail sidecar lives beside the publication doc:
+    // `decisions/publications/<stem>.narrative.json` (its canonical, editable,
+    // reproducible home). Read it here so the pure presentation layer stays
+    // disk-free.
+    let narrative = read_narrative_sidecar(region_doc);
+    project_publication_content(&content, output_dir, workspace, no_motifs, narrative)
+}
+
+/// Read the `<stem>.narrative.json` sidecar next to a publication doc, if any.
+fn read_narrative_sidecar(region_doc: &Path) -> Option<Vec<u8>> {
+    let stem = region_doc.file_stem()?;
+    let mut name = stem.to_os_string();
+    name.push(".narrative.json");
+    let sidecar = region_doc.with_file_name(name);
+    std::fs::read(&sidecar).ok()
+}
+```
+
+Projection is weave, shell, write, then bundle. The wasm bundling is behind
+the `motifs` feature: the standalone build of the crate compiles with
+`--no-default-features`, drops the surface-build dependency, and the
+`cfg(not(...))` arms below are what keep that build honest about what it
+does not do.
+
+<a name="chunk-project-publication-content"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#project-publication-content`</sub>
+
+```rust {#project-publication-content}
+/// Like [`project_publication`] but takes the publication doc's content
+/// directly (the MCP tool already read it / resolved its path). `narrative_json`
+/// is the optional scripted-trail sidecar bytes (the path-based entry point
+/// reads it from disk; direct callers may pass `None` for the empty stub).
+pub fn project_publication_content(
+    region_content: &str,
+    output_dir: &Path,
+    workspace: &Path,
+    no_motifs: bool,
+    narrative_json: Option<Vec<u8>>,
+) -> Result<RegionProjectReport> {
+    let input = parse_publication_region(region_content, workspace)?;
+    let mut out = weave_region(&input).context("weaving region")?;
+
+    // Wrap the woven semantic substrate into the self-booting presentation:
+    // canvas shell at the root, woven pages → `pages/` fallback, bundled
+    // `members.json` + `narrative.json`. `atlas.json` stays at the root.
+    let narrative_bundled = narrative_json.is_some();
+    crate::presentation::apply_publication_shell(&mut out, &input, narrative_json);
+
+    std::fs::create_dir_all(output_dir)
+        .with_context(|| format!("creating output dir {}", output_dir.display()))?;
+    for f in &out.files {
+        let dest = output_dir.join(&f.rel_path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&dest, &f.bytes).with_context(|| format!("writing {}", dest.display()))?;
+    }
+
+    // Bundle the render-vello wasm so the canvas shell boots offline. The
+    // motif/surface subsystem is publish-excludable (the `motifs` feature): the
+    // standalone/OSS x0k-tangle builds `--no-default-features`, dropping the
+    // x0k-surface-build dep and this HTML-weave-only bundling.
+    #[cfg(feature = "motifs")]
+    let (wasm_bundled, wasm_bytes) = bundle_render_vello_wasm(workspace, output_dir)?;
+    #[cfg(not(feature = "motifs"))]
+    let (wasm_bundled, wasm_bytes) = (false, 0u64);
+
+    #[cfg(feature = "motifs")]
+    let degraded = {
+        let mut degraded = out.degraded_embeds.clone();
+        if !no_motifs && !out.media_refs.is_empty() {
+            bundle_region_motifs(workspace, output_dir, &out.media_refs, &mut degraded)?;
+        }
+        degraded
+    };
+    #[cfg(not(feature = "motifs"))]
+    let degraded = {
+        let _ = (&no_motifs, &workspace);
+        out.degraded_embeds.clone()
+    };
+
+    // Count the woven semantic fallback pages (under `pages/`), not the shell.
+    let page_count = out
+        .files
+        .iter()
+        .filter(|f| {
+            f.rel_path.extension().map(|e| e == "html").unwrap_or(false)
+                && f.rel_path.starts_with(crate::presentation::FALLBACK_DIR)
+        })
+        .count();
+    Ok(RegionProjectReport {
+        entry_rel_path: out.entry_rel_path,
+        page_count,
+        media_refs: out.media_refs,
+        degraded_embeds: degraded,
+        unresolved_links: out.unresolved_links,
+        atlas_node_count: out.atlas.nodes.len(),
+        atlas_edge_count: out.atlas.edges.len(),
+        atlas_threads: out.atlas.threads.clone(),
+        atlas_unresolved_years: out.atlas.unresolved_years.clone(),
+        wasm_bundled,
+        wasm_bytes,
+        narrative_bundled,
+    })
+}
+```
+
+## Bundling the renderer
+
+The canvas shell imports two wasm-pack outputs. They are prebuilt binaries,
+copied from `X0K_RENDER_VELLO_WASM_DIR` or, failing that, the location the
+monorepo's web UI (`ui/0k.computer`, a vite app) builds them to — never
+built inline. Both paths are the monorepo's; a standalone build of this
+crate compiles without the `motifs` feature and does not look for them.
+
+<a name="chunk-render-vello-bundle"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#render-vello-bundle`</sub>
+
+```rust {#render-vello-bundle}
+/// Names of the two render-vello wasm-pack outputs the boot shell imports
+/// (`boot.js` does `import('./wasm/x0k_ui_render_vello.js')`, which resolves the
+/// `_bg.wasm` sibling).
+#[cfg(feature = "motifs")]
+const RENDER_VELLO_JS: &str = "x0k_ui_render_vello.js";
+#[cfg(feature = "motifs")]
+const RENDER_VELLO_WASM: &str = "x0k_ui_render_vello_bg.wasm";
+
+/// Copy the prebuilt render-vello wasm-pack bundle into the artifact's `wasm/`
+/// so the canvas shell boots offline. The bundle is located via
+/// `X0K_RENDER_VELLO_WASM_DIR` (release+wasm-opt build output), falling back to
+/// the monorepo web UI's dev-build location
+/// `<workspace>/ui/0k.computer/wasm/render-vello`.
+///
+/// The wasm is a prebuilt binary, not derivable data, so the projection copies
+/// it rather than invoking the (multi-minute) wasm-pack build inline. Build it
+/// once with:
+/// `wasm-pack build ui/render-vello --target web --release --out-dir <dir>`.
+///
+/// Returns `(bundled, bytes)`. If the bundle is absent the artifact still ships
+/// the semantic fallback; the shell detects the missing renderer and redirects.
+#[cfg(feature = "motifs")]
+fn bundle_render_vello_wasm(workspace: &Path, output_dir: &Path) -> Result<(bool, u64)> {
+    let dir = std::env::var_os("X0K_RENDER_VELLO_WASM_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace.join("ui/0k.computer/wasm/render-vello"));
+    let js = dir.join(RENDER_VELLO_JS);
+    let wasm = dir.join(RENDER_VELLO_WASM);
+    if !js.is_file() || !wasm.is_file() {
+        return Ok((false, 0));
+    }
+    let wasm_dir = output_dir.join("wasm");
+    std::fs::create_dir_all(&wasm_dir)?;
+    std::fs::copy(&js, wasm_dir.join(RENDER_VELLO_JS))
+        .with_context(|| format!("copying {}", js.display()))?;
+    let wasm_dest = wasm_dir.join(RENDER_VELLO_WASM);
+    let bytes =
+        std::fs::copy(&wasm, &wasm_dest).with_context(|| format!("copying {}", wasm.display()))?;
+    // Brotli-precompress the render-vello host wasm too — it's the largest
+    // single artifact and loads on every publication page. Served via
+    // `ServeDir::precompressed_br` exactly like the motif `.br` siblings.
+    x0k_surface_build::ensure_brotli(&wasm_dest)
+        .with_context(|| format!("brotli-precompressing {}", wasm_dest.display()))?;
+    Ok((true, bytes))
+}
+```
+
+## The corpus layout
+
+The projector walks four kinds of place: the directory a class's decisions
+sit in, the concept pages, the manuscripts, and — for the repository
+backend, the next chapter over — the literate set's root. Written as
+literals, those four facts are structure hiding in strings: the code that
+joins `x0k:design/foo` onto `decisions/design/` is *deciding* the layout
+every time it runs, and a corpus organized any other way has no way to say
+so. `x0k:architecture/monorepo-layout` §5 answers this generally — every
+kind of identity resolves through exactly one table, and a move is an edit
+to that table — and for a folio document that table already exists: the
+class registry, `config/projection-classes.toml`, whose `path_template`
+rows are what the daemon projects a document to.
+
+So `CorpusLayout` is the registry read as a set of roots. Nothing is
+duplicated: a class's directory *is* its `path_template` with the
+`{slug}.md` leaf removed, which is why `design` needs no row of its own
+here. What the registry cannot say is where the two document kinds it does
+not project live — a literate chapter, which is file-canonical and found by
+the `id:` its own envelope declares rather than by joining an id onto a
+directory, and a manuscript — plus the umbrella the class directories hang
+from, which a named document's search needs when its class has no row at
+all. Those three are a `[corpus]` table beside the class rows, in the same
+file, because a second file would be a second table for one identity kind
+and that is exactly what §5 forbids.
+
+<a name="chunk-corpus-layout"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#corpus-layout`</sub>
+
+```rust {#corpus-layout}
+/// Where each kind of corpus document lives. Read from the class registry
+/// (`x0k:architecture/monorepo-layout` §5: one resolver table per identity
+/// kind); the built-in values are the corpus as it stands, so a caller with
+/// no registry to read resolves exactly as before.
+#[derive(Debug, Clone)]
+pub struct CorpusLayout {
+    implementation: PathBuf,
+    decisions: PathBuf,
+    manuscripts: PathBuf,
+    /// Class name → its directory, from that class's `path_template`.
+    class_dirs: BTreeMap<String, PathBuf>,
+}
+
+/// The registry, relative to the workspace root. `config/` is a build-and-run
+/// root and does not move with the corpus, so this one path stays a literal.
+const CLASS_REGISTRY: &str = "config/projection-classes.toml";
+```
+
+The built-in values carry the corpus as it stands today, and they are what a
+caller gets when the registry is unreadable. That is a deliberate fallback
+rather than a refusal: the projector is also run against a *materialized
+corpus* — a `git archive` of an older revision, which may predate any row it
+would look for — and against test fixtures that are three files in a temp
+directory. Refusing there would trade a working projection for a diagnostic
+nobody wanted.
+
+<a name="chunk-corpus-layout-current"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#corpus-layout-current`</sub>
+
+```rust {#corpus-layout-current}
+impl Default for CorpusLayout {
+    fn default() -> CorpusLayout {
+        CorpusLayout {
+            implementation: PathBuf::from("knowledge/implementation"),
+            decisions: PathBuf::from("decisions"),
+            manuscripts: PathBuf::from("manuscripts"),
+            class_dirs: [
+                ("wiki", "knowledge/wiki"),
+                ("design", "decisions/design"),
+                ("architecture", "decisions/architecture"),
+                ("commitment", "decisions/commitments"),
+                ("publication", "decisions/publications"),
+            ]
+            .into_iter()
+            .map(|(c, d)| (c.to_string(), PathBuf::from(d)))
+            .collect(),
+        }
+    }
+}
+```
+
+Reading is total: every step that could fail leaves the built-in value in
+place. A `path_template` whose slug is not in the file name (a class whose
+documents are directories, should one ever exist) and a `path_template_fixed`
+singleton both yield no directory and are skipped rather than guessed at.
+
+<a name="chunk-corpus-layout-read"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#corpus-layout-read`</sub>
+
+```rust {#corpus-layout-read}
+impl CorpusLayout {
+    /// The layout `workspace` declares, falling back per row to the built-in
+    /// corpus. Cheap enough to call once per projection; never per member.
+    pub fn read(workspace: &Path) -> CorpusLayout {
+        let mut layout = CorpusLayout::default();
+        let Ok(text) = std::fs::read_to_string(workspace.join(CLASS_REGISTRY)) else {
+            return layout;
+        };
+        let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
+            return layout;
+        };
+        if let Some(corpus) = doc.get("corpus").and_then(|i| i.as_table_like()) {
+            let root = |k: &str| corpus.get(k).and_then(|i| i.as_str()).map(PathBuf::from);
+            layout.implementation = root("implementation").unwrap_or(layout.implementation);
+            layout.decisions = root("decisions").unwrap_or(layout.decisions);
+            layout.manuscripts = root("manuscripts").unwrap_or(layout.manuscripts);
+        }
+        if let Some(classes) = doc.get("classes").and_then(|i| i.as_table_like()) {
+            for (name, entry) in classes.iter() {
+                let dir = entry
+                    .as_table_like()
+                    .and_then(|t| t.get("path_template"))
+                    .and_then(|i| i.as_str())
+                    .and_then(template_dir);
+                if let Some(dir) = dir {
+                    layout.class_dirs.insert(name.to_string(), dir);
+                }
+            }
+        }
+        layout
+    }
+}
+
+/// The directory a `path_template` resolves into: everything before the
+/// `{slug}` leaf. `None` when the template has no such leaf.
+fn template_dir(template: &str) -> Option<PathBuf> {
+    let (dir, leaf) = template.rsplit_once('/')?;
+    leaf.contains("{slug}").then(|| PathBuf::from(dir))
+}
+```
+
+The four accessors are the whole surface. `class_dir` is the old table's
+job done by lookup; `decision_search_dirs` is the wider net a *named*
+document gets, where the publication wrote a class the registry may not
+know and the plural of a class name is as good a guess as the singular.
+Ordering matters and duplicates do not: the registry's own answer is tried
+first, and a class whose registry row already is `decisions/<class>s` must
+not have that directory walked twice, or one document would answer as two.
+
+<a name="chunk-corpus-layout-accessors"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#corpus-layout-accessors`</sub>
+
+```rust {#corpus-layout-accessors}
+impl CorpusLayout {
+    /// Root of the literate set — the directory a publication's chapters are
+    /// discovered under.
+    pub fn implementation_root(&self) -> &Path {
+        &self.implementation
+    }
+
+    /// Root the class directories hang from, for messages and for the
+    /// fallbacks below.
+    pub fn decisions_root(&self) -> &Path {
+        &self.decisions
+    }
+
+    /// The directory documents of `class` live in.
+    pub fn class_dir(&self, class: &str) -> PathBuf {
+        if class == "manuscript" {
+            return self.manuscripts.clone();
+        }
+        match self.class_dirs.get(class) {
+            Some(dir) => dir.clone(),
+            None => self.decisions.join(class),
+        }
+    }
+
+    /// Every directory a named document of `class` may be under, in the order
+    /// to try them: what the registry says, then the class name and its
+    /// plural under the decisions root, deduplicated.
+    pub fn decision_search_dirs(&self, class: &str) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for dir in [
+            self.class_dir(class),
+            self.decisions.join(class),
+            self.decisions.join(format!("{class}s")),
+        ] {
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+        dirs
+    }
+}
+```
+
+## Resolving the region
+
+The publication doc's `publishes:` edge lists member URIs; each is mapped to
+its file and read. The layout is read once here, not once per member: the
+registry is one small file and a hundred members should not open it a
+hundred times.
+
+<a name="chunk-parse-publication-region"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#parse-publication-region`</sub>
+
+```rust {#parse-publication-region}
+/// Resolve a publication doc into a [`RegionInput`]: read its `publishes:`
+/// edge with the shared envelope parser and map each member URI to its
+/// file. Member sources are read here (the pure weaver takes pre-read
+/// content).
+pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<RegionInput> {
+    use x0k_folio::colophon::{parse_envelope, DocType};
+
+    let layout = CorpusLayout::read(workspace);
+
+    let (env, _body) =
+        parse_envelope(content).map_err(|e| anyhow!("not a folio/v1 document: {e:?}"))?;
+    if env.doc_type != DocType::Publication {
+        return Err(anyhow!(
+            "document is not a publication (type is `{}`)",
+            env.doc_type.as_str()
+        ));
+    }
+
+    let member_uris: Vec<String> = env.edges.get("publishes").cloned().unwrap_or_default();
+    if member_uris.is_empty() {
+        return Err(anyhow!("publication has an empty `publishes` membership"));
+    }
+
+    let entry_point_uri = env
+        .edges
+        .get("entryPoint")
+        .or_else(|| env.edges.get("entry_point"))
+        .and_then(|v| v.first().cloned())
+        .or_else(|| {
+            if member_uris.len() == 1 {
+                member_uris.first().cloned()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "publication has no `entryPoint` and {} members; entry point is ambiguous",
+                member_uris.len()
+            )
+        })?;
+
+    let members = member_uris
+        .iter()
+        .map(|uri| {
+            let src = member_doc_path(uri, workspace, &layout);
+            let content = std::fs::read_to_string(&src).unwrap_or_default();
+            let rel = src.strip_prefix(workspace).unwrap_or(&src).to_path_buf();
+            RegionMember {
+                uri: uri.clone(),
+                content,
+                source_path: rel,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(RegionInput {
+        members,
+        entry_point_uri,
+    })
+}
+```
+
+A decision's id carries no topic segment but its file lives in a topic
+subdirectory, so the stem is searched for under the class's directory before
+the flat join is used as the fallback (and as the path a missing member
+reports).
+
+<a name="chunk-member-doc-path"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#member-doc-path`</sub>
+
+```rust {#member-doc-path}
+/// The corpus file backing one member URI.
+///
+/// A decision's id carries no topic (`x0k:architecture/identity`) but the
+/// files are organized into topic subdirectories, so the stem is searched for
+/// under the class's directory before falling back to the flat join — the
+/// flat path is what a missing member reports, so a dangling member still
+/// names a path.
+fn member_doc_path(uri: &str, workspace: &Path, layout: &CorpusLayout) -> PathBuf {
+    let rest = uri.strip_prefix("x0k:").unwrap_or(uri);
+    let (class, identifier) = match rest.split_once('/') {
+        Some((c, i)) => (c, i),
+        None => ("", rest),
+    };
+    let dir = workspace.join(layout.class_dir(class));
+    let file_name = format!("{identifier}.md");
+    let flat = dir.join(&file_name);
+    if flat.is_file() {
+        return flat;
+    }
+    walkdir::WalkDir::new(&dir)
+        .max_depth(DECISION_TOPIC_DEPTH)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .map(|e| e.into_path())
+        .find(|p| p.is_file() && p.file_name().and_then(|s| s.to_str()) == Some(file_name.as_str()))
+        .unwrap_or(flat)
+}
+
+/// Walk depth for a class directory: the directory, its topic
+/// subdirectories, and one level of headroom.
+const DECISION_TOPIC_DEPTH: usize = 3;
+```
+
+## Bundling motifs
+
+Each media ref is content-addressed and its wasm copied under `wasm/`; a
+static `host.js` shim and a `motifs.json` manifest are written beside it.
+Refs with no buildable surface stay in `degraded`.
+
+<a name="chunk-bundle-region-motifs"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#bundle-region-motifs`</sub>
+
+```rust {#bundle-region-motifs}
+/// Content-address the region's surfaces and copy each resolved `.wasm` into the
+/// artifact under `wasm/x0k_surface_<name>.wasm`, vendoring a static `host.js`
+/// shim. Refs resolving to no buildable surface keep their static label and stay
+/// in `degraded`.
+#[cfg(feature = "motifs")]
+fn bundle_region_motifs(
+    workspace: &Path,
+    output_dir: &Path,
+    media_refs: &[String],
+    degraded: &mut Vec<String>,
+) -> Result<()> {
+    let region_refs: std::collections::BTreeSet<&str> =
+        media_refs.iter().map(|s| s.as_str()).collect();
+
+    let embedded = x0k_surface_build::embed_scan(workspace).context("scanning surface embeds")?;
+    let mut uri_to_surface: std::collections::BTreeMap<&str, &x0k_surface_build::SurfaceRef> =
+        std::collections::BTreeMap::new();
+    for em in &embedded {
+        if !region_refs.contains(em.doc_uri.as_str()) {
+            continue;
+        }
+        if let Some(m) = &em.surface {
+            uri_to_surface.insert(em.doc_uri.as_str(), m);
+        }
+    }
+    if uri_to_surface.is_empty() {
+        return Ok(());
+    }
+
+    let report = x0k_surface_build::publish::publish(workspace, true)
+        .context("content-addressing surfaces")?;
+    let by_crate: std::collections::BTreeMap<&str, &x0k_surface_build::publish::PublishedSurface> =
+        report
+            .published
+            .iter()
+            .map(|p| (p.crate_name.as_str(), p))
+            .collect();
+
+    let wasm_dir = output_dir.join("wasm");
+    std::fs::create_dir_all(&wasm_dir)?;
+    let mut bundled_any = false;
+    // `data-media-ref` URI → bundled wasm filename, consumed by `host.js`.
+    let mut manifest: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+
+    for (uri, surface) in &uri_to_surface {
+        if let Some(published) = by_crate.get(surface.crate_name.as_str()) {
+            let file = format!("{}.wasm", surface.wasm_name);
+            let dest = wasm_dir.join(&file);
+            std::fs::copy(&published.cache_path, &dest).with_context(|| {
+                format!(
+                    "copying {} → {}",
+                    published.cache_path.display(),
+                    dest.display()
+                )
+            })?;
+            // Copy the brotli sibling alongside so the prod static serve
+            // (`ServeDir::precompressed_br`) can offer `Content-Encoding: br`.
+            if let Some(br_src) = &published.br_cache_path {
+                let br_dest = wasm_dir.join(format!("{file}.br"));
+                std::fs::copy(br_src, &br_dest).with_context(|| {
+                    format!("copying {} → {}", br_src.display(), br_dest.display())
+                })?;
+            }
+            degraded.retain(|d| d != uri);
+            manifest.insert((*uri).to_string(), file);
+            bundled_any = true;
+        }
+    }
+
+    if bundled_any {
+        std::fs::write(wasm_dir.join("host.js"), HOST_JS_SHIM).context("writing host.js loader")?;
+        let manifest_json =
+            serde_json::to_vec_pretty(&manifest).context("serializing motifs.json")?;
+        std::fs::write(wasm_dir.join("motifs.json"), manifest_json)
+            .context("writing motifs.json manifest")?;
+    }
+    Ok(())
+}
+```
+
+The host shim is a vanilla-JS ES module port of the monorepo web UI's motif
+loader, carried verbatim as a string constant so a published motif runs the
+same code path as the app. It is progressive enhancement: an embed with no
+bundled wasm, or a browser without WebGPU, keeps its static label. Like the
+bundler that writes it, it exists only under the `motifs` feature.
+
+<a name="chunk-host-js-shim"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#host-js-shim`</sub>
+
+```rust {#host-js-shim}
+/// Vendored static motif host loader. This is the real mount, not a stub that
+/// tags embeds with a static fallback: it instantiates each
+/// embedded motif's GPU-free `.wasm`, drives the v2 message ABI
+/// (`surface_create`/`surface_send_event`/`surface_frame`/...), and renders the
+/// emitted paint-IR through the bundled render-vello vello/WebGPU host onto a
+/// per-embed canvas. It is a vanilla-JS ES-module port of the monorepo web
+/// UI's motif loader (`ui/0k.computer/src/motif-loader.ts::loadMotif`), so a
+/// published motif runs byte-identically to the live app.
+///
+/// All asset URLs resolve relative to this module (`import.meta.url`), so the
+/// loader works regardless of which page-depth includes it (the fallback pages
+/// live under `pages/`, so they reference `../wasm/host.js`). A `motifs.json`
+/// manifest (written beside this file) maps each `data-media-ref` to its bundled
+/// wasm filename. Progressive enhancement: an embed whose ref is not in the
+/// manifest — or any embed when WebGPU is unavailable — keeps its static
+/// `.media-label` fallback.
+#[cfg(feature = "motifs")]
+const HOST_JS_SHIM: &str = r#"// Static publication motif host — instantiates each embedded motif's wasm,
+// drives the v2 message ABI, and renders its paint-IR through render-vello's
+// vello/WebGPU host onto a per-embed canvas. Vanilla-JS port of the live app's
+// motif-loader. Progressive enhancement: embeds with no bundled wasm (or when
+// WebGPU is absent) keep their static label.
+const BASE = import.meta.url;
+const u = (p) => new URL(p, BASE).href;
+let seq = 0;
+let hostPromise = null;
+let maxStyleInjected = false;
+
+async function loadHost() {
+  if (!hostPromise) {
+    hostPromise = (async () => {
+      const mod = await import(u('./x0k_ui_render_vello.js'));
+      await mod.default();
+      window.__c0k_motif_host = mod;
+      return mod;
+    })();
+  }
+  return hostPromise;
+}
+
+function stubImports(module) {
+  const imports = {};
+  for (const desc of WebAssembly.Module.imports(module)) {
+    const m = (imports[desc.module] ??= {});
+    if (desc.kind === 'function') m[desc.name] = () => 0;
+    else if (desc.kind === 'memory') m[desc.name] = new WebAssembly.Memory({ initial: 1 });
+    else if (desc.kind === 'table') m[desc.name] = new WebAssembly.Table({ initial: 1, element: 'anyfunc' });
+    else if (desc.kind === 'global') m[desc.name] = new WebAssembly.Global({ value: 'i32', mutable: true }, 0);
+  }
+  return imports;
+}
+
+async function instantiateMotif(wasmUrl, w, h) {
+  const resp = await fetch(wasmUrl);
+  if (!resp.ok) throw new Error('fetch motif wasm ' + resp.status + ' ' + wasmUrl);
+  const bytes = await resp.arrayBuffer();
+  const module = await WebAssembly.compile(bytes);
+  const instance = await WebAssembly.instantiate(module, stubImports(module));
+  const motif = instance.exports;
+  const handle = motif.surface_create(w, h);
+  return { motif, handle };
+}
+
+// The render-vello motif host has NO device-pixel-ratio transform: it replays
+// the guest's logical-coordinate paint-IR straight into a device-pixel render
+// texture (`canvas.width`×`canvas.height`). So the guest must be sized — and
+// fed pointer coordinates — in DEVICE pixels for its paint to FILL the canvas
+// backing store; otherwise the paint covers only `1/dpr` of the box, leaving
+// black gutters on the right and bottom. We therefore drive the guest at
+// `cssBox × dpr` and scale pointer coords by `dpr` to match.
+const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
+
+// One mounted motif embed: a canvas filling its container, the GPU-free guest,
+// the render-vello host handle, and a resize path the ResizeObserver + the
+// maximize affordance both reuse.
+async function mount(el, ref, file) {
+  let host;
+  try { host = await loadHost(); }
+  catch (e) { console.warn('[motif] host init failed (no WebGPU?):', e); return; }
+
+  const dpr = DPR();
+  const label = el.querySelector('.media-label');
+  if (label) label.style.display = 'none';
+  el.classList.add('media-live');
+
+  // A positioned wrapper so the canvas, the maximize button, and (when
+  // maximized) the close button stack predictably.
+  const stage = document.createElement('div');
+  stage.className = 'motif-stage';
+  const canvas = document.createElement('canvas');
+  canvas.id = 'motif-canvas-' + (seq++);
+  canvas.className = 'motif-canvas';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.display = 'block';
+  stage.appendChild(canvas);
+  el.appendChild(stage);
+
+  // Backing-store dims = the canvas CSS box × dpr (device pixels). Done BEFORE
+  // host init: `motif_init` reads `canvas.width`/`canvas.height` to size its
+  // surface.
+  const cssW = () => Math.max(1, Math.round(canvas.clientWidth || el.clientWidth || 640));
+  const cssH = () => Math.max(1, Math.round(canvas.clientHeight || 320));
+  let devW = Math.round(cssW() * dpr);
+  let devH = Math.round(cssH() * dpr);
+  canvas.width = devW;
+  canvas.height = devH;
+
+  let renderHandle;
+  try { renderHandle = await host.motif_init(canvas.id); }
+  catch (e) {
+    console.warn('[motif] motif_init failed:', e);
+    if (label) label.style.display = '';
+    stage.remove();
+    return;
+  }
+
+  // Guest is sized in DEVICE pixels (see DPR note above) so its paint fills the
+  // backing store.
+  let { motif, handle } = await instantiateMotif(u('./' + file), devW, devH);
+
+  function sendBytes(ev) {
+    if (!ev || ev.length === 0) return;
+    const ptr = motif.surface_alloc(ev.length);
+    new Uint8Array(motif.memory.buffer, ptr, ev.length).set(ev);
+    motif.surface_send_event(handle, ptr, ev.length);
+    motif.surface_free(ptr, ev.length);
+  }
+
+  // The shared resize path: recompute the device backing store from the current
+  // CSS box, reconfigure the host surface, and tell the guest its new logical
+  // (= device, here) extent. Reused by the ResizeObserver and maximize toggle.
+  function applySize() {
+    const d = DPR();
+    const nw = Math.max(1, Math.round(cssW() * d));
+    const nh = Math.max(1, Math.round(cssH() * d));
+    if (nw === devW && nh === devH) return;
+    devW = nw; devH = nh;
+    canvas.width = devW;
+    canvas.height = devH;
+    try { host.motif_resize(renderHandle, devW, devH); } catch (e) { /* pre-init */ }
+    sendBytes(host.motif_encode_resize(devW, devH));
+  }
+
+  const localXY = (e) => {
+    const r = canvas.getBoundingClientRect();
+    // CSS px → device px so coords land in the guest's device-px space.
+    const sx = r.width ? canvas.width / r.width : 1;
+    const sy = r.height ? canvas.height / r.height : 1;
+    return [(e.clientX - r.left) * sx, (e.clientY - r.top) * sy];
+  };
+  canvas.addEventListener('mousedown', (e) => { const [x, y] = localXY(e); sendBytes(host.motif_encode_pointer(0, x, y, e.button, e.shiftKey, e.ctrlKey, e.altKey, e.metaKey)); });
+  canvas.addEventListener('mouseup', (e) => { const [x, y] = localXY(e); sendBytes(host.motif_encode_pointer(1, x, y, e.button, e.shiftKey, e.ctrlKey, e.altKey, e.metaKey)); });
+  canvas.addEventListener('mousemove', (e) => { const [x, y] = localXY(e); sendBytes(host.motif_encode_pointer(2, x, y, -1, e.shiftKey, e.ctrlKey, e.altKey, e.metaKey)); });
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); const [x, y] = localXY(e); sendBytes(host.motif_encode_wheel(e.deltaX, e.deltaY, x, y, e.shiftKey, e.ctrlKey, e.altKey, e.metaKey)); }, { passive: false });
+
+  // Reflow whenever the container box changes (column resize, fullscreen
+  // enter/exit, font load). ResizeObserver fires once on observe, so the box
+  // is sized correctly on first layout even if `clientWidth` was 0 at mount.
+  const ro = new ResizeObserver(() => applySize());
+  ro.observe(canvas);
+
+  // ── Maximize affordance ────────────────────────────────────────────────
+  // A small ⤢ button overlaid top-right; click moves the stage into a
+  // fullscreen overlay (the motif resizes to fill it via applySize). ESC, the
+  // close button, or a click on the backdrop restores it in place.
+  injectMaxStyle();
+  let maximized = false;
+  let overlay = null;
+  const maxBtn = document.createElement('button');
+  maxBtn.type = 'button';
+  maxBtn.className = 'motif-max-btn';
+  maxBtn.title = 'Maximize';
+  maxBtn.setAttribute('aria-label', 'Maximize visualization');
+  maxBtn.textContent = '⤢'; // ⤢
+  stage.appendChild(maxBtn);
+
+  function enterMax() {
+    if (maximized) return;
+    maximized = true;
+    overlay = document.createElement('div');
+    overlay.className = 'motif-overlay';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'motif-close-btn';
+    closeBtn.title = 'Close (Esc)';
+    closeBtn.setAttribute('aria-label', 'Close maximized visualization');
+    closeBtn.textContent = '×'; // ×
+    overlay.appendChild(stage);
+    overlay.appendChild(closeBtn);
+    document.body.appendChild(overlay);
+    maxBtn.textContent = '⤡'; // ⤡ (restore)
+    maxBtn.title = 'Restore';
+    closeBtn.addEventListener('click', exitMax);
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) exitMax(); });
+    document.addEventListener('keydown', onKey);
+    // Two rAFs so the overlay has laid out before we measure the new box.
+    requestAnimationFrame(() => requestAnimationFrame(applySize));
+  }
+  function exitMax() {
+    if (!maximized) return;
+    maximized = false;
+    document.removeEventListener('keydown', onKey);
+    el.appendChild(stage); // back to its in-prose home
+    if (overlay) { overlay.remove(); overlay = null; }
+    maxBtn.textContent = '⤢';
+    maxBtn.title = 'Maximize';
+    requestAnimationFrame(() => requestAnimationFrame(applySize));
+  }
+  function onKey(e) { if (e.key === 'Escape') exitMax(); }
+  maxBtn.addEventListener('click', (e) => { e.stopPropagation(); maximized ? exitMax() : enterMax(); });
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = now - last; last = now;
+    sendBytes(host.motif_encode_tick(dt));
+    const packed = motif.surface_frame(handle);
+    if (packed !== 0n) {
+      const ptr = Number(packed >> 32n);
+      const len = Number(packed & 0xffffffffn);
+      const fb = new Uint8Array(motif.memory.buffer, ptr, len).slice();
+      motif.surface_free(ptr, len);
+      try { host.motif_render_frame(renderHandle, fb); }
+      catch (err) { console.warn('[motif] render_frame:', err); }
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Expose mounted motifs so a headless validator can read pixels back
+  // (offscreen GPU readback bypasses the swapchain present cap) and confirm the
+  // embed went live + filled its box.
+  (window.__c0k_motifs ??= []).push({
+    ref, file, canvas, renderHandle,
+    get deviceSize() { return [canvas.width, canvas.height]; },
+    get maximized() { return maximized; },
+    maximize: enterMax,
+    restore: exitMax,
+    captureFrame: (w, h) => host.motif_capture_frame(renderHandle, w, h),
+  });
+  window.dispatchEvent(new CustomEvent('x0k:motif-ready', { detail: { ref } }));
+}
+
+// Scoped CSS for the embed stage, the maximize button, and the fullscreen
+// overlay. Injected once, on first mount, so the static artifact needs no
+// extra stylesheet. The embed box gets a real height (the weaver's
+// `.media-embed` only set `min-height`), and the canvas fills it.
+function injectMaxStyle() {
+  if (maxStyleInjected) return;
+  maxStyleInjected = true;
+  const css = `
+.media-embed.media-live { padding: 0; display: block; min-height: 0; overflow: hidden; border-style: solid; }
+.motif-stage { position: relative; width: 100%; height: clamp(280px, 42vh, 460px); background: #101016; }
+.motif-canvas { touch-action: none; }
+.motif-max-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 30px; height: 30px; padding: 0; line-height: 28px; text-align: center;
+  font-size: 16px; cursor: pointer; border-radius: 6px;
+  color: #e8e8ef; background: rgba(22,22,30,0.62);
+  border: 1px solid rgba(220,220,235,0.28); backdrop-filter: blur(2px);
+  transition: background 0.12s, opacity 0.12s; opacity: 0.55;
+}
+.motif-stage:hover .motif-max-btn { opacity: 1; }
+.motif-max-btn:hover { background: rgba(40,40,54,0.9); }
+.motif-overlay {
+  position: fixed; inset: 0; z-index: 1000; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(10,10,14,0.82); backdrop-filter: blur(3px); padding: 3vmin;
+}
+.motif-overlay .motif-stage {
+  width: 94vw; height: 88vh; max-width: 1600px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.5); border-radius: 8px; overflow: hidden;
+}
+.motif-close-btn {
+  position: fixed; top: 18px; right: 22px; z-index: 1001;
+  width: 38px; height: 38px; padding: 0; line-height: 34px; text-align: center;
+  font-size: 22px; cursor: pointer; border-radius: 8px;
+  color: #f2f2f6; background: rgba(30,30,40,0.7);
+  border: 1px solid rgba(220,220,235,0.32);
+}
+.motif-close-btn:hover { background: rgba(54,54,70,0.95); }
+`;
+  const tag = document.createElement('style');
+  tag.setAttribute('data-x0k-surface-host', '');
+  tag.textContent = css;
+  document.head.appendChild(tag);
+}
+
+(async function () {
+  let manifest = {};
+  try {
+    const r = await fetch(u('./motifs.json'));
+    if (r.ok) manifest = await r.json();
+  } catch (e) { /* no manifest → every embed stays static */ }
+  document.querySelectorAll('.media-embed[data-media-ref]').forEach((el) => {
+    const ref = el.getAttribute('data-media-ref');
+    const file = manifest[ref];
+    el.setAttribute('data-static-fallback', file ? 'false' : 'true');
+    if (file) void mount(el, ref, file);
+  });
+})();
+"#;
+```
+
+## Tests
+
+<a name="chunk-tests"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#tests`</sub>
+
+```rust {#tests}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_built_in_layout_is_the_corpus_as_it_stands() {
+        // Wiki members live under knowledge/wiki, not decisions/ — the layout
+        // invariant the module doc states.
+        let l = CorpusLayout::default();
+        assert_eq!(l.class_dir("wiki"), Path::new("knowledge").join("wiki"));
+        assert_eq!(l.class_dir("design"), Path::new("decisions").join("design"));
+        assert_eq!(
+            l.class_dir("architecture"),
+            Path::new("decisions").join("architecture")
+        );
+        assert_eq!(l.class_dir("manuscript"), Path::new("manuscripts"));
+        // A class the registry does not know still resolves, by its own name.
+        assert_eq!(l.class_dir("gizmo"), Path::new("decisions").join("gizmo"));
+        assert_eq!(l.implementation_root(), Path::new("knowledge/implementation"));
+    }
+
+    #[test]
+    fn a_registry_moves_every_root_and_a_missing_one_moves_none() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("config")).unwrap();
+        std::fs::write(
+            dir.path().join(CLASS_REGISTRY),
+            "[corpus]\n\
+             implementation = \"corpora/x0k/implementation\"\n\
+             decisions = \"corpora/x0k/decisions\"\n\
+             manuscripts = \"corpora/x0k/manuscripts\"\n\
+             [classes.wiki]\n\
+             path_template = \"corpora/x0k/wiki/{slug}.md\"\n\
+             [classes.design]\n\
+             path_template = \"corpora/x0k/decisions/design/{slug}.md\"\n\
+             [classes.registry]\n\
+             path_template_fixed = \".0k/workstreams.toml\"\n",
+        )
+        .unwrap();
+        let moved = CorpusLayout::read(dir.path());
+        assert_eq!(moved.implementation_root(), Path::new("corpora/x0k/implementation"));
+        assert_eq!(moved.class_dir("wiki"), Path::new("corpora/x0k/wiki"));
+        assert_eq!(moved.class_dir("design"), Path::new("corpora/x0k/decisions/design"));
+        // No `path_template`, so no directory is guessed; the class falls back
+        // to the decisions root, which the `[corpus]` table moved.
+        assert_eq!(moved.class_dir("registry"), Path::new("corpora/x0k/decisions/registry"));
+        // A class the moved registry never mentions follows the moved root.
+        assert_eq!(moved.class_dir("gizmo"), Path::new("corpora/x0k/decisions/gizmo"));
+
+        let bare = tempfile::tempdir().unwrap();
+        assert_eq!(
+            CorpusLayout::read(bare.path()).class_dir("design"),
+            Path::new("decisions/design")
+        );
+    }
+
+    #[test]
+    fn a_named_documents_search_never_walks_one_directory_twice() {
+        // `commitment` resolves to `decisions/commitments` through the
+        // registry, which is also what the plural fallback produces: two hits
+        // for one file would read as an ambiguous id.
+        let dirs = CorpusLayout::default().decision_search_dirs("commitment");
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("decisions/commitments"),
+                PathBuf::from("decisions/commitment"),
+            ]
+        );
+        assert_eq!(
+            CorpusLayout::default().decision_search_dirs("design"),
+            vec![PathBuf::from("decisions/design"), PathBuf::from("decisions/designs")]
+        );
+    }
+
+    #[test]
+    fn member_doc_path_for_wiki_uri() {
+        let ws = Path::new("/repo");
+        let p = member_doc_path("x0k:wiki/hypercard", ws, &CorpusLayout::default());
+        assert_eq!(p, Path::new("/repo/knowledge/wiki/hypercard.md"));
+    }
+}
+```
+
+<a name="chunk-root"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [report](#chunk-report) · [project-publication](#chunk-project-publication) · [project-publication-content](#chunk-project-publication-content) · [render-vello-bundle](#chunk-render-vello-bundle) · [corpus-layout](#chunk-corpus-layout) · [corpus-layout-current](#chunk-corpus-layout-current) · [corpus-layout-read](#chunk-corpus-layout-read) · [corpus-layout-accessors](#chunk-corpus-layout-accessors) · [parse-publication-region](#chunk-parse-publication-region) · [member-doc-path](#chunk-member-doc-path) · [bundle-region-motifs](#chunk-bundle-region-motifs) · [host-js-shim](#chunk-host-js-shim) · [tests](#chunk-tests)</sub>
+
+```rust {#root}
+<<module-doc>>
+
+<<uses>>
+
+<<report>>
+
+<<project-publication>>
+
+<<project-publication-content>>
+
+<<render-vello-bundle>>
+
+<<corpus-layout>>
+
+<<corpus-layout-current>>
+
+<<corpus-layout-read>>
+
+<<corpus-layout-accessors>>
+
+<<parse-publication-region>>
+
+<<member-doc-path>>
+
+<<bundle-region-motifs>>
+
+<<host-js-shim>>
+
+<<tests>>
+```
+
+The projector owns every side effect of publishing so that nothing else has
+to; that is the whole reason it is a separate module from the weave.

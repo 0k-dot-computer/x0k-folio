@@ -1,0 +1,28 @@
+[package]
+name = "x0k-fact-projection"
+version = "0.1.0"
+edition = { workspace = true }
+description = "Wasm-safe fact-projection contract: substrate-neutral FactEntry tuples, folio envelope + grove entity projections, and the FactSource read seam (single-spine plan C0)"
+license = "MIT"
+rust-version = { workspace = true }
+repository = "https://github.com/0k-dot-computer/x0k-folio"
+readme = "../../README.md"
+keywords = ["literate-programming", "tangle", "markdown", "documentation"]
+
+# Deliberately wasm-clean and minimal: this crate is the substrate-neutral
+# contract between fact *producers* (folio envelope ingestion, grove
+# entity writes) and fact *consumers* (grove reconstruction folds,
+# relation-graph folds over the entry spine). It must build on
+# wasm32-unknown-unknown so spine consumers (motifs, web folds) can link it.
+# No workspace-hack (it would pull tokio/mio), no Dialog-DB deps (the
+# Dialog-DB FactSource impl lives in x0k-grove). serde + postcard exist
+# solely for the spine payload encoding in `payload.rs` (single-spine C1):
+# the core `FactEntry`/`FactValue` types stay serde-free — the wire schema
+# is the separate, explicitly versioned `FactPayload` type.
+[dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+postcard = { version = "1.0", default-features = false, features = ["use-std"] }
+# Coordinate digests + the canonical fact-summary digest (single-spine
+# D5a, `summary.rs`). Pure-Rust on wasm32 (no asm/simd there) — stays
+# wasm-clean, same posture as x0k-entry-types.
+blake3 = "1.5"

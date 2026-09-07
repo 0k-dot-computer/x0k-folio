@@ -1,0 +1,17 @@
+{
+  "source": "implementation/icon/validate.md",
+  "source_hash": "79ee856b619c87ed",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "5a962d4324f2d92d",
+      "outputs": [
+        {
+          "path": "crates/x0k-icon/src/validate.rs",
+          "hash": "8d330209a2fe5430"
+        }
+      ]
+    }
+  ]
+}

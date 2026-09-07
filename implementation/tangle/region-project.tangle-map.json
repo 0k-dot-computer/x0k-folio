@@ -1,0 +1,17 @@
+{
+  "source": "implementation/tangle/region-project.md",
+  "source_hash": "3e585c97006d1bd9",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "657457210e6ce976",
+      "outputs": [
+        {
+          "path": "crates/x0k-tangle/src/region_project.rs",
+          "hash": "bed0210b96d682a1"
+        }
+      ]
+    }
+  ]
+}

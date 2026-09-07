@@ -1,0 +1,17 @@
+{
+  "source": "implementation/folio/checking.md",
+  "source_hash": "1771b26f9b6e2549",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "94cf517a796c1cdd",
+      "outputs": [
+        {
+          "path": "crates/x0k-folio/src/envelope_check.rs",
+          "hash": "d61d7938083c69e0"
+        }
+      ]
+    }
+  ]
+}

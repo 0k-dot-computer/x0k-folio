@@ -1,0 +1,17 @@
+{
+  "source": "implementation/folio/provenance.md",
+  "source_hash": "3f60a1d7441f14f8",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "31f83a6b879cec7b",
+      "outputs": [
+        {
+          "path": "crates/x0k-folio/src/block_provenance.rs",
+          "hash": "389845a88c03a917"
+        }
+      ]
+    }
+  ]
+}

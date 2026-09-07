@@ -1,0 +1,21 @@
+{
+  "source": "implementation/folio/canonical-patch.md",
+  "source_hash": "00a2a6a489fb0fbc",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "0727e70fce4f482d",
+      "outputs": [
+        {
+          "path": "crates/x0k-folio/tests/patch_grammar.rs",
+          "hash": "d5634a7fd3e61a81"
+        },
+        {
+          "path": "crates/x0k-folio/src/canonical_patch.rs",
+          "hash": "92b3a824378d9eb2"
+        }
+      ]
+    }
+  ]
+}

@@ -41,7 +41,7 @@ fi
 # Re-tangle every literate document (the tangler discovers the ones with a
 # `tangle:` block). A tangle failure fails CI — it is never swallowed.
 # `cargo run` finds the binary wherever CARGO_TARGET_DIR put it.
-cargo run --locked -q -p x0k-tangle --bin x0k-tangle -- tangle corpora/x0k/implementation --workspace .
+cargo run --locked -q -p x0k-tangle --bin x0k-tangle -- tangle implementation --workspace .
 # The committed @generated code and .tangle-map.json sidecars must be exactly
 # what the tangler just wrote: any modified or untracked file is drift.
 if [ -n "$(git status --porcelain)" ]; then

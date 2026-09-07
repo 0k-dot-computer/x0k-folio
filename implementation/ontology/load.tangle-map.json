@@ -1,0 +1,17 @@
+{
+  "source": "implementation/ontology/load.md",
+  "source_hash": "2d1e166142387cf3",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "2bcf59c7f582fae7",
+      "outputs": [
+        {
+          "path": "crates/x0k-ontology/src/load.rs",
+          "hash": "e3e13e05e92ec275"
+        }
+      ]
+    }
+  ]
+}

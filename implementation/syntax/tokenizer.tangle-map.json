@@ -1,0 +1,17 @@
+{
+  "source": "implementation/syntax/tokenizer.md",
+  "source_hash": "2c3036965cf26e54",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "05dea384db59b280",
+      "outputs": [
+        {
+          "path": "crates/x0k-syntax/src/lib.rs",
+          "hash": "17eb07db452683c9"
+        }
+      ]
+    }
+  ]
+}

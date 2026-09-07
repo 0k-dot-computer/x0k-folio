@@ -1,0 +1,17 @@
+{
+  "source": "implementation/ontology/views.md",
+  "source_hash": "82f88c2d094dfeea",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "934540e431f5efb0",
+      "outputs": [
+        {
+          "path": "crates/x0k-ontology/src/lib.rs",
+          "hash": "b9fe00a300b4df89"
+        }
+      ]
+    }
+  ]
+}
