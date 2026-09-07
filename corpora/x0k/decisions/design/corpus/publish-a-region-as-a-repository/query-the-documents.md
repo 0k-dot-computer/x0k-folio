@@ -58,7 +58,7 @@ cargo run -p x0k-folio-cli -- query --database /tmp/folio --file query.json --fo
 Definitions in the collection supply its vocabulary. Add `--shipped` to
 `ingest` to include the supplied vocabulary, or use `--vocabulary path/to/modules`
 for a directory of Turtle modules.
-[Query files](../../../../x0k-folio-cli/examples/queries) use Dialog's native
+[Query files](../../../../../../x0k-folio-cli/examples/queries) use Dialog's native
 JSON query and rule format. Edit their properties and bindings to ask a
 different question. JSON output preserves the distinction between references,
 text, numbers, and other value types.
@@ -70,7 +70,7 @@ collections, build with `cargo build --release -p x0k-folio-cli` and use
 
 #### Try the Paper collection
 
-The [example collection](../../../../x0k-folio-cli/examples/papers) defines
+The [example collection](../../../../../../x0k-folio-cli/examples/papers) defines
 its own Paper concept and citation relationship. Ingest it, then ask which
 paper cites which:
 
@@ -80,5 +80,5 @@ cargo run -p x0k-folio-cli -- query --database /tmp/folio-papers --file x0k-foli
 ```
 
 The result links Alpha's citation of Beta to the document that declares it.
-The [command documentation](../../../../corpora/x0k/implementation/folio/query-cli.md)
+The [command documentation](../../../../implementation/folio/query-cli.md)
 explains native rules, query limits, and keeping the database current.
