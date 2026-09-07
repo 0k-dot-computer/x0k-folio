@@ -387,6 +387,37 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
 
     #[tokio::test]
     async fn selected_base_updates_and_removal_use_normal_source_recovery() {
+        // A visible Dialog commit can precede its lifecycle acknowledgement.
+        // Reconcile unchanged input until the durable checkpoint catches up;
+        // an absent acknowledgement or retained tombstone must still fail.
+        async fn reconcile_until_acknowledged(
+            source: &mut FolioSource,
+            root: &Path,
+            checkpoint: &Path,
+            sinks: &std::sync::Mutex<Vec<x0k_folio_ingest::backend::Backend>>,
+            expected: &[(PathBuf, String)],
+        ) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                x0k_folio_ingest::lifecycle::reconcile(
+                    source, root, checkpoint, sinks, None).await.unwrap();
+                let state = x0k_folio_ingest::checkpoint::load_state(checkpoint).unwrap();
+                let complete = state.files.len() == expected.len()
+                    && state.recovery.len() == expected.len()
+                    && expected.iter().all(|(path, hash)| {
+                        let key = path.to_string_lossy();
+                        state.files.get(key.as_ref()).is_some_and(|file|
+                            file.content_hash == *hash && file.acked_by.contains("dialog"))
+                            && state.recovery.get(key.as_ref()).is_some_and(|record|
+                                !record.deleted && record.revisions.get("dialog").is_some_and(
+                                    |revision| revision.applied_hash.as_ref() == Some(hash)))
+                    });
+                if complete { return; }
+                assert!(std::time::Instant::now() < deadline,
+                    "source recovery did not reach the exact acknowledged revisions: {state:?}");
+            }
+        }
+
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().join("corpus");
         std::fs::create_dir(&root).unwrap();
@@ -400,8 +431,12 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         assert_eq!(first.vocabulary_source_count(), 1);
         let raw = std::fs::read(&path).unwrap();
         let old_revision = first.revision_hash(&raw);
-        x0k_folio_ingest::lifecycle::reconcile(&mut first, &root, &checkpoint, &sinks, None).await.unwrap();
         let virtual_path = root.join(BASE_VOCABULARY_SOURCE);
+        let expected = vec![
+            (path.clone(), old_revision.clone()),
+            (virtual_path.clone(), first.revision_hash(&first.read(&virtual_path).unwrap())),
+        ];
+        reconcile_until_acknowledged(&mut first, &root, &checkpoint, &sinks, &expected).await;
         assert_eq!(x0k_folio_ingest::lifecycle::apply_path_change(
             &first, &virtual_path, &checkpoint, &sinks).unwrap(), 0);
         let label = "http://www.w3.org/2000/01/rdf-schema#label";
@@ -410,13 +445,21 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         assert_eq!(query_values(&backend, &origin).await, vec![FactValue::Text("directory:base.ttl".into())]);
         let mut changed = FolioSource::prepare_with_provenance(&root, selected_base("New"), "shipped").unwrap();
         assert_ne!(changed.revision_hash(&raw), old_revision);
-        x0k_folio_ingest::lifecycle::reconcile(&mut changed, &root, &checkpoint, &sinks, None).await.unwrap();
+        let changed_revision = changed.revision_hash(&raw);
+        let expected = vec![
+            (path.clone(), changed_revision.clone()),
+            (virtual_path.clone(), changed.revision_hash(&changed.read(&virtual_path).unwrap())),
+        ];
+        reconcile_until_acknowledged(&mut changed, &root, &checkpoint, &sinks, &expected).await;
         assert_eq!(query_values(&backend, label).await, vec![FactValue::Text("New".into())]);
         assert_eq!(query_values(&backend, &origin).await, vec![FactValue::Text("shipped".into())]);
         let mut removed = FolioSource::prepare(&root, OntologyModel::new([])).unwrap();
         assert_eq!(removed.vocabulary_source_count(), 0);
         assert!(removed.diagnostics()[0].error.is_some());
-        x0k_folio_ingest::lifecycle::reconcile(&mut removed, &root, &checkpoint, &sinks, None).await.unwrap();
+        reconcile_until_acknowledged(
+            &mut removed, &root, &checkpoint, &sinks,
+            &[(path.clone(), changed_revision)],
+        ).await;
         assert!(query_values(&backend, label).await.is_empty());
         assert!(query_values(&backend, &origin).await.is_empty());
         let state = x0k_folio_ingest::checkpoint::load_state(&checkpoint).unwrap();
