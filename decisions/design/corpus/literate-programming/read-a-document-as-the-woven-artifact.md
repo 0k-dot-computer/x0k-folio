@@ -11,6 +11,8 @@ x0k:
 
 ### Read a document as the woven artifact
 
+Read the explanation and code together, with references to code blocks expanded in place.
+
 I read a literate document as a rendered whole — its prose and its code in one
 continuous argument, code spans highlighted, chunks resolved where they are
 referenced rather than where they happen to be defined. The reading order is

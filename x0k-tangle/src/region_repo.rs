@@ -686,9 +686,10 @@ pub fn project_publication_repo_with(
         license_source,
         &source_licenses,
     )?;
-    tangle_publication_doc(region_doc, workspace, output_dir, &overlay)?;
+    let publication_pages = tangle_publication_doc(region_doc, workspace, output_dir, &overlay)?;
     write_readme_contents(
         output_dir,
+        &publication_pages,
         &literate,
         &vocab_modules,
         &modules_rel,
@@ -1964,6 +1965,8 @@ struct AffordanceRecord {
     id: String,
     /// The heading of the section that declares it.
     title: String,
+    /// Prose from the declaring section; its opening paragraph is the short description.
+    description: String,
     /// Projection-relative path of the document that declares it — the
     /// row's link.
     document: String,
@@ -2127,6 +2130,7 @@ fn affordance_record(entity: &InlineEntity, document: &str) -> AffordanceRecord 
     AffordanceRecord {
         id: entity.uri.to_string(),
         title: entity.title.clone(),
+        description: entity.description.clone(),
         document: document.to_string(),
         actors,
         surfaces: Vec::new(),
@@ -2568,10 +2572,6 @@ fn render_affordances(records: &[AffordanceRecord], icons: Option<&Icons>) -> St
     }
     let mut out = format!("{AFFORDANCES_LEAD}\n\n");
     for rec in records {
-        let icon = icons
-            .and_then(|i| i.label(&rec.id))
-            .map(|label| format!("{} ", icon_picture(AFFORDANCES_DIR, label, SUBJECT_ICON_HEIGHT)))
-            .unwrap_or_default();
         let mut tail: Vec<String> = Vec::new();
         if !rec.surfaces.is_empty() {
             let cues: Vec<String> =
@@ -2580,13 +2580,54 @@ fn render_affordances(records: &[AffordanceRecord], icons: Option<&Icons>) -> St
         }
         tail.push(rec.status().as_str().to_string());
         out.push_str(&format!(
-            "- {icon}**[{}]({})** — {}\n",
-            rec.title,
-            rec.document,
+            "{} — {}\n",
+            affordance_link(rec, icons),
             tail.join(" · ")
         ));
     }
     out.push('\n');
+    out
+}
+
+/// The small public list and the detailed map use the same records and marks.
+const AFFORDANCES_MARKER: &str = "<!-- x0k:affordance-links -->";
+
+fn affordance_link(rec: &AffordanceRecord, icons: Option<&Icons>) -> String {
+    let icon = icons
+        .and_then(|i| i.label(&rec.id))
+        .map(|label| format!("{} ", icon_picture(AFFORDANCES_DIR, label, SUBJECT_ICON_HEIGHT)))
+        .unwrap_or_default();
+    format!("- {icon}**[{}]({})**", rec.title, rec.document)
+}
+
+/// Use only the first prose paragraph: later paragraphs, icon declarations,
+/// and code belong to the affordance page. Text extraction avoids carrying
+/// page-relative links into a root-level list.
+fn affordance_description(description: &str) -> String {
+    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+    let mut paragraph = false;
+    let mut text = String::new();
+    for event in Parser::new(description) {
+        match event {
+            Event::Start(Tag::Paragraph) => paragraph = true,
+            Event::End(TagEnd::Paragraph) if paragraph => break,
+            Event::Text(value) | Event::Code(value) if paragraph => text.push_str(&value),
+            Event::SoftBreak | Event::HardBreak if paragraph => text.push(' '),
+            _ => {}
+        }
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn render_affordance_links(records: &[AffordanceRecord], icons: Option<&Icons>) -> String {
+    let mut out = String::new();
+    for rec in records {
+        out.push_str(&format!("{}\n\n", affordance_link(rec, icons)));
+        let description = affordance_description(&rec.description);
+        if !description.is_empty() {
+            out.push_str(&format!("  <p>{}</p>\n\n", xml_escape(&description)));
+        }
+    }
     out
 }
 
@@ -3129,7 +3170,7 @@ fn tangle_publication_doc(
     workspace: &Path,
     output_dir: &Path,
     overlay: &[String],
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
     let rel = region_doc
         .canonicalize()
         .ok()
@@ -3235,10 +3276,10 @@ fn tangle_publication_doc(
         tracing::info!(path = %seed.display(), "region_repo.overlay.seeded");
     }
     tracing::info!(source = %rel.display(), "region_repo.readme.tangled");
-    Ok(())
+    Ok(outputs.into_iter().filter(|p| !is_overlay(p) && root_markdown(p)).collect())
 }
 
-/// The marker a publication's README carries where its contents page goes.
+/// The marker an authored publication page carries where its contents map goes.
 /// An HTML comment: hidden in every rendered README, unambiguous to find.
 const CONTENTS_MARKER: &str = "<!-- x0k:contents";
 
@@ -3644,14 +3685,15 @@ fn render_contents(
     Ok(out.trim_end_matches('\n').to_string())
 }
 
-/// Replace the README's contents marker with the generated page, writing
+/// Replace the authored pages' single contents marker with the generated map, writing
 /// the icons its affordance rows and their pages show. A projection with
 /// documents, modules or affordances to list and no marker refuses: the
-/// alternative is a public README that silently says less than the
+/// alternative is a public map that silently says less than the
 /// repository ships.
 #[allow(clippy::too_many_arguments)]
 fn write_readme_contents(
     output_dir: &Path,
+    publication_pages: &[PathBuf],
     docs: &[LiterateDoc],
     modules: &[VocabModule],
     modules_rel: &Path,
@@ -3660,22 +3702,41 @@ fn write_readme_contents(
     projected: &[ProjectedDoc],
     report: &mut RepoProjectReport,
 ) -> Result<()> {
-    let path = output_dir.join("README.md");
-    let text = std::fs::read_to_string(&path).context("reading the tangled README")?;
-    let lines: Vec<&str> = text.split_inclusive('\n').collect();
-    let Some(marker) = find_contents_marker(&lines)? else {
+    let mut contents_page = None;
+    for page in publication_pages {
+        let path = output_dir.join(page);
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading publication page {}", page.display()))?;
+        let text = if text.contains(AFFORDANCES_MARKER) {
+            let compact = render_affordance_links(affordances, icons);
+            let expanded = text.replace(AFFORDANCES_MARKER, compact.trim_end());
+            std::fs::write(&path, &expanded)?;
+            expanded
+        } else {
+            text
+        };
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        if let Some(marker) = find_contents_marker(&lines)? {
+            if contents_page.is_some() {
+                bail!("the publication carries a second contents marker; the map has one home");
+            }
+            contents_page = Some((path, text, marker));
+        }
+    }
+    let Some((path, text, marker)) = contents_page else {
         if docs.is_empty() && modules.is_empty() && affordances.is_empty() {
             return Ok(());
         }
         bail!(
             "the publication ships {} literate document(s), {} vocabulary module(s) and \
-             {} affordance(s) but its README carries no `{CONTENTS_MARKER} -->` marker to \
+             {} affordance(s) but its authored pages carry no `{CONTENTS_MARKER} -->` marker to \
              write the contents page into",
             docs.len(),
             modules.len(),
             affordances.len()
         );
     };
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let concepts = concept_pages(projected);
     let mut unpublished = Vec::new();
     let contents = render_contents(
@@ -3698,7 +3759,7 @@ fn write_readme_contents(
     out.push_str(&contents);
     out.push('\n');
     out.extend(lines[marker.end..].iter().copied());
-    std::fs::write(&path, out).context("writing the README with its contents page")?;
+    std::fs::write(&path, out).context("writing the publication contents page")?;
     tracing::info!(
         documents = docs.len(),
         modules = modules.len(),
@@ -4599,6 +4660,7 @@ mod tests {
         AffordanceRecord {
             id: "x0k:affordance/read_a_line".to_string(),
             title: "Read a line".to_string(),
+            description: "Read the first line as text.".to_string(),
             document: "d.md".to_string(),
             actors: vec!["human".to_string()],
             surfaces: surfaces.iter().map(|s| ("cli".to_string(), s.to_string())).collect(),
@@ -4607,6 +4669,61 @@ mod tests {
             proofs: if tests.is_empty() { Vec::new() } else { vec![proof] },
             icons: Vec::new(),
         }
+    }
+
+    #[test]
+    fn split_publication_pages_keep_full_map_and_compact_links() {
+        let out = tempfile::tempdir().unwrap();
+        std::fs::write(out.path().join("README.md"), "# Read\n<!-- x0k:affordance-links -->\n[Implementation](IMPLEMENTATION.md)\n").unwrap();
+        std::fs::write(out.path().join("IMPLEMENTATION.md"), "# Map\n<!-- x0k:contents -->\n").unwrap();
+        let records = [record(&["demo-line"], &["one"], &[("one", ProofOutcome::Passed)])];
+        let docs = [doc("knowledge/implementation/demo/one.md", "One chapter", Some("The complete chapter."))];
+        let mut report = RepoProjectReport::default();
+        write_readme_contents(
+            out.path(), &[PathBuf::from("README.md"), PathBuf::from("IMPLEMENTATION.md")],
+            &docs, &[], Path::new("ontology/modules"), &records, None, &[], &mut report,
+        ).unwrap();
+        let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+        let map = std::fs::read_to_string(out.path().join("IMPLEMENTATION.md")).unwrap();
+        let link = affordance_link(&records[0], None);
+        assert!(readme.contains(&link));
+        assert!(!readme.contains("demo-line") && !readme.contains("proven"));
+        assert!(!readme.contains("One chapter"));
+        assert!(map.contains(&link) && map.contains("demo-line") && map.contains("proven"));
+        assert!(map.contains("One chapter") && map.contains("The complete chapter."));
+        assert!(!readme.contains("<!-- x0k:") && !map.contains("<!-- x0k:"));
+    }
+
+    #[test]
+    fn authored_pages_refuse_duplicate_maps_and_ignore_unlisted_files() {
+        let out = tempfile::tempdir().unwrap();
+        for page in ["README.md", "IMPLEMENTATION.md"] {
+            std::fs::write(out.path().join(page), "<!-- x0k:contents -->\n").unwrap();
+        }
+        let docs = [doc("knowledge/implementation/demo/one.md", "One", Some("One."))];
+        let write = |pages: &[PathBuf]| write_readme_contents(
+            out.path(), pages, &docs, &[], Path::new("ontology/modules"), &[], None, &[],
+            &mut RepoProjectReport::default(),
+        );
+        let both = [PathBuf::from("README.md"), PathBuf::from("IMPLEMENTATION.md")];
+        assert!(write(&both).unwrap_err().to_string().contains("second contents marker"));
+        std::fs::write(out.path().join("README.md"), "# Introduction\n").unwrap();
+        assert!(write(&both[..1]).unwrap_err().to_string().contains("carry no"));
+        write(&both).expect("the map has one authored home");
+    }
+
+    #[test]
+    fn affordance_blurbs_use_the_first_prose_paragraph_as_plain_text() {
+        let description = "```rust\nignored code\n```\n\nRead **one** [line](relative.md) with `parse_line`.\nKeep < and & literal.\n\nLonger explanation.\n\n```svg\n<svg/>\n```";
+        assert_eq!(affordance_description(description), "Read one line with parse_line. Keep < and & literal.");
+        let mut rec = record(&[], &[], &[]);
+        rec.description = description.to_string();
+        let page = render_affordance_links(&[rec], None);
+        assert!(page.contains("<p>Read one line with parse_line. Keep &lt; and &amp; literal.</p>"));
+        assert!(!page.contains("relative.md") && !page.contains("Longer explanation") && !page.contains("<svg"));
+        let mut rec = record(&[], &[], &[]);
+        rec.description.clear();
+        assert!(!render_affordance_links(&[rec], None).contains("<p>"));
     }
 
     #[test]

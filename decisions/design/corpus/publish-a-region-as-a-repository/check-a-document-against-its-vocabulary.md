@@ -11,6 +11,8 @@ x0k:
 
 ### Check a document against its vocabulary
 
+Find metadata and relationships that do not match the document vocabulary.
+
 Holding only the published repository, I check that a document's envelope is
 well formed and that the predicates on its edges are terms the vocabulary in
 this repository actually declares. I am told which of two things went wrong: a

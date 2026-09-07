@@ -11,6 +11,8 @@ x0k:
 
 ### Check an icon against the profile
 
+Check an icon's geometry and strokes against the shared drawing rules.
+
 An author, or the composing loop, hands a drawing to the checker and is
 told it is accepted or which rule it broke and where — never handed back
 a silently altered drawing.
@@ -228,3 +230,13 @@ fn icon_refuses_a_drawing_by_rule_naming_the_element_and_fails() {
 
 </details>
 
+
+Its mark is a drawing checked against its frame.
+
+```svg x0k:icon
+<svg viewBox="0 0 16 16">
+  <rect x="1.5" y="1.5" width="10" height="10" rx="1" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M6.5 3.5 L9 6.5 L6.5 9 L4 6.5 Z" fill="none" stroke="ink" stroke-width="1.5"/>
+  <path d="M8.5 12 L10.5 14 L14.5 9.5" fill="none" stroke="ink" stroke-width="1.5"/>
+</svg>
+```

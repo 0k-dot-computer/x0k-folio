@@ -14,7 +14,7 @@ wins where this file and the binary disagree.
 ## If you are asked to change code
 
 1. Find the chapter that owns it. The `@generated` header on the file names
-   the document; the README's contents lists every chapter by what it is
+   the document; IMPLEMENTATION.md lists every chapter by what it is
    about, so a change described as a behaviour ("how a chunk resolves") finds
    its chapter there before you open a file.
 2. Edit the document — the prose and the chunk together. The prose is the
@@ -50,7 +50,7 @@ predicates `edges` admits. Write the envelope by hand — no verb writes it for
 you: `format: folio/v1`, an `id` with the `x0k:` scheme (the parser admits no
 other), a `type` the format knows, a `status`, and `edges` whose predicates
 the `document` module declares (`x0k-ontology/ontology/modules/document.ttl`,
-one `rdfs:comment` per predicate). The README's "Start here" envelope is the
+one `rdfs:comment` per predicate). The integration guide's example envelope is the
 shape.
 
 ```sh
@@ -96,7 +96,7 @@ Quote the vocabulary, not the README's paraphrase of it.
 `x0k-ontology/ontology/modules/{core,document,software}.ttl` are N-Triples;
 the `rdfs:comment` on each class and predicate is its definition, and its
 `rdfs:domain` and `rdfs:range` say what it connects. For a concept rather
-than a term: each chapter group in the README's contents carries a *rests on*
+than a term: each chapter group in IMPLEMENTATION.md carries a *rests on*
 line naming the concept pages its chapters presuppose. The ones that ship are
 under `knowledge/wiki/`; a bare name with no link is a page the corpus has not
 published yet — say that, rather than supplying its content. To read a

@@ -11,6 +11,8 @@ x0k:
 
 ### Project source code out of a document
 
+Collect a document's code blocks into source files a compiler can build.
+
 I write the program and its explanation as one document, and get compilable
 source out of it. The document is the artifact I maintain; the code is what it
 projects. Nothing asks me to keep the two in agreement, because only one of

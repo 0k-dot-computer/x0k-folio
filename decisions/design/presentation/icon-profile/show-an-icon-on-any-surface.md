@@ -11,6 +11,8 @@ x0k:
 
 ### Show an icon on any surface
 
+Draw the same icon for different surfaces, using the colors and file format each needs.
+
 A surface — a projected repository, a woven page, a plate, the shell, a
 favicon — asks for the form it consumes and receives the entity's declared
 icon bound to its palette, from one reader, with nothing drawn by hand.
@@ -240,3 +242,14 @@ fn icon_writes_each_declaration_as_its_light_and_dark_files() {
 
 </details>
 
+
+The same drawing sits on a surface: the diamond carries across, the frame
+becomes a screen.
+
+```svg x0k:icon
+<svg viewBox="0 0 16 16">
+  <rect x="1.5" y="2.5" width="13" height="9" rx="1" fill="none" stroke="line" stroke-width="1"/>
+  <path d="M8 4 L10.5 7 L8 10 L5.5 7 Z" fill="none" stroke="ink" stroke-width="1.5"/>
+  <path d="M8 11.5 V14 M5.5 14 H10.5" fill="none" stroke="line" stroke-width="1"/>
+</svg>
+```
