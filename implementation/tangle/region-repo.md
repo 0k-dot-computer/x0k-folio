@@ -9480,10 +9480,16 @@ The publication can select `repositoryLayout: organized`. A final structured pro
 fn organized_repository_layout(content: &str) -> Result<bool> {
     let (header, _) = split_frontmatter(content).context("publication has no envelope")?;
     let yaml: serde_norway::Value = serde_norway::from_str(header)?;
-    match yaml["x0k"]["repositoryLayout"].as_str() {
-        None | Some("canonical") => Ok(false),
-        Some("organized") => Ok(true),
-        Some(other) => bail!("unknown repositoryLayout {other}"),
+    let field = &yaml["x0k"]["repositoryLayout"];
+    if field.is_null() && yaml["x0k"].as_mapping().is_some_and(|map|
+        !map.contains_key(serde_norway::Value::String("repositoryLayout".to_string()))) {
+        return Ok(false);
+    }
+    let value = field.as_str().context("repositoryLayout must be a string (canonical or organized)")?;
+    match value {
+        "canonical" => Ok(false),
+        "organized" => Ok(true),
+        other => bail!("unknown repositoryLayout {other}"),
     }
 }
 
@@ -9530,6 +9536,42 @@ fn organized_link(target: &str, old: &Path, new: &Path, crates: &[String], imple
     Some(format!("{relative}{}", &target[end..]))
 }
 
+/// Preserve descriptors and whitespace, rewriting only each candidate URL.
+/// URL tokens can contain commas (notably data URLs); only trailing commas
+/// terminate a descriptor-free candidate.
+fn organized_srcset(value: &str, old: &Path, new: &Path, crates: &[String], implementation: &Path) -> String {
+    let bytes = value.as_bytes();
+    let mut cursor = 0;
+    let mut edits = Vec::new();
+    while cursor < bytes.len() {
+        while cursor < bytes.len() && (bytes[cursor].is_ascii_whitespace() || bytes[cursor] == b',') { cursor += 1; }
+        let start = cursor;
+        while cursor < bytes.len() && !bytes[cursor].is_ascii_whitespace() { cursor += 1; }
+        let mut end = cursor;
+        while end > start && bytes[end-1] == b',' { end -= 1; }
+        if start < end {
+            if let Some(url) = organized_link(&value[start..end], old, new, crates, implementation) {
+                edits.push((start, end, url));
+            }
+        }
+        if end == cursor {
+            let mut parentheses = 0usize;
+            while cursor < bytes.len() {
+                match bytes[cursor] {
+                    b'(' => parentheses += 1,
+                    b')' => parentheses = parentheses.saturating_sub(1),
+                    b',' if parentheses == 0 => { cursor += 1; break; },
+                    _ => {},
+                }
+                cursor += 1;
+            }
+        }
+    }
+    let mut output = value.to_string();
+    for (start, end, url) in edits.into_iter().rev() { output.replace_range(start..end, &url); }
+    output
+}
+
 /// Operate on parsed Markdown links, reference definitions and rendered HTML.
 /// Code blocks and code spans are not URL-bearing document markup.
 fn organized_markdown(text: &str, old: &Path, new: &Path, crates: &[String], implementation: &Path) -> String {
@@ -9566,9 +9608,10 @@ fn organized_markdown(text: &str, old: &Path, new: &Path, crates: &[String], imp
                             let Some(length) = slice[start..].find(quote) else { break; };
                             let end = start+length;
                             let target = &slice[start..end];
-                            if let Some(value) = organized_link(target, old, new, crates, implementation) {
-                                edits.insert(span.start+start, (span.start+end, value));
-                            }
+                            let value = if attribute == "srcset" {
+                                Some(organized_srcset(target, old, new, crates, implementation))
+                            } else { organized_link(target, old, new, crates, implementation) };
+                            if let Some(value) = value { edits.insert(span.start+start, (span.start+end, value)); }
                             offset = end+1;
                         }
                     }
@@ -9768,6 +9811,31 @@ mod organized_layout_tests {
         assert!(mapped.contains("[code](../../../../demo/src/lib.rs)"), "{mapped}");
         assert!(mapped.contains("[example](../../../../demo/src/lib.rs)"), "{mapped}");
         assert_eq!(organized_path(Path::new("crates/demo/src/lib.rs"), &crates, implementation), Path::new("crates/demo/src/lib.rs"));
+    }
+
+    #[test]
+    fn organized_srcset_rewrites_each_candidate_and_preserves_descriptors() {
+        let old = Path::new("corpora/x0k/implementation/demo/page.md");
+        let new = Path::new("implementation/demo/page.md");
+        let implementation = Path::new("corpora/x0k/implementation");
+        let source = "<source srcset=\"../../../../affordances/a.svg 1x, ../../../../affordances/b.svg 2x\">";
+        let mapped = organized_markdown(source, old, new, &[], implementation);
+        assert_eq!(mapped, "<source srcset=\"../../assets/icons/a.svg 1x, ../../assets/icons/b.svg 2x\">");
+        let source = "data:image/svg+xml;base64,AAAA 1x, ../../../../affordances/b.svg 2x";
+        assert_eq!(organized_srcset(source, old, new, &[], implementation),
+            "data:image/svg+xml;base64,AAAA 1x, ../../assets/icons/b.svg 2x");
+        assert_eq!(organized_srcset("../../../../affordances/a.svg, ../../../../affordances/b.svg", old, new, &[], implementation),
+            "../../assets/icons/a.svg, ../../assets/icons/b.svg");
+    }
+
+    #[test]
+    fn repository_layout_rejects_present_non_string_values() {
+        assert!(!organized_repository_layout("---\nx0k:\n  id: demo\n---\n").unwrap());
+        assert!(organized_repository_layout("---\nx0k:\n  repositoryLayout: organized\n---\n").unwrap());
+        for value in ["1", "true", "null", "[organized]", "{name: organized}"] {
+            let text = format!("---\nx0k:\n  repositoryLayout: {value}\n---\n");
+            assert!(organized_repository_layout(&text).unwrap_err().to_string().contains("must be a string"), "{value}");
+        }
     }
 
     #[test]
