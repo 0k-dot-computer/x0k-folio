@@ -14,13 +14,14 @@ checker validates this metadata against the vocabulary you select.
 
 The supplied vocabulary describes documents, software, and their
 relationships. You can extend it, replace it, or define a vocabulary
-inside your documents. An **affordance** is one concept in the supplied
-vocabulary: it describes something a person or tool can do. Folio does
+inside your documents.
+
+For example, an **affordance** is one concept in the supplied vocabulary: it describes something a person or tool can do. Folio does
 not require every collection to use that concept.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/triangle-dark.svg">
-  <img alt="an implementation is constrained by an architecture and implements a design; architecture supports design" src="docs/triangle-light.svg">
+  <img alt="an implementation is constrained by an architecture and implements a design; architecture supports design; the design document declares an affordance" src="docs/triangle-light.svg">
 </picture>
 
 ## Concepts and instances
