@@ -1,6 +1,6 @@
 {
-  "corpus_commit": "1500a12f6cdea534f2eb6f475dba29a3e2c4cc0d",
-  "corpus_rev": "yoktwkuvmsslzmzyztptzklusrvmlmmm",
+  "corpus_commit": "f1b69aaa9f3a4bd5bd8d6a4242e02e69b178c5a7",
+  "corpus_rev": "wzvpqvmoplmzkmyyupuqovknvsmknrnk",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
@@ -19,6 +19,7 @@
     "x0k:design/literate-programming#read-a-document-as-the-woven-artifact": "corpora/x0k/decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md",
     "x0k:design/publish-a-region-as-a-repository#check-a-document-against-its-vocabulary": "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md",
     "x0k:design/publish-a-region-as-a-repository#declare-concepts-and-instances": "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md",
+    "x0k:design/publish-a-region-as-a-repository#query-the-documents": "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/query-the-documents.md",
     "x0k:wiki/event-graph-crdts": "corpora/x0k/wiki/event-graph-crdts.md",
     "x0k:wiki/literate-programming": "corpora/x0k/wiki/literate-programming.md",
     "x0k:wiki/loro": "corpora/x0k/wiki/loro.md"
@@ -125,6 +126,7 @@
     "corpora/x0k/decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md": "corpora/x0k/decisions/design/corpus/literate-programming.md",
     "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md": "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository.md",
     "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md": "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository.md",
+    "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/query-the-documents.md": "corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository.md",
     "corpora/x0k/decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md": "corpora/x0k/decisions/design/presentation/icon-profile.md",
     "corpora/x0k/decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md": "corpora/x0k/decisions/design/presentation/icon-profile.md",
     "corpora/x0k/implementation/folio/canonical-patch.md": "corpora/x0k/implementation/folio/canonical-patch.md",

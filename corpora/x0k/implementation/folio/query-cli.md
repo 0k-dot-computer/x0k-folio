@@ -15,6 +15,7 @@ x0k:
   edges:
     implements:
     - x0k:design/domains-of-your-own
+    - x0k:affordance/query_the_documents
     motivated_by:
     - x0k:intent/c5ccd003-77d6-4b0d-8824-649f6221c259
     cites:
@@ -26,6 +27,22 @@ x0k:
 The command takes explicit corpus and database paths. Its parser, document
 source and database adapter remain separate so a query does not need an
 x0k installation.
+
+## The query command
+
+The CLI exposes document queries through `x0k-folio-cli query`.
+
+<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d636c692d7175657279-1"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-folio-cli-query" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/folio/query-cli.md"><strong>Signifier</strong> · The query command · <code>https://0k.computer/ontology#signifier/x0k-folio-cli-query</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d636c692d7175657279-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d636c692d7175657279-1"></a>
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-folio-cli-query
+cue: x0k-folio-cli query
+edges:
+  signifies:
+    - x0k:affordance/query_the_documents
+  presentedOn:
+    - x0k:surface/cli
+```
 
 ## Read a collection
 

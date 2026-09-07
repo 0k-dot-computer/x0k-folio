@@ -1,6 +1,6 @@
 {
   "source": "corpora/x0k/implementation/folio/query-cli.md",
-  "source_hash": "4547006063783799",
+  "source_hash": "c5c8f0a975a7f71d",
   "pipelines": [
     {
       "kind": "identity-tangle",

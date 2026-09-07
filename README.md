@@ -16,8 +16,8 @@ The supplied vocabulary describes documents, software, and their
 relationships. You can extend it, replace it, or define a vocabulary
 inside your documents.
 
-For example, an **affordance** is one concept in the supplied vocabulary: it describes something a person or tool can do. Folio does
-not require every collection to use that concept.
+For example, an **affordance** is one concept in the supplied vocabulary:
+it describes something a person or tool can do.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/triangle-dark.svg">
@@ -27,53 +27,48 @@ not require every collection to use that concept.
 ## Concepts and instances
 
 A concept names a kind of thing; an instance is a particular thing of that
-kind. Define concepts in a `turtle folio:ontology` block and
-instances in typed YAML blocks. Definitions can be in the same document as
-their instances or in another document in the collection.
+kind. The supplied vocabulary’s [Affordance definition](x0k-ontology/ontology/modules/software.ttl)
+includes this Turtle declaration:
 
-The [Paper vocabulary](x0k-folio-cli/examples/papers/vocabulary.md) defines
-Paper and cites. An [instance](x0k-folio-cli/examples/papers/alpha.md)
-then says:
+```turtle
+@prefix x0k: <https://0k.computer/ontology#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
-```yaml
-id: paper:paper/alpha
-reviewed: true
-pages: 12
-edges:
-  paper:cites: [paper:paper/beta]
+x0k:Affordance a owl:Class ;
+    rdfs:label "Affordance" ;
+    rdfs:isDefinedBy <https://0k.computer/ontology/software> .
 ```
 
-The enclosing block is labeled `yaml paper:paper`. Its type gives
-the declaration meaning; its surrounding heading and prose give a reader
-context. A surface and theme can present that same declaration differently,
-with a readable default for custom concepts.
+A document can carry definitions in a `turtle folio:ontology` block.
+Folio does not require every collection to use the Affordance concept:
+you can define the concepts your collection needs.
+
+“Query the documents” is one instance of Affordance. Its design document
+declares it in a `yaml x0k:affordance` block:
+
+```yaml
+id: x0k:affordance/query_the_documents
+actors: [human, ai_agent]
+edges:
+  enabledBy:
+    - x0k:software-module/x0k-folio-cli
+    - x0k:software-module/x0k-folio-dialog
+```
+
+The heading names the affordance; the surrounding prose describes it.
+Definitions and instances can share a document or live in separate
+documents in the collection.
+
+The **Query the documents** entry under [What you can do with this](#what-you-can-do-with-this)
+is a rendered view of that instance. The repository renderer turns its
+heading, description, declaration, and icon into a linked entry. Its
+affordance page adds the available software and interface information.
+The surface and theme determine the presentation; custom concepts without
+a dedicated renderer receive a readable default.
 
 [Explore the supplied vocabulary](x0k-ontology/ontology/overview.svg).
 The diagram is generated from the modules shipped here.
-
-## Query the documents
-
-Ingest the example collection, then ask which paper cites which:
-
-```sh
-cargo run -p x0k-folio-cli -- ingest --root x0k-folio-cli/examples/papers --database /tmp/folio-papers
-cargo run -p x0k-folio-cli -- query --database /tmp/folio-papers --file x0k-folio-cli/examples/queries/citations.json
-```
-
-The result links Alpha's citation of Beta to the document that declares it.
-[Query files](x0k-folio-cli/examples/queries) are editable JSON using Dialog's
-native query and rule format. `--format json` preserves value types.
-`watch` follows edits; `status` reports rejected or pending
-documents; `rebuild` creates a fresh database generation.
-
-For larger collections, build an optimized executable with
-`cargo build --release -p x0k-folio-cli`, then run
-`target/release/x0k-folio-cli` with the same commands.
-
-Files remain the authoring surface. Dialog provides a queryable view of
-their concepts, instances, and relationships. This tool runs without x0k.
-The backend interface also lets the private x0k host enable Dialog, x0k,
-or both for different purposes.
 
 ## Code and documentation
 
@@ -129,6 +124,10 @@ publishing part of a repository. [Background and prior work](IMPLEMENTATION.md#l
 - <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/read-declared-affordances-dark.svg"><img alt="Declare concepts and instances" src="affordances/read-declared-affordances-light.svg" height="20"></picture> **[Declare concepts and instances](corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md)**
 
   <p>Define a vocabulary in a document, then describe particular things with it.</p>
+
+- <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/query-the-documents-dark.svg"><img alt="Query the documents" src="affordances/query-the-documents-light.svg" height="20"></picture> **[Query the documents](corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/query-the-documents.md)**
+
+  <p>Ask questions across a collection's concepts, instances, and relationships.</p>
 
 - <picture><source media="(prefers-color-scheme: dark)" srcset="affordances/show-an-icon-on-a-surface-dark.svg"><img alt="Show an icon on any surface" src="affordances/show-an-icon-on-a-surface-light.svg" height="20"></picture> **[Show an icon on any surface](corpora/x0k/decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md)**
 
