@@ -66,7 +66,7 @@ use std::sync::Arc;
 use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
 use x0k_folio::transclusion::extract_section;
 use x0k_folio::{EntityId, InlineEntity, ICON_CLASS};
-use x0k_icon::{emit, Accepted, Label, Palette};
+use x0k_icon::{emit, Accepted, Label, Palette, RoleBinding};
 
 use crate::faces::{check_section, icon_svg, proving_chunks};
 use crate::parser::parse_document;
@@ -602,7 +602,7 @@ pub fn project_publication_repo_with(
     } else {
         Some(vocabulary_overview(&vocab_modules, palette.as_ref())?)
     };
-    let icons = read_icons(workspace, &layout, &packages, &affordances, palette)?;
+    let icons = read_icons(workspace, &layout, &packages, &affordances, palette.clone())?;
 
     // A prior projection (a `.git`, or a PROVENANCE.json) is projected INTO,
     // not beside: the overlay paths are stashed, the regenerated region is
@@ -704,7 +704,8 @@ pub fn project_publication_repo_with(
         license_source,
         &source_licenses,
     )?;
-    let publication_pages = tangle_publication_doc(region_doc, workspace, output_dir, &overlay, &layout)?;
+    let publication_pages =
+        tangle_publication_doc(region_doc, workspace, output_dir, &overlay, &layout, palette.as_ref())?;
     write_readme_contents(
         output_dir,
         &publication_pages,
@@ -3757,7 +3758,8 @@ fn generate_lockfile(output_dir: &Path) -> Result<()> {
 /// Tangle the publication doc's own `tangle:` block into the projection:
 /// its `root: README.md` chunk becomes `<output_dir>/README.md`, and any
 /// chunk routed (`file="…"`) to a declared overlay path seeds that path
-/// when it is absent. The doc is copied to its corpus-relative path inside
+/// when it is absent, and any chunk routed to `assets/diagrams/<stem>.svg`
+/// is bound to `palette` once per scheme. The doc is copied to its corpus-relative path inside
 /// the projection for the duration of the tangle so the `@generated`
 /// header names that path and every write stays under the projection
 /// root; the copy and its sidecar are removed afterwards (the publication
@@ -3769,6 +3771,7 @@ fn tangle_publication_doc(
     output_dir: &Path,
     overlay: &[String],
     layout: &CorpusLayout,
+    palette: Option<&Palette>,
 ) -> Result<Vec<PathBuf>> {
     let rel = region_doc
         .canonicalize()
@@ -3837,9 +3840,13 @@ fn tangle_publication_doc(
         p.parent().is_none_or(|d| d.as_os_str().is_empty())
             && p.extension().is_some_and(|e| e == "md")
     };
+    // A diagram: an SVG routed under `assets/diagrams/`, bound to the palette below.
+    let diagram = |p: &Path| {
+        p.parent() == Some(Path::new("assets/diagrams")) && p.extension().is_some_and(|e| e == "svg")
+    };
     let stray: Vec<&PathBuf> = outputs
         .iter()
-        .filter(|p| !(p.as_path() == readme || is_overlay(p) || root_markdown(p)
+        .filter(|p| !(p.as_path() == readme || is_overlay(p) || root_markdown(p) || diagram(p)
             || (p.parent() == Some(Path::new("guides")) && p.extension().is_some_and(|e| e == "md"))))
         .collect();
     if !outputs.iter().any(|p| p == readme) || !stray.is_empty() {
@@ -3876,8 +3883,59 @@ fn tangle_publication_doc(
         std::fs::write(&path, body)?;
         tracing::info!(path = %seed.display(), "region_repo.overlay.seeded");
     }
+    // A diagram is bound to the palette like the icons: its `{{role}}`
+    // references become the scheme's colours, once per scheme, and the
+    // unbound file never ships.
+    for source in outputs.iter().filter(|p| diagram(p) && !is_overlay(p)) {
+        let path = output_dir.join(source);
+        let text = std::fs::read_to_string(&path)?;
+        let palette = palette.ok_or_else(|| {
+            anyhow!(
+                "{} routes a diagram to {} but carries no `palette:` to bind it with",
+                rel.display(),
+                source.display()
+            )
+        })?;
+        let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+        for (scheme, roles) in [("light", &palette.light), ("dark", &palette.dark)] {
+            let bound = bind_diagram(&text, roles).with_context(|| {
+                format!("binding {} for the {scheme} scheme", source.display())
+            })?;
+            std::fs::write(output_dir.join(source.with_file_name(format!("{stem}-{scheme}.svg"))), bound)?;
+        }
+        std::fs::remove_file(&path)?;
+        tracing::info!(path = %source.display(), "region_repo.diagram.bound");
+    }
     tracing::info!(source = %rel.display(), "region_repo.readme.tangled");
     Ok(outputs.into_iter().filter(|p| !is_overlay(p) && root_markdown(p)).collect())
+}
+
+/// Bind a diagram's `{{role}}` references to one scheme of the palette.
+/// Only the icon profile's four roles exist; any other name refuses.
+fn bind_diagram(text: &str, roles: &RoleBinding) -> Result<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else {
+            bail!("an unclosed `{{{{` role reference");
+        };
+        let name = after[..end].trim();
+        let value = match name {
+            "ink" => &roles.ink,
+            "line" => &roles.line,
+            "paper" => &roles.paper,
+            "accent" => &roles.accent,
+            other => bail!(
+                "`{{{{{other}}}}}` is not one of the palette's roles (ink, line, paper, accent)"
+            ),
+        };
+        out.push_str(value);
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 /// The marker an authored publication page carries where its contents map goes.

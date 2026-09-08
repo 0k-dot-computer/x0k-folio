@@ -1543,6 +1543,41 @@ fn overlay_contents_marker_is_not_a_publication_map() {
     assert!(format!("{err:#}").contains("carry no"), "{err:#}");
 }
 
+#[test]
+fn a_diagram_chunk_is_bound_to_the_palette_once_per_scheme() {
+    let ws = workspace(&[], true);
+    let original = publication_publishing(&["demo-crate"], &[]);
+    let doc = format!(
+        "{original}\n```svg {{#plate file=\"assets/diagrams/plate.svg\"}}\n<svg xmlns=\"http://www.w3.org/2000/svg\">\
+         <rect fill=\"{{{{paper}}}}\" stroke=\"{{{{ line }}}}\"/><text fill=\"{{{{ink}}}}\">folio</text>\
+         <circle fill=\"{{{{accent}}}}\"/></svg>\n```\n"
+    );
+    std::fs::write(ws.path().join(PUB_REL), doc).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).unwrap();
+    assert!(!out.path().join("assets/diagrams/plate.svg").exists(), "the unbound diagram never ships");
+    let light = std::fs::read_to_string(out.path().join("assets/diagrams/plate-light.svg")).unwrap();
+    let dark = std::fs::read_to_string(out.path().join("assets/diagrams/plate-dark.svg")).unwrap();
+    assert!(light.contains("fill=\"#fffff8\" stroke=\"#b88e44\""), "{light}");
+    assert!(light.contains("<text fill=\"#111111\">"), "{light}");
+    assert!(dark.contains("fill=\"#1e293b\" stroke=\"#96b4dc\""), "{dark}");
+    assert!(dark.contains("<circle fill=\"#96b4dc\"/>"), "{dark}");
+    assert!(light.starts_with("<!-- @generated"), "corpus-owned, regenerated every projection: {light}");
+}
+
+#[test]
+fn a_diagram_naming_a_role_outside_the_palette_is_refused() {
+    let ws = workspace(&[], true);
+    let original = publication_publishing(&["demo-crate"], &[]);
+    let doc = format!(
+        "{original}\n```svg {{#plate file=\"assets/diagrams/plate.svg\"}}\n<svg><rect fill=\"{{{{gold}}}}\"/></svg>\n```\n"
+    );
+    std::fs::write(ws.path().join(PUB_REL), doc).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let err = format!("{:#}", project(ws.path(), out.path()).unwrap_err());
+    assert!(err.contains("`{{gold}}` is not one of the palette's roles"), "{err}");
+}
+
 /// A real Cargo workspace whose package identity differs from its directory.
 fn moved_workspace() -> tempfile::TempDir {
     let ws = workspace(&["core"], true);

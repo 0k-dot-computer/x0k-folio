@@ -1,6 +1,6 @@
 {
-  "corpus_commit": "64d2a369a03a4516136826deac880f1d82cb18e7",
-  "corpus_rev": "qlmorxtynzvussmqvoooqxturzylwtsy",
+  "corpus_commit": "0c1b7b71c80dfbcfe0db91573b587ecdca038522",
+  "corpus_rev": "yrzuxxtxtzytntzoostqnokwuuyvztsp",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
@@ -118,15 +118,7 @@
   ],
   "modules_dir": "crates/x0k-ontology/ontology/modules",
   "overlay": [
-    "guides/CONTRIBUTING.md",
-    "assets/diagrams/plate-light.svg",
-    "assets/diagrams/plate-dark.svg",
-    "assets/diagrams/triangle-light.svg",
-    "assets/diagrams/triangle-dark.svg",
-    "assets/diagrams/derive-light.svg",
-    "assets/diagrams/derive-dark.svg",
-    "assets/diagrams/circle-light.svg",
-    "assets/diagrams/circle-dark.svg"
+    "guides/CONTRIBUTING.md"
   ],
   "path_map": {
     "background/event-graph-crdts.md": "corpora/x0k/wiki/event-graph-crdts.md",

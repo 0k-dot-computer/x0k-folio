@@ -166,7 +166,7 @@ use std::sync::Arc;
 use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
 use x0k_folio::transclusion::extract_section;
 use x0k_folio::{EntityId, InlineEntity, ICON_CLASS};
-use x0k_icon::{emit, Accepted, Label, Palette};
+use x0k_icon::{emit, Accepted, Label, Palette, RoleBinding};
 
 use crate::faces::{check_section, icon_svg, proving_chunks};
 use crate::parser::parse_document;
@@ -990,7 +990,7 @@ let vocabulary_overview = if vocab_modules.is_empty() {
 } else {
     Some(vocabulary_overview(&vocab_modules, palette.as_ref())?)
 };
-let icons = read_icons(workspace, &layout, &packages, &affordances, palette)?;
+let icons = read_icons(workspace, &layout, &packages, &affordances, palette.clone())?;
 ```
 
 The records the contents page's affordance rows are drawn from are read
@@ -1212,7 +1212,8 @@ emit_provenance(
     license_source,
     &source_licenses,
 )?;
-let publication_pages = tangle_publication_doc(region_doc, workspace, output_dir, &overlay, &layout)?;
+let publication_pages =
+    tangle_publication_doc(region_doc, workspace, output_dir, &overlay, &layout, palette.as_ref())?;
 write_readme_contents(
     output_dir,
     &publication_pages,
@@ -5587,13 +5588,28 @@ exact path or a path under an overlay directory — and anything else
 is a refusal: a chunk routed to a regenerated path would be a second
 writer for a file the crates or the corpus already own.
 
+The README's diagrams are the one other thing the doc may route, and
+they are bound the way the icons are. A chunk routed to
+`assets/diagrams/<stem>.svg` names its colours by role — `{{ink}}`,
+`{{line}}`, `{{paper}}`, `{{accent}}`, the icon profile's four paints
+and no others — and the projector writes it once per scheme, as
+`<stem>-light.svg` and `<stem>-dark.svg`, with the publication's
+`palette:` bound in; the unbound file never ships. That is what keeps a
+theme change a change to one block: the palette moves, and every
+diagram, icon and page follows on the next projection. A diagram that
+carried its colours as literals would be a seed instead, owned by the
+public side from its first projection and left behind by every palette
+after it. A role the palette does not carry refuses, naming the
+reference, and so does a diagram in a publication with no palette.
+
 <a name="chunk-tangle-readme"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#tangle-readme`</sub>
 
 ```rust {#tangle-readme}
 /// Tangle the publication doc's own `tangle:` block into the projection:
 /// its `root: README.md` chunk becomes `<output_dir>/README.md`, and any
 /// chunk routed (`file="…"`) to a declared overlay path seeds that path
-/// when it is absent. The doc is copied to its corpus-relative path inside
+/// when it is absent, and any chunk routed to `assets/diagrams/<stem>.svg`
+/// is bound to `palette` once per scheme. The doc is copied to its corpus-relative path inside
 /// the projection for the duration of the tangle so the `@generated`
 /// header names that path and every write stays under the projection
 /// root; the copy and its sidecar are removed afterwards (the publication
@@ -5605,6 +5621,7 @@ fn tangle_publication_doc(
     output_dir: &Path,
     overlay: &[String],
     layout: &CorpusLayout,
+    palette: Option<&Palette>,
 ) -> Result<Vec<PathBuf>> {
     let rel = region_doc
         .canonicalize()
@@ -5673,9 +5690,13 @@ fn tangle_publication_doc(
         p.parent().is_none_or(|d| d.as_os_str().is_empty())
             && p.extension().is_some_and(|e| e == "md")
     };
+    // A diagram: an SVG routed under `assets/diagrams/`, bound to the palette below.
+    let diagram = |p: &Path| {
+        p.parent() == Some(Path::new("assets/diagrams")) && p.extension().is_some_and(|e| e == "svg")
+    };
     let stray: Vec<&PathBuf> = outputs
         .iter()
-        .filter(|p| !(p.as_path() == readme || is_overlay(p) || root_markdown(p)
+        .filter(|p| !(p.as_path() == readme || is_overlay(p) || root_markdown(p) || diagram(p)
             || (p.parent() == Some(Path::new("guides")) && p.extension().is_some_and(|e| e == "md"))))
         .collect();
     if !outputs.iter().any(|p| p == readme) || !stray.is_empty() {
@@ -5712,8 +5733,59 @@ fn tangle_publication_doc(
         std::fs::write(&path, body)?;
         tracing::info!(path = %seed.display(), "region_repo.overlay.seeded");
     }
+    // A diagram is bound to the palette like the icons: its `{{role}}`
+    // references become the scheme's colours, once per scheme, and the
+    // unbound file never ships.
+    for source in outputs.iter().filter(|p| diagram(p) && !is_overlay(p)) {
+        let path = output_dir.join(source);
+        let text = std::fs::read_to_string(&path)?;
+        let palette = palette.ok_or_else(|| {
+            anyhow!(
+                "{} routes a diagram to {} but carries no `palette:` to bind it with",
+                rel.display(),
+                source.display()
+            )
+        })?;
+        let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+        for (scheme, roles) in [("light", &palette.light), ("dark", &palette.dark)] {
+            let bound = bind_diagram(&text, roles).with_context(|| {
+                format!("binding {} for the {scheme} scheme", source.display())
+            })?;
+            std::fs::write(output_dir.join(source.with_file_name(format!("{stem}-{scheme}.svg"))), bound)?;
+        }
+        std::fs::remove_file(&path)?;
+        tracing::info!(path = %source.display(), "region_repo.diagram.bound");
+    }
     tracing::info!(source = %rel.display(), "region_repo.readme.tangled");
     Ok(outputs.into_iter().filter(|p| !is_overlay(p) && root_markdown(p)).collect())
+}
+
+/// Bind a diagram's `{{role}}` references to one scheme of the palette.
+/// Only the icon profile's four roles exist; any other name refuses.
+fn bind_diagram(text: &str, roles: &RoleBinding) -> Result<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else {
+            bail!("an unclosed `{{{{` role reference");
+        };
+        let name = after[..end].trim();
+        let value = match name {
+            "ink" => &roles.ink,
+            "line" => &roles.line,
+            "paper" => &roles.paper,
+            "accent" => &roles.accent,
+            other => bail!(
+                "`{{{{{other}}}}}` is not one of the palette's roles (ink, line, paper, accent)"
+            ),
+        };
+        out.push_str(value);
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 ```
 
@@ -9186,6 +9258,41 @@ fn overlay_contents_marker_is_not_a_publication_map() {
     let out = tempfile::tempdir().unwrap();
     let err = project(ws.path(), out.path()).unwrap_err();
     assert!(format!("{err:#}").contains("carry no"), "{err:#}");
+}
+
+#[test]
+fn a_diagram_chunk_is_bound_to_the_palette_once_per_scheme() {
+    let ws = workspace(&[], true);
+    let original = publication_publishing(&["demo-crate"], &[]);
+    let doc = format!(
+        "{original}\n```svg {{#plate file=\"assets/diagrams/plate.svg\"}}\n<svg xmlns=\"http://www.w3.org/2000/svg\">\
+         <rect fill=\"{{{{paper}}}}\" stroke=\"{{{{ line }}}}\"/><text fill=\"{{{{ink}}}}\">folio</text>\
+         <circle fill=\"{{{{accent}}}}\"/></svg>\n```\n"
+    );
+    std::fs::write(ws.path().join(PUB_REL), doc).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).unwrap();
+    assert!(!out.path().join("assets/diagrams/plate.svg").exists(), "the unbound diagram never ships");
+    let light = std::fs::read_to_string(out.path().join("assets/diagrams/plate-light.svg")).unwrap();
+    let dark = std::fs::read_to_string(out.path().join("assets/diagrams/plate-dark.svg")).unwrap();
+    assert!(light.contains("fill=\"#fffff8\" stroke=\"#b88e44\""), "{light}");
+    assert!(light.contains("<text fill=\"#111111\">"), "{light}");
+    assert!(dark.contains("fill=\"#1e293b\" stroke=\"#96b4dc\""), "{dark}");
+    assert!(dark.contains("<circle fill=\"#96b4dc\"/>"), "{dark}");
+    assert!(light.starts_with("<!-- @generated"), "corpus-owned, regenerated every projection: {light}");
+}
+
+#[test]
+fn a_diagram_naming_a_role_outside_the_palette_is_refused() {
+    let ws = workspace(&[], true);
+    let original = publication_publishing(&["demo-crate"], &[]);
+    let doc = format!(
+        "{original}\n```svg {{#plate file=\"assets/diagrams/plate.svg\"}}\n<svg><rect fill=\"{{{{gold}}}}\"/></svg>\n```\n"
+    );
+    std::fs::write(ws.path().join(PUB_REL), doc).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let err = format!("{:#}", project(ws.path(), out.path()).unwrap_err());
+    assert!(err.contains("`{{gold}}` is not one of the palette's roles"), "{err}");
 }
 
 /// A real Cargo workspace whose package identity differs from its directory.
