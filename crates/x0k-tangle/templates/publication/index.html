@@ -22,32 +22,32 @@
   </noscript>
   <style>
     :root {
-      /* Pansophia-leaning layer-1 tokens render-vello reads via getComputedStyle. */
-      --color-surface: #f7f3ea;
-      --color-dag-canvas: #efe9db;
-      --color-text: #2b2620;
-      --color-accent: #8a5a2b;
-      --color-border: #c9bfa8;
-      --color-error: #9c3b2e;
-      --color-edge-dependency: #6b7a8f;
-      --color-edge-hierarchy: #8a5a2b;
-      --color-edge-cyclic: #9c3b2e;
-      --color-role-structural: #6b7a8f;
-      --color-role-decision: #8a5a2b;
-      --color-role-lifecycle: #5a7a5a;
-      --color-role-actor: #9c3b2e;
-      --color-entity-seed: #8a5a2b;
-      --color-entity-intent: #5a7a5a;
-      --color-entity-doc: #b08d57;
-      --color-entity-decision: #8a5a2b;
-      --color-entity-affordance: #9c3b2e;
-      --color-entity-session: #6b7a8f;
+      /* Pansophia layer-1 tokens (second edition, 2026-09: white, cool ink, slate accent), mirrored from substrate/brand/themes/pansophia.css; render-vello reads them via getComputedStyle. */
+      --color-surface: #ffffff;
+      --color-dag-canvas: #f4f6f7;
+      --color-text: #202526;
+      --color-accent: #496c7e;
+      --color-border: #e0e6e9;
+      --color-error: #9b3b34;
+      --color-edge-dependency: #557c92;
+      --color-edge-hierarchy: #3d5a4a;
+      --color-edge-cyclic: #9b3b34;
+      --color-role-structural: #3f5f80;
+      --color-role-decision: #7a5a2a;
+      --color-role-lifecycle: #4a6e5a;
+      --color-role-actor: #5b6470;
+      --color-entity-seed: #efe4c8;
+      --color-entity-intent: #d9e3ea;
+      --color-entity-doc: #ffffff;
+      --color-entity-decision: #ffffff;
+      --color-entity-affordance: #eadfd6;
+      --color-entity-session: #ffffff;
       /* Resting influence arcs read cool + quiet (render-vello also paints them
          faint at rest — the de-hairball); per-thread arc hues are pushed
          per-edge from boot.js. */
-      --color-edge-dependency: #8c93a0;
-      --font-family: "EB Garamond", Georgia, serif;
-      --font-mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --color-edge-dependency: #8295a1;
+      --font-family: "Baskervville", "Baskerville", "EB Garamond", Georgia, serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
       /* The idea-lane palette — the through-line shared with the glyphs, arcs,
          lane labels, narrative captions, and the woven pages. Eight idea-lanes +
          three bands (synthesis / capstone / frontier). (boot.js holds the
@@ -74,7 +74,7 @@
     .lane-label {
       position: absolute; font-family: var(--font-family); font-size: 13px;
       letter-spacing: 0.01em; color: var(--color-accent);
-      background: rgba(247,243,234,0.78); border: 1px solid var(--color-border);
+      background: rgba(255,255,255,0.82); border: 1px solid var(--color-border);
       border-radius: 4px; padding: 1px 8px; white-space: nowrap;
       box-shadow: 0 1px 4px rgba(0,0,0,0.08);
     }

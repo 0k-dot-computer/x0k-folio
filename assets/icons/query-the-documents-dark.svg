@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Query the documents" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2.5 2 H9.5 V14 H2.5 Z" fill="none" stroke="#96b4dc" stroke-width="1"/>
-  <path d="M4 4.5 H8 M4 7 H7" fill="none" stroke="#96b4dc" stroke-width="1"/>
-  <circle cx="10.5" cy="9.5" r="3" fill="#1e293b" stroke="#e2e8f0" stroke-width="1.5"/>
-  <path d="M12.5 11.5 L15 14" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
+  <path d="M2.5 2 H9.5 V14 H2.5 Z" fill="none" stroke="#c5ced3" stroke-width="1"/>
+  <path d="M4 4.5 H8 M4 7 H7" fill="none" stroke="#c5ced3" stroke-width="1"/>
+  <circle cx="10.5" cy="9.5" r="3" fill="#171d21" stroke="#ffffff" stroke-width="1.5"/>
+  <path d="M12.5 11.5 L15 14" fill="none" stroke="#ffffff" stroke-width="1.5"/>
 </svg>

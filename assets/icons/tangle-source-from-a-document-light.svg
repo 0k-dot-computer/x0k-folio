@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Project source code out of a document" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2.5 1.5 H8.5 L11 4 V14.5 H2.5 Z" fill="none" stroke="#b88e44" stroke-width="1"/>
-  <path d="M8.5 1.5 V4 H11" fill="none" stroke="#b88e44" stroke-width="1"/>
-  <path d="M4.5 6.5 H9 M4.5 8.5 H7" fill="none" stroke="#b88e44" stroke-width="1"/>
-  <rect x="6.5" y="9.5" width="7" height="4" rx="0.5" fill="#fffff8" stroke="#111111" stroke-width="1.5"/>
-  <path d="M8 11.5 H12" fill="none" stroke="#111111" stroke-width="1"/>
+  <path d="M2.5 1.5 H8.5 L11 4 V14.5 H2.5 Z" fill="none" stroke="#202526" stroke-width="1"/>
+  <path d="M8.5 1.5 V4 H11" fill="none" stroke="#202526" stroke-width="1"/>
+  <path d="M4.5 6.5 H9 M4.5 8.5 H7" fill="none" stroke="#202526" stroke-width="1"/>
+  <rect x="6.5" y="9.5" width="7" height="4" rx="0.5" fill="#ffffff" stroke="#202526" stroke-width="1.5"/>
+  <path d="M8 11.5 H12" fill="none" stroke="#202526" stroke-width="1"/>
 </svg>

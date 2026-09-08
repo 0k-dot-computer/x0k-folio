@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Check an icon against the profile" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="1.5" y="1.5" width="10" height="10" rx="1" fill="none" stroke="#96b4dc" stroke-width="1"/>
-  <path d="M6.5 3.5 L9 6.5 L6.5 9 L4 6.5 Z" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
-  <path d="M8.5 12 L10.5 14 L14.5 9.5" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>
+  <rect x="1.5" y="1.5" width="10" height="10" rx="1" fill="none" stroke="#c5ced3" stroke-width="1"/>
+  <path d="M6.5 3.5 L9 6.5 L6.5 9 L4 6.5 Z" fill="none" stroke="#ffffff" stroke-width="1.5"/>
+  <path d="M8.5 12 L10.5 14 L14.5 9.5" fill="none" stroke="#ffffff" stroke-width="1.5"/>
 </svg>

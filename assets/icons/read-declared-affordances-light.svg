@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Declare concepts and instances" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2.5 3.5 H8.5 L11 6 V14.5 H2.5 Z" fill="none" stroke="#b88e44" stroke-width="1"/>
-  <path d="M8.5 3.5 V6 H11" fill="none" stroke="#b88e44" stroke-width="1"/>
-  <path d="M4.5 8 H8" fill="none" stroke="#b88e44" stroke-width="1"/>
-  <rect x="4.5" y="9.5" width="4.5" height="3" fill="none" stroke="#b88e44" stroke-width="1" stroke-dasharray="1 2"/>
-  <rect x="9" y="1" width="5" height="3" rx="0.5" fill="#fffff8" stroke="#111111" stroke-width="1.5"/>
-  <path d="M10.5 2.5 H12.5" fill="none" stroke="#111111" stroke-width="1"/>
+  <path d="M2.5 3.5 H8.5 L11 6 V14.5 H2.5 Z" fill="none" stroke="#202526" stroke-width="1"/>
+  <path d="M8.5 3.5 V6 H11" fill="none" stroke="#202526" stroke-width="1"/>
+  <path d="M4.5 8 H8" fill="none" stroke="#202526" stroke-width="1"/>
+  <rect x="4.5" y="9.5" width="4.5" height="3" fill="none" stroke="#202526" stroke-width="1" stroke-dasharray="1 2"/>
+  <rect x="9" y="1" width="5" height="3" rx="0.5" fill="#ffffff" stroke="#202526" stroke-width="1.5"/>
+  <path d="M10.5 2.5 H12.5" fill="none" stroke="#202526" stroke-width="1"/>
 </svg>
