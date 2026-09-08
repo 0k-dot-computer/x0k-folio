@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 170" width="960" height="170" role="img" aria-label="folio">
-  <rect width="960" height="170" fill="#12121a"/>
-  <rect x="16" y="16" width="928" height="138" fill="none" stroke="#2a2a3a" stroke-width="1"/>
-  <rect x="23" y="23" width="914" height="124" fill="none" stroke="#525278" stroke-width="0.5"/>
-  <text x="480" y="102" text-anchor="middle" font-family="Georgia,'Palatino Linotype',Palatino,'Book Antiqua',serif" font-size="72" font-style="italic" letter-spacing="3" fill="#e2e8f0">folio</text>
-  <line x1="400" y1="122" x2="560" y2="122" stroke="#22d3ee" stroke-width="1"/>
+  <rect width="960" height="170" fill="#171d21"/>
+  <text x="480" y="98" text-anchor="middle" font-family="Baskervville,Baskerville,'Iowan Old Style','EB Garamond',Georgia,serif" font-size="76" letter-spacing="-1" fill="#ffffff">folio</text>
+  <line x1="40" y1="134" x2="464" y2="134" stroke="#3a4750" stroke-width="1"/>
+  <line x1="496" y1="134" x2="920" y2="134" stroke="#3a4750" stroke-width="1"/>
+  <text x="480" y="139" text-anchor="middle" font-family="Baskervville,Baskerville,'Iowan Old Style','EB Garamond',Georgia,serif" font-size="15" fill="#b3a075">✳</text>
 </svg>
