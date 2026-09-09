@@ -75,6 +75,15 @@ Everything else in the module is in service of these three.
 //! and unified the sidecar location for identity-tangle docs and
 //! pipeline-only docs.
 //!
+//! ## Refusing to clobber
+//!
+//! A document's outputs are all composed and hashed before any of them
+//! is written, and screened together against the sidecar's record of
+//! what this document last wrote there. An output holding content this
+//! document did not produce refuses the whole document — see
+//! [`crate::pipeline::classify_output`] for the verdicts and
+//! [`TangleSettings::clobber`] for the escape hatch.
+//!
 //! ## Output-path collisions
 //!
 //! [`tangle_workspace`] tracks the source doc for every output path it
@@ -109,8 +118,8 @@ use serde::{Deserialize, Serialize};
 use crate::identity_pipeline::IDENTITY_KIND;
 use crate::parser::parse_document;
 use crate::pipeline::{
-    ChunkInput, ChunkVariant, CommentStyle, PipelineContext, PipelineError, PipelineOutput,
-    PipelineRegistry,
+    classify_output, guard_outputs, ChunkInput, ChunkVariant, ClobberPolicy, CommentStyle,
+    OutputProvenance, PipelineContext, PipelineError, PipelineOutput, PipelineRegistry,
 };
 use crate::resolve::expand_chunk;
 ```
@@ -604,17 +613,101 @@ impl DocSite {
 
 /// What a tangle run knows that no document carries.
 ///
-/// One field today, and the reason it is a struct rather than that field:
+/// Two fields, and the reason it is a struct rather than two parameters:
 /// every run-scoped fact the tangler grows next belongs here, not in a
-/// fourth positional argument to the entry points.
+/// fifth positional argument to the entry points.
 #[derive(Debug, Clone, Default)]
 pub struct TangleSettings {
     /// Where this run's source documents can be read by someone who does
     /// not have the tree. `None` — the default — leaves the header exactly
     /// as it has always been.
     pub doc_site: Option<DocSite>,
+    /// What this run does when an output holds bytes it did not write.
+    /// [`ClobberPolicy::Refuse`] — the default — stops the document
+    /// rather than destroy them; a caller that means to overwrite says so.
+    pub clobber: ClobberPolicy,
 }
 ```
+
+## Refusing to destroy what we did not write
+
+`tangle` overwrites its outputs, and for most of this crate's life it
+did so without ever looking at what it was overwriting. A contributor
+added a line to a generated file, re-tangled, and the line was gone —
+no message, exit 0. The sidecar had recorded a hash for that path all
+along, so the bytes on disk could be compared against the bytes we last
+put there; nothing compared them.
+
+[`pipeline.md`](pipeline.md) holds the comparison, as three content
+hashes in and a verdict out. This is where the three hashes meet. Two
+of them the dispatcher already computes on its way to the sidecar —
+what it composed, and what the record beside the document says it wrote
+here last time — and the third is one `std::fs::read` of the path it is
+about to replace. The question is *disk against what we last wrote*,
+never *disk against what we are about to write*: a document that
+changed is supposed to change its output, and the second phrasing would
+refuse every real edit in the corpus.
+
+The screening is per **document**, not per file, and the ordering is the
+point. Every pipeline's outputs are composed and hashed first, nothing
+is written, and then one call decides for all of them — so a document
+with three outputs and one hand-edited file writes none of the three
+rather than two. A half-projected module compiles about as often as it
+doesn't.
+
+<a name="chunk-screen-outputs-fn"></a><sub>[`src/pipeline_runner.rs`](../../crates/x0k-tangle/src/pipeline_runner.rs) · `#screen-outputs-fn`</sub>
+
+```rust {#screen-outputs-fn}
+/// Screen every output one document composed, before any is written.
+/// `planned` pairs each absolute output path with the hash of the bytes
+/// about to land there.
+///
+/// Errors — having written nothing — when the policy is
+/// [`ClobberPolicy::Refuse`] and any output holds content this document
+/// did not produce.
+fn screen_outputs(
+    doc_path: &Path,
+    workspace_root: &Path,
+    planned: &[(PathBuf, String)],
+    policy: ClobberPolicy,
+) -> Result<()> {
+    // What this document last wrote to each path, read once for the
+    // whole document rather than per output.
+    let recorded: HashMap<PathBuf, String> = sidecar_output_claims(doc_path, workspace_root)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let provenances: Vec<(&Path, OutputProvenance)> = planned
+        .iter()
+        .map(|(abs, about_to_write)| {
+            let on_disk = std::fs::read(abs).ok().map(|b| content_hash_bytes(&b));
+            let verdict = classify_output(
+                recorded.get(abs).map(String::as_str),
+                on_disk.as_deref(),
+                about_to_write,
+            );
+            (abs.as_path(), verdict)
+        })
+        .collect();
+    for path in guard_outputs(doc_path, provenances, policy)? {
+        warn!(
+            activity.type = "obs.tangle_output_unrecorded",
+            source = %doc_path.display(),
+            path = %path.display(),
+            "tangle.output.unrecorded"
+        );
+    }
+    Ok(())
+}
+```
+
+The unrecorded case goes to the timeline as an event rather than a line
+of stderr, and it stays a warning rather than a refusal for the reason
+its verdict's doc-comment gives: the tool cannot tell a lost sidecar
+from an existing file being brought under literate authoring, and
+refusing would block the second — a move this substrate asks people to
+make. A repository projector performs it on every run: it copies a tree,
+deletes the sidecars, and re-tangles onto files that are already there.
 
 ## tangle_document
 
@@ -651,9 +744,12 @@ Steps:
    - Hash the inputs + config for sidecar drift detection.
    - Call `plugin.transform()`; promote `PipelineError` into anyhow.
    - For each returned output: compose with `@generated` header,
-     contain against the root, atomic write, record path + hash in
-     the sidecar entry.
-5. Write the sidecar next to the source.
+     contain against the root, hash, record path + hash in the
+     sidecar entry. Nothing is written yet.
+5. Screen the whole document's composed outputs against the sidecar
+   ([above](#refusing-to-destroy-what-we-did-not-write)), then write
+   them.
+6. Write the sidecar next to the source.
 
 Step 0, before any of that, is resolving both the root and the doc
 path to absolute form. Everything downstream — the joins, the
@@ -695,6 +791,10 @@ publication document is refused with the command that does tangle it.
 /// sidecar). On error before write, no files are touched. Holds the
 /// workspace tangle lock for its whole body, so a concurrent tangler
 /// in another process waits rather than interleaving writes.
+///
+/// Every output is composed and screened before any of them lands, so a
+/// document whose write would destroy content it did not produce is
+/// refused whole — see [`crate::pipeline::ClobberPolicy`].
 ///
 /// Runs with default [`TangleSettings`]: no document site, so the
 /// `@generated` header names the source document by path alone. A caller
@@ -797,6 +897,10 @@ pub fn tangle_document_with(
     let source_hash_str = content_hash(&content);
 
     let mut pipeline_sidecar_entries: Vec<PipelineSidecarEntry> = Vec::new();
+    // Every output this document will write, paired with the hash of the
+    // bytes about to land there. Filled by the loop below, screened as a
+    // whole once the loop ends, and only then written.
+    let mut planned: Vec<(PathBuf, String)> = Vec::new();
 
     for decl in &all_pipelines {
         let plugin = registry
@@ -881,8 +985,8 @@ pub fn tangle_document_with(
                 &decl.kind,
                 settings.doc_site.as_ref(),
             );
-            write_atomic(&abs_path, &final_bytes)?;
             let hash = content_hash_bytes(&final_bytes);
+            planned.push((abs_path.clone(), hash.clone()));
             sidecar_outputs.push(PipelineOutputRecord {
                 path: abs_path
                     .strip_prefix(workspace_root)
@@ -919,6 +1023,13 @@ pub fn tangle_document_with(
             config_hash,
             outputs: sidecar_outputs,
         });
+    }
+
+    // Nothing has been written yet, which is what lets one refusal here
+    // stop every output of this document instead of the last two.
+    screen_outputs(doc_path, workspace_root, &planned, settings.clobber)?;
+    for out in &result.pipeline_outputs {
+        write_atomic(&out.path, &out.content)?;
     }
 
     // Sidecar emission. Always next to the source — one sidecar per
@@ -1162,10 +1273,14 @@ workspace` invokes. It aggregates roots from every plugin's
   paths in the diagnostic.
 
 Output drift is different from a source edit: it means bytes owned by
-the doc changed behind the tangler's back. Before restoring that
-projection, the workspace pass emits `obs.tangle_output_drifted` with
-both source and output paths. That event is the hand-edit detector;
-regeneration remains the repair.
+the doc changed behind the tangler's back. The workspace pass emits
+`obs.tangle_output_drifted` with both source and output paths and then
+re-tangles the doc — where the [screening](#refusing-to-destroy-what-we-did-not-write)
+decides what happens next. Drift whose re-tangle reproduces the file
+byte for byte is a stale sidecar and passes; drift the document does not
+account for refuses that one document and leaves the rest of the sweep
+alone. So the event stays a detector and the pass stays a repair, but
+only for projections the document can still explain.
 
 <a name="chunk-workspace-types"></a><sub>[`src/pipeline_runner.rs`](../../crates/x0k-tangle/src/pipeline_runner.rs) · `#workspace-types`</sub>
 
@@ -1220,6 +1335,19 @@ pub struct WorkspaceTangleReport {
 pub fn tangle_workspace(
     workspace_root: &Path,
     registry: &PipelineRegistry,
+) -> Result<WorkspaceTangleReport> {
+    tangle_workspace_with(workspace_root, registry, &TangleSettings::default())
+}
+
+/// [`tangle_workspace`], with the run-scoped settings every document in
+/// the sweep shares. The one that matters here is
+/// [`TangleSettings::clobber`]: a `--force` sweep is the operator saying
+/// the whole tree's generated files are expendable, and the flag has to
+/// reach each document's screening to mean that.
+pub fn tangle_workspace_with(
+    workspace_root: &Path,
+    registry: &PipelineRegistry,
+    settings: &TangleSettings,
 ) -> Result<WorkspaceTangleReport> {
     let workspace_root = &absolutize(workspace_root);
     // Held for the whole pass, not per doc: the collision bookkeeping
@@ -1279,7 +1407,7 @@ pub fn tangle_workspace(
                     // the recorded "first declarer").
                     let mut had_collision = false;
                     if let Some(claims) = sidecar_output_claims(p, workspace_root) {
-                        for out_abs in claims {
+                        for (out_abs, _recorded_hash) in claims {
                             let first = output_claims
                                 .entry(out_abs.clone())
                                 .or_insert_with(|| p.to_path_buf())
@@ -1324,7 +1452,7 @@ pub fn tangle_workspace(
                 }
             }
 
-            match tangle_document(p, workspace_root, registry) {
+            match tangle_document_with(p, workspace_root, registry, settings) {
                 Ok(result) => {
                     // Check every output written by this doc against
                     // the global claim map. Use `entry().or_insert`
@@ -1407,18 +1535,22 @@ fn collision_error(path: &Path, first: &Path, second: &Path) -> anyhow::Error {
 <a name="chunk-sidecar-output-claims-fn"></a><sub>[`src/pipeline_runner.rs`](../../crates/x0k-tangle/src/pipeline_runner.rs) · `#sidecar-output-claims-fn`</sub>
 
 ```rust {#sidecar-output-claims-fn}
-/// Read the sidecar next to `doc_path` (if any) and return absolute
-/// paths for every recorded output. Used when reusing an up-to-date
-/// doc's claims in the workspace collision tracker — we want a doc
-/// whose sidecar is fresh to still register its outputs so a later
-/// dirty doc colliding with them is caught.
+/// Read the sidecar next to `doc_path` (if any) and return, for every
+/// recorded output, its absolute path and the hash the document last
+/// wrote there.
+///
+/// Two callers, one read. The workspace collision tracker wants the
+/// paths, so a doc whose sidecar is fresh still registers its outputs
+/// and a later dirty doc colliding with them is caught. [`screen_outputs`]
+/// wants the hashes, which are the "what we last wrote" half of the
+/// clobber question.
 ///
 /// Returns `None` if the sidecar is missing or unreadable (the doc
 /// would have been Dirty in that case anyway).
 fn sidecar_output_claims(
     doc_path: &Path,
     workspace_root: &Path,
-) -> Option<Vec<PathBuf>> {
+) -> Option<Vec<(PathBuf, String)>> {
     let sidecar_path = sidecar_path(doc_path);
     let text = std::fs::read_to_string(&sidecar_path).ok()?;
     let sidecar: TangleSidecar = serde_json::from_str(&text).ok()?;
@@ -1435,7 +1567,7 @@ fn sidecar_output_claims(
             else {
                 continue;
             };
-            claims.push(abs);
+            claims.push((abs, out.hash.clone()));
         }
     }
     Some(claims)
@@ -1604,8 +1736,18 @@ Three more cover the write path rather than the dispatch: a reader
 thread racing `write_atomic` and never seeing a partial file, the
 staging file not surviving the call, and the lock's re-entrancy.
 
-The header has a cluster of its own, because its text is a contract with
-readers outside this crate. One pins the no-site line byte for byte (it is
+The clobber guard has a cluster of its own, one test per verdict, all
+of them through `tangle_document_with` rather than through
+`classify_output` — [`pipeline.md`](pipeline.md) already pins the pure
+function, and what is unproven until here is that the call site feeds it
+the right three hashes. The Foreign case is the maintainer's report
+verbatim: append a line to a generated file, re-tangle, and the line has
+to still be there. Two of the cluster are not verdicts but consequences —
+a document with one clobbered output writes none of its outputs, and a
+sweep refuses that document without disturbing its neighbours.
+
+The header has a cluster of its own too, because its text is a contract
+with readers outside this crate. One pins the no-site line byte for byte (it is
 the line every generated file in this tree carries), one pins the
 site-bearing line, and two pin the *parsers*: the projected repository's
 `tools/x0k-guard-generated`, run as the shell script it is, and
@@ -2643,6 +2785,7 @@ hello world
 
         let settings = TangleSettings {
             doc_site: Some(DocSite::from_repository("https://github.com/o/r", "main")),
+            ..TangleSettings::default()
         };
         tangle_document_with(&doc_path, &workspace, &registry, &settings).expect("tangle ok");
         let written = std::fs::read_to_string(workspace.join("out/sited.txt")).unwrap();
@@ -3018,12 +3161,292 @@ from b
         // Depth unwound — the next acquisition is outermost again.
         assert!(lock_workspace(workspace).unwrap().file.is_some());
     }
+
+    /// A minimal identity-tangle document. `body` distinguishes one
+    /// generation of it from the next; `second`, when present, gives the
+    /// document a second output so the all-or-nothing claim is testable.
+    fn guard_doc(root: &str, body: &str, second: Option<(&str, &str)>) -> String {
+        let mut doc = format!(
+            "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/code/guard\n  \
+             type: wiki\n  status: proposed\n  tangle:\n    root: {root}\n---\n\n\
+             ```text {{#body}}\n{body}\n```\n"
+        );
+        if let Some((path, content)) = second {
+            doc.push_str(&format!(
+                "\n```text {{#other file=\"{path}\"}}\n{content}\n```\n"
+            ));
+        }
+        doc
+    }
+
+    /// Write `doc` as `<ws>/doc.md` and tangle it under `settings`.
+    fn tangle_guard_doc(
+        ws: &Path,
+        doc: &str,
+        settings: &TangleSettings,
+    ) -> Result<TangleResult> {
+        std::fs::write(ws.join("doc.md"), doc).unwrap();
+        tangle_document_with(
+            &ws.join("doc.md"),
+            ws,
+            &PipelineRegistry::default(),
+            settings,
+        )
+    }
+
+    /// Falsify every output hash the sidecar records, leaving the files
+    /// themselves current — the stale-sidecar shape.
+    fn falsify_recorded_hashes(doc: &Path) {
+        let sc = sidecar_path(doc);
+        let mut sidecar: TangleSidecar =
+            serde_json::from_str(&std::fs::read_to_string(&sc).unwrap()).unwrap();
+        for pipeline in &mut sidecar.pipelines {
+            for out in &mut pipeline.outputs {
+                out.hash = "0000000000000000".to_string();
+            }
+        }
+        std::fs::write(&sc, serde_json::to_string_pretty(&sidecar).unwrap()).unwrap();
+    }
+
+    /// `Absent`: the first tangle of a document has no sidecar to read
+    /// and no file to destroy.
+    #[test]
+    fn a_first_tangle_writes_with_no_sidecar_to_read() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/gen.txt", "alpha", None),
+            &TangleSettings::default(),
+        )
+        .expect("a first tangle has nothing to destroy");
+        let text = std::fs::read_to_string(ws.join("out/gen.txt")).unwrap();
+        assert!(text.contains("alpha"), "got {text}");
+    }
+
+    /// `Absent` again, the way it is reached in practice: `git clean` or
+    /// a deleted projection, with the sidecar still recording a hash.
+    #[test]
+    fn a_deleted_output_is_written_again() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        let doc = guard_doc("out/gen.txt", "alpha", None);
+        tangle_guard_doc(ws, &doc, &TangleSettings::default()).unwrap();
+        std::fs::remove_file(ws.join("out/gen.txt")).unwrap();
+
+        tangle_guard_doc(ws, &doc, &TangleSettings::default())
+            .expect("a missing output is not a clobber");
+        assert!(ws.join("out/gen.txt").is_file());
+    }
+
+    /// `Ours`: the file on disk is what we last wrote, so the document
+    /// moving forward replaces it. This is the case a check phrased as
+    /// disk-vs-about-to-write would refuse, and it is most of the corpus.
+    #[test]
+    fn a_changed_document_rewrites_the_output_it_last_wrote() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/gen.txt", "alpha", None),
+            &TangleSettings::default(),
+        )
+        .unwrap();
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/gen.txt", "beta", None),
+            &TangleSettings::default(),
+        )
+        .expect("a document is allowed to change its own output");
+
+        let text = std::fs::read_to_string(ws.join("out/gen.txt")).unwrap();
+        assert!(text.contains("beta") && !text.contains("alpha"), "got {text}");
+    }
+
+    /// `Foreign`: the maintainer's report, as a test. A line added to a
+    /// generated file must not vanish.
+    #[test]
+    fn a_hand_edited_output_refuses_the_document() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        let out = ws.join("out/gen.txt");
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/gen.txt", "alpha", None),
+            &TangleSettings::default(),
+        )
+        .unwrap();
+
+        let edited = format!("{}# HAND EDIT\n", std::fs::read_to_string(&out).unwrap());
+        std::fs::write(&out, &edited).unwrap();
+        let sidecar_before = std::fs::read_to_string(sidecar_path(&ws.join("doc.md"))).unwrap();
+
+        let err = tangle_guard_doc(
+            ws,
+            &guard_doc("out/gen.txt", "beta", None),
+            &TangleSettings::default(),
+        )
+        .expect_err("tangling over a hand edit is refused")
+        .to_string();
+
+        assert!(err.contains("refused to overwrite"), "got {err}");
+        assert!(err.contains("out/gen.txt"), "the refusal names the file: {err}");
+        assert!(err.contains("--force"), "the refusal names the way out: {err}");
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap(),
+            edited,
+            "the hand edit survived the refusal"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sidecar_path(&ws.join("doc.md"))).unwrap(),
+            sidecar_before,
+            "a refused document does not record a run it did not make"
+        );
+    }
+
+    /// The all-or-nothing claim: one clobbered output stops the
+    /// document's *other* outputs too, so nothing is half-projected.
+    #[test]
+    fn one_clobbered_output_writes_none_of_the_document() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/a.txt", "alpha", Some(("out/b.txt", "beta"))),
+            &TangleSettings::default(),
+        )
+        .unwrap();
+        let a_before = std::fs::read_to_string(ws.join("out/a.txt")).unwrap();
+        std::fs::write(ws.join("out/b.txt"), "hand written\n").unwrap();
+
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/a.txt", "ALPHA", Some(("out/b.txt", "BETA"))),
+            &TangleSettings::default(),
+        )
+        .expect_err("the document is refused whole");
+
+        assert_eq!(
+            std::fs::read_to_string(ws.join("out/a.txt")).unwrap(),
+            a_before,
+            "the clean output was not written either"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ws.join("out/b.txt")).unwrap(),
+            "hand written\n"
+        );
+    }
+
+    /// The escape hatch: the operator has said the bytes are expendable.
+    #[test]
+    fn force_overwrites_a_hand_edited_output() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        let out = ws.join("out/gen.txt");
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/gen.txt", "alpha", None),
+            &TangleSettings::default(),
+        )
+        .unwrap();
+        std::fs::write(&out, "# HAND EDIT\n").unwrap();
+
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/gen.txt", "beta", None),
+            &TangleSettings {
+                clobber: ClobberPolicy::Force,
+                ..TangleSettings::default()
+            },
+        )
+        .expect("--force overwrites");
+
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(text.contains("beta") && !text.contains("HAND EDIT"), "got {text}");
+    }
+
+    /// `AlreadyCurrent`: the sidecar disagrees with the file, and the
+    /// file is nonetheless exactly what this run would write. A write
+    /// that changes no byte destroys none, so it is not a refusal — this
+    /// is what keeps a re-tangle-and-diff gate runnable over a tree whose
+    /// sidecars have drifted.
+    #[test]
+    fn a_stale_sidecar_over_current_bytes_still_tangles() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        let doc = guard_doc("out/gen.txt", "alpha", None);
+        tangle_guard_doc(ws, &doc, &TangleSettings::default()).unwrap();
+        falsify_recorded_hashes(&ws.join("doc.md"));
+
+        tangle_guard_doc(ws, &doc, &TangleSettings::default())
+            .expect("a no-op write is not a clobber");
+        let text = std::fs::read_to_string(ws.join("out/gen.txt")).unwrap();
+        assert!(text.contains("alpha"), "got {text}");
+    }
+
+    /// `Unrecorded`: a file nothing claims. Adopting an existing file
+    /// into a literate document is a move this substrate asks for, and
+    /// the tool cannot tell it from a lost sidecar — so it writes, and
+    /// says so on the timeline.
+    #[test]
+    fn an_output_no_sidecar_claims_is_written_over() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join("out")).unwrap();
+        std::fs::write(ws.join("out/gen.txt"), "hand written, pre-literate\n").unwrap();
+
+        tangle_guard_doc(
+            ws,
+            &guard_doc("out/gen.txt", "alpha", None),
+            &TangleSettings::default(),
+        )
+        .expect("adopting an unrecorded file is allowed");
+        let text = std::fs::read_to_string(ws.join("out/gen.txt")).unwrap();
+        assert!(text.contains("alpha"), "got {text}");
+    }
+
+    /// The sweep refuses one document and carries on: the guard is a
+    /// per-document verdict, not a per-run one.
+    #[test]
+    fn a_workspace_sweep_refuses_only_the_clobbered_document() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        let dir = ws.join("knowledge/implementation/x");
+        std::fs::create_dir_all(&dir).unwrap();
+        let registry = PipelineRegistry::default();
+
+        for (name, root) in [("a.md", "out/a.txt"), ("b.md", "out/b.txt")] {
+            std::fs::write(dir.join(name), guard_doc(root, "alpha", None)).unwrap();
+            tangle_document(&dir.join(name), ws, &registry).unwrap();
+        }
+        // One hand edit, and both documents moved forward.
+        std::fs::write(ws.join("out/b.txt"), "hand written\n").unwrap();
+        for (name, root) in [("a.md", "out/a.txt"), ("b.md", "out/b.txt")] {
+            std::fs::write(dir.join(name), guard_doc(root, "beta", None)).unwrap();
+        }
+
+        let report = tangle_workspace(ws, &registry).expect("the sweep completes");
+        assert_eq!(report.tangled.len(), 1, "the clean document was tangled");
+        assert_eq!(report.errored.len(), 1, "only the clobbered one refused");
+        assert!(
+            report.errored[0].1.to_string().contains("refused to overwrite"),
+            "got {}",
+            report.errored[0].1
+        );
+        assert!(std::fs::read_to_string(ws.join("out/a.txt"))
+            .unwrap()
+            .contains("beta"));
+        assert_eq!(
+            std::fs::read_to_string(ws.join("out/b.txt")).unwrap(),
+            "hand written\n"
+        );
+    }
 }
 `````
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/pipeline_runner.rs`](../../crates/x0k-tangle/src/pipeline_runner.rs) · `#root` · assembles [module-header](#chunk-module-header) · [imports](#chunk-imports) · [sidecar-types](#chunk-sidecar-types) · [run-result-types](#chunk-run-result-types) · [sidecar-path](#chunk-sidecar-path) · [tangle-lock-state](#chunk-tangle-lock-state) · [tangle-lock-guard](#chunk-tangle-lock-guard) · [tangle-lock-acquire](#chunk-tangle-lock-acquire) · [tangle-lock-path](#chunk-tangle-lock-path) · [containment-fns](#chunk-containment-fns) · [doc-site](#chunk-doc-site) · [tangle-document](#chunk-tangle-document) · [tangle-directory](#chunk-tangle-directory) · [freshness-types](#chunk-freshness-types) · [doc-freshness-fn](#chunk-doc-freshness-fn) · [workspace-types](#chunk-workspace-types) · [tangle-workspace-fn](#chunk-tangle-workspace-fn) · [collision-error-fn](#chunk-collision-error-fn) · [sidecar-output-claims-fn](#chunk-sidecar-output-claims-fn) · [compose-with-header-fn](#chunk-compose-with-header-fn) · [temp-sibling-fn](#chunk-temp-sibling-fn) · [write-atomic-fn](#chunk-write-atomic-fn) · [hash-fns](#chunk-hash-fns) · [tests](#chunk-tests) · [tests-machinery](#chunk-tests-machinery)</sub>
+<a name="chunk-root"></a><sub>[`src/pipeline_runner.rs`](../../crates/x0k-tangle/src/pipeline_runner.rs) · `#root` · assembles [module-header](#chunk-module-header) · [imports](#chunk-imports) · [sidecar-types](#chunk-sidecar-types) · [run-result-types](#chunk-run-result-types) · [sidecar-path](#chunk-sidecar-path) · [tangle-lock-state](#chunk-tangle-lock-state) · [tangle-lock-guard](#chunk-tangle-lock-guard) · [tangle-lock-acquire](#chunk-tangle-lock-acquire) · [tangle-lock-path](#chunk-tangle-lock-path) · [containment-fns](#chunk-containment-fns) · [doc-site](#chunk-doc-site) · [screen-outputs-fn](#chunk-screen-outputs-fn) · [tangle-document](#chunk-tangle-document) · [tangle-directory](#chunk-tangle-directory) · [freshness-types](#chunk-freshness-types) · [doc-freshness-fn](#chunk-doc-freshness-fn) · [workspace-types](#chunk-workspace-types) · [tangle-workspace-fn](#chunk-tangle-workspace-fn) · [collision-error-fn](#chunk-collision-error-fn) · [sidecar-output-claims-fn](#chunk-sidecar-output-claims-fn) · [compose-with-header-fn](#chunk-compose-with-header-fn) · [temp-sibling-fn](#chunk-temp-sibling-fn) · [write-atomic-fn](#chunk-write-atomic-fn) · [hash-fns](#chunk-hash-fns) · [tests](#chunk-tests) · [tests-machinery](#chunk-tests-machinery)</sub>
 
 ```rust {#root}
 <<module-header>>
@@ -3047,6 +3470,8 @@ from b
 <<containment-fns>>
 
 <<doc-site>>
+
+<<screen-outputs-fn>>
 
 <<tangle-document>>
 

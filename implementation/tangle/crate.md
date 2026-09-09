@@ -192,12 +192,14 @@ pub use atlas::{
 };
 pub use identity_pipeline::{IdentityPipeline, IDENTITY_KIND};
 pub use pipeline::{
-    ChunkInput, ChunkVariant, CommentStyle, PipelineContext, PipelineError, PipelineErrorKind,
-    PipelineOutput, PipelineRegistry, TanglePipeline,
+    ChunkInput, ChunkVariant, ClobberPolicy, ClobberRefusal, CommentStyle, OutputProvenance,
+    PipelineContext, PipelineError, PipelineErrorKind, PipelineOutput, PipelineRegistry,
+    TanglePipeline,
 };
 pub use pipeline_runner::{
-    doc_freshness, tangle_directory, tangle_document, tangle_workspace, DirtyReason, DocFreshness,
-    PipelineRunOutput, TangleResult, WorkspaceTangleReport,
+    doc_freshness, tangle_directory, tangle_directory_with, tangle_document, tangle_document_with,
+    tangle_workspace, tangle_workspace_with, DirtyReason, DocFreshness, PipelineRunOutput,
+    TangleResult, TangleSettings, WorkspaceTangleReport,
 };
 pub use presentation::{
     apply_publication_shell, build_members_json, BOOT_FILE, FALLBACK_DIR, MEMBERS_FILE,
@@ -349,8 +351,19 @@ Tangle {
     /// Workspace root (defaults to current directory)
     #[arg(long)]
     workspace: Option<PathBuf>,
+    /// Overwrite outputs holding content this tangler did not write
+    #[arg(long)]
+    force: bool,
 },
 ```
+
+`--force` is the one flag on this verb that can lose work, and it is
+here because the dispatcher's clobber guard
+([`dispatcher.md`](dispatcher.md)) refuses a document whose output was
+edited outside it. The refusal names the file and the three ways out;
+this flag is the third. It is a per-run decision, never a default and
+never a setting, because the operator saying "those bytes are
+expendable" is a claim about *these* files at *this* moment.
 
 ### `x0k-tangle check`
 
@@ -748,8 +761,19 @@ Workspace {
     /// Workspace root (defaults to the current directory)
     #[arg(long)]
     root: Option<PathBuf>,
+    /// Overwrite outputs holding content this tangler did not write
+    #[arg(long)]
+    force: bool,
 },
 ```
+
+The sweep carries the same flag for the same reason, and it means the
+same thing document by document: a `--force` sweep is the operator
+saying the tree's generated files are expendable, not that one file is.
+Without it, a document whose output was edited outside the tangler lands
+in the report's `errored` bucket and the rest of the sweep proceeds —
+the guard is a per-document verdict, so one refusal costs one document
+rather than the run.
 
 ## Dispatch
 
@@ -817,7 +841,7 @@ which of the two things is missing.
 <a name="chunk-dispatch-tangle"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-tangle`</sub>
 
 ```rust {#dispatch-tangle file="src/main.rs"}
-Command::Tangle { paths, workspace } => {
+Command::Tangle { paths, workspace, force } => {
     // Route identity tangling through the unified dispatcher.
     // The default registry has `IdentityPipeline` registered;
     // docs that also declare extra pipelines will error here
@@ -825,6 +849,7 @@ Command::Tangle { paths, workspace } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
     let docs = discover_documents(&paths)?;
     let registry = x0k_tangle::PipelineRegistry::default();
+    let settings = clobber_settings(force);
     let mut total_files = 0;
     let mut tangled_docs = 0;
     let mut nowhere_to_write = 0;
@@ -837,7 +862,7 @@ Command::Tangle { paths, workspace } => {
             continue;
         }
         tangled_docs += 1;
-        let result = x0k_tangle::tangle_document(doc_path, &ws, &registry)?;
+        let result = x0k_tangle::tangle_document_with(doc_path, &ws, &registry, &settings)?;
         for out in &result.identity_outputs {
             eprintln!("  {} → {}", doc_path.display(), out.path.display());
             total_files += 1;
@@ -1396,10 +1421,11 @@ Command::ReceiveRepo {
 <a name="chunk-dispatch-workspace"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-workspace`</sub>
 
 ```rust {#dispatch-workspace file="src/main.rs"}
-Command::Workspace { root } => {
+Command::Workspace { root, force } => {
     let ws = resolve_workspace_root(root)?;
     let registry = x0k_tangle::PipelineRegistry::default();
-    let report = x0k_tangle::tangle_workspace(&ws, &registry)?;
+    let settings = clobber_settings(force);
+    let report = x0k_tangle::tangle_workspace_with(&ws, &registry, &settings)?;
     print_workspace_summary(&ws, &report);
     if !report.errored.is_empty() {
         std::process::exit(1);
@@ -1481,6 +1507,27 @@ fn resolve_workspace_root(flag: Option<PathBuf>) -> Result<PathBuf> {
     // cwd. The library refuses writes outside this root regardless.
     std::fs::canonicalize(&raw)
         .with_context(|| format!("resolving workspace root {}", raw.display()))
+}
+```
+
+Two verbs take `--force` and both mean the same thing by it, so the
+translation from flag to policy lives in one place. The default is the
+absence of the flag rather than a configured value: a run that did not
+say "overwrite" gets the guard.
+
+<a name="chunk-clobber-settings"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#clobber-settings`</sub>
+
+```rust {#clobber-settings file="src/main.rs"}
+/// The run-scoped settings a `--force` flag decides.
+fn clobber_settings(force: bool) -> x0k_tangle::TangleSettings {
+    x0k_tangle::TangleSettings {
+        clobber: if force {
+            x0k_tangle::ClobberPolicy::Force
+        } else {
+            x0k_tangle::ClobberPolicy::Refuse
+        },
+        ..Default::default()
+    }
 }
 ```
 
@@ -1738,7 +1785,7 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 <<exports>>
 ```
 
-<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-note](#chunk-dangling-note) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
+<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [clobber-settings](#chunk-clobber-settings) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-note](#chunk-dangling-note) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
 
 ```rust {#bin-root file="src/main.rs"}
 <<bin-doc>>
@@ -1752,6 +1799,8 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 <<main-fn>>
 
 <<resolve-workspace-root>>
+
+<<clobber-settings>>
 
 <<print-workspace-summary>>
 
@@ -1793,6 +1842,14 @@ green line names the work it did rather than asserting work it skipped.
 Two documents holding one id fail the run. And `tangle`, handed a
 document that names nowhere to write, says so instead of reporting a
 successful zero.
+
+Three more pin `--force` and what it is an escape from, because the
+guard is only worth having if it is reachable from the shell the
+maintainer actually ran: a hand-edited generated file refuses the
+document and survives, `--force` overwrites it, and a document that
+simply moved forward re-tangles with no flag at all. That last one is
+the important one — it is the whole corpus, and a guard that got it
+wrong would refuse everything.
 
 <a name="chunk-cli-verdicts"></a><sub>[`tests/cli_verdicts.rs`](../../crates/x0k-tangle/tests/cli_verdicts.rs) · `#cli-verdicts`</sub>
 
@@ -2102,6 +2159,99 @@ fn tangle_writes_a_document_that_names_a_target() {
         stderr.contains("tangled 1 file(s) from 1 document(s)"),
         "got {stderr}"
     );
+}
+
+/// A document with one chunk and one output. `body` distinguishes one
+/// generation of it from the next.
+fn tangling_doc(body: &str) -> String {
+    format!(
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/guard\n  \
+         type: implementation\n  status: draft\n  tangle:\n    crate: .\n    \
+         root: src/lib.rs\n---\n# Doc\n\n```rust {{#root}}\npub fn {body}() {{}}\n```\n"
+    )
+}
+
+fn tangle_in(dir: &Path, force: bool) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"));
+    cmd.arg("tangle")
+        .arg(dir.join("docs/d.md"))
+        .arg("--workspace")
+        .arg(dir);
+    if force {
+        cmd.arg("--force");
+    }
+    cmd.output().expect("the x0k-tangle binary runs")
+}
+
+/// The maintainer's report, through the shell: a line added to a
+/// generated file is not silently eaten by the next tangle.
+#[test]
+fn tangle_refuses_to_overwrite_a_hand_edited_output() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("first"));
+    assert!(tangle_in(tmp.path(), false).status.success());
+
+    let out_file = tmp.path().join("src/lib.rs");
+    let edited = format!("{}// HAND EDIT\n", fs::read_to_string(&out_file).unwrap());
+    fs::write(&out_file, &edited).unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("second"));
+
+    let out = tangle_in(tmp.path(), false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "tangling over a hand edit reported success: {stderr}"
+    );
+    assert!(
+        stderr.contains("refused to overwrite") && stderr.contains("src/lib.rs"),
+        "the refusal names what it would have destroyed: {stderr}"
+    );
+    assert!(
+        stderr.contains("--force"),
+        "the refusal names the way out: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&out_file).unwrap(),
+        edited,
+        "the hand edit survived"
+    );
+}
+
+/// And the way out works.
+#[test]
+fn tangle_force_overwrites_a_hand_edited_output() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("first"));
+    assert!(tangle_in(tmp.path(), false).status.success());
+
+    let out_file = tmp.path().join("src/lib.rs");
+    fs::write(&out_file, "// HAND EDIT\n").unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("second"));
+
+    let out = tangle_in(tmp.path(), true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "--force did not overwrite: {stderr}");
+    let text = fs::read_to_string(&out_file).unwrap();
+    assert!(
+        text.contains("second") && !text.contains("HAND EDIT"),
+        "got {text}"
+    );
+}
+
+/// The common path stays common: a document that moves forward rewrites
+/// the output it last wrote, with no flag and no complaint.
+#[test]
+fn tangle_rewrites_the_output_it_last_wrote() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("first"));
+    assert!(tangle_in(tmp.path(), false).status.success());
+    write(tmp.path(), "docs/d.md", &tangling_doc("second"));
+
+    let out = tangle_in(tmp.path(), false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "an ordinary re-tangle failed: {stderr}");
+    let text = fs::read_to_string(tmp.path().join("src/lib.rs")).unwrap();
+    assert!(text.contains("second") && !text.contains("first"), "got {text}");
 }
 `````
 

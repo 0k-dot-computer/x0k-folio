@@ -305,3 +305,96 @@ fn tangle_writes_a_document_that_names_a_target() {
         "got {stderr}"
     );
 }
+
+/// A document with one chunk and one output. `body` distinguishes one
+/// generation of it from the next.
+fn tangling_doc(body: &str) -> String {
+    format!(
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/guard\n  \
+         type: implementation\n  status: draft\n  tangle:\n    crate: .\n    \
+         root: src/lib.rs\n---\n# Doc\n\n```rust {{#root}}\npub fn {body}() {{}}\n```\n"
+    )
+}
+
+fn tangle_in(dir: &Path, force: bool) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"));
+    cmd.arg("tangle")
+        .arg(dir.join("docs/d.md"))
+        .arg("--workspace")
+        .arg(dir);
+    if force {
+        cmd.arg("--force");
+    }
+    cmd.output().expect("the x0k-tangle binary runs")
+}
+
+/// The maintainer's report, through the shell: a line added to a
+/// generated file is not silently eaten by the next tangle.
+#[test]
+fn tangle_refuses_to_overwrite_a_hand_edited_output() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("first"));
+    assert!(tangle_in(tmp.path(), false).status.success());
+
+    let out_file = tmp.path().join("src/lib.rs");
+    let edited = format!("{}// HAND EDIT\n", fs::read_to_string(&out_file).unwrap());
+    fs::write(&out_file, &edited).unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("second"));
+
+    let out = tangle_in(tmp.path(), false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "tangling over a hand edit reported success: {stderr}"
+    );
+    assert!(
+        stderr.contains("refused to overwrite") && stderr.contains("src/lib.rs"),
+        "the refusal names what it would have destroyed: {stderr}"
+    );
+    assert!(
+        stderr.contains("--force"),
+        "the refusal names the way out: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&out_file).unwrap(),
+        edited,
+        "the hand edit survived"
+    );
+}
+
+/// And the way out works.
+#[test]
+fn tangle_force_overwrites_a_hand_edited_output() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("first"));
+    assert!(tangle_in(tmp.path(), false).status.success());
+
+    let out_file = tmp.path().join("src/lib.rs");
+    fs::write(&out_file, "// HAND EDIT\n").unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("second"));
+
+    let out = tangle_in(tmp.path(), true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "--force did not overwrite: {stderr}");
+    let text = fs::read_to_string(&out_file).unwrap();
+    assert!(
+        text.contains("second") && !text.contains("HAND EDIT"),
+        "got {text}"
+    );
+}
+
+/// The common path stays common: a document that moves forward rewrites
+/// the output it last wrote, with no flag and no complaint.
+#[test]
+fn tangle_rewrites_the_output_it_last_wrote() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/d.md", &tangling_doc("first"));
+    assert!(tangle_in(tmp.path(), false).status.success());
+    write(tmp.path(), "docs/d.md", &tangling_doc("second"));
+
+    let out = tangle_in(tmp.path(), false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "an ordinary re-tangle failed: {stderr}");
+    let text = fs::read_to_string(tmp.path().join("src/lib.rs")).unwrap();
+    assert!(text.contains("second") && !text.contains("first"), "got {text}");
+}

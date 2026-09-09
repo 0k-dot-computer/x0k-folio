@@ -276,8 +276,14 @@ did resolve are written before the run fails, so a failed sync leaves the
 document partly updated; re-run it after fixing the reference.
 Which languages the extractor can parse is the one thing on this page that
 moves, so read `x0k-tangle sync --help` for the current set rather than
-trusting a list here. A file it cannot parse comes back as that same
-per-chunk warning, not as an emptied block.
+trusting a list here. A file it cannot parse fails the same
+way — a per-chunk `error:` naming the supported set, and a non-zero run.
+
+**A chunk whose symbol has since been renamed or deleted keeps the body it
+was last given.** The run says so and fails, but the document on disk is
+unchanged, so a re-tangle-and-diff gate sees nothing and `check` does not
+resolve `symbol=` at all. Until it does, a stale `from=` chunk is drift this
+repository cannot catch for you: re-run `sync` and read its exit code.
 
 The direction is the point, not the syntax. A `from=` chunk is a reference,
 not an output: `tangle` on that document writes zero files and does not touch

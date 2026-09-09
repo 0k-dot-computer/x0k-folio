@@ -31,6 +31,9 @@ enum Command {
         /// Workspace root (defaults to current directory)
         #[arg(long)]
         workspace: Option<PathBuf>,
+        /// Overwrite outputs holding content this tangler did not write
+        #[arg(long)]
+        force: bool,
     },
     /// Verify chunk references resolve and no cycles exist, and read every
     /// folio/v1 envelope against a vocabulary.
@@ -263,6 +266,9 @@ enum Command {
         /// Workspace root (defaults to the current directory)
         #[arg(long)]
         root: Option<PathBuf>,
+        /// Overwrite outputs holding content this tangler did not write
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -270,7 +276,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Tangle { paths, workspace } => {
+        Command::Tangle { paths, workspace, force } => {
             // Route identity tangling through the unified dispatcher.
             // The default registry has `IdentityPipeline` registered;
             // docs that also declare extra pipelines will error here
@@ -278,6 +284,7 @@ fn main() -> Result<()> {
             let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
             let docs = discover_documents(&paths)?;
             let registry = x0k_tangle::PipelineRegistry::default();
+            let settings = clobber_settings(force);
             let mut total_files = 0;
             let mut tangled_docs = 0;
             let mut nowhere_to_write = 0;
@@ -290,7 +297,7 @@ fn main() -> Result<()> {
                     continue;
                 }
                 tangled_docs += 1;
-                let result = x0k_tangle::tangle_document(doc_path, &ws, &registry)?;
+                let result = x0k_tangle::tangle_document_with(doc_path, &ws, &registry, &settings)?;
                 for out in &result.identity_outputs {
                     eprintln!("  {} → {}", doc_path.display(), out.path.display());
                     total_files += 1;
@@ -729,10 +736,11 @@ fn main() -> Result<()> {
             }
         }
 
-        Command::Workspace { root } => {
+        Command::Workspace { root, force } => {
             let ws = resolve_workspace_root(root)?;
             let registry = x0k_tangle::PipelineRegistry::default();
-            let report = x0k_tangle::tangle_workspace(&ws, &registry)?;
+            let settings = clobber_settings(force);
+            let report = x0k_tangle::tangle_workspace_with(&ws, &registry, &settings)?;
             print_workspace_summary(&ws, &report);
             if !report.errored.is_empty() {
                 std::process::exit(1);
@@ -800,6 +808,18 @@ fn resolve_workspace_root(flag: Option<PathBuf>) -> Result<PathBuf> {
     // cwd. The library refuses writes outside this root regardless.
     std::fs::canonicalize(&raw)
         .with_context(|| format!("resolving workspace root {}", raw.display()))
+}
+
+/// The run-scoped settings a `--force` flag decides.
+fn clobber_settings(force: bool) -> x0k_tangle::TangleSettings {
+    x0k_tangle::TangleSettings {
+        clobber: if force {
+            x0k_tangle::ClobberPolicy::Force
+        } else {
+            x0k_tangle::ClobberPolicy::Refuse
+        },
+        ..Default::default()
+    }
 }
 
 /// Pretty-print a `WorkspaceTangleReport` to stderr.

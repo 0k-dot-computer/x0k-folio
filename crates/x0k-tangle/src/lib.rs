@@ -63,12 +63,14 @@ pub use atlas::{
 };
 pub use identity_pipeline::{IdentityPipeline, IDENTITY_KIND};
 pub use pipeline::{
-    ChunkInput, ChunkVariant, CommentStyle, PipelineContext, PipelineError, PipelineErrorKind,
-    PipelineOutput, PipelineRegistry, TanglePipeline,
+    ChunkInput, ChunkVariant, ClobberPolicy, ClobberRefusal, CommentStyle, OutputProvenance,
+    PipelineContext, PipelineError, PipelineErrorKind, PipelineOutput, PipelineRegistry,
+    TanglePipeline,
 };
 pub use pipeline_runner::{
-    doc_freshness, tangle_directory, tangle_document, tangle_workspace, DirtyReason, DocFreshness,
-    PipelineRunOutput, TangleResult, WorkspaceTangleReport,
+    doc_freshness, tangle_directory, tangle_directory_with, tangle_document, tangle_document_with,
+    tangle_workspace, tangle_workspace_with, DirtyReason, DocFreshness, PipelineRunOutput,
+    TangleResult, TangleSettings, WorkspaceTangleReport,
 };
 pub use presentation::{
     apply_publication_shell, build_members_json, BOOT_FILE, FALLBACK_DIR, MEMBERS_FILE,
