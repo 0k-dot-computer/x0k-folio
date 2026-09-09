@@ -5,10 +5,27 @@ use x0k_syntax::{css_class, highlight, HighlightedToken, Language, TokenKind};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::path::Path;
 
 pub struct WeaveOutput {
     pub html: String,
     pub title: Option<String>,
+}
+
+/// The file name a document's woven page takes inside an output directory:
+/// the document's own stem, so weaving a second chapter beside the first
+/// adds a page rather than replacing one.
+///
+/// Pure, and deterministic per document — re-weaving the same document
+/// rewrites the same file. Documents sharing a stem across directories
+/// share a name; a caller that must not clobber checks at the write.
+pub fn page_file_name(doc_path: &Path) -> String {
+    let stem = doc_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "index".to_string());
+    format!("{stem}.html")
 }
 
 pub fn weave_html(content: &str, doc: &ParsedDocument) -> Result<WeaveOutput> {
@@ -3133,5 +3150,57 @@ second
         assert!(output.html.contains("<h2 id=\"the-weave-function\">"));
         // The inner markup is preserved inside the heading.
         assert!(output.html.contains("<code>weave</code>"));
+    }
+
+    #[test]
+    fn a_page_is_named_after_its_document() {
+        assert_eq!(page_file_name(Path::new("stack.md")), "stack.html");
+        assert_eq!(page_file_name(Path::new("docs/attrs.md")), "attrs.html");
+        assert_eq!(
+            page_file_name(Path::new("/abs/book/parser.md")),
+            "parser.html"
+        );
+    }
+
+    /// The defect this rule exists for: two documents woven into one output
+    /// directory must not resolve to the same file.
+    #[test]
+    fn two_documents_woven_into_one_directory_keep_two_pages() {
+        let first = page_file_name(Path::new("docs/stack.md"));
+        let second = page_file_name(Path::new("docs/attrs.md"));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn a_document_named_index_still_renders_index_html() {
+        assert_eq!(page_file_name(Path::new("book/index.md")), "index.html");
+    }
+
+    #[test]
+    fn a_path_with_no_stem_falls_back_to_index() {
+        assert_eq!(page_file_name(Path::new("/")), "index.html");
+    }
+
+    /// The whole defect, walked end to end: two chapters woven into one
+    /// output directory, written the way a caller writes them, and both
+    /// still there afterwards with their own text.
+    #[test]
+    fn a_second_chapter_woven_into_the_same_directory_leaves_the_first() {
+        let out = tempfile::TempDir::new().unwrap();
+        let chapters = [
+            ("docs/stack.md", "# Stack\n\nThe stack chapter.\n"),
+            ("docs/attrs.md", "# Attrs\n\nThe attrs chapter.\n"),
+        ];
+
+        for (doc_path, content) in chapters {
+            let parsed = parse_document(content).unwrap();
+            let html = weave_html(content, &parsed).unwrap().html;
+            std::fs::write(out.path().join(page_file_name(Path::new(doc_path))), html).unwrap();
+        }
+
+        let stack = std::fs::read_to_string(out.path().join("stack.html")).unwrap();
+        let attrs = std::fs::read_to_string(out.path().join("attrs.html")).unwrap();
+        assert!(stack.contains("The stack chapter."), "got {stack}");
+        assert!(attrs.contains("The attrs chapter."), "got {attrs}");
     }
 }

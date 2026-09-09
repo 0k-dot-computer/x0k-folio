@@ -48,9 +48,18 @@ enum Command {
     /// A third thing is checked across the set: an
     /// affordance claimed for a human that no signifier signifies is a
     /// defect, because the audience has nothing to perceive.
+    ///
+    /// Every `from=` chunk is resolved against its source file too —
+    /// missing file, missing symbol, ambiguous symbol, a language symbol
+    /// extraction cannot walk — and each failure fails the check. Nothing
+    /// is written: this is the read-only half of `sync`.
     Check {
         /// Paths to scan
         paths: Vec<PathBuf>,
+        /// Workspace root that `from=` paths resolve against
+        /// (defaults to current directory)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
         /// Directory of ontology module files (*.ttl) to check against.
         /// Defaults to the modules this projection's PROVENANCE.json names,
         /// then to the set this build compiled.
@@ -359,10 +368,12 @@ fn main() -> Result<()> {
             }
         }
 
-        Command::Check { paths, vocabulary } => {
+        Command::Check { paths, workspace, vocabulary } => {
+            let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
             let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref())?;
             let mut has_errors = false;
             let mut chunked_documents = 0;
+            let mut source_refs = 0;
             let mut ids: HashMap<String, PathBuf> = HashMap::new();
 
             for doc_path in markdown_under(&paths) {
@@ -389,6 +400,12 @@ fn main() -> Result<()> {
                     chunked_documents += 1;
                     for err in &x0k_tangle::resolve::check_all_refs(&parsed)? {
                         eprintln!("{}: {}", doc_path.display(), err);
+                        has_errors = true;
+                    }
+                    let sources = x0k_tangle::source_check::check_source_refs(&parsed, &ws);
+                    source_refs += sources.checked;
+                    for finding in &sources.findings {
+                        eprintln!("{}: {}", doc_path.display(), finding);
                         has_errors = true;
                     }
                 }
@@ -435,7 +452,7 @@ fn main() -> Result<()> {
             } else {
                 eprintln!(
                     "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
-                    references_verdict(chunked_documents),
+                    references_verdict(chunked_documents, source_refs),
                     report.corpus.checked,
                     report.declarations.checked,
                     report.corpus.dangling.len()
@@ -506,7 +523,9 @@ fn main() -> Result<()> {
 
             if let Some(dir) = output_dir {
                 std::fs::create_dir_all(&dir)?;
-                let html_path = dir.join("index.html");
+                // Named after the document, so weaving a second chapter into one
+                // directory no longer destroys the first (weave.md § the page's name).
+                let html_path = dir.join(x0k_tangle::weave::page_file_name(&path));
                 std::fs::write(&html_path, &output.html)?;
                 eprintln!("wove {} → {}", path.display(), html_path.display());
             } else {
@@ -885,16 +904,26 @@ fn dangling_note(source: &str, predicate: &str, target: impl std::fmt::Display) 
 
 /// What `check` says about the reference half of a clean run.
 ///
-/// The count is load-bearing. Zero is a real and common answer — a
-/// directory of decision documents declares no chunks — and it has to
-/// read as zero rather than as a pass, because the shape that produces
-/// it is also the shape a broken walk produces.
-fn references_verdict(chunked_documents: usize) -> String {
-    match chunked_documents {
-        0 => "no chunk references to check".to_string(),
-        1 => "all references OK in 1 document with chunks".to_string(),
-        n => format!("all references OK in {n} documents with chunks"),
+/// The counts are load-bearing, and they are separate because they are
+/// separate claims. Zero is a real and common answer for either — a
+/// directory of decision documents declares no chunks, and most
+/// documents that do declare chunks name no source file — and each has
+/// to read as zero rather than as a pass, because the shape that
+/// produces it is also the shape a broken walk produces.
+fn references_verdict(chunked_documents: usize, source_refs: usize) -> String {
+    if chunked_documents == 0 {
+        return "no chunk references to check".to_string();
     }
+    let docs = match chunked_documents {
+        1 => "1 document with chunks".to_string(),
+        n => format!("{n} documents with chunks"),
+    };
+    let sources = match source_refs {
+        0 => "no from= source references declared".to_string(),
+        1 => "1 from= source reference resolves".to_string(),
+        n => format!("{n} from= source references resolve"),
+    };
+    format!("splice references resolve in {docs}, {sources}")
 }
 
 /// What `tangle` says about a document it was named and cannot write from.

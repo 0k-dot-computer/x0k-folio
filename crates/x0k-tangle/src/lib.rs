@@ -18,9 +18,11 @@
 //!   sidecar next to the document that records what was produced.
 //! - **weave** — [`weave::weave_html`]: render the document, prose and
 //!   highlighted code together, as a single HTML page.
-//! - **check** — [`resolve::check_all_refs`] and
-//!   [`faces::vocabulary`] + [`faces::check_vocabulary`]: verify every chunk reference resolves
-//!   and no reference cycle exists, and read every folio/v1 envelope
+//! - **check** — [`resolve::check_all_refs`],
+//!   [`source_check::check_source_refs`], and [`faces::vocabulary`] +
+//!   [`faces::check_vocabulary`]: verify every chunk reference resolves
+//!   and no reference cycle exists, resolve every `from=`/`symbol=`
+//!   chunk against its source file, and read every folio/v1 envelope
 //!   against a vocabulary — one named with `--vocabulary`, one a
 //!   projection recorded, or the set this build compiled — without
 //!   writing anything.
@@ -88,3 +90,144 @@ pub use region_weave::{
     build_uri_to_path, rewrite_cross_doc_links, validate_artifact, weave_region, ArtifactFile,
     RegionInput, RegionMember, RegionWeaveOutput, UnresolvedLink,
 };
+
+/// Resolving every `from=` chunk in a document without writing anything.
+///
+/// The read-only half of [`crate::sync`]: it opens the same files, calls
+/// the same extractor, and reports the same sentences, but it never
+/// touches the document. That is what makes it usable as a gate — `sync`
+/// rewrites the tree it judges, so no CI job can run it.
+pub mod source_check {
+    use crate::parser::ParsedDocument;
+    use crate::source_ref::{extract_symbol_in, SymbolLanguage};
+    use std::path::Path;
+
+    /// What one pass over a document's `from=` chunks found.
+    ///
+    /// `checked` counts the chunks that named a source, findings or not,
+    /// so a caller's summary line can say how much it read rather than
+    /// asserting a pass over work it may have skipped.
+    pub struct SourceRefReport {
+        pub checked: usize,
+        pub findings: Vec<String>,
+    }
+
+    /// Resolve every `from=` chunk against the workspace root, reporting
+    /// each one that does not.
+    ///
+    /// The resolution is `sync`'s, move for move: the same
+    /// `workspace_root.join(from)`, the same language refusal before any
+    /// file is opened, the same `extract_symbol_in`. A finding is phrased
+    /// `chunk '<name>': <what sync would have said>`, so the two verbs
+    /// name a broken reference identically and a reader who has seen one
+    /// recognises the other.
+    ///
+    /// A chunk carrying `from=` and no `symbol=` is the one shape this
+    /// verb judges on its own, because `sync` skips it in silence — see
+    /// `bare_from_finding` below, which is private, so this is deliberately
+    /// not an intra-doc link.
+    pub fn check_source_refs(parsed: &ParsedDocument, workspace_root: &Path) -> SourceRefReport {
+        let mut report = SourceRefReport {
+            checked: 0,
+            findings: Vec::new(),
+        };
+
+        for name in &parsed.chunk_order {
+            let Some(chunk) = parsed.chunk(name) else {
+                continue;
+            };
+            if chunk.is_media || !chunk.is_from_ref() {
+                continue;
+            }
+            let Some(ref from_path) = chunk.from else {
+                continue;
+            };
+            report.checked += 1;
+
+            let source_file = workspace_root.join(from_path);
+            let lang = SymbolLanguage::for_lang(chunk.lang.as_deref());
+
+            let Some(symbol) = chunk.symbol.as_deref() else {
+                if let Some(finding) = bare_from_finding(name, &source_file, lang.is_ok()) {
+                    report.findings.push(finding);
+                }
+                continue;
+            };
+
+            // Which grammar reads the source is a property of the
+            // document alone, so it is settled before any file is opened
+            // — the order `sync` uses, and the reason an unwalkable
+            // language never reads as a mistyped symbol.
+            let lang = match lang {
+                Ok(lang) => lang,
+                Err(e) => {
+                    report.findings.push(format!("chunk '{name}': {e}"));
+                    continue;
+                }
+            };
+
+            if !source_file.exists() {
+                report.findings.push(not_found(name, &source_file));
+                continue;
+            }
+
+            let source_content = match std::fs::read_to_string(&source_file) {
+                Ok(content) => content,
+                Err(e) => {
+                    report.findings.push(format!(
+                        "chunk '{name}': reading {}: {e}",
+                        source_file.display()
+                    ));
+                    continue;
+                }
+            };
+
+            if let Err(e) = extract_symbol_in(&source_content, symbol, lang) {
+                report.findings.push(format!("chunk '{name}': {e}"));
+            }
+        }
+
+        report
+    }
+
+    /// What a chunk naming a file and no symbol is worth saying about.
+    ///
+    /// Two different things wear this shape. One is deliberate: a whole
+    /// file quoted into a document in a language symbol extraction cannot
+    /// walk — a TOML effect definition, a shader — where there is no
+    /// symbol to name and the document is showing the file. The corpus
+    /// has one, and making it fatal would be this gate refusing a
+    /// perfectly honest reference.
+    ///
+    /// The other is an accident, and it is the same accident this whole
+    /// verb is about. In rust, typescript, python — a language `sync`
+    /// *can* walk — a `from=` with no `symbol=` is a chunk `sync` skips
+    /// in silence forever: the body is never refreshed, and nothing on
+    /// either side of the tool ever says so. That one is a finding.
+    ///
+    /// Both are held to the half of the claim that is checkable from
+    /// here: the file the chunk names has to be there.
+    fn bare_from_finding(name: &str, source_file: &Path, walkable: bool) -> Option<String> {
+        if !source_file.exists() {
+            return Some(not_found(name, source_file));
+        }
+        if walkable {
+            return Some(format!(
+                "chunk '{name}': names a source file and no symbol=, in a language \
+                 symbol extraction can walk — sync skips it in silence, so the body \
+                 is never refreshed (add symbol=, or quote the file from a fence \
+                 sync cannot walk)"
+            ));
+        }
+        None
+    }
+
+    /// The one spelling of a source file that is not there. `sync` says
+    /// this sentence too.
+    fn not_found(name: &str, source_file: &Path) -> String {
+        format!(
+            "chunk '{name}': source file not found: {}",
+            source_file.display()
+        )
+    }
+}

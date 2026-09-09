@@ -1103,6 +1103,90 @@ fn heading_with_inline_markup_slugs_and_preserves_markup() {
 
 </details>
 
+<details><summary><code>a_page_is_named_after_its_document</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn a_page_is_named_after_its_document() {
+    assert_eq!(page_file_name(Path::new("stack.md")), "stack.html");
+    assert_eq!(page_file_name(Path::new("docs/attrs.md")), "attrs.html");
+    assert_eq!(
+        page_file_name(Path::new("/abs/book/parser.md")),
+        "parser.html"
+    );
+}
+
+/// The defect this rule exists for: two documents woven into one output
+/// directory must not resolve to the same file.
+```
+
+</details>
+
+<details><summary><code>two_documents_woven_into_one_directory_keep_two_pages</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn two_documents_woven_into_one_directory_keep_two_pages() {
+    let first = page_file_name(Path::new("docs/stack.md"));
+    let second = page_file_name(Path::new("docs/attrs.md"));
+    assert_ne!(first, second);
+}
+```
+
+</details>
+
+<details><summary><code>a_document_named_index_still_renders_index_html</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn a_document_named_index_still_renders_index_html() {
+    assert_eq!(page_file_name(Path::new("book/index.md")), "index.html");
+}
+```
+
+</details>
+
+<details><summary><code>a_path_with_no_stem_falls_back_to_index</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn a_path_with_no_stem_falls_back_to_index() {
+    assert_eq!(page_file_name(Path::new("/")), "index.html");
+}
+
+/// The whole defect, walked end to end: two chapters woven into one
+/// output directory, written the way a caller writes them, and both
+/// still there afterwards with their own text.
+```
+
+</details>
+
+<details><summary><code>a_second_chapter_woven_into_the_same_directory_leaves_the_first</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn a_second_chapter_woven_into_the_same_directory_leaves_the_first() {
+    let out = tempfile::TempDir::new().unwrap();
+    let chapters = [
+        ("docs/stack.md", "# Stack\n\nThe stack chapter.\n"),
+        ("docs/attrs.md", "# Attrs\n\nThe attrs chapter.\n"),
+    ];
+
+    for (doc_path, content) in chapters {
+        let parsed = parse_document(content).unwrap();
+        let html = weave_html(content, &parsed).unwrap().html;
+        std::fs::write(out.path().join(page_file_name(Path::new(doc_path))), html).unwrap();
+    }
+
+    let stack = std::fs::read_to_string(out.path().join("stack.html")).unwrap();
+    let attrs = std::fs::read_to_string(out.path().join("attrs.html")).unwrap();
+    assert!(stack.contains("The stack chapter."), "got {stack}");
+    assert!(attrs.contains("The attrs chapter."), "got {attrs}");
+}
+```
+
+</details>
+
 
 Its mark: a document opening into a page, the source on the left and a
 leaf swung open to the right carrying the rendered text.

@@ -91,11 +91,22 @@ pub fn extract_symbol_in(
     pick_match(matches, symbol_path)
 }
 
-/// A parsed `symbol=`: the segments to descend, and the trait a Rust
-/// `<Type as Trait>::method` path pins the impl block to.
+/// A parsed `symbol=`: the segments to descend, and what the impl block
+/// a Rust qualified path selects must implement.
 struct SymbolQuery<'p> {
     parts: Vec<&'p str>,
-    trait_bound: Option<&'p str>,
+    trait_bound: TraitBound<'p>,
+}
+
+/// What an impl block must implement for a query to accept it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TraitBound<'p> {
+    /// An unqualified path: any impl block on the type will do.
+    Any,
+    /// `<Ty as Trait>`: the block implementing that trait.
+    Named(&'p str),
+    /// `<Ty>`: the inherent block, which implements nothing.
+    Inherent,
 }
 
 fn parse_symbol_query(symbol_path: &str, lang: SymbolLanguage) -> SymbolQuery<'_> {
@@ -106,7 +117,7 @@ fn parse_symbol_query(symbol_path: &str, lang: SymbolLanguage) -> SymbolQuery<'_
     }
     SymbolQuery {
         parts: split_symbol_path(symbol_path, lang),
-        trait_bound: None,
+        trait_bound: TraitBound::Any,
     }
 }
 
@@ -141,17 +152,27 @@ fn split_julia_path(path: &str) -> Vec<&str> {
 }
 
 /// `<Pairs<'_, R> as fmt::Display>::fmt` — the type, the trait that
-/// selects one impl of it, and the path below.
+/// selects one impl of it, and the path below. Both narrower forms are
+/// read too: `<Ty>` for the inherent block, and either qualifier with no
+/// path below, which names the impl block itself.
 fn parse_qualified_path(path: &str) -> Option<SymbolQuery<'_>> {
     let inner = path.strip_prefix('<')?;
     let close = closing_angle(inner)?;
     let (qualifier, rest) = inner.split_at(close);
-    let (ty, bound) = split_at_as(qualifier)?;
+    let (ty, bound) = match split_at_as(qualifier) {
+        Some((ty, trait_name)) => (ty, TraitBound::Named(trait_name)),
+        None => (qualifier.trim(), TraitBound::Inherent),
+    };
     let mut parts = vec![ty];
-    parts.extend(rest.strip_prefix(">::")?.split("::"));
+    let below = rest.strip_prefix('>')?;
+    if let Some(path) = below.strip_prefix("::") {
+        parts.extend(path.split("::"));
+    } else if !below.is_empty() {
+        return None;
+    }
     Some(SymbolQuery {
         parts,
-        trait_bound: Some(bound),
+        trait_bound: bound,
     })
 }
 
@@ -219,19 +240,32 @@ fn ambiguity_report(matches: &[Candidate], symbol_path: &str) -> String {
         "symbol '{symbol_path}' is ambiguous — {} definitions match:",
         matches.len()
     );
+    let mut suggested = false;
     for m in matches {
         report.push_str(&format!("\n  line {}", m.span.start_line));
         if let Some(scope) = &m.scope {
             report.push_str(&format!(" in `{scope}`"));
         }
-        if let Some(select) = &m.select {
+        if let Some(select) = unique_selector(m, matches) {
             report.push_str(&format!(" — select it with symbol=\"{select}\""));
+            suggested = true;
         }
     }
-    if matches.iter().all(|m| m.select.is_none()) {
+    if !suggested {
         report.push_str("\n  no spelling names one of these alone; reference the enclosing item");
     }
     report
+}
+
+/// A candidate's selector, but only if it is the candidate's alone — a
+/// spelling two matches share does not name one of them.
+fn unique_selector<'c>(candidate: &'c Candidate, matches: &[Candidate]) -> Option<&'c str> {
+    let select = candidate.select.as_deref()?;
+    let sharers = matches
+        .iter()
+        .filter(|other| other.select.as_deref() == Some(select))
+        .count();
+    (sharers == 1).then_some(select)
 }
 
 fn matched(span: SymbolSpan, enclosing: Option<&Enclosing>, kind: MatchKind) -> Candidate {
@@ -380,14 +414,26 @@ fn base_type_name(ty: &str) -> &str {
     ty.split('<').next().unwrap_or(ty).trim()
 }
 
-fn trait_matches(bound: Option<&str>, actual: Option<&str>) -> bool {
-    let Some(bound) = bound else {
-        return true;
-    };
-    let Some(actual) = actual else {
-        return false;
-    };
-    actual == bound || last_segment(actual) == last_segment(bound)
+/// The `symbol=` that names one impl block and nothing else: the qualified
+/// type path Rust itself writes — `<Stack<T> as Default>` for a trait impl,
+/// `<Stack<T>>` for the inherent one. Round-trips through
+/// [`parse_qualified_path`], which is what makes it printable in a report.
+fn impl_selector(ty: &str, implemented: Option<&str>) -> String {
+    match implemented {
+        Some(trait_name) => format!("<{ty} as {trait_name}>"),
+        None => format!("<{ty}>"),
+    }
+}
+
+fn trait_matches(bound: TraitBound, actual: Option<&str>) -> bool {
+    match (bound, actual) {
+        (TraitBound::Any, _) => true,
+        (TraitBound::Inherent, actual) => actual.is_none(),
+        (TraitBound::Named(_), None) => false,
+        (TraitBound::Named(bound), Some(actual)) => {
+            actual == bound || last_segment(actual) == last_segment(bound)
+        }
+    }
 }
 
 fn last_segment(path: &str) -> &str {
@@ -454,13 +500,19 @@ fn collect_matching_impl(
     if !trait_matches(query.trait_bound, implemented.as_deref()) {
         return;
     }
+    let selector = impl_selector(&ty, implemented.as_deref());
     let enclosing = Enclosing {
         header: Some(impl_header(node, source)),
-        qualifier: implemented.map(|t| format!("<{ty} as {t}>")),
+        qualifier: Some(selector.clone()),
     };
     if depth == query.parts.len() - 1 {
         let span = make_span(format!("impl {ty}"), node, source, Leading::RustAttrs);
-        matches.push(matched(span, Some(&enclosing), MatchKind::ImplBlock));
+        matches.push(Candidate {
+            scope: enclosing.header.clone(),
+            select: Some(selector),
+            span,
+            kind: MatchKind::ImplBlock,
+        });
     } else if let Some(body) = node.child_by_field_name("body") {
         collect_matching_symbols(body, source, query, depth + 1, Some(&enclosing), matches);
     }
@@ -1114,6 +1166,127 @@ mod tests {
     fn a_plain_comment_across_a_blank_line_stays_out() {
         let span = extract_symbol(PEST_SAMPLE, "Plain").unwrap();
         assert_eq!(span.body, "pub struct Plain;", "got {:?}", span.body);
+    }
+
+    const IMPL_SAMPLE: &str = r#"
+    use std::fmt;
+
+    pub struct Stack<T> {
+        cache: Vec<T>,
+    }
+
+    impl<T: Clone> Stack<T> {
+        pub fn push(&mut self, v: T) {
+            self.cache.push(v);
+        }
+
+        pub fn fmt(&self) -> String {
+            String::new()
+        }
+    }
+
+    impl<T> Default for Stack<T> {
+        fn default() -> Self {
+            Stack { cache: Vec::new() }
+        }
+    }
+
+    impl<T: fmt::Debug> fmt::Debug for Stack<T> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "stack")
+        }
+    }
+    "#;
+
+    /// Two inherent blocks on a type declared elsewhere: the case where no
+    /// qualified spelling can tell the candidates apart.
+    const TWO_INHERENT_SAMPLE: &str = r#"
+    impl Pairs {
+        pub fn first(&self) {}
+    }
+
+    impl Pairs {
+        pub fn second(&self) {}
+    }
+    "#;
+
+    /// Every `symbol="…"` an ambiguity report prints.
+    fn suggestions(report: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut rest = report;
+        while let Some(pos) = rest.find("symbol=\"") {
+            rest = &rest[pos + "symbol=\"".len()..];
+            let end = rest.find('"').expect("unterminated suggestion");
+            found.push(rest[..end].to_string());
+            rest = &rest[end + 1..];
+        }
+        found
+    }
+
+    /// The invariant: feed every suggestion back and each one resolves.
+    fn round_trip(source: &str, symbol_path: &str) -> Vec<String> {
+        let report = extract_symbol(source, symbol_path).unwrap_err().to_string();
+        let found = suggestions(&report);
+        for suggestion in &found {
+            if let Err(e) = extract_symbol(source, suggestion) {
+                panic!("suggested symbol=\"{suggestion}\" does not resolve: {e}\n{report}");
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn impl_block_suggestions_round_trip() {
+        let found = round_trip(IMPL_SAMPLE, "Stack<T>");
+        assert_eq!(found.len(), 3, "got {found:?}");
+        assert!(found.contains(&"<Stack<T>>".to_string()), "got {found:?}");
+        assert!(
+            found.contains(&"<Stack<T> as Default>".to_string()),
+            "got {found:?}"
+        );
+        // The block's header text never lands where a member name belongs.
+        assert!(!found.iter().any(|s| s.contains("impl ")), "got {found:?}");
+    }
+
+    #[test]
+    fn member_suggestions_round_trip_from_inherent_and_trait_blocks() {
+        let found = round_trip(IMPL_SAMPLE, "Stack<T>::fmt");
+        assert_eq!(found.len(), 2, "got {found:?}");
+        assert!(found.contains(&"<Stack<T>>::fmt".to_string()), "got {found:?}");
+    }
+
+    #[test]
+    fn trait_impl_suggestions_round_trip() {
+        let found = round_trip(PEST_SAMPLE, "Pairs<'_, R>::fmt");
+        assert_eq!(found.len(), 2, "got {found:?}");
+    }
+
+    #[test]
+    fn an_inherent_impl_block_is_addressable() {
+        let inherent = extract_symbol(IMPL_SAMPLE, "<Stack<T>>").unwrap();
+        assert!(
+            inherent.body.starts_with("impl<T: Clone> Stack<T>"),
+            "got {:?}",
+            inherent.body
+        );
+        let derived = extract_symbol(IMPL_SAMPLE, "<Stack<T> as Default>").unwrap();
+        assert!(
+            derived.body.starts_with("impl<T> Default for Stack<T>"),
+            "got {:?}",
+            derived.body
+        );
+    }
+
+    #[test]
+    fn blocks_no_spelling_separates_get_the_note_and_no_suggestion() {
+        let report = extract_symbol(TWO_INHERENT_SAMPLE, "Pairs")
+            .unwrap_err()
+            .to_string();
+        assert!(suggestions(&report).is_empty(), "got {report}");
+        assert!(
+            report.contains("no spelling names one of these alone"),
+            "got {report}"
+        );
     }
 
     const TS_SAMPLE: &str = r#"

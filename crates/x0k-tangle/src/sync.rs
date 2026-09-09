@@ -146,7 +146,12 @@ fn apply_from_patches(
         i += 1;
     }
 
-    Ok(result.join("\n"))
+    // `lines()` dropped the final newline; put it back iff it was there.
+    let mut out = result.join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 /// Replace the body of one named fenced chunk in a literate document,
@@ -308,5 +313,40 @@ fn old_version() {}
         let result = apply_from_patches(content, &parsed, &patches).unwrap();
         assert!(result.contains("fn new_version()"));
         assert!(!result.contains("fn old_version()"));
+    }
+
+    /// The document ends `` ``` `` + newline before the sync and must end
+    /// the same way after it — twice, since a rewrite that strips the byte
+    /// ping-pongs against any end-of-file-newline hook.
+    fn synced_twice(doc: &str) -> String {
+        let (tmp, doc_path) = workspace(
+            "remap.js",
+            "export function createHorizonRemap(scale) {\n  return (u) => u * scale;\n}\n",
+            doc,
+        );
+        let first = sync_document(&doc_path, tmp.path()).unwrap();
+        assert_eq!(first.chunks_populated, 1, "{:?}", first.errors);
+        let after_one = std::fs::read_to_string(&doc_path).unwrap();
+        sync_document(&doc_path, tmp.path()).unwrap();
+        let after_two = std::fs::read_to_string(&doc_path).unwrap();
+        assert_eq!(after_one, after_two, "sync is not idempotent");
+        after_two
+    }
+
+    #[test]
+    fn a_synced_document_keeps_its_trailing_newline() {
+        let synced = synced_twice(
+            "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n",
+        );
+        assert!(synced.ends_with("```\n"), "got {synced:?}");
+    }
+
+    #[test]
+    fn a_document_without_a_trailing_newline_does_not_gain_one() {
+        let synced = synced_twice(
+            "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```",
+        );
+        assert!(synced.ends_with("```"), "got {synced:?}");
+        assert!(!synced.ends_with('\n'), "got {synced:?}");
     }
 }

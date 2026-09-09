@@ -133,9 +133,11 @@ user needs, and where the document format is specified.
 //!   sidecar next to the document that records what was produced.
 //! - **weave** — [`weave::weave_html`]: render the document, prose and
 //!   highlighted code together, as a single HTML page.
-//! - **check** — [`resolve::check_all_refs`] and
-//!   [`faces::vocabulary`] + [`faces::check_vocabulary`]: verify every chunk reference resolves
-//!   and no reference cycle exists, and read every folio/v1 envelope
+//! - **check** — [`resolve::check_all_refs`],
+//!   [`source_check::check_source_refs`], and [`faces::vocabulary`] +
+//!   [`faces::check_vocabulary`]: verify every chunk reference resolves
+//!   and no reference cycle exists, resolve every `from=`/`symbol=`
+//!   chunk against its source file, and read every folio/v1 envelope
 //!   against a vocabulary — one named with `--vocabulary`, one a
 //!   projection recorded, or the set this build compiled — without
 //!   writing anything.
@@ -217,6 +219,181 @@ pub use region_weave::{
     build_uri_to_path, rewrite_cross_doc_links, validate_artifact, weave_region, ArtifactFile,
     RegionInput, RegionMember, RegionWeaveOutput, UnresolvedLink,
 };
+```
+
+## Reading a `from=` without touching it
+
+`sync` is the verb that *repairs* a source reference, and repairing means
+writing: it opens the file the chunk names, extracts the symbol, and puts
+the body back into the document. That makes it useless as a gate. A CI job
+cannot run a verb that rewrites the tree it is judging, and a maintainer
+who runs it locally and pushes gets a green pipeline over a document whose
+prose sits above code that was deleted three months ago.
+
+The hole is worse than "unchecked", because `sync` half-closes it in a way
+that reads as closed. Sync a chunk, let the source method be renamed, and
+`sync` exits 1 — but it leaves the old body in place. The document is
+byte-identical, `git status` is clean, the re-run-and-diff gate the guide
+recommends sees nothing, and `check` prints a pass. The stale body is the
+one failure this whole feature exists to prevent, and it was the one
+failure nothing could observe from the read side.
+
+So the resolution half of `sync` gets a second caller that stops before the
+write. Same file, same symbol, same extractor, same messages — including
+the ambiguity report, which is the most useful sentence this tool prints and
+is worth having in the mode a reader can run. What comes back is a list of
+sentences and a count of what was resolved, so the CLI can print findings
+under the document that holds them and say how much it read.
+
+The policy lives here rather than in either binary because there are two
+binaries. `main.rs` and the bundle's `bin/x0k-tangle.rs` are copies of each
+other by construction, and a duplicated format string that drifts costs a
+reader a confusing line; a duplicated *resolution rule* that drifts costs
+them a gate that disagrees with itself about whether the tree is sound.
+
+<a name="chunk-source-check"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#source-check`</sub>
+
+```rust {#source-check}
+/// Resolving every `from=` chunk in a document without writing anything.
+///
+/// The read-only half of [`crate::sync`]: it opens the same files, calls
+/// the same extractor, and reports the same sentences, but it never
+/// touches the document. That is what makes it usable as a gate — `sync`
+/// rewrites the tree it judges, so no CI job can run it.
+pub mod source_check {
+    use crate::parser::ParsedDocument;
+    use crate::source_ref::{extract_symbol_in, SymbolLanguage};
+    use std::path::Path;
+
+    /// What one pass over a document's `from=` chunks found.
+    ///
+    /// `checked` counts the chunks that named a source, findings or not,
+    /// so a caller's summary line can say how much it read rather than
+    /// asserting a pass over work it may have skipped.
+    pub struct SourceRefReport {
+        pub checked: usize,
+        pub findings: Vec<String>,
+    }
+
+    /// Resolve every `from=` chunk against the workspace root, reporting
+    /// each one that does not.
+    ///
+    /// The resolution is `sync`'s, move for move: the same
+    /// `workspace_root.join(from)`, the same language refusal before any
+    /// file is opened, the same `extract_symbol_in`. A finding is phrased
+    /// `chunk '<name>': <what sync would have said>`, so the two verbs
+    /// name a broken reference identically and a reader who has seen one
+    /// recognises the other.
+    ///
+    /// A chunk carrying `from=` and no `symbol=` is the one shape this
+    /// verb judges on its own, because `sync` skips it in silence — see
+    /// `bare_from_finding` below, which is private, so this is deliberately
+    /// not an intra-doc link.
+    pub fn check_source_refs(parsed: &ParsedDocument, workspace_root: &Path) -> SourceRefReport {
+        let mut report = SourceRefReport {
+            checked: 0,
+            findings: Vec::new(),
+        };
+
+        for name in &parsed.chunk_order {
+            let Some(chunk) = parsed.chunk(name) else {
+                continue;
+            };
+            if chunk.is_media || !chunk.is_from_ref() {
+                continue;
+            }
+            let Some(ref from_path) = chunk.from else {
+                continue;
+            };
+            report.checked += 1;
+
+            let source_file = workspace_root.join(from_path);
+            let lang = SymbolLanguage::for_lang(chunk.lang.as_deref());
+
+            let Some(symbol) = chunk.symbol.as_deref() else {
+                if let Some(finding) = bare_from_finding(name, &source_file, lang.is_ok()) {
+                    report.findings.push(finding);
+                }
+                continue;
+            };
+
+            // Which grammar reads the source is a property of the
+            // document alone, so it is settled before any file is opened
+            // — the order `sync` uses, and the reason an unwalkable
+            // language never reads as a mistyped symbol.
+            let lang = match lang {
+                Ok(lang) => lang,
+                Err(e) => {
+                    report.findings.push(format!("chunk '{name}': {e}"));
+                    continue;
+                }
+            };
+
+            if !source_file.exists() {
+                report.findings.push(not_found(name, &source_file));
+                continue;
+            }
+
+            let source_content = match std::fs::read_to_string(&source_file) {
+                Ok(content) => content,
+                Err(e) => {
+                    report.findings.push(format!(
+                        "chunk '{name}': reading {}: {e}",
+                        source_file.display()
+                    ));
+                    continue;
+                }
+            };
+
+            if let Err(e) = extract_symbol_in(&source_content, symbol, lang) {
+                report.findings.push(format!("chunk '{name}': {e}"));
+            }
+        }
+
+        report
+    }
+
+    /// What a chunk naming a file and no symbol is worth saying about.
+    ///
+    /// Two different things wear this shape. One is deliberate: a whole
+    /// file quoted into a document in a language symbol extraction cannot
+    /// walk — a TOML effect definition, a shader — where there is no
+    /// symbol to name and the document is showing the file. The corpus
+    /// has one, and making it fatal would be this gate refusing a
+    /// perfectly honest reference.
+    ///
+    /// The other is an accident, and it is the same accident this whole
+    /// verb is about. In rust, typescript, python — a language `sync`
+    /// *can* walk — a `from=` with no `symbol=` is a chunk `sync` skips
+    /// in silence forever: the body is never refreshed, and nothing on
+    /// either side of the tool ever says so. That one is a finding.
+    ///
+    /// Both are held to the half of the claim that is checkable from
+    /// here: the file the chunk names has to be there.
+    fn bare_from_finding(name: &str, source_file: &Path, walkable: bool) -> Option<String> {
+        if !source_file.exists() {
+            return Some(not_found(name, source_file));
+        }
+        if walkable {
+            return Some(format!(
+                "chunk '{name}': names a source file and no symbol=, in a language \
+                 symbol extraction can walk — sync skips it in silence, so the body \
+                 is never refreshed (add symbol=, or quote the file from a fence \
+                 sync cannot walk)"
+            ));
+        }
+        None
+    }
+
+    /// The one spelling of a source file that is not there. `sync` says
+    /// this sentence too.
+    fn not_found(name: &str, source_file: &Path) -> String {
+        format!(
+            "chunk '{name}': source file not found: {}",
+            source_file.display()
+        )
+    }
+}
 ```
 
 ## The CLI face
@@ -410,9 +587,18 @@ edges:
 /// A third thing is checked across the set: an
 /// affordance claimed for a human that no signifier signifies is a
 /// defect, because the audience has nothing to perceive.
+///
+/// Every `from=` chunk is resolved against its source file too —
+/// missing file, missing symbol, ambiguous symbol, a language symbol
+/// extraction cannot walk — and each failure fails the check. Nothing
+/// is written: this is the read-only half of `sync`.
 Check {
     /// Paths to scan
     paths: Vec<PathBuf>,
+    /// Workspace root that `from=` paths resolve against
+    /// (defaults to current directory)
+    #[arg(long)]
+    workspace: Option<PathBuf>,
     /// Directory of ontology module files (*.ttl) to check against.
     /// Defaults to the modules this projection's PROVENANCE.json names,
     /// then to the set this build compiled.
@@ -968,10 +1154,12 @@ which two are in play.
 <a name="chunk-dispatch-check"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-check`</sub>
 
 ```rust {#dispatch-check file="src/main.rs"}
-Command::Check { paths, vocabulary } => {
+Command::Check { paths, workspace, vocabulary } => {
+    let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
     let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref())?;
     let mut has_errors = false;
     let mut chunked_documents = 0;
+    let mut source_refs = 0;
     let mut ids: HashMap<String, PathBuf> = HashMap::new();
 
     for doc_path in markdown_under(&paths) {
@@ -998,6 +1186,12 @@ Command::Check { paths, vocabulary } => {
             chunked_documents += 1;
             for err in &x0k_tangle::resolve::check_all_refs(&parsed)? {
                 eprintln!("{}: {}", doc_path.display(), err);
+                has_errors = true;
+            }
+            let sources = x0k_tangle::source_check::check_source_refs(&parsed, &ws);
+            source_refs += sources.checked;
+            for finding in &sources.findings {
+                eprintln!("{}: {}", doc_path.display(), finding);
                 has_errors = true;
             }
         }
@@ -1044,7 +1238,7 @@ Command::Check { paths, vocabulary } => {
     } else {
         eprintln!(
             "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
-            references_verdict(chunked_documents),
+            references_verdict(chunked_documents, source_refs),
             report.corpus.checked,
             report.declarations.checked,
             report.corpus.dangling.len()
@@ -1053,7 +1247,7 @@ Command::Check { paths, vocabulary } => {
 }
 ```
 
-The green line says what it did, and the count is what makes that
+The green line says what it did, and the counts are what make that
 possible to read. `all references OK` used to print over a set whose
 references had never been read — the same six words for a corpus of
 forty chapters and for a directory the walk had dropped every document
@@ -1061,21 +1255,38 @@ out of. A verdict that asserts the work it skipped is worse than no
 verdict at all: it is the gate reporting a pass it did not run, and a
 reader has no way to tell the two apart.
 
+The line names its two kinds separately because they are two claims,
+and the same sentence has now overstated three separate times. A
+`<<splice>>` resolves inside the document; a `from=` resolves against a
+file on disk. A run can read forty documents of splices and open no
+source file at all, and a line that folded both into "all references
+OK" would say the same words either way.
+
 <a name="chunk-references-verdict"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#references-verdict`</sub>
 
 ```rust {#references-verdict file="src/main.rs"}
 /// What `check` says about the reference half of a clean run.
 ///
-/// The count is load-bearing. Zero is a real and common answer — a
-/// directory of decision documents declares no chunks — and it has to
-/// read as zero rather than as a pass, because the shape that produces
-/// it is also the shape a broken walk produces.
-fn references_verdict(chunked_documents: usize) -> String {
-    match chunked_documents {
-        0 => "no chunk references to check".to_string(),
-        1 => "all references OK in 1 document with chunks".to_string(),
-        n => format!("all references OK in {n} documents with chunks"),
+/// The counts are load-bearing, and they are separate because they are
+/// separate claims. Zero is a real and common answer for either — a
+/// directory of decision documents declares no chunks, and most
+/// documents that do declare chunks name no source file — and each has
+/// to read as zero rather than as a pass, because the shape that
+/// produces it is also the shape a broken walk produces.
+fn references_verdict(chunked_documents: usize, source_refs: usize) -> String {
+    if chunked_documents == 0 {
+        return "no chunk references to check".to_string();
     }
+    let docs = match chunked_documents {
+        1 => "1 document with chunks".to_string(),
+        n => format!("{n} documents with chunks"),
+    };
+    let sources = match source_refs {
+        0 => "no from= source references declared".to_string(),
+        1 => "1 from= source reference resolves".to_string(),
+        n => format!("{n} from= source references resolve"),
+    };
+    format!("splice references resolve in {docs}, {sources}")
 }
 ```
 
@@ -1168,7 +1379,9 @@ Command::Weave { path, output_dir } => {
 
     if let Some(dir) = output_dir {
         std::fs::create_dir_all(&dir)?;
-        let html_path = dir.join("index.html");
+        // Named after the document, so weaving a second chapter into one
+        // directory no longer destroys the first (weave.md § the page's name).
+        let html_path = dir.join(x0k_tangle::weave::page_file_name(&path));
         std::fs::write(&html_path, &output.html)?;
         eprintln!("wove {} → {}", path.display(), html_path.display());
     } else {
@@ -1775,7 +1988,7 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 
 ## Composing the crate root and the binary
 
-<a name="chunk-root"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#root` · assembles [crate-doc](#chunk-crate-doc) · [modules](#chunk-modules) · [exports](#chunk-exports)</sub>
+<a name="chunk-root"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#root` · assembles [crate-doc](#chunk-crate-doc) · [modules](#chunk-modules) · [exports](#chunk-exports) · [source-check](#chunk-source-check)</sub>
 
 ```rust {#root}
 <<crate-doc>>
@@ -1783,6 +1996,8 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 <<modules>>
 
 <<exports>>
+
+<<source-check>>
 ```
 
 <a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [clobber-settings](#chunk-clobber-settings) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-note](#chunk-dangling-note) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
@@ -1819,10 +2034,16 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 
 The crate's boundary is the thing to keep honest. Every module is
 public and the CLI is thin, so there is no place for behaviour to hide
-that a consumer could not reach by name — which is also why this
-chapter has no mechanism of its own to derive. When a verb grows a
-mechanism, it moves to a chapter; when a chapter's type is meant to be
-named from outside, it appears in the export list above.
+that a consumer could not reach by name. When a verb grows a mechanism,
+it moves to a chapter; when a chapter's type is meant to be named from
+outside, it appears in the export list above.
+
+`source_check` is the one thing this chapter keeps, and it is here for
+a reason the layout cannot express anywhere else: it is a policy two
+binaries have to agree on. Every other duplicated line between
+`main.rs` and the bundle's copy is a sentence; this one is the rule that
+decides whether a tree is sound, and a copy of it would eventually
+disagree with itself.
 
 ## Pinning the verdicts
 
@@ -1843,6 +2064,17 @@ Two documents holding one id fail the run. And `tangle`, handed a
 document that names nowhere to write, says so instead of reporting a
 successful zero.
 
+The source-reference pins are the fourth failure-open, and the largest.
+One per way a `from=` breaks — a symbol the file does not have, a file
+that is not there, a symbol two definitions answer to, a language the
+extractor cannot walk, a chunk that names a file and no symbol in a
+language it could have — plus the two that say what the verb is for:
+`check` writes nothing, and it catches the stale body. That last one
+runs the whole hazard: sync a chunk, rename the symbol in the source,
+and the document is byte-identical to what `sync` wrote. `git status`
+is clean, a re-tangle sees nothing, and until this the gate said the
+tree was sound.
+
 Three more pin `--force` and what it is an escape from, because the
 guard is only worth having if it is reachable from the shell the
 maintainer actually ran: a hand-edited generated file refuses the
@@ -1857,8 +2089,9 @@ wrong would refuse everything.
 //! Pins for the verdicts the CLI returns
 //! (`x0k:implementation/tangle/crate`): what `sync` exits with when a
 //! chunk it was asked to fill stayed empty, what `check` says about an
-//! edge that leaves the set, and the three ways `check` and `tangle`
-//! used to report a pass they had not run.
+//! edge that leaves the set, how `check` reports a `from=` that no
+//! longer resolves without writing a byte, and the ways `check` and
+//! `tangle` used to report a pass they had not run.
 
 use std::fs;
 use std::path::Path;
@@ -1980,6 +2213,299 @@ fn sync_passes_a_document_with_nothing_to_fill() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "sync failed: {stderr}");
     assert!(stderr.contains("synced 0 chunk(s)"), "got {stderr}");
+}
+
+// ---- `check` resolves every `from=` -------------------------------------
+//
+// The read-only gate. `sync` is the verb that repairs a source
+// reference and it repairs by writing, so no CI job can run it; these
+// pin the verb that can. Each names one way a reference breaks, and the
+// last two are the reason the feature exists: `check` must write
+// nothing, and it must catch the stale body `sync` leaves behind.
+
+/// Two definitions one `symbol=` matches, so the ambiguity report has
+/// something to report.
+const AMBIGUOUS_SOURCE: &str = "use std::fmt;\n\npub struct Horizon;\n\nimpl fmt::Debug for Horizon {\n    fn render(&self) -> u8 {\n        1\n    }\n}\n\nimpl fmt::Display for Horizon {\n    fn render(&self) -> u8 {\n        2\n    }\n}\n";
+
+fn check_in(dir: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("check")
+        .arg(dir)
+        .arg("--workspace")
+        .arg(dir)
+        .output()
+        .expect("the x0k-tangle binary runs")
+}
+
+#[test]
+fn check_fails_a_symbol_the_source_does_not_have() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemapp\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a misspelled symbol passed the gate: {stderr}"
+    );
+    assert!(
+        stderr.contains("symbol 'createHorizonRemapp' not found"),
+        "the finding names the symbol it looked for: {stderr}"
+    );
+    assert!(
+        stderr.contains("chunk 'remap'"),
+        "the finding names the chunk it is about: {stderr}"
+    );
+}
+
+#[test]
+fn check_fails_a_from_naming_a_file_that_is_not_there() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```rust {#remap from=\"gone/remap.rs\" symbol=\"remap\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a dangling file passed: {stderr}");
+    assert!(
+        stderr.contains("source file not found") && stderr.contains("gone/remap.rs"),
+        "the finding names the path it resolved to: {stderr}"
+    );
+}
+
+#[test]
+fn check_reports_the_candidates_for_an_ambiguous_symbol() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "horizon.rs", AMBIGUOUS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Horizon\n\n```rust {#h from=\"horizon.rs\" symbol=\"Horizon::render\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "an ambiguous symbol passed: {stderr}");
+    assert!(
+        stderr.contains("is ambiguous — 2 definitions match"),
+        "the finding counts the candidates: {stderr}"
+    );
+    assert!(
+        stderr.contains("select it with symbol=\"<Horizon as fmt::Display>::render\""),
+        "the finding hands the reader the spelling that resolves it: {stderr}"
+    );
+}
+
+#[test]
+fn check_names_the_language_limit_rather_than_the_symbol() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.rb", "def create_remap\n  1\nend\n");
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```ruby {#remap from=\"remap.rb\" symbol=\"create_remap\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "got {stderr}");
+    assert!(stderr.contains("symbol extraction supports"), "got {stderr}");
+    assert!(
+        !stderr.contains("not found"),
+        "an unwalkable language must not read as a mistyped symbol: {stderr}"
+    );
+}
+
+#[test]
+fn check_fails_a_bare_from_in_a_language_sync_can_walk() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\"}\nexport function gone() {}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a chunk sync will skip forever passed the gate: {stderr}"
+    );
+    assert!(
+        stderr.contains("no symbol=") && stderr.contains("sync skips it in silence"),
+        "the finding says why the body will never be refreshed: {stderr}"
+    );
+}
+
+/// The deliberate shape: a whole file quoted in a language symbol
+/// extraction cannot walk. The corpus has one, and the gate has no
+/// business refusing it.
+#[test]
+fn check_passes_a_whole_file_from_in_a_language_sync_cannot_walk() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "fx/glitch.toml", "name = \"glitch\"\n");
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Glitch\n\n```toml {#glitch from=\"fx/glitch.toml\"}\nname = \"glitch\"\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "check failed: {stderr}");
+    assert!(
+        stderr.contains("1 from= source reference resolves"),
+        "the whole-file reference is counted as read: {stderr}"
+    );
+}
+
+/// …but only while the file is there. The half of that claim which is
+/// checkable from here still is checked.
+#[test]
+fn check_fails_a_whole_file_from_whose_file_is_gone() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Glitch\n\n```toml {#glitch from=\"fx/glitch.toml\"}\nname = \"glitch\"\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "got {stderr}");
+    assert!(
+        stderr.contains("source file not found") && stderr.contains("glitch.toml"),
+        "got {stderr}"
+    );
+}
+
+#[test]
+fn check_counts_the_source_references_it_resolved() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "check failed: {stderr}");
+    assert!(
+        stderr.contains("splice references resolve in 1 document with chunks")
+            && stderr.contains("1 from= source reference resolves"),
+        "the green line names both kinds it read: {stderr}"
+    );
+    assert!(
+        !stderr.contains("all references OK"),
+        "the line that overstated three times is gone: {stderr}"
+    );
+}
+
+#[test]
+fn check_says_a_document_of_splices_declared_no_source_references() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Doc\n\n```rust {#root file=\"src/lib.rs\"}\nfn f() {\n    <<inner>>\n}\n```\n\n\
+         ```rust {#inner}\nlet x = 1;\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "check failed: {stderr}");
+    assert!(
+        stderr.contains("no from= source references declared"),
+        "a run that opened no source file says so: {stderr}"
+    );
+}
+
+/// The whole point of the verb: it is the one that can run in CI, and it
+/// can only run in CI if it never writes. Nothing on disk moves, on the
+/// failing path or the passing one.
+#[test]
+fn check_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"nope\"}\nstale body\n```\n",
+    );
+
+    let before = fs::read_to_string(tmp.path().join("doc.md")).unwrap();
+    let source_before = fs::read_to_string(tmp.path().join("remap.js")).unwrap();
+
+    let out = check_in(tmp.path());
+    assert!(!out.status.success());
+
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("doc.md")).unwrap(),
+        before,
+        "check rewrote the document it was judging"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("remap.js")).unwrap(),
+        source_before,
+        "check rewrote the source"
+    );
+    assert!(
+        !tmp.path().join("doc.tangle-map.json").exists(),
+        "check wrote a sidecar"
+    );
+}
+
+/// The hazard this closes, end to end. Sync a chunk successfully, rename
+/// the symbol in the source, and the document is now byte-identical to
+/// what `sync` left: `git status` is clean and a re-tangle sees nothing.
+/// Before this, `check` printed a pass over it.
+#[test]
+fn check_catches_the_stale_body_sync_left_behind() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n",
+    );
+
+    assert!(sync(tmp.path()).status.success(), "the fixture must sync");
+    let synced = fs::read_to_string(tmp.path().join("doc.md")).unwrap();
+    assert!(synced.contains("createHorizonRemap"));
+
+    // The rename happens in the source. The document is not touched.
+    write(
+        tmp.path(),
+        "remap.js",
+        &JS_SOURCE.replace("createHorizonRemap", "createHorizonMap"),
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the document still shows a body its source no longer has, and check passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("symbol 'createHorizonRemap' not found"),
+        "the finding names the symbol the document is still displaying: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("doc.md")).unwrap(),
+        synced,
+        "the gate that caught it also left the document alone"
+    );
 }
 
 /// A predicate this build is certain to accept, so the fixture measures

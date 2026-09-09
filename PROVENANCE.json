@@ -1,6 +1,6 @@
 {
-  "corpus_commit": "37f17d9b2ac7589362650414615b0469e9729545",
-  "corpus_rev": "lorpynwowtsorpqsnslotnttwspkzzps",
+  "corpus_commit": "10bae4efab29021d1af82c20b22bfbc2f486d918",
+  "corpus_rev": "lqowxvllrklrkrtorsryvxqyunxlwxvn",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
@@ -238,7 +238,11 @@
     "x0k:test/x0k-tangle/src/region_gfm.rs::the_weave_inverts_line_for_line": "passed",
     "x0k:test/x0k-tangle/src/region_gfm.rs::the_woven_chapter_tangles_to_the_same_chunks": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::a_base_with_both_scripts_is_one_msubsup": "passed",
+    "x0k:test/x0k-tangle/src/weave.rs::a_document_named_index_still_renders_index_html": "passed",
+    "x0k:test/x0k-tangle/src/weave.rs::a_page_is_named_after_its_document": "passed",
+    "x0k:test/x0k-tangle/src/weave.rs::a_path_with_no_stem_falls_back_to_index": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::a_ref_links_to_where_the_chunk_is_defined_and_does_not_expand_it": "passed",
+    "x0k:test/x0k-tangle/src/weave.rs::a_second_chapter_woven_into_the_same_directory_leaves_the_first": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::accepted_spellings_render_and_the_rest_still_fail_loudly": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::bad_math_falls_back_to_raw_tex": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::braces_keep_the_nesting_the_author_wrote": "passed",
@@ -266,6 +270,7 @@
     "x0k:test/x0k-tangle/src/weave.rs::single_language_chunk_renders_without_tabs": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::tab_buttons_have_onclick": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::the_recurrence_survives_the_whole_weave": "passed",
+    "x0k:test/x0k-tangle/src/weave.rs::two_documents_woven_into_one_directory_keep_two_pages": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::affordances_prints_each_declaration_as_a_record": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::affordances_reports_a_malformed_block_and_keeps_going": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_names_a_human_claim_no_signifier_signifies_and_fails": "passed",

@@ -2,8 +2,9 @@
 //! Pins for the verdicts the CLI returns
 //! (`x0k:implementation/tangle/crate`): what `sync` exits with when a
 //! chunk it was asked to fill stayed empty, what `check` says about an
-//! edge that leaves the set, and the three ways `check` and `tangle`
-//! used to report a pass they had not run.
+//! edge that leaves the set, how `check` reports a `from=` that no
+//! longer resolves without writing a byte, and the ways `check` and
+//! `tangle` used to report a pass they had not run.
 
 use std::fs;
 use std::path::Path;
@@ -125,6 +126,299 @@ fn sync_passes_a_document_with_nothing_to_fill() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "sync failed: {stderr}");
     assert!(stderr.contains("synced 0 chunk(s)"), "got {stderr}");
+}
+
+// ---- `check` resolves every `from=` -------------------------------------
+//
+// The read-only gate. `sync` is the verb that repairs a source
+// reference and it repairs by writing, so no CI job can run it; these
+// pin the verb that can. Each names one way a reference breaks, and the
+// last two are the reason the feature exists: `check` must write
+// nothing, and it must catch the stale body `sync` leaves behind.
+
+/// Two definitions one `symbol=` matches, so the ambiguity report has
+/// something to report.
+const AMBIGUOUS_SOURCE: &str = "use std::fmt;\n\npub struct Horizon;\n\nimpl fmt::Debug for Horizon {\n    fn render(&self) -> u8 {\n        1\n    }\n}\n\nimpl fmt::Display for Horizon {\n    fn render(&self) -> u8 {\n        2\n    }\n}\n";
+
+fn check_in(dir: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("check")
+        .arg(dir)
+        .arg("--workspace")
+        .arg(dir)
+        .output()
+        .expect("the x0k-tangle binary runs")
+}
+
+#[test]
+fn check_fails_a_symbol_the_source_does_not_have() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemapp\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a misspelled symbol passed the gate: {stderr}"
+    );
+    assert!(
+        stderr.contains("symbol 'createHorizonRemapp' not found"),
+        "the finding names the symbol it looked for: {stderr}"
+    );
+    assert!(
+        stderr.contains("chunk 'remap'"),
+        "the finding names the chunk it is about: {stderr}"
+    );
+}
+
+#[test]
+fn check_fails_a_from_naming_a_file_that_is_not_there() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```rust {#remap from=\"gone/remap.rs\" symbol=\"remap\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a dangling file passed: {stderr}");
+    assert!(
+        stderr.contains("source file not found") && stderr.contains("gone/remap.rs"),
+        "the finding names the path it resolved to: {stderr}"
+    );
+}
+
+#[test]
+fn check_reports_the_candidates_for_an_ambiguous_symbol() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "horizon.rs", AMBIGUOUS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Horizon\n\n```rust {#h from=\"horizon.rs\" symbol=\"Horizon::render\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "an ambiguous symbol passed: {stderr}");
+    assert!(
+        stderr.contains("is ambiguous — 2 definitions match"),
+        "the finding counts the candidates: {stderr}"
+    );
+    assert!(
+        stderr.contains("select it with symbol=\"<Horizon as fmt::Display>::render\""),
+        "the finding hands the reader the spelling that resolves it: {stderr}"
+    );
+}
+
+#[test]
+fn check_names_the_language_limit_rather_than_the_symbol() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.rb", "def create_remap\n  1\nend\n");
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```ruby {#remap from=\"remap.rb\" symbol=\"create_remap\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "got {stderr}");
+    assert!(stderr.contains("symbol extraction supports"), "got {stderr}");
+    assert!(
+        !stderr.contains("not found"),
+        "an unwalkable language must not read as a mistyped symbol: {stderr}"
+    );
+}
+
+#[test]
+fn check_fails_a_bare_from_in_a_language_sync_can_walk() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\"}\nexport function gone() {}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a chunk sync will skip forever passed the gate: {stderr}"
+    );
+    assert!(
+        stderr.contains("no symbol=") && stderr.contains("sync skips it in silence"),
+        "the finding says why the body will never be refreshed: {stderr}"
+    );
+}
+
+/// The deliberate shape: a whole file quoted in a language symbol
+/// extraction cannot walk. The corpus has one, and the gate has no
+/// business refusing it.
+#[test]
+fn check_passes_a_whole_file_from_in_a_language_sync_cannot_walk() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "fx/glitch.toml", "name = \"glitch\"\n");
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Glitch\n\n```toml {#glitch from=\"fx/glitch.toml\"}\nname = \"glitch\"\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "check failed: {stderr}");
+    assert!(
+        stderr.contains("1 from= source reference resolves"),
+        "the whole-file reference is counted as read: {stderr}"
+    );
+}
+
+/// …but only while the file is there. The half of that claim which is
+/// checkable from here still is checked.
+#[test]
+fn check_fails_a_whole_file_from_whose_file_is_gone() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Glitch\n\n```toml {#glitch from=\"fx/glitch.toml\"}\nname = \"glitch\"\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "got {stderr}");
+    assert!(
+        stderr.contains("source file not found") && stderr.contains("glitch.toml"),
+        "got {stderr}"
+    );
+}
+
+#[test]
+fn check_counts_the_source_references_it_resolved() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "check failed: {stderr}");
+    assert!(
+        stderr.contains("splice references resolve in 1 document with chunks")
+            && stderr.contains("1 from= source reference resolves"),
+        "the green line names both kinds it read: {stderr}"
+    );
+    assert!(
+        !stderr.contains("all references OK"),
+        "the line that overstated three times is gone: {stderr}"
+    );
+}
+
+#[test]
+fn check_says_a_document_of_splices_declared_no_source_references() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Doc\n\n```rust {#root file=\"src/lib.rs\"}\nfn f() {\n    <<inner>>\n}\n```\n\n\
+         ```rust {#inner}\nlet x = 1;\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "check failed: {stderr}");
+    assert!(
+        stderr.contains("no from= source references declared"),
+        "a run that opened no source file says so: {stderr}"
+    );
+}
+
+/// The whole point of the verb: it is the one that can run in CI, and it
+/// can only run in CI if it never writes. Nothing on disk moves, on the
+/// failing path or the passing one.
+#[test]
+fn check_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"nope\"}\nstale body\n```\n",
+    );
+
+    let before = fs::read_to_string(tmp.path().join("doc.md")).unwrap();
+    let source_before = fs::read_to_string(tmp.path().join("remap.js")).unwrap();
+
+    let out = check_in(tmp.path());
+    assert!(!out.status.success());
+
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("doc.md")).unwrap(),
+        before,
+        "check rewrote the document it was judging"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("remap.js")).unwrap(),
+        source_before,
+        "check rewrote the source"
+    );
+    assert!(
+        !tmp.path().join("doc.tangle-map.json").exists(),
+        "check wrote a sidecar"
+    );
+}
+
+/// The hazard this closes, end to end. Sync a chunk successfully, rename
+/// the symbol in the source, and the document is now byte-identical to
+/// what `sync` left: `git status` is clean and a re-tangle sees nothing.
+/// Before this, `check` printed a pass over it.
+#[test]
+fn check_catches_the_stale_body_sync_left_behind() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n",
+    );
+
+    assert!(sync(tmp.path()).status.success(), "the fixture must sync");
+    let synced = fs::read_to_string(tmp.path().join("doc.md")).unwrap();
+    assert!(synced.contains("createHorizonRemap"));
+
+    // The rename happens in the source. The document is not touched.
+    write(
+        tmp.path(),
+        "remap.js",
+        &JS_SOURCE.replace("createHorizonRemap", "createHorizonMap"),
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the document still shows a body its source no longer has, and check passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("symbol 'createHorizonRemap' not found"),
+        "the finding names the symbol the document is still displaying: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("doc.md")).unwrap(),
+        synced,
+        "the gate that caught it also left the document alone"
+    );
 }
 
 /// A predicate this build is certain to accept, so the fixture measures

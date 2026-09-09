@@ -53,7 +53,10 @@ attaches prose to a body its author never read, and exits zero —
 the one failure this whole substrate exists to prevent. So an
 ambiguous path is refused, the candidates are printed with the impl
 header each sits under, and Rust's own qualified spelling
-(`<Pairs<'_, R> as fmt::Display>::fmt`) selects one.
+(`<Pairs<'_, R> as fmt::Display>::fmt`) selects one. Every spelling the
+refusal prints resolves when pasted back — a suggestion that does not is
+worse than silence, because a reader who trusts it spends the next minute
+doubting their paste instead of the tool.
 
 The same machinery powers `list_symbols_in`, which the doc-browser
 uses to enumerate symbols in a file for navigation panels.
@@ -242,14 +245,34 @@ A query is the path segments to descend, plus — for a Rust
 The trait is not a segment: it does not name a scope to enter, it
 narrows which of several impl blocks on the same type counts.
 
+That narrowing has three settings, not two. A bare path says nothing
+about traits and takes any impl block on the type. `<Ty as Trait>` takes
+the one implementing that trait. And `<Ty>` — the qualifier Rust writes
+when there is no trait to name — takes the *inherent* block, the one
+implementing nothing. Without that third setting an inherent impl block
+sitting beside two trait impls on the same type has no spelling at all:
+`Ty` prefers the type's own declaration, and `Ty<T>` is ambiguous with
+the trait impls and offers no escape.
+
 <a name="chunk-symbol-query"></a><sub>[`src/source_ref.rs`](../../crates/x0k-tangle/src/source_ref.rs) · `#symbol-query`</sub>
 
 ```rust {#symbol-query}
-/// A parsed `symbol=`: the segments to descend, and the trait a Rust
-/// `<Type as Trait>::method` path pins the impl block to.
+/// A parsed `symbol=`: the segments to descend, and what the impl block
+/// a Rust qualified path selects must implement.
 struct SymbolQuery<'p> {
     parts: Vec<&'p str>,
-    trait_bound: Option<&'p str>,
+    trait_bound: TraitBound<'p>,
+}
+
+/// What an impl block must implement for a query to accept it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TraitBound<'p> {
+    /// An unqualified path: any impl block on the type will do.
+    Any,
+    /// `<Ty as Trait>`: the block implementing that trait.
+    Named(&'p str),
+    /// `<Ty>`: the inherent block, which implements nothing.
+    Inherent,
 }
 
 fn parse_symbol_query(symbol_path: &str, lang: SymbolLanguage) -> SymbolQuery<'_> {
@@ -260,7 +283,7 @@ fn parse_symbol_query(symbol_path: &str, lang: SymbolLanguage) -> SymbolQuery<'_
     }
     SymbolQuery {
         parts: split_symbol_path(symbol_path, lang),
-        trait_bound: None,
+        trait_bound: TraitBound::Any,
     }
 }
 ```
@@ -321,21 +344,39 @@ The qualified form is Rust's own syntax for the same disambiguation,
 which is why it is the one we read: an author who has hit two `fmt`s
 already knows how the language spells the answer.
 
+The path below the qualifier is optional, and its absence is the whole
+point: `<Pairs<'_, R> as fmt::Display>::fmt` names a method, and
+`<Pairs<'_, R> as fmt::Display>` names the block holding it. A qualifier
+with nothing after it used to fail this parse and fall through to the
+plain split, which found nothing and reported the symbol missing — so
+the one thing an ambiguity report most wants to hand a reader looking at
+two impl blocks was the one thing the tool could not read.
+
 <a name="chunk-parse-qualified-path"></a><sub>[`src/source_ref.rs`](../../crates/x0k-tangle/src/source_ref.rs) · `#parse-qualified-path`</sub>
 
 ```rust {#parse-qualified-path}
 /// `<Pairs<'_, R> as fmt::Display>::fmt` — the type, the trait that
-/// selects one impl of it, and the path below.
+/// selects one impl of it, and the path below. Both narrower forms are
+/// read too: `<Ty>` for the inherent block, and either qualifier with no
+/// path below, which names the impl block itself.
 fn parse_qualified_path(path: &str) -> Option<SymbolQuery<'_>> {
     let inner = path.strip_prefix('<')?;
     let close = closing_angle(inner)?;
     let (qualifier, rest) = inner.split_at(close);
-    let (ty, bound) = split_at_as(qualifier)?;
+    let (ty, bound) = match split_at_as(qualifier) {
+        Some((ty, trait_name)) => (ty, TraitBound::Named(trait_name)),
+        None => (qualifier.trim(), TraitBound::Inherent),
+    };
     let mut parts = vec![ty];
-    parts.extend(rest.strip_prefix(">::")?.split("::"));
+    let below = rest.strip_prefix('>')?;
+    if let Some(path) = below.strip_prefix("::") {
+        parts.extend(path.split("::"));
+    } else if !below.is_empty() {
+        return None;
+    }
     Some(SymbolQuery {
         parts,
-        trait_bound: Some(bound),
+        trait_bound: bound,
     })
 }
 ```
@@ -433,6 +474,19 @@ The report is written for someone who cannot see the file: the line,
 the scope as the source spells it, and — when the language has a
 spelling that selects one — the exact `symbol=` to paste.
 
+The invariant that makes it worth printing is that every `symbol=` in a
+report resolves when fed back. A suggestion that does not is worse than
+none, because the reader trusts it and spends the next minute doubting
+their paste rather than the tool. Two things enforce it. Each kind of
+candidate builds its selector by the rule that actually selects it —
+that is the impl block's fix above. And the report prints a selector only
+when no *other* candidate carries the same one: a spelling shared by two
+of the matches names neither alone, whatever the walk thought, and a type
+with two inherent impl blocks is the ordinary way that happens. When the
+filter leaves nothing printable, the note about there being no such
+spelling fires — which it could not do before, since one bogus selector
+anywhere in the list suppressed it for the whole report.
+
 <a name="chunk-ambiguity-report"></a><sub>[`src/source_ref.rs`](../../crates/x0k-tangle/src/source_ref.rs) · `#ambiguity-report`</sub>
 
 ```rust {#ambiguity-report}
@@ -441,19 +495,32 @@ fn ambiguity_report(matches: &[Candidate], symbol_path: &str) -> String {
         "symbol '{symbol_path}' is ambiguous — {} definitions match:",
         matches.len()
     );
+    let mut suggested = false;
     for m in matches {
         report.push_str(&format!("\n  line {}", m.span.start_line));
         if let Some(scope) = &m.scope {
             report.push_str(&format!(" in `{scope}`"));
         }
-        if let Some(select) = &m.select {
+        if let Some(select) = unique_selector(m, matches) {
             report.push_str(&format!(" — select it with symbol=\"{select}\""));
+            suggested = true;
         }
     }
-    if matches.iter().all(|m| m.select.is_none()) {
+    if !suggested {
         report.push_str("\n  no spelling names one of these alone; reference the enclosing item");
     }
     report
+}
+
+/// A candidate's selector, but only if it is the candidate's alone — a
+/// spelling two matches share does not name one of them.
+fn unique_selector<'c>(candidate: &'c Candidate, matches: &[Candidate]) -> Option<&'c str> {
+    let select = candidate.select.as_deref()?;
+    let sharers = matches
+        .iter()
+        .filter(|other| other.select.as_deref() == Some(select))
+        .count();
+    (sharers == 1).then_some(select)
 }
 ```
 
@@ -710,6 +777,17 @@ fn impl_trait_name(node: Node, source: &str) -> Option<String> {
 fn base_type_name(ty: &str) -> &str {
     ty.split('<').next().unwrap_or(ty).trim()
 }
+
+/// The `symbol=` that names one impl block and nothing else: the qualified
+/// type path Rust itself writes — `<Stack<T> as Default>` for a trait impl,
+/// `<Stack<T>>` for the inherent one. Round-trips through
+/// [`parse_qualified_path`], which is what makes it printable in a report.
+fn impl_selector(ty: &str, implemented: Option<&str>) -> String {
+    match implemented {
+        Some(trait_name) => format!("<{ty} as {trait_name}>"),
+        None => format!("<{ty}>"),
+    }
+}
 ```
 
 A `<Type as Trait>` qualifier matches the impl's trait by its last
@@ -720,14 +798,15 @@ match in full — splitting `From<a::B>` on `::` would name nothing.
 <a name="chunk-trait-matching"></a><sub>[`src/source_ref.rs`](../../crates/x0k-tangle/src/source_ref.rs) · `#trait-matching`</sub>
 
 ```rust {#trait-matching}
-fn trait_matches(bound: Option<&str>, actual: Option<&str>) -> bool {
-    let Some(bound) = bound else {
-        return true;
-    };
-    let Some(actual) = actual else {
-        return false;
-    };
-    actual == bound || last_segment(actual) == last_segment(bound)
+fn trait_matches(bound: TraitBound, actual: Option<&str>) -> bool {
+    match (bound, actual) {
+        (TraitBound::Any, _) => true,
+        (TraitBound::Inherent, actual) => actual.is_none(),
+        (TraitBound::Named(_), None) => false,
+        (TraitBound::Named(bound), Some(actual)) => {
+            actual == bound || last_segment(actual) == last_segment(bound)
+        }
+    }
 }
 
 fn last_segment(path: &str) -> &str {
@@ -808,6 +887,15 @@ are checked against the query's trait bound first, which is what
 makes `<Pairs<'_, R> as fmt::Display>::fmt` walk into one of two
 otherwise identical blocks.
 
+The two readings need different selectors, and conflating them is what
+made the ambiguity report lie. A member below the block is selected by
+the qualifier plus its own name; the block *itself* is selected by the
+qualifier alone. Building the block's selector out of the member rule
+produced `<Stack<T> as Default>::impl Stack<T>` — the block's header text
+pasted where a member name goes, a spelling nothing can resolve, printed
+to a reader with no way to tell it apart from a working one. So the block
+builds its own candidate rather than borrowing `matched`'s.
+
 <a name="chunk-walk-matching-impl"></a><sub>[`src/source_ref.rs`](../../crates/x0k-tangle/src/source_ref.rs) · `#walk-matching-impl`</sub>
 
 ```rust {#walk-matching-impl}
@@ -829,13 +917,19 @@ fn collect_matching_impl(
     if !trait_matches(query.trait_bound, implemented.as_deref()) {
         return;
     }
+    let selector = impl_selector(&ty, implemented.as_deref());
     let enclosing = Enclosing {
         header: Some(impl_header(node, source)),
-        qualifier: implemented.map(|t| format!("<{ty} as {t}>")),
+        qualifier: Some(selector.clone()),
     };
     if depth == query.parts.len() - 1 {
         let span = make_span(format!("impl {ty}"), node, source, Leading::RustAttrs);
-        matches.push(matched(span, Some(&enclosing), MatchKind::ImplBlock));
+        matches.push(Candidate {
+            scope: enclosing.header.clone(),
+            select: Some(selector),
+            span,
+            kind: MatchKind::ImplBlock,
+        });
     } else if let Some(body) = node.child_by_field_name("body") {
         collect_matching_symbols(body, source, query, depth + 1, Some(&enclosing), matches);
     }
@@ -1632,6 +1726,13 @@ between the two `fmt`s. What it pins is a refusal: the tool that
 promises prose cannot fall out of step with code must not answer a
 question the document did not ask.
 
+Two more fixtures pin the report's own promise. One carries a type with
+an inherent block and two trait blocks — the shape a reader meets when
+they write `symbol="Stack<T>"` — and its cases feed every suggestion the
+refusal prints back through the extractor, once per kind of candidate.
+The other carries two indistinguishable inherent blocks, where the right
+answer is to print no spelling at all and say so.
+
 <a name="chunk-ambiguity-tests"></a><sub>[`src/source_ref.rs`](../../crates/x0k-tangle/src/source_ref.rs) · `#ambiguity-tests`</sub>
 
 `````rust {#ambiguity-tests}
@@ -1735,6 +1836,127 @@ fn a_method_keeps_its_attribute_and_doc() {
 fn a_plain_comment_across_a_blank_line_stays_out() {
     let span = extract_symbol(PEST_SAMPLE, "Plain").unwrap();
     assert_eq!(span.body, "pub struct Plain;", "got {:?}", span.body);
+}
+
+const IMPL_SAMPLE: &str = r#"
+use std::fmt;
+
+pub struct Stack<T> {
+    cache: Vec<T>,
+}
+
+impl<T: Clone> Stack<T> {
+    pub fn push(&mut self, v: T) {
+        self.cache.push(v);
+    }
+
+    pub fn fmt(&self) -> String {
+        String::new()
+    }
+}
+
+impl<T> Default for Stack<T> {
+    fn default() -> Self {
+        Stack { cache: Vec::new() }
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Stack<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "stack")
+    }
+}
+"#;
+
+/// Two inherent blocks on a type declared elsewhere: the case where no
+/// qualified spelling can tell the candidates apart.
+const TWO_INHERENT_SAMPLE: &str = r#"
+impl Pairs {
+    pub fn first(&self) {}
+}
+
+impl Pairs {
+    pub fn second(&self) {}
+}
+"#;
+
+/// Every `symbol="…"` an ambiguity report prints.
+fn suggestions(report: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = report;
+    while let Some(pos) = rest.find("symbol=\"") {
+        rest = &rest[pos + "symbol=\"".len()..];
+        let end = rest.find('"').expect("unterminated suggestion");
+        found.push(rest[..end].to_string());
+        rest = &rest[end + 1..];
+    }
+    found
+}
+
+/// The invariant: feed every suggestion back and each one resolves.
+fn round_trip(source: &str, symbol_path: &str) -> Vec<String> {
+    let report = extract_symbol(source, symbol_path).unwrap_err().to_string();
+    let found = suggestions(&report);
+    for suggestion in &found {
+        if let Err(e) = extract_symbol(source, suggestion) {
+            panic!("suggested symbol=\"{suggestion}\" does not resolve: {e}\n{report}");
+        }
+    }
+    found
+}
+
+#[test]
+fn impl_block_suggestions_round_trip() {
+    let found = round_trip(IMPL_SAMPLE, "Stack<T>");
+    assert_eq!(found.len(), 3, "got {found:?}");
+    assert!(found.contains(&"<Stack<T>>".to_string()), "got {found:?}");
+    assert!(
+        found.contains(&"<Stack<T> as Default>".to_string()),
+        "got {found:?}"
+    );
+    // The block's header text never lands where a member name belongs.
+    assert!(!found.iter().any(|s| s.contains("impl ")), "got {found:?}");
+}
+
+#[test]
+fn member_suggestions_round_trip_from_inherent_and_trait_blocks() {
+    let found = round_trip(IMPL_SAMPLE, "Stack<T>::fmt");
+    assert_eq!(found.len(), 2, "got {found:?}");
+    assert!(found.contains(&"<Stack<T>>::fmt".to_string()), "got {found:?}");
+}
+
+#[test]
+fn trait_impl_suggestions_round_trip() {
+    let found = round_trip(PEST_SAMPLE, "Pairs<'_, R>::fmt");
+    assert_eq!(found.len(), 2, "got {found:?}");
+}
+
+#[test]
+fn an_inherent_impl_block_is_addressable() {
+    let inherent = extract_symbol(IMPL_SAMPLE, "<Stack<T>>").unwrap();
+    assert!(
+        inherent.body.starts_with("impl<T: Clone> Stack<T>"),
+        "got {:?}",
+        inherent.body
+    );
+    let derived = extract_symbol(IMPL_SAMPLE, "<Stack<T> as Default>").unwrap();
+    assert!(
+        derived.body.starts_with("impl<T> Default for Stack<T>"),
+        "got {:?}",
+        derived.body
+    );
+}
+
+#[test]
+fn blocks_no_spelling_separates_get_the_note_and_no_suggestion() {
+    let report = extract_symbol(TWO_INHERENT_SAMPLE, "Pairs")
+        .unwrap_err()
+        .to_string();
+    assert!(suggestions(&report).is_empty(), "got {report}");
+    assert!(
+        report.contains("no spelling names one of these alone"),
+        "got {report}"
+    );
 }
 `````
 

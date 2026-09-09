@@ -59,6 +59,7 @@ use x0k_syntax::{css_class, highlight, HighlightedToken, Language, TokenKind};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::path::Path;
 
 pub struct WeaveOutput {
     pub html: String,
@@ -70,6 +71,62 @@ pub struct WeaveOutput {
 title is needed because some output paths (e.g. a static-site builder
 generating a sidebar listing) need the title independently of the
 body.
+
+## Naming the page on disk
+
+Weaving produces a string; something else decides what to call it. That
+decision used to be no decision at all — every document written into an
+output directory was called `index.html` — so weaving a second chapter of
+a book into the directory holding the first silently deleted the first,
+and reported success. A book is the ordinary case for this verb, not an
+exotic one, which is why the name has to come from the document.
+
+The rule is the document's file stem: `stack.md` renders to `stack.html`,
+`docs/attrs.md` to `attrs.html`. It is the name the author already typed,
+so the destination is guessable without reading this page; it is a pure
+function of the argument, so re-weaving the same document overwrites its
+own page and never a neighbour's; and it is what every static-site
+generator does with a source file, so the output directory can be
+committed, diffed and served without a manifest explaining the mapping.
+
+Two consequences are worth saying out loud. A document actually named
+`index.md` still renders to `index.html` — the one case where the old
+behaviour was right, and the one that keeps `GET /` working for a server
+pointed at the directory. And two documents with the *same* stem in
+different directories still land on one name: a weave directory is a flat
+namespace, and this rule does not make it deep. We do not disambiguate by
+folding the parent directory into the name or hashing the path, because a
+page called `docs-stack.html` or `stack-a3f1.html` is unguessable, and an
+unguessable name costs every reader something to spare an author a
+collision they can rename their way out of. Refusing to *overwrite* in
+that residual case is the right guard, but it belongs at the write, not
+here: this function performs no I/O and knows nothing about what is
+already on disk.
+
+The region weaver's `index.html` is a different contract — there the name
+marks the entry member of a multi-page artifact, and a static host's
+directory-index convention depends on it — and this rule does not reach
+it.
+
+<a name="chunk-page-file-name"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#page-file-name`</sub>
+
+```rust {#page-file-name}
+/// The file name a document's woven page takes inside an output directory:
+/// the document's own stem, so weaving a second chapter beside the first
+/// adds a page rather than replacing one.
+///
+/// Pure, and deterministic per document — re-weaving the same document
+/// rewrites the same file. Documents sharing a stem across directories
+/// share a name; a caller that must not clobber checks at the write.
+pub fn page_file_name(doc_path: &Path) -> String {
+    let stem = doc_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "index".to_string());
+    format!("{stem}.html")
+}
+```
 
 ## The main weave function
 
@@ -3543,15 +3600,69 @@ second
         // The inner markup is preserved inside the heading.
         assert!(output.html.contains("<code>weave</code>"));
     }
+
+    #[test]
+    fn a_page_is_named_after_its_document() {
+        assert_eq!(page_file_name(Path::new("stack.md")), "stack.html");
+        assert_eq!(page_file_name(Path::new("docs/attrs.md")), "attrs.html");
+        assert_eq!(
+            page_file_name(Path::new("/abs/book/parser.md")),
+            "parser.html"
+        );
+    }
+
+    /// The defect this rule exists for: two documents woven into one output
+    /// directory must not resolve to the same file.
+    #[test]
+    fn two_documents_woven_into_one_directory_keep_two_pages() {
+        let first = page_file_name(Path::new("docs/stack.md"));
+        let second = page_file_name(Path::new("docs/attrs.md"));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn a_document_named_index_still_renders_index_html() {
+        assert_eq!(page_file_name(Path::new("book/index.md")), "index.html");
+    }
+
+    #[test]
+    fn a_path_with_no_stem_falls_back_to_index() {
+        assert_eq!(page_file_name(Path::new("/")), "index.html");
+    }
+
+    /// The whole defect, walked end to end: two chapters woven into one
+    /// output directory, written the way a caller writes them, and both
+    /// still there afterwards with their own text.
+    #[test]
+    fn a_second_chapter_woven_into_the_same_directory_leaves_the_first() {
+        let out = tempfile::TempDir::new().unwrap();
+        let chapters = [
+            ("docs/stack.md", "# Stack\n\nThe stack chapter.\n"),
+            ("docs/attrs.md", "# Attrs\n\nThe attrs chapter.\n"),
+        ];
+
+        for (doc_path, content) in chapters {
+            let parsed = parse_document(content).unwrap();
+            let html = weave_html(content, &parsed).unwrap().html;
+            std::fs::write(out.path().join(page_file_name(Path::new(doc_path))), html).unwrap();
+        }
+
+        let stack = std::fs::read_to_string(out.path().join("stack.html")).unwrap();
+        let attrs = std::fs::read_to_string(out.path().join("attrs.html")).unwrap();
+        assert!(stack.contains("The stack chapter."), "got {stack}");
+        assert!(attrs.contains("The attrs chapter."), "got {attrs}");
+    }
 }
 `````
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#root` · assembles [imports](#chunk-imports) · [weave-html-fn](#chunk-weave-html-fn) · [render-code-block-fn](#chunk-render-code-block-fn) · [render-tabbed-chunk-fn](#chunk-render-tabbed-chunk-fn) · [capitalize-lang-fn](#chunk-capitalize-lang-fn) · [render-code-with-refs-fn](#chunk-render-code-with-refs-fn) · [render-param-panel-fn](#chunk-render-param-panel-fn) · [small-helpers](#chunk-small-helpers) · [math-macro-tables](#chunk-math-macro-tables) · [math-tex-scanning](#chunk-math-tex-scanning) · [math-tex-normalise](#chunk-math-tex-normalise) · [math-fuse-scripts](#chunk-math-fuse-scripts) · [stylesheet](#chunk-stylesheet) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#root` · assembles [imports](#chunk-imports) · [page-file-name](#chunk-page-file-name) · [weave-html-fn](#chunk-weave-html-fn) · [render-code-block-fn](#chunk-render-code-block-fn) · [render-tabbed-chunk-fn](#chunk-render-tabbed-chunk-fn) · [capitalize-lang-fn](#chunk-capitalize-lang-fn) · [render-code-with-refs-fn](#chunk-render-code-with-refs-fn) · [render-param-panel-fn](#chunk-render-param-panel-fn) · [small-helpers](#chunk-small-helpers) · [math-macro-tables](#chunk-math-macro-tables) · [math-tex-scanning](#chunk-math-tex-scanning) · [math-tex-normalise](#chunk-math-tex-normalise) · [math-fuse-scripts](#chunk-math-fuse-scripts) · [stylesheet](#chunk-stylesheet) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>
+
+<<page-file-name>>
 
 <<weave-html-fn>>
 
