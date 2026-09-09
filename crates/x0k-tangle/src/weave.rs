@@ -2427,6 +2427,36 @@ let y = 1;
     }
 
     #[test]
+    fn a_ref_links_to_where_the_chunk_is_defined_and_does_not_expand_it() {
+        let content = r#"# Compose
+
+```rust {#leaf}
+let y = 1;
+```
+
+```rust {#root}
+<<leaf>>
+```
+"#;
+        let doc = parse_document(content).unwrap();
+        let html = weave_html(content, &doc).unwrap().html;
+
+        // The anchor lands: the chunk the ref names carries the id the
+        // href asks for. A link to nothing would still match the markup
+        // assertion above.
+        assert!(html.contains("class=\"chunk-ref\" href=\"#chunk-leaf\""), "{html}");
+        assert!(html.contains("id=\"chunk-leaf\""), "{html}");
+
+        // And it is a reference, not an expansion: `leaf`'s body is
+        // rendered once, under its own header, not again inside `root`.
+        assert_eq!(
+            html.matches("<span class=\"tok-keyword\">let</span>").count(),
+            1,
+            "{html}"
+        );
+    }
+
+    #[test]
     fn escaped_ref_line_renders_as_the_literal_without_an_anchor() {
         let content = r#"# Show the syntax
 

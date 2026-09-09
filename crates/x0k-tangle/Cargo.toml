@@ -52,6 +52,11 @@ pulldown-cmark = { version = "0.12", default-features = false, features = ["simd
 latex2mathml = "0.2"
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
+# Symbol extraction (`from=`/`symbol=` chunks) and the language-aware chunk
+# ref scan both dispatch on the language a chunk declares. `x0k-syntax` owns
+# the fence-tag vocabulary for the toolchain but hands out classified tokens,
+# not grammars, so the TypeScript grammar is linked here beside the Rust one.
+tree-sitter-typescript = "0.23"
 
 serde = { workspace = true }
 serde_json = { workspace = true }

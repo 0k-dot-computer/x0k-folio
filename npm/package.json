@@ -1,0 +1,65 @@
+{
+  "bin": {
+    "folio": "bin/folio.js",
+    "x0k-folio": "bin/x0k-folio.js",
+    "x0k-tangle": "bin/x0k-tangle.js"
+  },
+  "description": "Literate programming tangler/weaver with bidirectional sync. Extracts compilable source from folio/v1 documents and reconciles edits from either side.",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "install.js",
+    "README.md"
+  ],
+  "homepage": "https://github.com/0k-dot-computer/x0k-folio",
+  "license": "MIT",
+  "name": "@0k/folio",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0k-dot-computer/x0k-folio.git"
+  },
+  "scripts": {
+    "postinstall": "node install.js",
+    "test": "node test/resolve.test.js"
+  },
+  "version": "0.1.0",
+  "x0k": {
+    "assetPrefix": "x0k-folio",
+    "checksums": "SHA256SUMS",
+    "commands": {
+      "folio": "x0k-tangle",
+      "x0k-folio": "x0k-folio-cli",
+      "x0k-tangle": "x0k-tangle"
+    },
+    "digests": {},
+    "envPrefix": "FOLIO",
+    "releaseBase": "https://github.com/0k-dot-computer/x0k-folio/releases/download",
+    "repo": "0k-dot-computer/x0k-folio",
+    "tagPrefix": "v",
+    "targets": {
+      "darwin-arm64": {
+        "archive": ".tar.gz",
+        "exe": "",
+        "target": "aarch64-apple-darwin"
+      },
+      "darwin-x64": {
+        "archive": ".tar.gz",
+        "exe": "",
+        "target": "x86_64-apple-darwin"
+      },
+      "linux-arm64": {
+        "archive": ".tar.gz",
+        "exe": "",
+        "target": "aarch64-unknown-linux-musl"
+      },
+      "linux-x64": {
+        "archive": ".tar.gz",
+        "exe": "",
+        "target": "x86_64-unknown-linux-musl"
+      }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+#!/bin/sh
+# Build this repository's release binaries for ONE target triple and package
+# them as the asset a release carries:
+#
+#   tools/release-artifacts <target-triple> [output-dir]
+#
+# Writes <output-dir>/<asset> and <output-dir>/<asset>.sha256, where <asset> is
+# `x0k-folio-<target>.tar.gz` (`.zip` on Windows). Nothing here talks to a
+# forge or a registry — publishing the asset is the caller's act. The release
+# workflow calls this once per target; so can a maintainer, by hand.
+set -eu
+target="${1:-}"
+out="${2:-dist}"
+if [ -z "$target" ]; then
+  echo "usage: tools/release-artifacts <target-triple> [output-dir]" >&2
+  exit 2
+fi
+case "$target" in
+  *-windows-*) exe=".exe"; ext=".zip" ;;
+  *)           exe="";     ext=".tar.gz" ;;
+esac
+# rustup is how a CI runner acquires a target. A nix or distro toolchain that
+# already has it needs no step here, so an absent rustup is not an error.
+if command -v rustup >/dev/null 2>&1; then
+  rustup target add "$target"
+fi
+# `--locked` for the same reason `tools/ci` uses it: the committed lockfile is
+# what was audited, and a release must be built from it.
+cargo build --release --locked --target "$target" -p x0k-folio-cli --bin x0k-folio-cli -p x0k-tangle --bin x0k-tangle
+stage="$out/.stage-$target"
+rm -rf "$stage"
+mkdir -p "$stage" "$out"
+for bin in x0k-folio-cli x0k-tangle; do
+  cp "target/$target/release/$bin$exe" "$stage/$bin$exe"
+done
+asset="x0k-folio-$target$ext"
+# One flat archive of binaries, no leading directory: the postinstall extracts
+# straight into its `vendor/`. `tar -a` picks the format from the extension,
+# which is how the Windows `.zip` is written by the same line.
+if [ "$ext" = ".zip" ]; then
+  (cd "$stage" && tar -a -cf "../$asset" ./*)
+else
+  (cd "$stage" && tar -czf "../$asset" ./*)
+fi
+rm -rf "$stage"
+# `sha256sum` on Linux, `shasum -a 256` on macOS. The two-column output is what
+# `sha256sum -c` reads and what the release's SHA256SUMS is concatenated from.
+(
+  cd "$out"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$asset" > "$asset.sha256"
+  else
+    shasum -a 256 "$asset" > "$asset.sha256"
+  fi
+)
+echo "$out/$asset"

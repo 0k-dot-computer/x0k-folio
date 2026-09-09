@@ -156,10 +156,10 @@ pub struct FactEntry {
     /// Subject entity URI (e.g. `x0k:design/foo`, `x0k:intent/<uuid>`).
     pub entity: String,
     /// Predicate, in its stored spelling (e.g. `x0k:folio/status`,
-    /// `c0kgrove:intent/title`, `motivatedBy`). Projection does not
-    /// normalize predicate spellings — the live reader/writer skew between
-    /// `c0kgrove:intent/*` and unified spellings is preserved verbatim
-    /// and addressed in C2/C5a.
+    /// `vendor:intent/title`, `motivatedBy`). Projection does not
+    /// normalize predicate spellings: where a reader and a writer
+    /// disagree on a spelling, the skew is preserved verbatim rather
+    /// than resolved here.
     pub predicate: String,
     /// Typed value.
     pub value: FactValue,
@@ -830,15 +830,15 @@ mod tests {
             "x0k:intent/abc",
             vec![
                 (
-                    "c0kgrove:intent/title".to_string(),
+                    "vendor:intent/title".to_string(),
                     FactValue::Text("Do the thing".to_string()),
                 ),
                 (
-                    "c0kgrove:intent/from-seed".to_string(),
+                    "vendor:intent/from-seed".to_string(),
                     FactValue::EntityRef("x0k:seed/xyz".to_string()),
                 ),
                 (
-                    "c0kgrove:intent/created-at".to_string(),
+                    "vendor:intent/created-at".to_string(),
                     FactValue::SignedInt(42),
                 ),
             ],

@@ -40,10 +40,10 @@ This module adds a wrapper, `find_chunk_refs_aware`, that uses
 tree-sitter to identify spans inside string literals, raw strings,
 and comments, then filters out any naive match whose source line
 starts inside an excluded span. When the chunk's `lang` is one we
-have a grammar for (today: Rust), the aware scan applies; for
-anything else we fall back to the line-based rule (better to
-over-include and surface an "undefined chunk" error than silently
-drop a real ref).
+have a grammar for — Rust, TypeScript (which also parses JavaScript),
+TSX — the aware scan applies; for anything else we fall back to the
+line-based rule (better to over-include and surface an "undefined
+chunk" error than silently drop a real ref).
 
 ## Imports
 
@@ -56,6 +56,7 @@ tree-sitter wiring.
 ```rust {#imports}
 use crate::chunk::{find_chunk_refs, ChunkRef};
 use tree_sitter::{Node, Parser};
+use x0k_syntax::Language as FenceLanguage;
 ```
 
 ## The public function
@@ -146,37 +147,58 @@ fn line_start_offsets(content: &str) -> Vec<usize> {
 
 ## Tree-sitter span collection
 
-`collect_exclude_spans` picks the language, parses, and walks the
-resulting tree collecting the byte ranges of any node whose `kind()`
-matches our exclude list. Returns `None` when we don't have a
-grammar for the language, signalling "fall back to naive."
+Each grammar names its literals differently, so the pair — grammar
+and the node kinds to exclude — travels together. Rust's list:
 
-The `exclude_kinds` list is curated for Rust today:
 - `string_literal` — `"foo"`, `b"foo"`
 - `raw_string_literal` — `r"foo"`, `r#"foo"#`, `r##"foo"##`, etc.
 - `line_comment` — `// ...`
 - `block_comment` — `/* ... */`
 
-Adding support for TypeScript / JavaScript means: depend on
-`tree-sitter-typescript` (or javascript), add a match arm, and
-extend `exclude_kinds` with that grammar's node kinds (likely
-`string`, `template_string`, `comment`). Deferred — the Rust
-unblocker is what the substrate needs right now.
+TypeScript's is shorter, because one `comment` kind covers both `//`
+and `/* */` and one `string` kind covers `'…'` and `"…"`. A
+`template_string` is excluded whole: a `${…}` substitution inside one
+can hold code, but a `<<name>>` alone on a line inside a template is
+data by the same reasoning as a raw string.
+
+<a name="chunk-exclude-kinds"></a><sub>[`src/chunk_refs.rs`](../../crates/x0k-tangle/src/chunk_refs.rs) · `#exclude-kinds`</sub>
+
+```rust {#exclude-kinds}
+const RUST_EXCLUDE_KINDS: &[&str] = &[
+    "string_literal",
+    "raw_string_literal",
+    "line_comment",
+    "block_comment",
+];
+const TS_EXCLUDE_KINDS: &[&str] = &["string", "template_string", "comment"];
+```
+
+`collect_exclude_spans` picks that pair, parses, and walks the
+resulting tree collecting the byte ranges of any node whose `kind()`
+matches. The fence tag resolves through `x0k-syntax`, the same
+vocabulary the weaver highlights by, and then narrows: JSON and
+Python are tags it knows and we have no exclude list for, so they
+return `None` and fall back to naive.
 
 <a name="chunk-collect-exclude-spans-fn"></a><sub>[`src/chunk_refs.rs`](../../crates/x0k-tangle/src/chunk_refs.rs) · `#collect-exclude-spans-fn`</sub>
 
 ```rust {#collect-exclude-spans-fn}
 fn collect_exclude_spans(content: &str, lang: &str) -> Option<Vec<(usize, usize)>> {
-    let language = match lang {
-        "rust" | "rs" => tree_sitter_rust::LANGUAGE,
-        _ => return None,
-    };
+    let (language, exclude_kinds): (tree_sitter::Language, &[&str]) =
+        match FenceLanguage::from_str(lang)? {
+            FenceLanguage::Rust => (tree_sitter_rust::LANGUAGE.into(), RUST_EXCLUDE_KINDS),
+            FenceLanguage::Typescript => (
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                TS_EXCLUDE_KINDS,
+            ),
+            FenceLanguage::Tsx => (tree_sitter_typescript::LANGUAGE_TSX.into(), TS_EXCLUDE_KINDS),
+            _ => return None,
+        };
     let mut parser = Parser::new();
-    parser.set_language(&language.into()).ok()?;
+    parser.set_language(&language).ok()?;
     let tree = parser.parse(content, None)?;
     let mut spans = Vec::new();
-    let exclude_kinds = ["string_literal", "raw_string_literal", "line_comment", "block_comment"];
-    walk_collect(tree.root_node(), &exclude_kinds, &mut spans);
+    walk_collect(tree.root_node(), exclude_kinds, &mut spans);
     Some(spans)
 }
 ```
@@ -212,7 +234,9 @@ Coverage hits the Rust edge cases:
 - Multi-line raw strings — the span runs across many lines and
   every interior `<<x>>` must be filtered.
 - Fall-back when `lang = None` or unknown.
-- The `"rs"` alias.
+- The `"rs"` alias, and the `js` / `jsx` tags reaching the
+  TypeScript and TSX grammars.
+- JavaScript strings, template literals and comments.
 - Malformed code: tree-sitter recovers with an error tree but does
   not crash; we don't make a strict assertion on count here.
 - An escaped ref inside a string is dropped like a plain one; outside,
@@ -328,6 +352,22 @@ mod tests {
     }
 
     #[test]
+    fn skips_refs_in_js_strings_templates_and_comments() {
+        let content = "export function f() {\n  const a = `\n<<in_template>>\n`;\n                         // <<commented>>\n  /*\n  <<in_block>>\n  */\n  <<real>>\n}\n";
+        let refs = find_chunk_refs_aware(content, Some("javascript"));
+        assert_eq!(refs.len(), 1, "got {:?}", refs);
+        assert_eq!(refs[0].name, "real");
+    }
+
+    #[test]
+    fn jsx_tag_reaches_the_tsx_grammar() {
+        let content = "const App = () => <div/>;\nconst s = `\n<<in_template>>\n`;\n<<real>>\n";
+        let refs = find_chunk_refs_aware(content, Some("jsx"));
+        assert_eq!(refs.len(), 1, "got {:?}", refs);
+        assert_eq!(refs[0].name, "real");
+    }
+
+    #[test]
     fn syntax_error_falls_back_conservatively() {
         // Malformed Rust: unmatched brace. tree-sitter parses with errors
         // but still produces a tree; the exclude spans we recover should
@@ -344,7 +384,7 @@ mod tests {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/chunk_refs.rs`](../../crates/x0k-tangle/src/chunk_refs.rs) · `#root` · assembles [imports](#chunk-imports) · [find-chunk-refs-aware-fn](#chunk-find-chunk-refs-aware-fn) · [line-start-offsets-fn](#chunk-line-start-offsets-fn) · [collect-exclude-spans-fn](#chunk-collect-exclude-spans-fn) · [walk-collect-fn](#chunk-walk-collect-fn) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/chunk_refs.rs`](../../crates/x0k-tangle/src/chunk_refs.rs) · `#root` · assembles [imports](#chunk-imports) · [find-chunk-refs-aware-fn](#chunk-find-chunk-refs-aware-fn) · [line-start-offsets-fn](#chunk-line-start-offsets-fn) · [exclude-kinds](#chunk-exclude-kinds) · [collect-exclude-spans-fn](#chunk-collect-exclude-spans-fn) · [walk-collect-fn](#chunk-walk-collect-fn) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>
@@ -352,6 +392,8 @@ mod tests {
 <<find-chunk-refs-aware-fn>>
 
 <<line-start-offsets-fn>>
+
+<<exclude-kinds>>
 
 <<collect-exclude-spans-fn>>
 

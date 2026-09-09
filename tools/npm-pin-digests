@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+'use strict';
+// Pin every release asset's SHA-256 into npm/package.json, from the SHA256SUMS
+// the release job just assembled. Run between building the assets and
+// publishing the wrapper: after this, the digest a consumer checks against
+// travels inside the signed npm tarball rather than being fetched from the
+// same host as the asset it vouches for.
+//
+//   tools/npm-pin-digests [dist-dir]
+//
+// Refuses when an asset the wrapper claims a platform for has no digest — a
+// wrapper that promises a platform whose binary did not build is a package
+// whose install fails on somebody else's machine.
+var fs = require('fs');
+var path = require('path');
+
+var dist = process.argv[2] || 'dist';
+var file = path.join('npm', 'package.json');
+var pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+var sums = fs.readFileSync(path.join(dist, pkg.x0k.checksums), 'utf8');
+var seen = {};
+sums.split('\n').forEach(function (line) {
+  var parts = line.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    seen[parts[parts.length - 1].replace(/^\*/, '')] = parts[0];
+  }
+});
+
+var digests = {};
+var missing = [];
+Object.keys(pkg.x0k.targets).sort().forEach(function (key) {
+  var entry = pkg.x0k.targets[key];
+  var asset = pkg.x0k.assetPrefix + '-' + entry.target + entry.archive;
+  if (seen[asset]) { digests[asset] = seen[asset]; } else { missing.push(asset); }
+});
+if (missing.length) {
+  console.error('error: no digest in ' + dist + '/' + pkg.x0k.checksums +
+    ' for ' + missing.join(', '));
+  process.exit(1);
+}
+pkg.x0k.digests = digests;
+fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n');
+console.log('pinned ' + Object.keys(digests).length + ' digests into ' + file);

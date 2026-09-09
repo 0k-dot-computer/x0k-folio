@@ -72,12 +72,13 @@ document id in the corpus carries a locator suffix, and the typed
 envelope layer — the exact consumer at issue — never reads the field.
 The parity that must hold meanwhile is narrow and testable: for any URI
 carrying neither a locator nor a fragment, `EntityId` and `EntityUri`
-must parse the same string to the same class and identifier, and render
-the same string back. The three exceptions are deliberate and each is
-stated where it is made — the locator under *Parsing*, the fragment in
-the section after this one, and the scheme in the section after that,
-where `x0k:` stops being a constant and becomes whichever prefixes a
-vocabulary declares.
+must parse the same string to the same class and identifier. The four
+exceptions are deliberate and each is stated where it is made — the
+locator under *Parsing*, the fragment in the section after this one,
+the scheme in the section after that, where `x0k:` stops being a
+constant and becomes whichever prefixes a vocabulary declares, and
+under *Rendering* the one place the two agree on what a string means
+and disagree on how to write it back.
 
 <a name="chunk-module-doc"></a><sub>[`src/entity_id.rs`](../../crates/x0k-folio/src/entity_id.rs) · `#module-doc`</sub>
 
@@ -89,6 +90,12 @@ vocabulary declares.
 //! ```text
 //! <scheme>:<class>/<identifier>[#<fragment>]
 //! ```
+//!
+//! `/` separates the class from the identifier at its first occurrence
+//! and nowhere after, so an identifier may hold as many more as it
+//! likes: `x0k:implementation/folio/identity` is the class
+//! `implementation` over the identifier `folio/identity`, which is how
+//! the document vocabulary addresses a literate chapter.
 //!
 //! The scheme is a vocabulary's compact namespace prefix — `x0k` for the
 //! base namespace, a module's own name where it declares one with
@@ -251,17 +258,35 @@ impl EntityId {
 
 ## Rendering
 
-Display is the inverse of parsing, with one asymmetry worth naming: a
-bare `/` inside an identifier parses (the split takes only the first
-one) but re-renders as `%2F`. The corpus relies on the parse — the
-literate documents are ided `x0k:implementation/folio/identity`, a
-class of `implementation` over an identifier of `folio/identity` — so
-tightening the parser would reject a live convention, and tightening
-the renderer would break parity with `EntityUri`, which encodes the
-same way. The honest statement is that this pair round-trips
-*strings that were rendered by it*, and parses a slightly wider
-language than it renders. A test pins that shape so it stays a known
-edge rather than a surprise.
+Display is the inverse of parsing, and the whole of its difficulty is
+`/`. The character is a separator exactly once — the parser splits on
+the first one and everything after it is identifier — so a second one
+cannot be read as anything else, and encoding it buys no unambiguity.
+It costs the reader the id instead. `x0k:implementation/<dir>/<slug>`
+is how the vocabulary says a literate chapter is addressed
+(`document.ttl`, `Implementation`) and how the corpus writes one a few
+thousand times over, so a renderer that answers
+`x0k:implementation/folio%2Fidentity` is answering every diagnostic
+about every chapter with a string nobody typed and nobody can grep for.
+The encode set therefore holds the separators still ambiguous where
+they stand — `@` and `#` — and lets `/` through. The same rule serves
+the fragment, where a heading path is slash-joined (`a/b/c`) and the
+`#` split has likewise already taken everything after the first one.
+
+That is a third way this pair parts from `EntityUri`, and the first
+that is about rendering alone: `x0k_types::entity_uri`
+encodes `/` too, under a comment calling a bare one "illegal anyway"
+while its own `split_once` accepts it. What a string *means* is
+unaffected — both read `x0k:implementation/folio/identity` as
+`implementation` over `folio/identity` — so the divergence is in how
+the two write an id back, and the substrate's renderer is the side
+that should move when the split lands. Meanwhile the law this side
+holds is the plain one: whatever `Display` emits parses back to the
+id it came from. The one string that does not is an id whose *class*
+was constructed with a `/` in it: the class is written raw, because it
+is a kebab-case token and no parse produces one carrying a separator,
+so only a hand-built value can reach that state. `EntityUri` is raw
+there too and has the same hole.
 
 <a name="chunk-display"></a><sub>[`src/entity_id.rs`](../../crates/x0k-folio/src/entity_id.rs) · `#display`</sub>
 
@@ -480,28 +505,32 @@ impl std::error::Error for EntityIdError {}
 
 ## Percent-encoding
 
-Byte-for-byte the substrate's rule but for one character: encode the
-structural separators (`/`, `@`, `#`), the escape sentinel (`%`),
-whitespace, and everything outside printable ASCII. Decoding is the
-inverse and rejects a truncated or non-hex escape rather than passing
-it through. `#` is the addition, and it is forced: a fragment separator
-that can also appear raw inside an identifier is not a separator. The
-substrate's renderer does not encode it, so the two agree on every
-string that has no `#` in it — which is every authored id in the corpus
-measured today — and the divergence is the same shape as the locator's,
-written down rather than discovered.
+The substrate's rule, one character added and one removed: encode the
+separators that are still ambiguous where they stand (`@`, `#`), the
+escape sentinel (`%`), whitespace, and everything outside printable
+ASCII. Decoding is the inverse and rejects a truncated or non-hex
+escape rather than passing it through. `#` is the addition, and it is
+forced: a fragment separator that can also appear raw inside an
+identifier is not a separator. `/` is the removal, for the mirror
+reason given under *Rendering* — it has already done its separating by
+the time either part is encoded, so encoding it protects nothing and
+mangles the corpus's commonest id shape. A string carrying `%2F` from
+before still decodes to the `/` it stood for; it simply renders back
+as the character now.
 
 <a name="chunk-percent"></a><sub>[`src/entity_id.rs`](../../crates/x0k-folio/src/entity_id.rs) · `#percent`</sub>
 
 ```rust {#percent}
 /// Whether a byte must be percent-encoded. Disallowed: the separators
-/// `/`, `@` and `#`, whitespace, `%` (escape sentinel), and any
-/// non-printable / non-ASCII byte. `x0k_types::entity_uri`'s rule but
-/// for `#`, which that renderer does not treat as a separator; the two
-/// agree on every string without one.
+/// `@` and `#`, whitespace, `%` (escape sentinel), and any
+/// non-printable / non-ASCII byte. Not `/`: it separates the class from
+/// the identifier at its first occurrence only, so every later one is
+/// unambiguous and stays as written — which is what makes
+/// `x0k:implementation/folio/identity` render as itself.
+/// `x0k_types::entity_uri`'s rule but for those two characters.
 fn must_encode(byte: u8) -> bool {
     match byte {
-        b'/' | b'@' | b'%' | b'#' => true,
+        b'@' | b'%' | b'#' => true,
         b' ' | b'\t' | b'\n' | b'\r' => true,
         // Printable ASCII range, exclusive of the special chars above.
         0x21..=0x7e => false,
@@ -558,8 +587,11 @@ fn hex_nibble(b: u8) -> Option<u8> {
 
 The round-trip cases are drawn from the substrate's own table, one per
 class, so the parity claim is checked against the same inputs
-`EntityUri` is checked against. The rest pin the refusals, the one
-asymmetry, and the two ways a fragment must behave: it survives a
+`EntityUri` is checked against. That table had no `implementation` id
+in it, and every id in it was single-segment, which is how a renderer
+that mangled the corpus's commonest shape kept a green suite; the
+class is in the list now and has a test of its own. The rest pin the
+refusals and the two ways a fragment must behave: it survives a
 round-trip as a *part*, and it never leaks into the identifier.
 
 <a name="chunk-tests"></a><sub>[`src/entity_id.rs`](../../crates/x0k-folio/src/entity_id.rs) · `#tests`</sub>
@@ -583,6 +615,7 @@ mod tests {
             "x0k:commitment/no-shortcuts",
             "x0k:design/publish-a-region-as-a-repository",
             "x0k:architecture/publication-projection",
+            "x0k:implementation/folio/identity",
             "x0k:wiki/pattern-language-of-computing",
             "x0k:literate-spec/agent_messaging",
             "x0k:affordance/publish_region_as_repository",
@@ -735,15 +768,43 @@ mod tests {
     }
 
     #[test]
-    fn identifier_may_hold_a_bare_slash_but_re_renders_encoded() {
-        // The literate corpus ids itself this way, so the parse must
-        // accept it; the renderer matches `EntityUri` and encodes. The
-        // pair therefore parses a wider language than it renders, and
-        // this test is where that is written down rather than discovered.
-        let id: EntityId = "x0k:implementation/folio/identity".parse().expect("parse");
+    fn a_multi_segment_identifier_renders_as_it_was_written() {
+        // `x0k:implementation/<dir>/<slug>` is the vocabulary's own
+        // addressing rule for a literate chapter, so a two-segment
+        // identifier is the corpus's commonest id and not an edge case.
+        let id = round_trip("x0k:implementation/folio/identity");
         assert_eq!(id.class, "implementation");
         assert_eq!(id.identifier, "folio/identity");
-        assert_eq!(id.to_string(), "x0k:implementation/folio%2Fidentity");
+
+        // Depth is not the parser's business: the class takes the first
+        // `/` and the identifier is everything left.
+        assert_eq!(
+            round_trip("x0k:implementation/three/deep/segments").identifier,
+            "three/deep/segments"
+        );
+
+        // A fragment is a heading *path*, so it is slash-joined too, and
+        // the `#` split has already taken everything after the first one.
+        let section = round_trip("x0k:implementation/folio/identity#rendering/the-encode-set");
+        assert_eq!(section.identifier, "folio/identity");
+        assert_eq!(
+            section.fragment.as_deref(),
+            Some("rendering/the-encode-set")
+        );
+
+        // Constructed rather than parsed, the string still comes out
+        // greppable — this is the path a diagnostic prints through.
+        assert_eq!(
+            EntityId::new("implementation", "folio/identity").to_string(),
+            "x0k:implementation/folio/identity"
+        );
+
+        // A `%2F` written by the old renderer still decodes to the `/` it
+        // stood for; it renders back as the character. The same id, spelled
+        // the way the corpus spells it.
+        let encoded: EntityId = "x0k:implementation/folio%2Fidentity".parse().expect("parse");
+        assert_eq!(encoded, id);
+        assert_eq!(encoded.to_string(), "x0k:implementation/folio/identity");
     }
 
     #[test]
@@ -816,6 +877,9 @@ mod tests {
 
 The module is small and will get smaller: when the substrate's side of
 the split lands, `write_encoded`, `decode_percent`, and `must_encode`
-stop being a second copy and become the only copy. Until then the tests
-above are the join — they are the same cases `x0k-types` runs, so the
-day the two disagree, both suites say so.
+stop being a second copy and become the only copy, and the two
+characters this copy already renders differently — `#` encoded, `/`
+not — stop being a divergence and become the rule. Until then the tests
+above are the join: they are the cases `x0k-types` runs plus the ones
+that say where the two part, so the day they part anywhere else, both
+suites say so.

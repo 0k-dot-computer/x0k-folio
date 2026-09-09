@@ -131,7 +131,7 @@ The tangle run in reverse: a symbol lifted out of a source file, a chunk body wr
 
 *rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](background/literate-programming.md)
 
-- [Symbol extraction for `from=` chunks](implementation/tangle/source-refs.md) — Tree-sitter symbol extraction for a `from=` chunk — the syntax tree decides where a symbol's body begins and ends, with no regex and no brace counting — and the symbol listing the doc browser reads.
+- [Symbol extraction for `from=` chunks](implementation/tangle/source-refs.md) — Tree-sitter symbol extraction for a `from=` chunk — the grammar of the language the chunk declares decides where a symbol's body begins and ends, with no regex and no brace counting — and the symbol listing the doc browser reads.
 - [Pulling code back into the document](implementation/tangle/source-sync.md) — The two paths that run against the tangle: filling a `from=` chunk's body from the file it names, and replacing a named chunk's body programmatically so a host can write a value back and re-tangle in lockstep.
 - [Reading an edited output back through the sidecar](implementation/tangle/reverse-stitch.md) — Lifting an edited generated file back through the sidecar's line ranges into a patch against its document. Exported and tested but unwired: nothing in the tree calls it today.
 

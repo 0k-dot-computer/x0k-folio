@@ -1,6 +1,6 @@
 {
   "source": "implementation/tangle/weave.md",
-  "source_hash": "5d3e2723539310bf",
+  "source_hash": "08b3f0ea8e534b20",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-tangle/src/weave.rs",
-          "hash": "1cd1f215d10b1f03"
+          "hash": "63752616787d6e9e"
         }
       ]
     }

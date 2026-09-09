@@ -38,9 +38,10 @@ enum Command {
     /// apart. A defect — a malformed id or edge target, a predicate no
     /// module of the vocabulary declares, an envelope that does not parse —
     /// is a gap in what this publication selected, and fails the check. An
-    /// edge whose target names no document under the paths is an edge into
-    /// the corpus this was projected from: expected, printed as a note,
-    /// never a failure. A third thing is checked across the set: an
+    /// edge whose target names no document under the paths scanned simply
+    /// leaves the set — often into a wider corpus this selection was drawn
+    /// from, and expected either way: printed as a note, never a failure.
+    /// A third thing is checked across the set: an
     /// affordance claimed for a human that no signifier signifies is a
     /// defect, because the audience has nothing to perceive.
     Check {
@@ -304,12 +305,14 @@ fn main() -> Result<()> {
             let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
             let docs = discover_documents_any(&paths)?;
             let mut total_populated = 0;
+            let mut unfilled = 0;
 
             for doc_path in &docs {
                 let result = x0k_tangle::sync::sync_document(doc_path, &ws)?;
 
                 for err in &result.errors {
-                    eprintln!("  warn: {}", err);
+                    eprintln!("  error: {}: {}", doc_path.display(), err);
+                    unfilled += 1;
                 }
 
                 if result.chunks_populated > 0 {
@@ -327,6 +330,11 @@ fn main() -> Result<()> {
                 total_populated,
                 docs.len()
             );
+
+            if unfilled > 0 {
+                eprintln!("{unfilled} chunk(s) named a source and were left empty");
+                std::process::exit(1);
+            }
         }
 
         Command::Check { paths, vocabulary } => {
@@ -360,8 +368,8 @@ fn main() -> Result<()> {
             }
             for edge in &report.corpus.dangling {
                 eprintln!(
-                    "{}: note: edge `{}` → `{}` names no document here (an edge into the corpus this was projected from; expected)",
-                    edge.source, edge.predicate, edge.target
+                    "{}",
+                    dangling_note(&edge.source, &edge.predicate, &edge.target)
                 );
             }
 
@@ -790,6 +798,18 @@ fn print_workspace_summary(
         let rel = path.strip_prefix(workspace_root).unwrap_or(path).display();
         eprintln!("  ERROR {}: {}", rel, err);
     }
+}
+
+/// The note `check` prints for an edge that leaves the set.
+///
+/// The set is whatever the paths on the command line contain, and nothing
+/// beyond it is knowable from here: not whether a wider corpus exists, not
+/// whether this tree was projected out of one. So the note names the
+/// situation and stops. A note that instead told the reader their edge
+/// pointed into "the corpus this was projected from" would be true of one
+/// repository and read as a misconfiguration to everyone else.
+fn dangling_note(source: &str, predicate: &str, target: impl std::fmt::Display) -> String {
+    format!("{source}: note: edge `{predicate}` → `{target}` names no document under the paths scanned")
 }
 
 fn discover_documents_any(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {

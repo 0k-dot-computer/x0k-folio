@@ -53,7 +53,7 @@ body. Running it again replaces the body with whatever `my_fn` is now.
 
 ```rust {#module-doc}
 use crate::parser::{parse_document, ParsedDocument};
-use crate::source_ref::extract_symbol;
+use crate::source_ref::{extract_symbol_in, SymbolLanguage};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 ```
@@ -62,10 +62,17 @@ use std::path::{Path, PathBuf};
 
 A sync reports how many chunks it populated, how many it skipped, and every
 error it met without stopping. A chunk is skipped when it has `from` but no
-`symbol` — the extractor needs a name to find a span. A missing source file
-or an unextractable symbol is an error against that chunk, and the rest of
-the document still syncs. The document is rewritten only when at least one
-patch exists.
+`symbol` — the extractor needs a name to find a span. A missing source file,
+a fence whose language extraction cannot walk, or an unextractable symbol is
+an error against that chunk, and the rest of the document still syncs. The
+document is rewritten only when at least one patch exists.
+
+The distinction matters to the caller: skipped chunks are a document saying
+nothing was asked of them, errors are a document asking for something and not
+getting it. A `sync` that reports errors has left the document out of step
+with the source it names, which is the whole condition the verb exists to
+remove — so the CLI turns any error into a non-zero exit
+([`crate.md`](crate.md)).
 
 <a name="chunk-sync-result"></a><sub>[`src/sync.rs`](../../crates/x0k-tangle/src/sync.rs) · `#sync-result`</sub>
 
@@ -106,6 +113,18 @@ pub fn sync_document(doc_path: &Path, workspace_root: &Path) -> Result<SyncResul
             continue;
         };
 
+        // Which grammar reads the source is a property of the document
+        // alone, so it is settled before any file is opened: a chunk in a
+        // language extraction cannot walk says so, rather than reporting
+        // the symbol missing from a tree it was never in.
+        let lang = match SymbolLanguage::for_lang(chunk.lang.as_deref()) {
+            Ok(lang) => lang,
+            Err(e) => {
+                errors.push(format!("chunk '{}': {}", name, e));
+                continue;
+            }
+        };
+
         let source_file = workspace_root.join(from_path);
         if !source_file.exists() {
             errors.push(format!(
@@ -119,7 +138,7 @@ pub fn sync_document(doc_path: &Path, workspace_root: &Path) -> Result<SyncResul
         let source_content = std::fs::read_to_string(&source_file)
             .with_context(|| format!("reading {}", source_file.display()))?;
 
-        match extract_symbol(&source_content, symbol) {
+        match extract_symbol_in(&source_content, symbol, lang) {
             Ok(span) => {
                 patches.push(FromPatch {
                     chunk_name: name.clone(),
@@ -304,12 +323,65 @@ pub fn replace_chunk_body(md: &str, chunk_name: &str, new_body: &str) -> Result<
 
 ## Tests
 
+The patch-application cases work on strings. The two `sync_document` cases
+need a document and a source file on disk in the same workspace, so they
+build one in a temp directory: one syncing a JavaScript chunk end to end —
+the path that used to report a live export as missing because the file was
+read with the Rust grammar — and one on a language extraction does not walk,
+which must leave the document untouched and say why.
+
 <a name="chunk-tests"></a><sub>[`src/sync.rs`](../../crates/x0k-tangle/src/sync.rs) · `#tests`</sub>
 
 `````rust {#tests}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    /// A workspace holding one source file and one document that
+    /// references a symbol in it. Returns the document's path.
+    fn workspace(source_name: &str, source: &str, doc: &str) -> (TempDir, PathBuf) {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(source_name), source).unwrap();
+        let doc_path = tmp.path().join("doc.md");
+        std::fs::write(&doc_path, doc).unwrap();
+        (tmp, doc_path)
+    }
+
+    #[test]
+    fn syncs_a_javascript_chunk_from_its_source() {
+        let (tmp, doc_path) = workspace(
+            "remap.js",
+            "export function createHorizonRemap(scale) {\n  return (u) => u * scale;\n}\n",
+            "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n",
+        );
+
+        let result = sync_document(&doc_path, tmp.path()).unwrap();
+        assert_eq!(result.errors, Vec::<String>::new());
+        assert_eq!(result.chunks_populated, 1);
+
+        let synced = std::fs::read_to_string(&doc_path).unwrap();
+        assert!(
+            synced.contains("export function createHorizonRemap(scale) {"),
+            "got {synced}"
+        );
+        assert!(synced.contains("return (u) => u * scale;"), "got {synced}");
+    }
+
+    #[test]
+    fn a_chunk_in_an_unwalkable_language_errors_and_leaves_the_document_alone() {
+        let doc = "# Remap\n\n```python {#remap from=\"remap.py\" symbol=\"create_remap\"}\n```\n";
+        let (tmp, doc_path) = workspace("remap.py", "def create_remap():\n    return 1\n", doc);
+
+        let result = sync_document(&doc_path, tmp.path()).unwrap();
+        assert_eq!(result.chunks_populated, 0);
+        assert_eq!(result.errors.len(), 1, "got {:?}", result.errors);
+        let err = &result.errors[0];
+        assert!(err.contains("chunk 'remap'"), "got {err}");
+        assert!(err.contains("symbol extraction supports"), "got {err}");
+        assert!(!err.contains("not found"), "got {err}");
+        assert_eq!(std::fs::read_to_string(&doc_path).unwrap(), doc);
+    }
 
     #[test]
     fn replace_chunk_body_swaps_only_the_named_chunk() {

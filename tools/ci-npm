@@ -1,0 +1,28 @@
+#!/bin/sh
+# The npm wrapper's own checks. Deliberately NOT part of `tools/ci`: the
+# wrapper is a distribution lane, not a build dependency, and a clone with no
+# JavaScript toolchain has to go green. The release workflow runs this before
+# it publishes.
+set -eu
+if ! command -v node >/dev/null 2>&1; then
+  echo "note: skipping the npm wrapper checks (node is not installed)" >&2
+  exit 0
+fi
+node -e 'JSON.parse(require("fs").readFileSync("npm/package.json", "utf8"))'
+node --check npm/install.js
+node --check npm/lib/resolve.js
+node --check tools/npm-pin-digests
+for shim in npm/bin/*.js; do node --check "$shim"; done
+# The resolution pins: every declared platform maps to one asset URL, an
+# undeclared one refuses, a mirror override moves only the base, and a pinned
+# digest is a digest for an asset this package actually ships. Offline.
+node npm/test/resolve.test.js
+# The one agreement no JavaScript here can see. The wrapper publishes at the
+# entry-point crate's version and the release is tagged from it, so a wrapper
+# that has drifted builds a URL for an asset no release carries.
+crate_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/x0k-tangle/Cargo.toml | head -n1)
+npm_version=$(node -p 'require("./npm/package.json").version')
+if [ -n "$crate_version" ] && [ "$crate_version" != "$npm_version" ]; then
+  echo "error: npm/package.json is $npm_version but crates/x0k-tangle/Cargo.toml is $crate_version" >&2
+  exit 1
+fi

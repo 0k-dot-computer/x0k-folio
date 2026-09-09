@@ -390,9 +390,10 @@ edges:
 /// apart. A defect — a malformed id or edge target, a predicate no
 /// module of the vocabulary declares, an envelope that does not parse —
 /// is a gap in what this publication selected, and fails the check. An
-/// edge whose target names no document under the paths is an edge into
-/// the corpus this was projected from: expected, printed as a note,
-/// never a failure. A third thing is checked across the set: an
+/// edge whose target names no document under the paths scanned simply
+/// leaves the set — often into a wider corpus this selection was drawn
+/// from, and expected either way: printed as a note, never a failure.
+/// A third thing is checked across the set: an
 /// affordance claimed for a human that no signifier signifies is a
 /// defect, because the audience has nothing to perceive.
 Check {
@@ -754,9 +755,9 @@ Workspace {
 workspace root, calls the library, and prints a report to stderr; stdout
 is reserved for data (`index` and `weave` without an output path,
 `list`, and `affordances`). Exit codes carry the verdicts: `check` and
-`workspace` exit non-zero on any error, `publish-repo` when the
-projection fails to build or test, `receive-repo` when any change was
-refused.
+`workspace` exit non-zero on any error, `sync` when a chunk it was
+asked to fill stayed empty, `publish-repo` when the projection fails to
+build or test, `receive-repo` when any change was refused.
 
 <a name="chunk-main-fn"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
 
@@ -838,6 +839,15 @@ Command::Tangle { paths, workspace } => {
 }
 ```
 
+`sync` counts a chunk it was asked to fill and could not as a failure of
+the run, not a warning on the way past. The predicate is *any*, not *all*:
+one document whose `from=` chunk still holds a stale body is exactly the
+drift the verb removes, and a run that reports it and exits 0 lets a CI job
+go green over a document no longer saying what its source says. A document
+with nothing to fill — no `from=` chunks, or chunks that name a file and no
+symbol — raises no error and passes, so "sync is clean" keeps meaning
+something in a tree that mostly does not use the feature.
+
 <a name="chunk-dispatch-sync"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-sync`</sub>
 
 ```rust {#dispatch-sync file="src/main.rs"}
@@ -845,12 +855,14 @@ Command::Sync { paths, workspace } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
     let docs = discover_documents_any(&paths)?;
     let mut total_populated = 0;
+    let mut unfilled = 0;
 
     for doc_path in &docs {
         let result = x0k_tangle::sync::sync_document(doc_path, &ws)?;
 
         for err in &result.errors {
-            eprintln!("  warn: {}", err);
+            eprintln!("  error: {}: {}", doc_path.display(), err);
+            unfilled += 1;
         }
 
         if result.chunks_populated > 0 {
@@ -868,6 +880,11 @@ Command::Sync { paths, workspace } => {
         total_populated,
         docs.len()
     );
+
+    if unfilled > 0 {
+        eprintln!("{unfilled} chunk(s) named a source and were left empty");
+        std::process::exit(1);
+    }
 }
 ```
 
@@ -877,8 +894,8 @@ every folio/v1 envelope under the same paths against the shipped
 vocabulary ([`cli-faces.md`](cli-faces.md)) and prints what it found
 in the affordance's own two categories: a defect as `<path>: <defect>`,
 which fails the run, and a dangling edge as a `note:` that names the
-target and says why it is expected. The summary line counts both, so a
-clean run still says how many envelopes were read and how many edges
+target and the set it is missing from. The summary line counts both, so
+a clean run still says how many envelopes were read and how many edges
 left the set.
 
 <a name="chunk-dispatch-check"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-check`</sub>
@@ -915,8 +932,8 @@ Command::Check { paths, vocabulary } => {
     }
     for edge in &report.corpus.dangling {
         eprintln!(
-            "{}: note: edge `{}` → `{}` names no document here (an edge into the corpus this was projected from; expected)",
-            edge.source, edge.predicate, edge.target
+            "{}",
+            dangling_note(&edge.source, &edge.predicate, &edge.target)
         );
     }
 
@@ -1416,6 +1433,26 @@ fn print_workspace_summary(
 }
 ```
 
+What `check` says about an edge whose target is not in the set it read
+lives in one place, because it is a claim about the reader's tree and
+the tree is the one thing this process cannot see past.
+
+<a name="chunk-dangling-note"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dangling-note`</sub>
+
+```rust {#dangling-note file="src/main.rs"}
+/// The note `check` prints for an edge that leaves the set.
+///
+/// The set is whatever the paths on the command line contain, and nothing
+/// beyond it is knowable from here: not whether a wider corpus exists, not
+/// whether this tree was projected out of one. So the note names the
+/// situation and stops. A note that instead told the reader their edge
+/// pointed into "the corpus this was projected from" would be true of one
+/// repository and read as a misconfiguration to everyone else.
+fn dangling_note(source: &str, predicate: &str, target: impl std::fmt::Display) -> String {
+    format!("{source}: note: edge `{predicate}` → `{target}` names no document under the paths scanned")
+}
+```
+
 <a name="chunk-discover-documents"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#discover-documents`</sub>
 
 ```rust {#discover-documents file="src/main.rs"}
@@ -1482,7 +1519,7 @@ fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 <<exports>>
 ```
 
-<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [print-workspace-summary](#chunk-print-workspace-summary) · [discover-documents](#chunk-discover-documents)</sub>
+<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-note](#chunk-dangling-note) · [discover-documents](#chunk-discover-documents)</sub>
 
 ```rust {#bin-root file="src/main.rs"}
 <<bin-doc>>
@@ -1499,6 +1536,8 @@ fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 
 <<print-workspace-summary>>
 
+<<dangling-note>>
+
 <<discover-documents>>
 ```
 
@@ -1508,6 +1547,171 @@ that a consumer could not reach by name — which is also why this
 chapter has no mechanism of its own to derive. When a verb grows a
 mechanism, it moves to a chapter; when a chapter's type is meant to be
 named from outside, it appears in the export list above.
+
+## Pinning the verdicts
+
+Two of this chapter's claims are about what the process does rather than
+what it computes: `sync` exits non-zero when a chunk it was asked to fill
+stayed empty, and `check`'s dangling-edge note says only what is true of
+the tree it was pointed at. Neither is reachable from a unit test of a
+library function — the first is an exit code, the second is a sentence a
+reader believes or does not — so they are pinned the way
+[`cli-faces.md`](cli-faces.md) pins the other faces: run the built binary
+over a temp fixture, and let what it prints and how it exits be the claim.
+
+<a name="chunk-cli-verdicts"></a><sub>[`tests/cli_verdicts.rs`](../../crates/x0k-tangle/tests/cli_verdicts.rs) · `#cli-verdicts`</sub>
+
+`````rust {#cli-verdicts file="tests/cli_verdicts.rs"}
+//! Pins for the verdicts the CLI returns
+//! (`x0k:implementation/tangle/crate`): what `sync` exits with when a
+//! chunk it was asked to fill stayed empty, and what `check` says about
+//! an edge that leaves the set.
+
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Output};
+
+use tempfile::TempDir;
+
+const JS_SOURCE: &str =
+    "export function createHorizonRemap(scale) {\n  return (u) => u * scale;\n}\n";
+
+fn write(dir: &Path, rel: &str, content: &str) {
+    let path = dir.join(rel);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, content).unwrap();
+}
+
+fn run(args: &[&str], dir: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .args(args)
+        .arg(dir)
+        .output()
+        .expect("the x0k-tangle binary runs")
+}
+
+fn sync(dir: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("sync")
+        .arg(dir)
+        .arg("--workspace")
+        .arg(dir)
+        .output()
+        .expect("the x0k-tangle binary runs")
+}
+
+#[test]
+fn sync_fills_a_javascript_chunk_and_passes() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n",
+    );
+
+    let out = sync(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "sync failed: {stderr}");
+    assert!(stderr.contains("synced 1 chunk(s)"), "got {stderr}");
+
+    let synced = fs::read_to_string(tmp.path().join("doc.md")).unwrap();
+    assert!(
+        synced.contains("export function createHorizonRemap(scale)"),
+        "got {synced}"
+    );
+}
+
+#[test]
+fn sync_exits_nonzero_when_a_chunk_it_was_asked_to_fill_stayed_empty() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```rust {#remap from=\"missing.rs\" symbol=\"remap\"}\n```\n",
+    );
+
+    let out = sync(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a sync that filled nothing reported success: {stderr}"
+    );
+    assert!(stderr.contains("error:"), "got {stderr}");
+}
+
+#[test]
+fn sync_names_the_language_limit_rather_than_the_symbol() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.py", "def create_remap():\n    return 1\n");
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```python {#remap from=\"remap.py\" symbol=\"create_remap\"}\n```\n",
+    );
+
+    let out = sync(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "got {stderr}");
+    assert!(stderr.contains("symbol extraction supports"), "got {stderr}");
+    assert!(
+        !stderr.contains("not found"),
+        "an unwalkable language must not read as a mistyped symbol: {stderr}"
+    );
+}
+
+#[test]
+fn sync_passes_a_document_with_nothing_to_fill() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "doc.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/fixture\n  \
+         type: implementation\n  status: draft\n  tangle:\n    crate: fixture\n    \
+         root: src/lib.rs\n---\n# Doc\n\n```rust {#root}\nfn f() {}\n```\n",
+    );
+
+    let out = sync(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "sync failed: {stderr}");
+    assert!(stderr.contains("synced 0 chunk(s)"), "got {stderr}");
+}
+
+/// A predicate this build is certain to accept, so the fixture measures
+/// the note and not the module selection.
+fn shipped_predicate() -> &'static str {
+    x0k_ontology::KNOWN_EDGE_PREDICATES
+        .first()
+        .copied()
+        .expect("a build whose vocabulary declares no document edge ships no document module")
+}
+
+#[test]
+fn the_dangling_edge_note_claims_only_what_is_true_of_any_tree() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/fixture.md",
+        &format!(
+            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/fixture\n  type: design\n  \
+             status: draft\n  edges:\n    {}:\n      - x0k:design/elsewhere\n---\n# Fixture\n",
+            shipped_predicate()
+        ),
+    );
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "check failed: {stderr}");
+    assert!(
+        stderr.contains("names no document under the paths scanned"),
+        "the note names the set it scanned: {stderr}"
+    );
+    assert!(
+        !stderr.contains("projected from"),
+        "the note claims nothing about a corpus the reader may not have: {stderr}"
+    );
+}
+`````
 
 ## The package manifest
 
@@ -1570,6 +1774,11 @@ pulldown-cmark = { version = "0.12", default-features = false, features = ["simd
 latex2mathml = "0.2"
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
+# Symbol extraction (`from=`/`symbol=` chunks) and the language-aware chunk
+# ref scan both dispatch on the language a chunk declares. `x0k-syntax` owns
+# the fence-tag vocabulary for the toolchain but hands out classified tokens,
+# not grammars, so the TypeScript grammar is linked here beside the Rust one.
+tree-sitter-typescript = "0.23"
 
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -11,12 +11,15 @@ x0k:
 
 ### Read a document as the woven artifact
 
-Read the explanation and code together, with references to code blocks expanded in place.
+Read the explanation and code together, with each reference to another code block a link to where that block is defined.
 
 I read a literate document as a rendered whole — its prose and its code in one
-continuous argument, code spans highlighted, chunks resolved where they are
-referenced rather than where they happen to be defined. The reading order is
-the one the author chose, not the one the compiler needs.
+continuous argument, code spans highlighted, and every `<<ref>>` an anchor I
+can follow to the chunk it names. Expansion is the tangler's act, performed
+once into the source file; on the page it would reprint each chunk body wherever
+it is composed and bury the argument under its own output. Following a
+reference is a click, and the reading order stays the one the author chose,
+not the one the compiler needs.
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f77656176655f615f646f63756d656e74-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/weave_a_document" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md"><strong>Affordance</strong> · Read a document as the woven artifact · <code>https://0k.computer/ontology#affordance/weave_a_document</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f77656176655f615f646f63756d656e74-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f77656176655f615f646f63756d656e74-1"></a>
 
@@ -747,6 +750,42 @@ let y = 1;
 
     // The composing ref renders as a chunk-ref anchor, not a code span.
     assert!(output.html.contains("class=\"chunk-ref\" href=\"#chunk-leaf\""));
+}
+````
+
+</details>
+
+<details><summary><code>a_ref_links_to_where_the_chunk_is_defined_and_does_not_expand_it</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+````rust
+#[test]
+fn a_ref_links_to_where_the_chunk_is_defined_and_does_not_expand_it() {
+    let content = r#"# Compose
+
+```rust {#leaf}
+let y = 1;
+```
+
+```rust {#root}
+<<leaf>>
+```
+"#;
+    let doc = parse_document(content).unwrap();
+    let html = weave_html(content, &doc).unwrap().html;
+
+    // The anchor lands: the chunk the ref names carries the id the
+    // href asks for. A link to nothing would still match the markup
+    // assertion above.
+    assert!(html.contains("class=\"chunk-ref\" href=\"#chunk-leaf\""), "{html}");
+    assert!(html.contains("id=\"chunk-leaf\""), "{html}");
+
+    // And it is a reference, not an expansion: `leaf`'s body is
+    // rendered once, under its own header, not again inside `root`.
+    assert_eq!(
+        html.matches("<span class=\"tok-keyword\">let</span>").count(),
+        1,
+        "{html}"
+    );
 }
 ````
 

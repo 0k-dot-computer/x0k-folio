@@ -2190,6 +2190,15 @@ attribute is present — the doc-browser injects the rendered HTML via
 innerHTML, and an event listener bound at registration time would
 fail; the inline onclick is the cheapest portable solution.
 
+One test holds the affordance these prove to what the page does. The
+affordance says a reference to another code block is a *link* to where
+that block is defined, so two things have to be true and neither is
+implied by the anchor's markup alone: the href has to land on a header
+that exists on the page, and the body it names has to appear once,
+where it is defined, rather than again at every site that composes it.
+Expansion happens in the tangler, and a reader who was promised it here
+would be reading a different page from the one weave renders.
+
 <a name="chunk-tests"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#tests` · proves [Read a document as the woven artifact](../../decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)</sub>
 
 `````rust {#tests proves="x0k:affordance/weave_a_document"}
@@ -2640,6 +2649,36 @@ let y = 1;
 
         // The composing ref renders as a chunk-ref anchor, not a code span.
         assert!(output.html.contains("class=\"chunk-ref\" href=\"#chunk-leaf\""));
+    }
+
+    #[test]
+    fn a_ref_links_to_where_the_chunk_is_defined_and_does_not_expand_it() {
+        let content = r#"# Compose
+
+```rust {#leaf}
+let y = 1;
+```
+
+```rust {#root}
+<<leaf>>
+```
+"#;
+        let doc = parse_document(content).unwrap();
+        let html = weave_html(content, &doc).unwrap().html;
+
+        // The anchor lands: the chunk the ref names carries the id the
+        // href asks for. A link to nothing would still match the markup
+        // assertion above.
+        assert!(html.contains("class=\"chunk-ref\" href=\"#chunk-leaf\""), "{html}");
+        assert!(html.contains("id=\"chunk-leaf\""), "{html}");
+
+        // And it is a reference, not an expansion: `leaf`'s body is
+        // rendered once, under its own header, not again inside `root`.
+        assert_eq!(
+            html.matches("<span class=\"tok-keyword\">let</span>").count(),
+            1,
+            "{html}"
+        );
     }
 
     #[test]

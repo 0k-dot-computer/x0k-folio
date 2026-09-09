@@ -5,9 +5,9 @@
 //! that every fact a substrate-connected journaled cell writes carries
 //! typed provenance: the producer's identity and the journal seq that
 //! emitted it, replacing the free-form cause strings each writer had
-//! invented for itself (`journal-head:<head>`, `grove:supersede`,
-//! `query-contract-retraction`). [`FactProvenance`] is that type, and
-//! this module is its one spelling.
+//! invented for itself — a bare head reference, a verb, a retraction
+//! marker, each meaning something only to the writer that minted it.
+//! [`FactProvenance`] is that type, and this module is its one spelling.
 //!
 //! # Provenance is attribution, never an arbiter
 //!
@@ -43,7 +43,7 @@ pub const JOURNAL_CAUSE_PREFIX: &str = "journal:";
 /// journal position that emitted it.
 ///
 /// `producer` is the writing cell's identity — a session or cell URI
-/// (e.g. `x0k-servitor:<name>`), the same spelling the producer's other
+/// (e.g. `x0k:cell/<name>`), the same spelling the producer's other
 /// facts hang off. `journal_seq` is the seq of the producer's journal
 /// entry at emission: for a fact emitted by a journaled transition, the
 /// entry that emitted it; for a host-side writer that bypasses the
@@ -76,9 +76,9 @@ impl FactProvenance {
     }
 
     /// Parse a cause string rendered by [`Self::to_cause`]. Returns
-    /// `None` for anything else — legacy free-form causes
-    /// (`journal-head:…`, `grove:supersede`, …) and the file-projection
-    /// causes are not journal provenance and stay opaque.
+    /// `None` for anything else — legacy free-form causes and the
+    /// file-projection causes are not journal provenance and stay
+    /// opaque.
     pub fn parse(cause: &str) -> Option<Self> {
         let rest = cause.strip_prefix(JOURNAL_CAUSE_PREFIX)?;
         let (producer, seq) = rest.rsplit_once('@')?;
@@ -106,9 +106,9 @@ mod tests {
 
     #[test]
     fn journal_cause_roundtrips() {
-        let prov = FactProvenance::new("x0k-servitor:grind-1", 42);
+        let prov = FactProvenance::new("x0k:cell/indexer", 42);
         let cause = prov.to_cause();
-        assert_eq!(cause, "journal:x0k-servitor:grind-1@42");
+        assert_eq!(cause, "journal:x0k:cell/indexer@42");
         assert_eq!(FactProvenance::parse(&cause), Some(prov));
     }
 
@@ -122,9 +122,9 @@ mod tests {
     #[test]
     fn legacy_and_malformed_causes_parse_as_none() {
         for cause in [
-            "journal-head:abc123",          // the servitor legacy form
-            "grove:supersede",              // the grove legacy form
-            "query-contract-retraction",    // the x0k-query legacy form
+            "journal-head:abc123",          // a bare head reference
+            "entity-supersede",             // a writer's own verb
+            "query-contract-retraction",    // a retraction marker
             "file-content:deadbeef",        // file-projection provenance
             "journal:no-seq",               // missing position
             "journal:producer@not-a-seq",   // non-numeric position
@@ -151,7 +151,7 @@ mod tests {
 
         // A fact written with provenance citing the producer and the head
         // position standing at emission.
-        let producer = "x0k-servitor:grind-1";
+        let producer = "x0k:cell/indexer";
         let head = journal.last().unwrap();
         let mut fact = FactEntry::new(
             producer,
@@ -176,10 +176,10 @@ mod tests {
     fn fact_entry_exposes_its_provenance() {
         let mut fact = FactEntry::new("x0k:seed/a", "p/title", FactValue::Text("A".into()));
         assert_eq!(fact.provenance(), None);
-        fact.cause = Some(FactProvenance::new("x0k-servitor:grind-1", 3).to_cause());
+        fact.cause = Some(FactProvenance::new("x0k:cell/indexer", 3).to_cause());
         assert_eq!(
             fact.provenance(),
-            Some(FactProvenance::new("x0k-servitor:grind-1", 3))
+            Some(FactProvenance::new("x0k:cell/indexer", 3))
         );
         // A legacy cause is not provenance.
         fact.cause = Some("journal-head:abc".into());

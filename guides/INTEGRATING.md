@@ -30,16 +30,17 @@ tree-sitter grammars and `x0k-tangle` links `tree-sitter-rust` directly, so
 policy when it is absent. There is no crates.io release to install from; the
 binary comes from this clone, at `target/debug/x0k-tangle`.
 
-Four verbs are the ones you will use, and each has a `--help`:
+Five verbs are the ones you will use, and each has a `--help`:
 
 | verb | what it does |
 |---|---|
 | `x0k-tangle tangle <doc…> --workspace <root>` | write a document's chunks to their files, and a sidecar beside the document |
+| `x0k-tangle sync <path…> --workspace <root>` | the other direction: fill each `from=`/`symbol=` chunk's body from the source file it names |
 | `x0k-tangle check <path…>` | verify chunk references, and read every folio/v1 envelope under the paths against the shipped vocabulary |
 | `x0k-tangle affordances <path…>` | print every affordance the documents declare, as JSON |
 | `x0k-tangle weave <doc> --output-dir <dir>` | render one document as an HTML page |
 
-`sync`, `index`, `list` and `workspace` also run here, and `x0k-tangle
+`index`, `list` and `workspace` also run here, and `x0k-tangle
 --help` lists them; `weave-region`, `project-repo`, `publish-repo` and
 `receive-repo` are marked `[corpus-only]` and refuse, because they read the
 private corpus this repository was projected from. In this checkout `cargo
@@ -115,6 +116,33 @@ subclass of it, spelled in snake case (`refinedBy` in the file is
 `refined_by` in the envelope). That is also where your agent looks when it
 explains a term, so the two of you are reading the definition the checker
 enforces, not a paraphrase.
+
+Your collection can carry a vocabulary of its own, and one that does ships
+here. `crates/x0k-folio-cli/examples/papers/` is three documents:
+`vocabulary.md` declares a namespace and a `Paper` class in a
+`turtle folio:ontology` block, and `alpha.md` and `beta.md` are papers that
+cite each other through the predicate it declares. It is the smallest
+complete thing to copy:
+
+```sh
+x0k-tangle check crates/x0k-folio-cli/examples/papers
+```
+
+The declaration that makes a prefix yours is one triple of that file:
+
+```turtle
+<https://example.org/paper-vocabulary> a owl:Ontology ;
+    vann:preferredNamespacePrefix "paper" ;
+    vann:preferredNamespaceUri "https://example.org/papers#" .
+```
+
+A block inside a document is one way in; `x0k-tangle check --vocabulary <dir>`
+is the other, loading a directory of `.ttl` files at run time so a module of
+your own needs no rebuild of the binary. What such a module can and cannot
+reach is under what does not exist yet, below — the honest summary is that a
+class it declares becomes a usable document `type` and a namespace it declares
+becomes an id scheme, while the decision header's `edges:` still admits only
+the shipped predicates.
 
 ## Adopting the tangle for one crate
 
@@ -198,6 +226,57 @@ x0k-tangle tangle docs --workspace .
 Keep the lines after it. The `git status --porcelain` check is the whole
 proof: a re-tangle that changes the tree is drift, and CI fails on it.
 
+## Starting from code you already have
+
+Everything above assumes the document owns the code. For a codebase that
+already exists that is the wrong order to adopt in: it asks you to move
+working files inside prose before you know whether the prose is worth
+writing. A `from=` chunk is the other direction. The document names a symbol
+in a file it does not own, leaves the block empty, and `sync` fills the body
+in from the source. Given `src/bucket.rs` as you already wrote it,
+`docs/ratelimit.md` says:
+
+````markdown
+```rust {#bucket from="src/bucket.rs" symbol="Bucket"}
+```
+
+Refilling never carries the level past the capacity.
+
+```rust {#refill from="src/bucket.rs" symbol="refill"}
+```
+````
+
+`from=` is a path from the workspace root, not from the document. `symbol=`
+names the item to pull, and `::` descends into it: `Bucket::refill` is that
+method, `tests::refill_stops_at_capacity` that test. The two go together — a
+`from=` with no `symbol=` is skipped, because there is no name to find a span
+by. Then, from your repository's root:
+
+```sh
+x0k-tangle sync docs --workspace .
+```
+
+It reads every folio/v1 document under `docs`, finds each symbol in its file
+by parsing the file rather than by matching a line range, and rewrites the
+documents with the bodies in place. Run it again whenever the code moves on
+and the bodies are replaced. A symbol that has been renamed or deleted is
+reported against its chunk — `warn: chunk 'refill': symbol 'refil' not
+found` — the rest of the document still syncs, and the run does not fail, so
+this is a reference that goes stale loudly rather than a build that breaks.
+Which languages the extractor can parse is the one thing on this page that
+moves, so read `x0k-tangle sync --help` for the current set rather than
+trusting a list here. A file it cannot parse comes back as that same
+per-chunk warning, not as an emptied block.
+
+The direction is the point, not the syntax. A `from=` chunk is a reference,
+not an output: `tangle` on that document writes zero files and does not touch
+`src/bucket.rs`, which stays the file you edit and the file your build
+compiles. So you can put explanation around the parts of a system that most
+need it, in the order that explains them, without moving a line of code or
+generating anything — and where you later decide the document should own the
+code, drop the `from=` and `symbol=`, keep the body that `sync` put there,
+add a `tangle:` block, and the file becomes an output.
+
 ## Declaring capabilities
 
 A capability is three declarations in three places, and `check` ties them.
@@ -272,7 +351,8 @@ Said here so that nothing above has to imply it.
   namespace prefix a loaded module declares with
   `vann:preferredNamespaceUri` — so `mycorp:design/retry-budget` is a
   well-formed id once a `mycorp` module declares a namespace, and is refused
-  by name until then. A prefix belonging to no module is still not a scheme,
+  by name until then (`crates/x0k-folio-cli/examples/papers/vocabulary.md`
+  is a declaration to copy). A prefix belonging to no module is still not a scheme,
   and whether the format should have one of its own is a decision not yet
   taken.
 - **Custom predicates in the legacy document header.** A module of yours
@@ -284,8 +364,9 @@ Said here so that nothing above has to imply it.
   a predicate only if it lives in the `https://0k.computer/ontology#`
   namespace with a `Decision` domain, so a predicate in a namespace of your
   own is loaded but not admitted there. Typed YAML instances use the
-  collection vocabulary and support custom predicates; the Paper example
-  demonstrates this. The header's `type:` is also wider than it should be —
+  collection vocabulary and support custom predicates; the papers example
+  under `crates/x0k-folio-cli/examples/papers/` demonstrates this.
+  The header's `type:` is also wider than it should be —
   the vocabulary marks no class as a document genus, so any class the loaded
   modules declare is an accepted `type`, and narrowing that needs a marker
   the vocabulary does not have.

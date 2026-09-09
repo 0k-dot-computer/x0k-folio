@@ -7,6 +7,12 @@
 //! <scheme>:<class>/<identifier>[#<fragment>]
 //! ```
 //!
+//! `/` separates the class from the identifier at its first occurrence
+//! and nowhere after, so an identifier may hold as many more as it
+//! likes: `x0k:implementation/folio/identity` is the class
+//! `implementation` over the identifier `folio/identity`, which is how
+//! the document vocabulary addresses a literate chapter.
+//!
 //! The scheme is a vocabulary's compact namespace prefix — `x0k` for the
 //! base namespace, a module's own name where it declares one with
 //! `vann:preferredNamespaceUri`. [`EntityId::parse_in`] takes the
@@ -276,13 +282,15 @@ impl fmt::Display for EntityIdError {
 impl std::error::Error for EntityIdError {}
 
 /// Whether a byte must be percent-encoded. Disallowed: the separators
-/// `/`, `@` and `#`, whitespace, `%` (escape sentinel), and any
-/// non-printable / non-ASCII byte. `x0k_types::entity_uri`'s rule but
-/// for `#`, which that renderer does not treat as a separator; the two
-/// agree on every string without one.
+/// `@` and `#`, whitespace, `%` (escape sentinel), and any
+/// non-printable / non-ASCII byte. Not `/`: it separates the class from
+/// the identifier at its first occurrence only, so every later one is
+/// unambiguous and stays as written — which is what makes
+/// `x0k:implementation/folio/identity` render as itself.
+/// `x0k_types::entity_uri`'s rule but for those two characters.
 fn must_encode(byte: u8) -> bool {
     match byte {
-        b'/' | b'@' | b'%' | b'#' => true,
+        b'@' | b'%' | b'#' => true,
         b' ' | b'\t' | b'\n' | b'\r' => true,
         // Printable ASCII range, exclusive of the special chars above.
         0x21..=0x7e => false,
@@ -352,6 +360,7 @@ mod tests {
             "x0k:commitment/no-shortcuts",
             "x0k:design/publish-a-region-as-a-repository",
             "x0k:architecture/publication-projection",
+            "x0k:implementation/folio/identity",
             "x0k:wiki/pattern-language-of-computing",
             "x0k:literate-spec/agent_messaging",
             "x0k:affordance/publish_region_as_repository",
@@ -504,15 +513,43 @@ mod tests {
     }
 
     #[test]
-    fn identifier_may_hold_a_bare_slash_but_re_renders_encoded() {
-        // The literate corpus ids itself this way, so the parse must
-        // accept it; the renderer matches `EntityUri` and encodes. The
-        // pair therefore parses a wider language than it renders, and
-        // this test is where that is written down rather than discovered.
-        let id: EntityId = "x0k:implementation/folio/identity".parse().expect("parse");
+    fn a_multi_segment_identifier_renders_as_it_was_written() {
+        // `x0k:implementation/<dir>/<slug>` is the vocabulary's own
+        // addressing rule for a literate chapter, so a two-segment
+        // identifier is the corpus's commonest id and not an edge case.
+        let id = round_trip("x0k:implementation/folio/identity");
         assert_eq!(id.class, "implementation");
         assert_eq!(id.identifier, "folio/identity");
-        assert_eq!(id.to_string(), "x0k:implementation/folio%2Fidentity");
+
+        // Depth is not the parser's business: the class takes the first
+        // `/` and the identifier is everything left.
+        assert_eq!(
+            round_trip("x0k:implementation/three/deep/segments").identifier,
+            "three/deep/segments"
+        );
+
+        // A fragment is a heading *path*, so it is slash-joined too, and
+        // the `#` split has already taken everything after the first one.
+        let section = round_trip("x0k:implementation/folio/identity#rendering/the-encode-set");
+        assert_eq!(section.identifier, "folio/identity");
+        assert_eq!(
+            section.fragment.as_deref(),
+            Some("rendering/the-encode-set")
+        );
+
+        // Constructed rather than parsed, the string still comes out
+        // greppable — this is the path a diagnostic prints through.
+        assert_eq!(
+            EntityId::new("implementation", "folio/identity").to_string(),
+            "x0k:implementation/folio/identity"
+        );
+
+        // A `%2F` written by the old renderer still decodes to the `/` it
+        // stood for; it renders back as the character. The same id, spelled
+        // the way the corpus spells it.
+        let encoded: EntityId = "x0k:implementation/folio%2Fidentity".parse().expect("parse");
+        assert_eq!(encoded, id);
+        assert_eq!(encoded.to_string(), "x0k:implementation/folio/identity");
     }
 
     #[test]

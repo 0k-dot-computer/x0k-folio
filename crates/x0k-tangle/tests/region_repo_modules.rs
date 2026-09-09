@@ -1490,6 +1490,294 @@ fn a_publication_whose_rows_show_marks_needs_a_palette() {
     let out = tempfile::tempdir().unwrap();
     project(ws.path(), out.path()).expect("no rows, no palette needed");
 }
+
+/// Give `demo-crate` a binary, so a prebuilt declaration has something to
+/// release. Declared as a `[[bin]]`, which is the shape the reader looks at
+/// before it falls back to an implicit `src/main.rs`.
+fn write_binary(ws: &Path, bin: &str) {
+    let manifest = ws.join("demo-crate/Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        format!("{text}\n[[bin]]\nname = \"{bin}\"\npath = \"src/main.rs\"\n"),
+    )
+    .unwrap();
+    std::fs::write(ws.join("demo-crate/src/main.rs"), "fn main() {}\n").unwrap();
+}
+
+const REPOSITORY: &str = "https://github.com/demo-org/demo-repo";
+
+/// Two targets on two platforms, one wrapper, one command whose name is not
+/// its binary's — which is the case `bin:` exists for.
+const PREBUILT: &str = "    targets:\n      - x86_64-unknown-linux-musl\n      - aarch64-apple-darwin\n    npm:\n      package: \"@demo/tool\"\n      bin:\n        tool: demo-tool\n";
+
+/// Rewrite the fixture publication's envelope to carry `repository:` and a
+/// `prebuilt:` block, and give the crate a binary to release.
+fn declare_prebuilt(ws: &Path, repository: Option<&str>, prebuilt: &str) {
+    write_binary(ws, "demo-tool");
+    let doc = std::fs::read_to_string(ws.join(PUB_REL)).unwrap();
+    let repo = repository
+        .map(|r| format!("  repository: {r}\n"))
+        .unwrap_or_default();
+    std::fs::write(
+        ws.join(PUB_REL),
+        doc.replace("  tangle:\n", &format!("{repo}  prebuilt:\n{prebuilt}  tangle:\n")),
+    )
+    .unwrap();
+}
+
+/// As [`project`], with the forge wrappers emitted: the release workflow is
+/// one of them, so the tests that read it project this way.
+fn project_github(ws: &Path, out: &Path) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
+    project_publication_repo_with(
+        &ws.join(PUB_REL),
+        out,
+        ws,
+        &RepoProjectOptions {
+            license: None,
+            git_init: false,
+            allow_dirty: false,
+            emit_github: true,
+        },
+        &runner_reporting(ProofOutcome::Passed),
+    )
+}
+
+#[test]
+fn a_publication_declaring_no_prebuilt_carries_no_release_lane() {
+    let ws = workspace(&[], true);
+    let out = tempfile::tempdir().unwrap();
+    let report = project_github(ws.path(), out.path()).expect("projection");
+    assert!(report.prebuilt.is_none(), "nothing was declared");
+    for absent in [
+        "npm",
+        "tools/release-artifacts",
+        "tools/ci-npm",
+        "tools/npm-pin-digests",
+        ".github/workflows/release.yml",
+    ] {
+        assert!(!out.path().join(absent).exists(), "{absent} is not emitted");
+    }
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    assert!(prov["prebuilt"].is_null(), "the record says there is no lane");
+    assert!(
+        !tree_carries(out.path(), "postinstall"),
+        "no file in the projection mentions a postinstall"
+    );
+}
+
+#[test]
+fn a_prebuilt_declaration_emits_the_release_lane_and_the_wrapper() {
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT);
+    let out = tempfile::tempdir().unwrap();
+    let report = project_github(ws.path(), out.path()).expect("projection");
+
+    let summary = report.prebuilt.clone().expect("the lane is declared");
+    assert_eq!(summary.version, "0.1.0", "the entry-point crate's version");
+    assert_eq!(summary.tag, "v0.1.0");
+    assert_eq!(
+        summary.targets,
+        vec![
+            "x86_64-unknown-linux-musl".to_string(),
+            "aarch64-apple-darwin".to_string()
+        ]
+    );
+    assert_eq!(summary.npm_package.as_deref(), Some("@demo/tool"));
+
+    // The forge-agnostic half names the crate, the binary, and the asset.
+    let script = std::fs::read_to_string(out.path().join("tools/release-artifacts")).unwrap();
+    assert!(script.contains("-p demo-crate --bin demo-tool"), "{script}");
+    assert!(
+        script.contains("asset=\"demo-$target$ext\""),
+        "the asset is named for the publication:\n{script}"
+    );
+
+    // The manifest npm reads: valid JSON, with `bin`, `postinstall` and the
+    // platform table agreeing with each other.
+    let pkg: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("npm/package.json")).unwrap())
+            .expect("package.json is JSON");
+    assert_eq!(pkg["name"], "@demo/tool");
+    assert_eq!(pkg["version"], "0.1.0");
+    assert_eq!(pkg["scripts"]["postinstall"], "node install.js");
+    assert_eq!(pkg["bin"]["tool"], "bin/tool.js");
+    assert_eq!(pkg["x0k"]["commands"]["tool"], "demo-tool");
+    assert_eq!(pkg["x0k"]["envPrefix"], "TOOL");
+    assert_eq!(pkg["x0k"]["repo"], "demo-org/demo-repo");
+    // Empty, and present: the projector cannot know a digest for bytes that do
+    // not exist, and the postinstall reads the empty map as "packed by hand".
+    assert_eq!(pkg["x0k"]["digests"], serde_json::json!({}));
+    assert_eq!(
+        pkg["x0k"]["releaseBase"],
+        "https://github.com/demo-org/demo-repo/releases/download"
+    );
+    assert_eq!(
+        pkg["x0k"]["targets"]["linux-x64"]["target"],
+        "x86_64-unknown-linux-musl"
+    );
+    assert_eq!(
+        pkg["x0k"]["targets"]["darwin-arm64"]["target"],
+        "aarch64-apple-darwin"
+    );
+    for file in ["npm/bin/tool.js", "npm/lib/resolve.js", "npm/install.js"] {
+        assert!(out.path().join(file).is_file(), "{file}");
+    }
+    // The registry page is the repository's own README, not a second one
+    // written for npm — the projector templates no prose.
+    assert_eq!(
+        std::fs::read_to_string(out.path().join("npm/README.md")).unwrap(),
+        std::fs::read_to_string(out.path().join("README.md")).unwrap()
+    );
+
+    // The workflow's matrix is the declared targets, each on a runner that
+    // builds it natively.
+    let workflow =
+        std::fs::read_to_string(out.path().join(".github/workflows/release.yml")).unwrap();
+    assert!(workflow.contains("- target: x86_64-unknown-linux-musl"), "{workflow}");
+    assert!(workflow.contains("runner: macos-14"), "{workflow}");
+    assert!(
+        workflow.contains("npm publish --provenance --access public"),
+        "{workflow}"
+    );
+    // The verification the operator asked for: assets attested at release, the
+    // wrapper's own tarball attested at publish, digests pinned in between.
+    assert!(
+        workflow.contains("actions/attest-build-provenance@v2"),
+        "{workflow}"
+    );
+    assert!(workflow.contains("./tools/npm-pin-digests dist"), "{workflow}");
+    assert!(out.path().join("tools/npm-pin-digests").is_file());
+
+    // And the promise the repository is now making is in the record.
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    assert_eq!(prov["prebuilt"]["tag"], "v0.1.0");
+    assert_eq!(prov["prebuilt"]["npm_package"], "@demo/tool");
+}
+
+#[test]
+fn the_lane_never_enters_the_repositorys_own_ci() {
+    let plain_ws = workspace(&[], true);
+    let plain = tempfile::tempdir().unwrap();
+    project_github(plain_ws.path(), plain.path()).expect("projection");
+    let before = std::fs::read_to_string(plain.path().join("tools/ci")).unwrap();
+
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT);
+    let out = tempfile::tempdir().unwrap();
+    project_github(ws.path(), out.path()).expect("projection");
+    let after = std::fs::read_to_string(out.path().join("tools/ci")).unwrap();
+    assert_eq!(
+        before, after,
+        "`tools/ci` is byte-identical with and without the lane"
+    );
+    assert!(!after.contains("node"), "{after}");
+    assert!(!after.contains("npm"), "{after}");
+
+    // The wrapper's checks live in their own script, which skips itself where
+    // node is absent rather than failing a clone that has none.
+    let check = std::fs::read_to_string(out.path().join("tools/ci-npm")).unwrap();
+    assert!(check.contains("skipping the npm wrapper checks"), "{check}");
+    assert!(check.contains("demo-crate/Cargo.toml"), "{check}");
+}
+
+#[test]
+fn a_declaration_that_could_not_produce_an_installable_release_refuses() {
+    let npm = "    npm:\n      package: \"@demo/tool\"\n";
+    for (prebuilt, repository, needle) in [
+        (
+            "    targets:\n      - x86_64-unknown-freebsd\n".to_string(),
+            Some(REPOSITORY),
+            "no release row",
+        ),
+        (
+            "    targets:\n      - x86_64-unknown-linux-gnu\n      - x86_64-unknown-linux-musl\n"
+                .to_string(),
+            Some(REPOSITORY),
+            "cannot choose between",
+        ),
+        (
+            format!("    targets:\n      - x86_64-apple-darwin\n{npm}"),
+            None,
+            "needs the publication's `repository:`",
+        ),
+        (
+            format!("    targets:\n      - x86_64-apple-darwin\n{npm}"),
+            Some("https://example.com/demo"),
+            "is not a `https://github.com/<owner>/<repo>` project",
+        ),
+        (
+            format!("    targets:\n      - x86_64-apple-darwin\n{npm}      bin:\n        tool: not-a-binary\n"),
+            Some(REPOSITORY),
+            "which no `entryPoint` crate",
+        ),
+        (
+            "    tarjets:\n      - x86_64-apple-darwin\n".to_string(),
+            Some(REPOSITORY),
+            "does not read",
+        ),
+        (
+            "    targets: []\n".to_string(),
+            Some(REPOSITORY),
+            "declares no `targets:`",
+        ),
+    ] {
+        let ws = workspace(&[], true);
+        declare_prebuilt(ws.path(), repository, &prebuilt);
+        let err = project_err(ws.path());
+        assert!(err.contains(needle), "expected `{needle}` in:\n{err}");
+    }
+}
+
+#[test]
+fn a_prebuilt_declaration_without_an_entry_point_refuses() {
+    let ws = workspace(&[], false);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT);
+    let err = project_err(ws.path());
+    assert!(err.contains("needs an `entryPoint` crate"), "{err}");
+}
+
+#[test]
+fn the_wrapper_resolves_every_declared_platform_offline() {
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT);
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+    let Ok(run) = std::process::Command::new("node")
+        .arg("npm/test/resolve.test.js")
+        .current_dir(out.path())
+        .output()
+    else {
+        eprintln!("skipping: no `node` to run the wrapper's own test with");
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    assert!(
+        run.status.success(),
+        "the wrapper's test:\n{stdout}{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(stdout.contains("2 platforms, 1 commands"), "{stdout}");
+
+    // And the launchers and the postinstall are parseable JavaScript, which is
+    // what `tools/ci-npm` asks node before it runs anything.
+    for file in ["npm/install.js", "npm/lib/resolve.js", "npm/bin/tool.js"] {
+        let checked = std::process::Command::new("node")
+            .args(["--check", file])
+            .current_dir(out.path())
+            .output()
+            .expect("node is here, having just run");
+        assert!(
+            checked.status.success(),
+            "{file}: {}",
+            String::from_utf8_lossy(&checked.stderr)
+        );
+    }
+}
 #[test]
 fn implementation_map_and_compact_readme_share_affordances() {
     let ws = workspace(&[], true);

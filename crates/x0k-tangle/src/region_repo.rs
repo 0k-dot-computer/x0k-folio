@@ -54,6 +54,18 @@
 //! published declaration names under `enabledBy` is published, or excluded —
 //! a declaration naming a module the audience will not have is refused.
 //!
+//! A publication may declare `prebuilt:` — target triples, and optionally an
+//! npm wrapper — and the projection then also carries a release lane: a
+//! forge-agnostic `tools/release-artifacts` that packages the entry-point
+//! binaries for one target, a `.github/workflows/release.yml` that runs it per
+//! declared target on a tag under SLSA build provenance, and an `npm/` package
+//! whose `postinstall` fetches the matching asset and refuses to install it
+//! unless it matches a digest pinned into the package at publish time (and,
+//! where `gh` is present, its build attestation) — so `npx` reaches the tool
+//! with no Rust toolchain and nothing unverified is ever executed. The lane is
+//! inert for a publication that declares none, and it never enters `tools/ci`:
+//! it is a distribution lane, not a build dependency.
+//!
 //! The projector emits a `PROVENANCE.json` (the inbound-contribution seam) and
 //! refuses to disclose anything above `public` access tier.
 
@@ -62,6 +74,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use serde::Deserialize;
 
 use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
 use x0k_folio::transclusion::extract_section;
@@ -263,6 +277,12 @@ pub struct RepoProjectReport {
     /// does not publish, once each. The *rests on* line prints these as
     /// plain text; this list is the wiki's writing queue.
     pub unpublished_concepts: Vec<String>,
+    /// The prebuilt-binary distribution the publication declares
+    /// (`prebuilt:`) — the release tag its assets are cut at, the target
+    /// triples, and the npm wrapper when one is declared. `None` when the
+    /// publication declares none, in which case the projection carries no
+    /// release workflow and no wrapper.
+    pub prebuilt: Option<PrebuiltSummary>,
 }
 
 /// Where the version stamped into shipped modules' `owl:versionIRI` came from.
@@ -604,6 +624,9 @@ pub fn project_publication_repo_with(
     };
     let icons = read_icons(workspace, &layout, &packages, &affordances, palette.clone())?;
 
+    let prebuilt = resolve_prebuilt(&content, &env, &packages, &versions, &crates_io)?;
+    report.prebuilt = prebuilt.as_ref().map(PrebuiltPlan::summary);
+
     // A prior projection (a `.git`, or a PROVENANCE.json) is projected INTO,
     // not beside: the overlay paths are stashed, the regenerated region is
     // cleared so nothing stale survives, and the overlay is restored after
@@ -723,6 +746,13 @@ pub fn project_publication_repo_with(
         organize_repository(output_dir, &mut report, &mut path_map, &layout)?;
         emit_provenance(output_dir, &env.id, &path_map, &report, &license,
             license_source, &source_licenses)?;
+    }
+    // After the relayout, and for one reason: the wrapper carries the
+    // repository's own README as its registry page, and the relayout rewrites
+    // every Markdown link relative to a file's new home. Emitting the copy
+    // afterwards is what keeps the two pages the same page.
+    if let Some(plan) = &prebuilt {
+        emit_prebuilt(output_dir, plan, &license, opts.emit_github)?;
     }
     if let Some(stash) = stash {
         restore_overlay(output_dir, &stash)?;
@@ -992,14 +1022,12 @@ fn envelope_string_list(content: &str, key: &str) -> Vec<String> {
     out
 }
 
-/// Read the `palette:` block out of a publication doc's `x0k:` envelope
-/// — the icon profile's four roles bound to colours, per scheme — as the
-/// binder's own type. `None` when the envelope carries none; a block
-/// that does not read as one refuses, naming why.
-pub fn envelope_palette(content: &str) -> Result<Option<Palette>> {
-    let Some((yaml, _)) = split_frontmatter(content) else {
-        return Ok(None);
-    };
+/// The lines nested under a top-level envelope key, as a YAML fragment —
+/// `None` when the envelope carries no such key. The block's own indentation
+/// is uniform, so the fragment parses as a mapping without dedenting.
+fn envelope_block(content: &str, key: &str) -> Option<String> {
+    let (yaml, _) = split_frontmatter(content)?;
+    let prefix = format!("{key}:");
     let mut block = String::new();
     let mut in_block = false;
     for line in yaml.lines() {
@@ -1012,13 +1040,21 @@ pub fn envelope_palette(content: &str) -> Result<Option<Palette>> {
             }
             break;
         }
-        if indent == 2 && line.trim_start().starts_with("palette:") {
+        if indent == 2 && line.trim_start().starts_with(&prefix) {
             in_block = true;
         }
     }
-    if !in_block {
+    in_block.then_some(block)
+}
+
+/// Read the `palette:` block out of a publication doc's `x0k:` envelope
+/// — the icon profile's four roles bound to colours, per scheme — as the
+/// binder's own type. `None` when the envelope carries none; a block
+/// that does not read as one refuses, naming why.
+pub fn envelope_palette(content: &str) -> Result<Option<Palette>> {
+    let Some(block) = envelope_block(content, "palette") else {
         return Ok(None);
-    }
+    };
     let palette: Palette = serde_norway::from_str(&block).map_err(|e| {
         anyhow!(
             "the publication's `palette:` block does not read as the icon profile's four \
@@ -4483,6 +4519,511 @@ fn emit_ci_and_guard(output_dir: &Path, emit_github: bool, layout: &CorpusLayout
     Ok(())
 }
 
+/// A target triple a publication releases binaries for, with everything the
+/// two consumers of that choice need: the `(process.platform, process.arch)`
+/// pair a Node install resolves through, the archive shape, and a runner that
+/// builds the triple natively.
+#[derive(Debug, Clone, Copy)]
+struct PrebuiltTarget {
+    triple: &'static str,
+    node_platform: &'static str,
+    node_arch: &'static str,
+    /// `.zip` on Windows because that is what a Windows user's tooling opens.
+    /// The postinstall unpacks both with `tar`, which is bsdtar on Windows and
+    /// macOS and reads zip archives, so the wrapper needs no unzip dependency.
+    archive: &'static str,
+    exe: &'static str,
+    runner: &'static str,
+    /// A shell line the runner needs before `cargo build` reaches this triple;
+    /// empty when it needs none.
+    setup: &'static str,
+}
+
+/// Every triple this projector knows how to release for. Each row is a runner
+/// that builds the triple *natively* — no cross-linker, no `cross` — and a
+/// Node platform pair the postinstall resolves from.
+const PREBUILT_TARGETS: &[PrebuiltTarget] = &[
+    PrebuiltTarget { triple: "x86_64-unknown-linux-musl", node_platform: "linux",
+        node_arch: "x64", archive: ".tar.gz", exe: "", runner: "ubuntu-latest",
+        setup: "sudo apt-get update && sudo apt-get install -y musl-tools" },
+    PrebuiltTarget { triple: "x86_64-unknown-linux-gnu", node_platform: "linux",
+        node_arch: "x64", archive: ".tar.gz", exe: "", runner: "ubuntu-latest", setup: "" },
+    PrebuiltTarget { triple: "aarch64-unknown-linux-musl", node_platform: "linux",
+        node_arch: "arm64", archive: ".tar.gz", exe: "", runner: "ubuntu-24.04-arm",
+        setup: "sudo apt-get update && sudo apt-get install -y musl-tools" },
+    PrebuiltTarget { triple: "aarch64-unknown-linux-gnu", node_platform: "linux",
+        node_arch: "arm64", archive: ".tar.gz", exe: "", runner: "ubuntu-24.04-arm", setup: "" },
+    PrebuiltTarget { triple: "x86_64-apple-darwin", node_platform: "darwin",
+        node_arch: "x64", archive: ".tar.gz", exe: "", runner: "macos-13", setup: "" },
+    PrebuiltTarget { triple: "aarch64-apple-darwin", node_platform: "darwin",
+        node_arch: "arm64", archive: ".tar.gz", exe: "", runner: "macos-14", setup: "" },
+    PrebuiltTarget { triple: "x86_64-pc-windows-msvc", node_platform: "win32",
+        node_arch: "x64", archive: ".zip", exe: ".exe", runner: "windows-latest", setup: "" },
+    PrebuiltTarget { triple: "aarch64-pc-windows-msvc", node_platform: "win32",
+        node_arch: "arm64", archive: ".zip", exe: ".exe", runner: "windows-11-arm", setup: "" },
+];
+
+/// The `prebuilt:` envelope block, as declared.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PrebuiltDecl {
+    /// Target triples, each a row of [`PREBUILT_TARGETS`].
+    targets: Vec<String>,
+    /// The tag a release is cut at is `{tag_prefix}{version}`; `v` by default.
+    #[serde(default)]
+    tag_prefix: Option<String>,
+    #[serde(default)]
+    npm: Option<NpmDecl>,
+}
+
+/// The `npm:` sub-block: the wrapper package, and the command names it links.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct NpmDecl {
+    package: String,
+    /// `npm publish --access <this>`; `public`, which is the only value that
+    /// makes sense for a publication, unless a scoped private package says so.
+    #[serde(default)]
+    access: Option<String>,
+    /// Command name → the binary it runs. Empty means one command per
+    /// entry-point binary, named after the binary.
+    #[serde(default)]
+    bin: BTreeMap<String, String>,
+}
+
+/// The prebuilt distribution a projection emitted, for the report and the
+/// provenance. `None` when the publication declares none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrebuiltSummary {
+    /// The entry-point crate's version — what the wrapper publishes as and
+    /// what the release tag names.
+    pub version: String,
+    /// The tag a release must be cut at for the wrapper's URLs to resolve.
+    pub tag: String,
+    /// Target triples, in declaration order.
+    pub targets: Vec<String>,
+    /// Command name → the binary it runs.
+    pub commands: BTreeMap<String, String>,
+    /// The npm package the wrapper publishes as, when one is declared.
+    pub npm_package: Option<String>,
+}
+
+/// Everything the emitters need, resolved and checked.
+struct PrebuiltPlan {
+    tag_prefix: String,
+    version: String,
+    tag: String,
+    targets: Vec<&'static PrebuiltTarget>,
+    /// The asset base name: `<asset_prefix>-<triple><archive>`.
+    asset_prefix: String,
+    /// The crate whose manifest names the version and describes the wrapper.
+    entry_crate: String,
+    /// Command name → the binary it runs.
+    commands: BTreeMap<String, String>,
+    /// Binary → the crate that builds it.
+    binary_crates: BTreeMap<String, String>,
+    npm: Option<NpmPlan>,
+}
+
+/// The npm wrapper half of a plan.
+struct NpmPlan {
+    package: String,
+    access: String,
+    /// `<owner>/<repo>` — what `gh attestation verify --repo` takes.
+    project: String,
+    release_base: String,
+    homepage: String,
+    /// The prefix of the wrapper's two escape-hatch environment variables,
+    /// derived from the package's unscoped name.
+    env_prefix: String,
+}
+
+impl PrebuiltPlan {
+    fn summary(&self) -> PrebuiltSummary {
+        PrebuiltSummary {
+            version: self.version.clone(),
+            tag: self.tag.clone(),
+            targets: self.targets.iter().map(|t| t.triple.to_string()).collect(),
+            commands: self.commands.clone(),
+            npm_package: self.npm.as_ref().map(|n| n.package.clone()),
+        }
+    }
+}
+
+/// Read and check the publication's `prebuilt:` declaration. `Ok(None)` when
+/// it carries none — the projection is then byte-identical to one from a
+/// projector that had never heard of this lane.
+fn resolve_prebuilt(
+    content: &str,
+    env: &Colophon,
+    packages: &SourcePackages,
+    versions: &BTreeMap<String, String>,
+    crates_io: &CratesIoMeta,
+) -> Result<Option<PrebuiltPlan>> {
+    let Some(block) = envelope_block(content, "prebuilt") else {
+        return Ok(None);
+    };
+    let decl: PrebuiltDecl = serde_norway::from_str(&block)
+        .map_err(|e| anyhow!("the publication's `prebuilt:` block does not read: {e}"))?;
+    if decl.targets.is_empty() {
+        bail!("`prebuilt:` declares no `targets:` — name at least one target triple");
+    }
+    let mut targets: Vec<&'static PrebuiltTarget> = Vec::new();
+    let mut seen: BTreeMap<String, &str> = BTreeMap::new();
+    for triple in &decl.targets {
+        let target = PREBUILT_TARGETS
+            .iter()
+            .find(|t| t.triple == triple)
+            .ok_or_else(|| {
+                anyhow!(
+                    "`prebuilt:` names target `{triple}`, which this projector has no \
+                     release row for — known targets: {}",
+                    PREBUILT_TARGETS.iter().map(|t| t.triple).collect::<Vec<_>>().join(", ")
+                )
+            })?;
+        let key = format!("{}-{}", target.node_platform, target.node_arch);
+        if let Some(other) = seen.insert(key.clone(), target.triple) {
+            bail!(
+                "`prebuilt:` names both `{other}` and `{triple}`, which a consumer on \
+                 {key} cannot choose between — name one per platform"
+            );
+        }
+        targets.push(target);
+    }
+    let entry = member_names(env.edges.get("entryPoint"), "entryPoint")?;
+    let entry_crate = entry.crates.first().cloned().ok_or_else(|| {
+        anyhow!(
+            "`prebuilt:` needs an `entryPoint` crate: its manifest `version` is what the \
+             release is tagged with and what the wrapper publishes as"
+        )
+    })?;
+    let version = versions.get(&entry_crate).cloned().ok_or_else(|| {
+        anyhow!("`entryPoint` crate `{entry_crate}` has no manifest `version` to release at")
+    })?;
+    let tag_prefix = decl.tag_prefix.clone().unwrap_or_else(|| "v".to_string());
+    let tag = format!("{tag_prefix}{version}");
+    // Binary → the crate that builds it, for the release script's `-p`. Every
+    // entry-point crate contributes its binaries; a publication that names two
+    // entry points releases both, which is what x0k-folio's tangler and CLI are.
+    let mut binary_crates: BTreeMap<String, String> = BTreeMap::new();
+    for name in &entry.crates {
+        for bin in crate_binaries(packages, name)? {
+            binary_crates.insert(bin, name.clone());
+        }
+    }
+    if binary_crates.is_empty() {
+        bail!(
+            "no `entryPoint` crate of this publication declares a binary, so there is \
+             nothing to release"
+        );
+    }
+    // The asset base name is the publication's own slug — derived, so two
+    // publications of one corpus cannot collide by forgetting to differ.
+    let asset_prefix = env
+        .id
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("release")
+        .to_string();
+    let commands: BTreeMap<String, String> = match decl.npm.as_ref() {
+        Some(n) if !n.bin.is_empty() => n.bin.clone(),
+        _ => binary_crates.keys().map(|b| (b.clone(), b.clone())).collect(),
+    };
+    for (command, bin) in &commands {
+        if !binary_crates.contains_key(bin) {
+            bail!(
+                "`prebuilt:` maps command `{command}` to binary `{bin}`, which no \
+                 `entryPoint` crate of this publication builds (it builds: {})",
+                binary_crates.keys().cloned().collect::<Vec<_>>().join(", ")
+            );
+        }
+        if command.is_empty()
+            || !command.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            bail!("`prebuilt:` command name `{command}` is not a plain command name");
+        }
+    }
+    let npm = match decl.npm {
+        None => None,
+        Some(n) => {
+            let repository = crates_io.repository.clone().ok_or_else(|| {
+                anyhow!(
+                    "`prebuilt.npm:` needs the publication's `repository:` — the wrapper's \
+                     postinstall builds its download URL from it"
+                )
+            })?;
+            let project = repository
+                .trim_end_matches('/')
+                .trim_end_matches(".git")
+                .strip_prefix("https://github.com/")
+                .filter(|p| p.split('/').filter(|s| !s.is_empty()).count() == 2)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "`repository: {repository}` is not a `https://github.com/<owner>/<repo>` \
+                         project, and the release-asset URL shape this wrapper builds is GitHub's"
+                    )
+                })?
+                .to_string();
+            Some(NpmPlan {
+                env_prefix: env_var_prefix(&n.package),
+                package: n.package,
+                access: n.access.unwrap_or_else(|| "public".to_string()),
+                release_base: format!("https://github.com/{project}/releases/download"),
+                homepage: format!("https://github.com/{project}"),
+                project,
+            })
+        }
+    };
+    Ok(Some(PrebuiltPlan {
+        tag_prefix,
+        version,
+        tag,
+        targets,
+        asset_prefix,
+        entry_crate,
+        commands,
+        binary_crates,
+        npm,
+    }))
+}
+
+/// The binaries a published crate builds: every `[[bin]]` it declares, and
+/// failing those the implicit `src/main.rs` target named after the package.
+fn crate_binaries(packages: &SourcePackages, name: &str) -> Result<Vec<String>> {
+    let doc = packages.manifest(name)?;
+    let mut out: Vec<String> = doc
+        .get("bin")
+        .and_then(|b| b.as_array_of_tables())
+        .map(|bins| {
+            bins.iter()
+                .filter_map(|b| b.get("name").and_then(|v| v.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if out.is_empty() && packages.root(name)?.join("src/main.rs").is_file() {
+        out.push(name.to_string());
+    }
+    Ok(out)
+}
+
+/// `@0k/folio` → `FOLIO`, the prefix of `FOLIO_BINARY_DIR` and
+/// `FOLIO_BINARY_MIRROR`. A leading digit is not a portable variable name, so
+/// a package whose name starts with one is prefixed rather than refused.
+fn env_var_prefix(package: &str) -> String {
+    let unscoped = package.rsplit('/').next().unwrap_or(package);
+    let mut out: String = unscoped
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .collect();
+    if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        out.insert(0, 'X');
+    }
+    out
+}
+
+/// Write the prebuilt lane: the release script, the forge wrapper for it, and
+/// — when the publication declares one — the npm package. Everything here is
+/// regenerated scaffolding, cleared and rewritten on every projection.
+fn emit_prebuilt(
+    output_dir: &Path,
+    plan: &PrebuiltPlan,
+    license: &str,
+    emit_github: bool,
+) -> Result<()> {
+    let bins: Vec<&str> = plan.binary_crates.keys().map(String::as_str).collect();
+    let flags = plan
+        .binary_crates
+        .iter()
+        .map(|(bin, krate)| format!("-p {krate} --bin {bin}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = output_dir.join("tools/release-artifacts");
+    std::fs::create_dir_all(output_dir.join("tools"))?;
+    std::fs::write(
+        &script,
+        RELEASE_SCRIPT
+            .replace("{bin_flags}", &flags)
+            .replace("{bins}", &bins.join(" "))
+            .replace("{asset_prefix}", &plan.asset_prefix),
+    )?;
+    let mut executable = vec![script];
+    if let Some(npm) = &plan.npm {
+        emit_npm_wrapper(output_dir, plan, npm, license)?;
+        let check = output_dir.join("tools/ci-npm");
+        std::fs::write(&check, npm_check_script(output_dir, plan))?;
+        executable.push(check);
+        // The step that pins the release's digests into the wrapper before it
+        // is published. In `tools/` and not in `npm/` because it acts on the
+        // package rather than shipping inside it.
+        let pin = output_dir.join("tools/npm-pin-digests");
+        std::fs::write(&pin, NPM_PIN_DIGESTS_JS)?;
+        executable.push(pin);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in &executable {
+            let mut perm = std::fs::metadata(path)?.permissions();
+            perm.set_mode(0o755);
+            std::fs::set_permissions(path, perm)?;
+        }
+    }
+    if emit_github {
+        let dir = output_dir.join(".github/workflows");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("release.yml"), release_workflow(plan))?;
+    }
+    Ok(())
+}
+
+/// The npm package: a manifest carrying the resolved platform table, the
+/// fixed resolution/install logic, one launcher per command, an offline test,
+/// and the repository's own README as the package's page.
+fn emit_npm_wrapper(
+    output_dir: &Path,
+    plan: &PrebuiltPlan,
+    npm: &NpmPlan,
+    license: &str,
+) -> Result<()> {
+    let dir = output_dir.join("npm");
+    std::fs::create_dir_all(dir.join("bin"))?;
+    std::fs::create_dir_all(dir.join("lib"))?;
+    std::fs::create_dir_all(dir.join("test"))?;
+    std::fs::write(
+        dir.join("package.json"),
+        npm_manifest(output_dir, plan, npm, license)?,
+    )?;
+    std::fs::write(dir.join("lib/resolve.js"), NPM_RESOLVE_JS)?;
+    std::fs::write(dir.join("install.js"), NPM_INSTALL_JS)?;
+    std::fs::write(dir.join("test/resolve.test.js"), NPM_RESOLVE_TEST_JS)?;
+    for command in plan.commands.keys() {
+        std::fs::write(
+            dir.join("bin").join(format!("{command}.js")),
+            NPM_SHIM_JS.replace("{command}", command),
+        )?;
+    }
+    // `vendor/` is written by the postinstall on the consumer's machine; it is
+    // neither committed nor published, and without this entry `tools/ci` would
+    // read a maintainer's local `npm install` as drift.
+    std::fs::write(dir.join(".gitignore"), "/node_modules/\n/vendor/\n")?;
+    // The package's page on the registry is the repository's own README, not a
+    // second one written for npm: the projector templates no prose.
+    let readme = output_dir.join("README.md");
+    if readme.is_file() {
+        std::fs::copy(&readme, dir.join("README.md"))?;
+    }
+    Ok(())
+}
+
+/// `npm/package.json`: npm's own keys, plus an `x0k` block holding the
+/// resolved platform table the postinstall and the launchers both read.
+fn npm_manifest(
+    output_dir: &Path,
+    plan: &PrebuiltPlan,
+    npm: &NpmPlan,
+    license: &str,
+) -> Result<String> {
+    let mut targets = serde_json::Map::new();
+    for target in &plan.targets {
+        targets.insert(
+            format!("{}-{}", target.node_platform, target.node_arch),
+            serde_json::json!({
+                "target": target.triple,
+                "archive": target.archive,
+                "exe": target.exe,
+            }),
+        );
+    }
+    let bin: BTreeMap<String, String> = plan
+        .commands
+        .keys()
+        .map(|c| (c.clone(), format!("bin/{c}.js")))
+        .collect();
+    let manifest = serde_json::json!({
+        "name": npm.package,
+        "version": plan.version,
+        // The entry-point crate's own description, read from the manifest this
+        // projection just vendored — never a sentence the projector writes.
+        "description": entry_description(output_dir, &plan.entry_crate),
+        "license": license,
+        "homepage": npm.homepage,
+        "repository": { "type": "git", "url": format!("git+{}.git", npm.homepage) },
+        "bin": bin,
+        // `vendor/` is absent on purpose: the postinstall writes it on the
+        // consumer's machine, and it is never carried in the tarball.
+        "files": ["bin", "lib", "install.js", "README.md"],
+        "scripts": { "postinstall": "node install.js", "test": "node test/resolve.test.js" },
+        "engines": { "node": ">=18" },
+        "x0k": {
+            "assetPrefix": plan.asset_prefix,
+            "tagPrefix": plan.tag_prefix,
+            "releaseBase": npm.release_base,
+            "checksums": "SHA256SUMS",
+            "envPrefix": npm.env_prefix,
+            // `<owner>/<repo>`, which is what `gh attestation verify --repo`
+            // takes. The wrapper checks the build provenance against it.
+            "repo": npm.project,
+            "commands": plan.commands,
+            "targets": targets,
+            // Filled by `tools/npm-pin-digests` in the release workflow, from
+            // the assets that release just built. Empty here because the
+            // projector cannot know a digest for bytes that do not exist yet —
+            // and an empty map is what the postinstall reads as "this wrapper
+            // was packed by hand", which it says out loud.
+            "digests": serde_json::Map::new(),
+        },
+    });
+    Ok(format!("{}\n", serde_json::to_string_pretty(&manifest)?))
+}
+
+/// A vendored crate's manifest, wherever the layout put it. Asked of the tree
+/// rather than assumed, because these emitters run after the relayout.
+fn vendored_manifest(output_dir: &Path, krate: &str) -> Option<PathBuf> {
+    [output_dir.join("crates").join(krate), output_dir.join(krate)]
+        .into_iter()
+        .map(|dir| dir.join("Cargo.toml"))
+        .find(|p| p.is_file())
+}
+
+/// The entry-point crate's `description`, which is the wrapper's.
+fn entry_description(output_dir: &Path, krate: &str) -> Option<String> {
+    let text = std::fs::read_to_string(vendored_manifest(output_dir, krate)?).ok()?;
+    manifest_package_str(&text.parse::<toml_edit::DocumentMut>().ok()?, "description")
+}
+
+/// `tools/ci-npm`: the wrapper's own checks, deliberately outside `tools/ci`.
+/// Skips itself when node is absent, so a clone with no JavaScript toolchain
+/// is unaffected by this lane's existence.
+fn npm_check_script(output_dir: &Path, plan: &PrebuiltPlan) -> String {
+    // The relayout may have moved the crates under `crates/`; ask the tree
+    // rather than assume, since this script is written after the move.
+    let manifest = vendored_manifest(output_dir, &plan.entry_crate)
+        .and_then(|p| p.strip_prefix(output_dir).ok().map(Path::to_path_buf))
+        .unwrap_or_else(|| Path::new(&plan.entry_crate).join("Cargo.toml"));
+    NPM_CHECK_SCRIPT.replace("{entry_manifest}", &manifest.to_string_lossy())
+}
+
+/// `.github/workflows/release.yml`: one job per declared target calling
+/// `tools/release-artifacts`, one job attaching the assets to the tag's
+/// release, and — when a wrapper is declared — one publishing it.
+fn release_workflow(plan: &PrebuiltPlan) -> String {
+    let mut matrix = String::new();
+    for target in &plan.targets {
+        matrix.push_str(&format!("          - target: {}\n", target.triple));
+        matrix.push_str(&format!("            runner: {}\n", target.runner));
+        matrix.push_str(&format!("            setup: {:?}\n", target.setup));
+    }
+    let npm_job = match &plan.npm {
+        None => String::new(),
+        Some(npm) => NPM_PUBLISH_JOB.replace("{access}", &npm.access),
+    };
+    RELEASE_WORKFLOW
+        .replace("{tag_prefix}", &plan.tag_prefix)
+        .replace("{matrix}", matrix.trim_end_matches('\n'))
+        .replace("{npm_job}", &npm_job)
+}
+
 fn emit_provenance(
     output_dir: &Path,
     publication_uri: &str,
@@ -4547,6 +5088,17 @@ fn emit_provenance(
             .map(|(id, outcome)| (id.as_str(), outcome.as_str()))
             .collect::<BTreeMap<_, _>>(),
         "proofs_run": report.proofs_run,
+        // The prebuilt lane, when the publication declares one. A repository
+        // carrying an npm wrapper is making a promise about a URL — that a
+        // release exists at this tag, with these assets — and the record
+        // should say which promise, so a receiver can check it was kept.
+        "prebuilt": report.prebuilt.as_ref().map(|p| serde_json::json!({
+            "version": p.version,
+            "tag": p.tag,
+            "targets": p.targets,
+            "commands": p.commands,
+            "npm_package": p.npm_package,
+        })),
         // The relicense act, recorded: what this projection is released
         // under, where that decision came from, and what each crate declared
         // in the source tree it was projected from. The last one needs its
@@ -4979,6 +5531,715 @@ for f in $(git diff --name-only "$base" "$head"); do
   esac
 done
 exit $fail
+"#;
+
+/// `tools/release-artifacts` — build the entry-point binaries for ONE target
+/// and package them as the asset the wrapper (and a plain `curl`) expects.
+const RELEASE_SCRIPT: &str = r#"#!/bin/sh
+# Build this repository's release binaries for ONE target triple and package
+# them as the asset a release carries:
+#
+#   tools/release-artifacts <target-triple> [output-dir]
+#
+# Writes <output-dir>/<asset> and <output-dir>/<asset>.sha256, where <asset> is
+# `{asset_prefix}-<target>.tar.gz` (`.zip` on Windows). Nothing here talks to a
+# forge or a registry — publishing the asset is the caller's act. The release
+# workflow calls this once per target; so can a maintainer, by hand.
+set -eu
+target="${1:-}"
+out="${2:-dist}"
+if [ -z "$target" ]; then
+  echo "usage: tools/release-artifacts <target-triple> [output-dir]" >&2
+  exit 2
+fi
+case "$target" in
+  *-windows-*) exe=".exe"; ext=".zip" ;;
+  *)           exe="";     ext=".tar.gz" ;;
+esac
+# rustup is how a CI runner acquires a target. A nix or distro toolchain that
+# already has it needs no step here, so an absent rustup is not an error.
+if command -v rustup >/dev/null 2>&1; then
+  rustup target add "$target"
+fi
+# `--locked` for the same reason `tools/ci` uses it: the committed lockfile is
+# what was audited, and a release must be built from it.
+cargo build --release --locked --target "$target" {bin_flags}
+stage="$out/.stage-$target"
+rm -rf "$stage"
+mkdir -p "$stage" "$out"
+for bin in {bins}; do
+  cp "target/$target/release/$bin$exe" "$stage/$bin$exe"
+done
+asset="{asset_prefix}-$target$ext"
+# One flat archive of binaries, no leading directory: the postinstall extracts
+# straight into its `vendor/`. `tar -a` picks the format from the extension,
+# which is how the Windows `.zip` is written by the same line.
+if [ "$ext" = ".zip" ]; then
+  (cd "$stage" && tar -a -cf "../$asset" ./*)
+else
+  (cd "$stage" && tar -czf "../$asset" ./*)
+fi
+rm -rf "$stage"
+# `sha256sum` on Linux, `shasum -a 256` on macOS. The two-column output is what
+# `sha256sum -c` reads and what the release's SHA256SUMS is concatenated from.
+(
+  cd "$out"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$asset" > "$asset.sha256"
+  else
+    shasum -a 256 "$asset" > "$asset.sha256"
+  fi
+)
+echo "$out/$asset"
+"#;
+
+/// `tools/ci-npm` — the wrapper's checks, skipped where node is absent.
+const NPM_CHECK_SCRIPT: &str = r#"#!/bin/sh
+# The npm wrapper's own checks. Deliberately NOT part of `tools/ci`: the
+# wrapper is a distribution lane, not a build dependency, and a clone with no
+# JavaScript toolchain has to go green. The release workflow runs this before
+# it publishes.
+set -eu
+if ! command -v node >/dev/null 2>&1; then
+  echo "note: skipping the npm wrapper checks (node is not installed)" >&2
+  exit 0
+fi
+node -e 'JSON.parse(require("fs").readFileSync("npm/package.json", "utf8"))'
+node --check npm/install.js
+node --check npm/lib/resolve.js
+node --check tools/npm-pin-digests
+for shim in npm/bin/*.js; do node --check "$shim"; done
+# The resolution pins: every declared platform maps to one asset URL, an
+# undeclared one refuses, a mirror override moves only the base, and a pinned
+# digest is a digest for an asset this package actually ships. Offline.
+node npm/test/resolve.test.js
+# The one agreement no JavaScript here can see. The wrapper publishes at the
+# entry-point crate's version and the release is tagged from it, so a wrapper
+# that has drifted builds a URL for an asset no release carries.
+crate_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' {entry_manifest} | head -n1)
+npm_version=$(node -p 'require("./npm/package.json").version')
+if [ -n "$crate_version" ] && [ "$crate_version" != "$npm_version" ]; then
+  echo "error: npm/package.json is $npm_version but {entry_manifest} is $crate_version" >&2
+  exit 1
+fi
+"#;
+
+/// `npm/lib/resolve.js` — which asset this machine needs and where it lives.
+/// Pure, so the offline test can exercise every shipped platform at once.
+const NPM_RESOLVE_JS: &str = r##"'use strict';
+// Which release asset this machine needs, and where it lives.
+//
+// Pure: no network, no filesystem, no child process — everything here is a
+// function of package.json and a (platform, arch) pair. That is what lets
+// test/resolve.test.js check every platform this package ships for, on one
+// machine, offline. install.js is the only file that reaches the network.
+
+function platformKey(platform, arch) {
+  return platform + '-' + arch;
+}
+
+// The target this machine installs, or a refusal naming what IS shipped. A
+// missing platform is the ordinary case for a new architecture, so the message
+// has to be actionable rather than merely negative.
+function resolveTarget(manifest, platform, arch) {
+  var key = platformKey(platform, arch);
+  var entry = manifest.x0k.targets[key];
+  if (!entry) {
+    var shipped = Object.keys(manifest.x0k.targets).sort().join(', ');
+    var error = new Error(
+      'no prebuilt binary for ' + key + '. Prebuilt platforms: ' +
+      shipped + '. Build from source instead (see ' + manifest.homepage +
+      ') and point ' + binaryDirVar(manifest) + ' at the directory holding the binaries.'
+    );
+    error.code = 'EUNSUPPORTEDPLATFORM';
+    throw error;
+  }
+  return { key: key, target: entry.target, archive: entry.archive, exe: entry.exe };
+}
+
+function releaseTag(manifest) {
+  return manifest.x0k.tagPrefix + manifest.version;
+}
+
+function assetName(manifest, entry) {
+  return manifest.x0k.assetPrefix + '-' + entry.target + entry.archive;
+}
+
+// Overridable so a consumer behind a firewall, or a build that must not reach
+// the forge, can serve the same assets from their own mirror.
+function releaseBase(manifest, env) {
+  return (env && env[mirrorVar(manifest)]) || manifest.x0k.releaseBase;
+}
+
+function assetUrl(manifest, entry, env) {
+  return releaseBase(manifest, env) + '/' + encodeURIComponent(releaseTag(manifest)) +
+    '/' + assetName(manifest, entry);
+}
+
+function checksumUrl(manifest, env) {
+  return releaseBase(manifest, env) + '/' + encodeURIComponent(releaseTag(manifest)) +
+    '/' + manifest.x0k.checksums;
+}
+
+function mirrorVar(manifest) { return manifest.x0k.envPrefix + '_BINARY_MIRROR'; }
+function binaryDirVar(manifest) { return manifest.x0k.envPrefix + '_BINARY_DIR'; }
+function attestationVar(manifest) { return manifest.x0k.envPrefix + '_ATTESTATION'; }
+
+// How hard the postinstall leans on the build attestation. `check` (the
+// default) runs the verifier when there is one and aborts if it says no;
+// `require` additionally aborts when there is no verifier; `skip` does not run
+// it at all, for a machine that cannot reach the transparency log. In every
+// mode the digest check is fatal — this dial only moves the second layer.
+function attestationMode(manifest, env) {
+  var mode = (env && env[attestationVar(manifest)]) || 'check';
+  if (mode !== 'check' && mode !== 'require' && mode !== 'skip') {
+    throw new Error(attestationVar(manifest) + ' must be check, require or skip (got ' + mode + ')');
+  }
+  return mode;
+}
+
+// The digest the release workflow pinned into this package for this asset, or
+// null when the wrapper was packed by hand. Null is not "unverified" — it is
+// "verified against the release's own SHA256SUMS instead", which install.js
+// says out loud, because it is the weaker of the two claims.
+function pinnedDigest(manifest, entry) {
+  var digests = manifest.x0k.digests || {};
+  var digest = digests[assetName(manifest, entry)];
+  return typeof digest === 'string' && digest.length === 64 ? digest : null;
+}
+
+// `gh attestation verify <file> --repo <this>` — the command that checks an
+// asset against the build provenance the release workflow attested.
+function attestationCommand(manifest, file) {
+  return ['attestation', 'verify', file, '--repo', manifest.x0k.repo];
+}
+
+// Where install.js puts a binary and where bin/<command>.js looks for it. The
+// two sides agree because they are the same function; `vendor/` is written at
+// install time and is not in the published tarball.
+function binaryFile(manifest, entry, command) {
+  var bin = manifest.x0k.commands[command];
+  if (!bin) { throw new Error(manifest.name + ' has no command named ' + command); }
+  return 'vendor/' + bin + entry.exe;
+}
+
+module.exports = {
+  platformKey: platformKey,
+  resolveTarget: resolveTarget,
+  releaseTag: releaseTag,
+  assetName: assetName,
+  releaseBase: releaseBase,
+  assetUrl: assetUrl,
+  checksumUrl: checksumUrl,
+  mirrorVar: mirrorVar,
+  binaryDirVar: binaryDirVar,
+  attestationVar: attestationVar,
+  attestationMode: attestationMode,
+  pinnedDigest: pinnedDigest,
+  attestationCommand: attestationCommand,
+  binaryFile: binaryFile
+};
+"##;
+
+/// `npm/install.js` — the postinstall: fetch, verify, unpack.
+const NPM_INSTALL_JS: &str = r##"#!/usr/bin/env node
+'use strict';
+// postinstall: put this platform's prebuilt binaries in vendor/, and refuse
+// rather than install anything this package cannot verify.
+//
+// Two checks, in this order, both fail-closed:
+//
+//   1. SHA-256 against the digest pinned in package.json by the release that
+//      built the asset. The digest travels inside the npm tarball, so it is
+//      not served by the host serving the bytes it vouches for. A wrapper
+//      packed by hand carries no pinned digest; that case falls back to the
+//      release's own SHA256SUMS and SAYS SO, because it is a weaker claim.
+//   2. The build provenance the release attested (SLSA, via Sigstore), when
+//      `gh` is on PATH: it ties the asset to the workflow, commit and runner
+//      that produced it. A FAILED verification always aborts. An ABSENT
+//      verifier prints the command and continues on the default
+//      `<PREFIX>_ATTESTATION=check`, and aborts on `=require`; `=skip` does
+//      not run it at all and says so loudly. The dial only moves this layer —
+//      the digest check above is fatal in every mode.
+//
+// Nothing here ever runs, chmods, or copies a byte that failed a check.
+var fs = require('fs');
+var os = require('os');
+var path = require('path');
+var https = require('https');
+var crypto = require('crypto');
+var child = require('child_process');
+var execFileSync = child.execFileSync;
+var resolve = require('./lib/resolve');
+var manifest = require('./package.json');
+
+var vendor = path.join(__dirname, 'vendor');
+
+function fail(message) {
+  console.error(manifest.name + ': ' + message);
+  process.exit(1);
+}
+
+function binaries() {
+  return Object.keys(manifest.x0k.commands).map(function (c) {
+    return manifest.x0k.commands[c];
+  });
+}
+
+// GitHub redirects release downloads to its object store, so redirects are the
+// normal path here, not an edge case.
+function get(url, redirects) {
+  return new Promise(function (ok, no) {
+    https.get(url, { headers: { 'user-agent': manifest.name } }, function (res) {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        if ((redirects || 0) > 5) { no(new Error('too many redirects for ' + url)); return; }
+        ok(get(new URL(res.headers.location, url).toString(), (redirects || 0) + 1));
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        no(new Error('HTTP ' + res.statusCode + ' for ' + url));
+        return;
+      }
+      var chunks = [];
+      res.on('data', function (c) { chunks.push(c); });
+      res.on('end', function () { ok(Buffer.concat(chunks)); });
+    }).on('error', no);
+  });
+}
+
+function expectedSum(sums, asset) {
+  var lines = sums.split('\n');
+  for (var i = 0; i < lines.length; i += 1) {
+    var parts = lines[i].trim().split(/\s+/);
+    if (parts.length >= 2 && parts[parts.length - 1].replace(/^\*/, '') === asset) {
+      return parts[0];
+    }
+  }
+  throw new Error(asset + ' is not listed in ' + manifest.x0k.checksums);
+}
+
+// The build provenance, checked where a verifier exists. `gh` shells out to a
+// public transparency log, so this is the layer that says WHO built the bytes,
+// not merely that they are the bytes somebody listed. A failure here is fatal:
+// an asset that fails attestation is exactly the case this check is for.
+function attest(archive) {
+  var mode = resolve.attestationMode(manifest, process.env);
+  var args = resolve.attestationCommand(manifest, archive);
+  var line = 'gh ' + args.join(' ');
+  if (mode === 'skip') {
+    console.error(
+      manifest.name + ': WARNING — build provenance NOT checked (' +
+      resolve.attestationVar(manifest) + '=skip). The digest matched, so these are the ' +
+      'bytes this package expected; nothing has attested WHO built them. To check: ' + line
+    );
+    return;
+  }
+  try {
+    child.execFileSync('gh', args, { stdio: 'inherit' });
+  } catch (e) {
+    // ENOENT is "no verifier on this machine"; any other non-zero exit is the
+    // verifier itself saying no, and that is never survivable.
+    if (e && e.code === 'ENOENT') {
+      if (mode === 'require') {
+        fail(
+          resolve.attestationVar(manifest) + '=require, but the GitHub CLI is not installed, ' +
+          'so the build provenance cannot be checked. Install it (https://cli.github.com), ' +
+          'or set ' + resolve.attestationVar(manifest) + '=check to accept a digest-only install.'
+        );
+      }
+      console.error(
+        manifest.name + ': note — build provenance not checked (no `gh` on PATH). ' +
+        'The digest matched. To check the provenance too: ' + line
+      );
+      return;
+    }
+    fail(
+      'the build provenance for ' + path.basename(archive) + ' did not verify. Refusing to ' +
+      'install; nothing was written. This is what a tampered or re-uploaded release asset ' +
+      'looks like — and also what an unauthenticated or rate-limited `gh` looks like, so if ' +
+      'you believe the release is good, run `' + line + '` yourself before setting ' +
+      resolve.attestationVar(manifest) + '=skip.'
+    );
+  }
+}
+
+function install(entry, dir) {
+  binaries().forEach(function (bin) {
+    var source = path.join(dir, bin + entry.exe);
+    if (!fs.existsSync(source)) { fail(source + ' does not exist'); }
+    var target = path.join(vendor, bin + entry.exe);
+    fs.copyFileSync(source, target);
+    fs.chmodSync(target, 0o755);
+  });
+}
+
+function main() {
+  var entry = resolve.resolveTarget(manifest, process.platform, process.arch);
+  // Read the dial before anything is fetched: a misspelt value should refuse
+  // at once, not after a download whose result it would have governed.
+  resolve.attestationMode(manifest, process.env);
+  fs.mkdirSync(vendor, { recursive: true });
+  // The local rung: a directory of binaries this machine already has. A nix
+  // build, a distro package, or a maintainer testing an unreleased build sets
+  // this, and the install never reaches the network.
+  var provided = process.env[resolve.binaryDirVar(manifest)];
+  if (provided) { install(entry, provided); return Promise.resolve(); }
+  var asset = resolve.assetName(manifest, entry);
+  var pinned = resolve.pinnedDigest(manifest, entry);
+  var wanted = pinned
+    ? Promise.resolve(pinned)
+    : get(resolve.checksumUrl(manifest, process.env)).then(function (sums) {
+        console.error(
+          manifest.name + ': note — this copy of the wrapper carries no pinned digest, ' +
+          'so ' + asset + ' is being checked against the release\'s own ' +
+          manifest.x0k.checksums + '. A wrapper published by the release workflow ' +
+          'pins the digest instead.'
+        );
+        return expectedSum(sums.toString('utf8'), asset);
+      });
+  return wanted.then(function (want) {
+    return get(resolve.assetUrl(manifest, entry, process.env)).then(function (bytes) {
+      var got = crypto.createHash('sha256').update(bytes).digest('hex');
+      if (got !== want) {
+        fail(
+          'digest mismatch for ' + asset + ': expected ' + want + ', got ' + got +
+          '. Refusing to install — nothing was written.'
+        );
+      }
+      var tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prebuilt-'));
+      var archive = path.join(tmp, asset);
+      fs.writeFileSync(archive, bytes);
+      attest(archive);
+      // `tar` reads both shapes we ship: GNU tar for the .tar.gz on Linux, and
+      // bsdtar — which is what `tar` is on macOS and on Windows 10 and later —
+      // for the .zip. So there is no unzip dependency and no bundled unpacker.
+      execFileSync('tar', ['-xf', archive, '-C', tmp], { stdio: 'inherit' });
+      fs.unlinkSync(archive);
+      install(entry, tmp);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    });
+  });
+}
+
+// Through a promise, so that a refusal thrown synchronously — an unsupported
+// platform, a misspelt dial — reaches `fail` and prints the sentence written
+// for it, rather than a stack trace at somebody's `npm install`.
+Promise.resolve().then(main).catch(function (e) { fail(e.message); });
+"##;
+
+/// `npm/bin/<command>.js` — the launcher npm links for one command.
+const NPM_SHIM_JS: &str = r##"#!/usr/bin/env node
+'use strict';
+// Launcher for `{command}`. npm links this file; it runs the real binary that
+// install.js put in vendor/, and exits with its status.
+var fs = require('fs');
+var path = require('path');
+var spawnSync = require('child_process').spawnSync;
+var resolve = require('../lib/resolve');
+var manifest = require('../package.json');
+
+var entry = resolve.resolveTarget(manifest, process.platform, process.arch);
+var binary = path.join(__dirname, '..', resolve.binaryFile(manifest, entry, '{command}'));
+if (!fs.existsSync(binary)) {
+  console.error(manifest.name + ': ' + binary + ' is missing — the install step did not run.');
+  console.error('Reinstall without --ignore-scripts, or run: node ' +
+    path.join(__dirname, '..', 'install.js'));
+  process.exit(1);
+}
+var run = spawnSync(binary, process.argv.slice(2), { stdio: 'inherit' });
+if (run.error) {
+  console.error(manifest.name + ': ' + run.error.message);
+  process.exit(1);
+}
+process.exit(run.status === null ? 1 : run.status);
+"##;
+
+/// `tools/npm-pin-digests` — write each built asset's SHA-256 into the
+/// wrapper's manifest before it is published.
+const NPM_PIN_DIGESTS_JS: &str = r##"#!/usr/bin/env node
+'use strict';
+// Pin every release asset's SHA-256 into npm/package.json, from the SHA256SUMS
+// the release job just assembled. Run between building the assets and
+// publishing the wrapper: after this, the digest a consumer checks against
+// travels inside the signed npm tarball rather than being fetched from the
+// same host as the asset it vouches for.
+//
+//   tools/npm-pin-digests [dist-dir]
+//
+// Refuses when an asset the wrapper claims a platform for has no digest — a
+// wrapper that promises a platform whose binary did not build is a package
+// whose install fails on somebody else's machine.
+var fs = require('fs');
+var path = require('path');
+
+var dist = process.argv[2] || 'dist';
+var file = path.join('npm', 'package.json');
+var pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+var sums = fs.readFileSync(path.join(dist, pkg.x0k.checksums), 'utf8');
+var seen = {};
+sums.split('\n').forEach(function (line) {
+  var parts = line.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    seen[parts[parts.length - 1].replace(/^\*/, '')] = parts[0];
+  }
+});
+
+var digests = {};
+var missing = [];
+Object.keys(pkg.x0k.targets).sort().forEach(function (key) {
+  var entry = pkg.x0k.targets[key];
+  var asset = pkg.x0k.assetPrefix + '-' + entry.target + entry.archive;
+  if (seen[asset]) { digests[asset] = seen[asset]; } else { missing.push(asset); }
+});
+if (missing.length) {
+  console.error('error: no digest in ' + dist + '/' + pkg.x0k.checksums +
+    ' for ' + missing.join(', '));
+  process.exit(1);
+}
+pkg.x0k.digests = digests;
+fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n');
+console.log('pinned ' + Object.keys(digests).length + ' digests into ' + file);
+"##;
+
+/// `npm/test/resolve.test.js` — offline pins for the resolution logic.
+const NPM_RESOLVE_TEST_JS: &str = r##"'use strict';
+// Offline pins for the resolution logic: every platform this package ships for
+// maps to exactly one asset URL, an unshipped platform refuses with a message
+// naming what IS shipped, and a mirror override moves the base and nothing
+// else. No network, no install — `tools/ci-npm` runs this anywhere node is.
+var assert = require('assert');
+var resolve = require('../lib/resolve');
+var manifest = require('../package.json');
+
+var keys = Object.keys(manifest.x0k.targets);
+assert.ok(keys.length > 0, 'the package declares at least one platform');
+
+keys.forEach(function (key) {
+  var split = key.indexOf('-');
+  var platform = key.slice(0, split);
+  var arch = key.slice(split + 1);
+  var entry = resolve.resolveTarget(manifest, platform, arch);
+  assert.strictEqual(entry.target, manifest.x0k.targets[key].target, key);
+
+  var url = resolve.assetUrl(manifest, entry, {});
+  assert.ok(url.indexOf(manifest.x0k.releaseBase + '/') === 0, url);
+  assert.ok(url.indexOf('/' + resolve.releaseTag(manifest) + '/') > 0, url);
+  assert.ok(url.lastIndexOf(resolve.assetName(manifest, entry)) ===
+    url.length - resolve.assetName(manifest, entry).length, url);
+
+  var override = {};
+  override[resolve.mirrorVar(manifest)] = 'https://mirror.example/dl';
+  assert.strictEqual(
+    resolve.assetUrl(manifest, entry, override),
+    url.replace(manifest.x0k.releaseBase, 'https://mirror.example/dl'),
+    'the mirror moves the base and nothing else'
+  );
+
+  Object.keys(manifest.x0k.commands).forEach(function (command) {
+    var file = resolve.binaryFile(manifest, entry, command);
+    var expected = 'vendor/' + manifest.x0k.commands[command] + entry.exe;
+    assert.strictEqual(file, expected, command + ' on ' + key);
+  });
+});
+
+assert.throws(
+  function () { resolve.resolveTarget(manifest, 'sunos', 'sparc'); },
+  function (e) {
+    return e.code === 'EUNSUPPORTEDPLATFORM' &&
+      e.message.indexOf(manifest.homepage) > 0 &&
+      e.message.indexOf(resolve.binaryDirVar(manifest)) > 0;
+  },
+  'an unshipped platform refuses and says how to proceed without one'
+);
+
+// Every command npm links is a command the launchers and the postinstall know.
+Object.keys(manifest.bin).forEach(function (command) {
+  assert.ok(manifest.x0k.commands[command], command + ' links to no binary');
+  assert.strictEqual(manifest.bin[command], 'bin/' + command + '.js', command);
+});
+
+// The digests, if this copy carries any: a pinned digest must be a SHA-256 for
+// an asset this package actually ships, and every platform must have one — a
+// half-pinned wrapper installs verified on one machine and unverified on the
+// next, which is worse than either.
+var pinned = Object.keys(manifest.x0k.digests || {});
+if (pinned.length > 0) {
+  var assets = keys.map(function (key) {
+    var entry = manifest.x0k.targets[key];
+    return manifest.x0k.assetPrefix + '-' + entry.target + entry.archive;
+  });
+  pinned.forEach(function (asset) {
+    assert.ok(assets.indexOf(asset) >= 0, asset + ' is not an asset this package ships');
+    assert.ok(/^[0-9a-f]{64}$/.test(manifest.x0k.digests[asset]), asset + ' has no sha256');
+  });
+  assert.strictEqual(pinned.length, assets.length, 'every platform is pinned or none is');
+  keys.forEach(function (key) {
+    var split = key.indexOf('-');
+    var entry = resolve.resolveTarget(manifest, key.slice(0, split), key.slice(split + 1));
+    assert.ok(resolve.pinnedDigest(manifest, entry), key + ' resolves to its pinned digest');
+  });
+}
+
+// The attestation command names this repository, whoever asks for it.
+assert.deepStrictEqual(
+  resolve.attestationCommand(manifest, '/tmp/asset.tar.gz'),
+  ['attestation', 'verify', '/tmp/asset.tar.gz', '--repo', manifest.x0k.repo]
+);
+assert.ok(/^[^/]+\/[^/]+$/.test(manifest.x0k.repo), 'repo is <owner>/<name>');
+
+// The dial: `check` by default, three values, and a typo is a refusal rather
+// than a silently weaker install.
+var v = resolve.attestationVar(manifest);
+assert.strictEqual(resolve.attestationMode(manifest, {}), 'check');
+['check', 'require', 'skip'].forEach(function (mode) {
+  var env = {};
+  env[v] = mode;
+  assert.strictEqual(resolve.attestationMode(manifest, env), mode);
+});
+var bogus = {};
+bogus[v] = 'yes';
+assert.throws(function () { resolve.attestationMode(manifest, bogus); }, /check, require or skip/);
+
+console.log('ok — ' + keys.length + ' platforms, ' +
+  Object.keys(manifest.bin).length + ' commands');
+"##;
+
+/// `.github/workflows/release.yml` — the forge wrapper over
+/// `tools/release-artifacts`, with `{matrix}` the declared targets.
+const RELEASE_WORKFLOW: &str = r#"name: release
+on:
+  push:
+    tags: ["{tag_prefix}*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing tag to build and attach assets to
+        required: true
+permissions:
+  contents: write
+jobs:
+  artifacts:
+    strategy:
+      # One target's runner being unavailable must not cancel the others: a
+      # partial release is recoverable by re-running, a cancelled one is not.
+      fail-fast: false
+      matrix:
+        include:
+{matrix}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain prerequisites for this target
+        if: matrix.setup != ''
+        shell: bash
+        run: ${{ matrix.setup }}
+      - shell: bash
+        run: ./tools/release-artifacts "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+  release:
+    needs: artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # What `actions/attest-build-provenance` needs: an OIDC token to prove to
+      # Sigstore which workflow is asking, and write access to this
+      # repository's attestations.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: artifacts-*
+          merge-multiple: true
+      - name: One SHA256SUMS for the whole release
+        shell: bash
+        run: |
+          cd dist
+          cat ./*.sha256 > SHA256SUMS
+          rm -f ./*.sha256
+      # SLSA build provenance for every asset: which workflow, which commit,
+      # which runner. Verified by a consumer with
+      # `gh attestation verify <file> --repo <owner>/<repo>`, against a public
+      # transparency log — no key for this project to hold or lose. The
+      # wrapper's postinstall runs the same command when `gh` is present.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - name: Attach the assets to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/* --clobber
+{npm_job}"#;
+
+/// The wrapper's publish job, appended to the workflow when the publication
+/// declares an npm package.
+const NPM_PUBLISH_JOB: &str = r#"  npm:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # `npm publish --provenance` attests the tarball the same way the release
+      # job attests the binaries, so the pinned digests inside it are covered.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: artifacts-*
+          merge-multiple: true
+      - name: Pin the release's digests into the wrapper
+        # The whole point of the wrapper's fail-closed install: after this the
+        # digest a consumer checks against ships inside the npm tarball, rather
+        # than being fetched from the host serving the bytes it vouches for.
+        shell: bash
+        run: |
+          cd dist && cat ./*.sha256 > SHA256SUMS && cd ..
+          ./tools/npm-pin-digests dist
+      - shell: bash
+        run: ./tools/ci-npm
+      - name: The wrapper's version is the tag
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version=$(node -p 'require("./npm/package.json").version')
+          expected="$(node -p 'require("./npm/package.json").x0k.tagPrefix')$version"
+          if [ "$TAG" != "$expected" ]; then
+            echo "error: tag $TAG does not name the wrapper's version ($expected)" >&2
+            exit 1
+          fi
+      - name: Publish the wrapper
+        # The token is the one secret this lane needs. Without it the binary
+        # release still happened; only the wrapper is skipped, and loudly.
+        shell: bash
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "note: NPM_TOKEN is not set — skipping the npm publish" >&2
+            exit 0
+          fi
+          npm publish --provenance --access {access}
 "#;
 
 #[cfg(test)]
@@ -5780,5 +7041,88 @@ mod organized_layout_tests {
         let error = organize_repository(root, &mut report, &mut BTreeMap::new(), &layout).unwrap_err();
         assert!(error.to_string().contains("collision"));
         assert_eq!(std::fs::read_to_string(root.join("demo/a")).unwrap(), "demo/a");
+    }
+}
+#[cfg(test)]
+mod prebuilt_workflow_tests {
+    use super::*;
+
+    fn plan() -> PrebuiltPlan {
+        PrebuiltPlan {
+            tag_prefix: "v".to_string(),
+            version: "1.2.3".to_string(),
+            tag: "v1.2.3".to_string(),
+            // The first and last rows: a Linux musl build and a Windows one,
+            // which is the pair whose archive and runner differ.
+            targets: vec![&PREBUILT_TARGETS[0], &PREBUILT_TARGETS[7]],
+            asset_prefix: "demo".to_string(),
+            entry_crate: "demo".to_string(),
+            commands: [("tool".to_string(), "demo-tool".to_string())]
+                .into_iter()
+                .collect(),
+            binary_crates: [("demo-tool".to_string(), "demo".to_string())]
+                .into_iter()
+                .collect(),
+            npm: Some(NpmPlan {
+                package: "@demo/tool".to_string(),
+                access: "public".to_string(),
+                project: "o/r".to_string(),
+                release_base: "https://github.com/o/r/releases/download".to_string(),
+                homepage: "https://github.com/o/r".to_string(),
+                env_prefix: "TOOL".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn the_release_workflow_is_yaml_a_runner_can_read() {
+        let text = release_workflow(&plan());
+        let yaml: serde_norway::Value =
+            serde_norway::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        for job in ["artifacts", "release", "npm"] {
+            assert!(!yaml["jobs"][job].is_null(), "job `{job}`:\n{text}");
+        }
+        // The permissions the attestation needs, on the job that attests.
+        let release = &yaml["jobs"]["release"];
+        assert_eq!(release["permissions"]["id-token"].as_str(), Some("write"));
+        assert_eq!(release["permissions"]["attestations"].as_str(), Some("write"));
+        assert_eq!(
+            yaml["jobs"]["npm"]["permissions"]["id-token"].as_str(),
+            Some("write"),
+            "`npm publish --provenance` needs one too"
+        );
+        let include = yaml["jobs"]["artifacts"]["strategy"]["matrix"]["include"]
+            .as_sequence()
+            .unwrap_or_else(|| panic!("a matrix:\n{text}"));
+        assert_eq!(include.len(), 2);
+        assert_eq!(
+            include[0]["target"].as_str(),
+            Some("x86_64-unknown-linux-musl")
+        );
+        assert_eq!(include[1]["runner"].as_str(), Some("windows-11-arm"));
+        // A runner that needs no preparation carries an empty string, not a
+        // missing key: the step's `if:` compares against one.
+        assert_eq!(include[1]["setup"].as_str(), Some(""));
+    }
+
+    #[test]
+    fn a_publication_with_no_wrapper_gets_no_publish_job() {
+        let mut bare = plan();
+        bare.npm = None;
+        let text = release_workflow(&bare);
+        let yaml: serde_norway::Value =
+            serde_norway::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert!(!yaml["jobs"]["release"].is_null(), "{text}");
+        assert!(yaml["jobs"]["npm"].is_null(), "{text}");
+        assert!(!text.contains("npm publish"), "{text}");
+    }
+
+    /// The two escape-hatch variables are named after the package, so a
+    /// consumer with two such wrappers installed has two names.
+    #[test]
+    fn the_wrappers_environment_variables_are_named_after_it() {
+        assert_eq!(env_var_prefix("@0k/folio"), "FOLIO");
+        assert_eq!(env_var_prefix("my-tool"), "MY_TOOL");
+        assert_eq!(env_var_prefix("@scope/0day"), "X0DAY");
     }
 }

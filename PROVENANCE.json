@@ -1,6 +1,6 @@
 {
-  "corpus_commit": "0c1b7b71c80dfbcfe0db91573b587ecdca038522",
-  "corpus_rev": "yrzuxxtxtzytntzoostqnokwuuyvztsp",
+  "corpus_commit": "d1a798005a25b25cc67f4945ec68b784ac8d051c",
+  "corpus_rev": "rvkoyqyxypzwvxylvuxvmzxtsosozqty",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
@@ -185,6 +185,22 @@
     "implementation/tangle/source-sync.md": "corpora/x0k/implementation/tangle/source-sync.md",
     "implementation/tangle/weave.md": "corpora/x0k/implementation/tangle/weave.md"
   },
+  "prebuilt": {
+    "commands": {
+      "folio": "x0k-tangle",
+      "x0k-folio": "x0k-folio-cli",
+      "x0k-tangle": "x0k-tangle"
+    },
+    "npm_package": "@0k/folio",
+    "tag": "v0.1.0",
+    "targets": [
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-musl",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin"
+    ],
+    "version": "0.1.0"
+  },
   "proofs": {
     "x0k:test/x0k-icon/src/bind.rs::a_fifth_role_or_a_missing_scheme_does_not_read": "passed",
     "x0k:test/x0k-icon/src/bind.rs::the_css_binding_writes_variables_and_the_name_binding_writes_roles": "passed",
@@ -220,6 +236,7 @@
     "x0k:test/x0k-tangle/src/region_gfm.rs::the_affordance_section_carries_the_evidence_under_its_block": "passed",
     "x0k:test/x0k-tangle/src/region_gfm.rs::the_weave_inverts_line_for_line": "passed",
     "x0k:test/x0k-tangle/src/region_gfm.rs::the_woven_chapter_tangles_to_the_same_chunks": "passed",
+    "x0k:test/x0k-tangle/src/weave.rs::a_ref_links_to_where_the_chunk_is_defined_and_does_not_expand_it": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::bad_math_falls_back_to_raw_tex": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::classify_comment_kinds": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::comment_run_grouping_wraps_and_classifies": "passed",

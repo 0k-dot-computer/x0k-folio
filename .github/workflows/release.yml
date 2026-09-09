@@ -1,0 +1,138 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing tag to build and attach assets to
+        required: true
+permissions:
+  contents: write
+jobs:
+  artifacts:
+    strategy:
+      # One target's runner being unavailable must not cancel the others: a
+      # partial release is recoverable by re-running, a cancelled one is not.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            setup: "sudo apt-get update && sudo apt-get install -y musl-tools"
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            setup: "sudo apt-get update && sudo apt-get install -y musl-tools"
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            setup: ""
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            setup: ""
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain prerequisites for this target
+        if: matrix.setup != ''
+        shell: bash
+        run: ${{ matrix.setup }}
+      - shell: bash
+        run: ./tools/release-artifacts "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+  release:
+    needs: artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # What `actions/attest-build-provenance` needs: an OIDC token to prove to
+      # Sigstore which workflow is asking, and write access to this
+      # repository's attestations.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: artifacts-*
+          merge-multiple: true
+      - name: One SHA256SUMS for the whole release
+        shell: bash
+        run: |
+          cd dist
+          cat ./*.sha256 > SHA256SUMS
+          rm -f ./*.sha256
+      # SLSA build provenance for every asset: which workflow, which commit,
+      # which runner. Verified by a consumer with
+      # `gh attestation verify <file> --repo <owner>/<repo>`, against a public
+      # transparency log — no key for this project to hold or lose. The
+      # wrapper's postinstall runs the same command when `gh` is present.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - name: Attach the assets to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/* --clobber
+  npm:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # `npm publish --provenance` attests the tarball the same way the release
+      # job attests the binaries, so the pinned digests inside it are covered.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: artifacts-*
+          merge-multiple: true
+      - name: Pin the release's digests into the wrapper
+        # The whole point of the wrapper's fail-closed install: after this the
+        # digest a consumer checks against ships inside the npm tarball, rather
+        # than being fetched from the host serving the bytes it vouches for.
+        shell: bash
+        run: |
+          cd dist && cat ./*.sha256 > SHA256SUMS && cd ..
+          ./tools/npm-pin-digests dist
+      - shell: bash
+        run: ./tools/ci-npm
+      - name: The wrapper's version is the tag
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version=$(node -p 'require("./npm/package.json").version')
+          expected="$(node -p 'require("./npm/package.json").x0k.tagPrefix')$version"
+          if [ "$TAG" != "$expected" ]; then
+            echo "error: tag $TAG does not name the wrapper's version ($expected)" >&2
+            exit 1
+          fi
+      - name: Publish the wrapper
+        # The token is the one secret this lane needs. Without it the binary
+        # release still happened; only the wrapper is skipped, and loudly.
+        shell: bash
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "note: NPM_TOKEN is not set — skipping the npm publish" >&2
+            exit 0
+          fi
+          npm publish --provenance --access public

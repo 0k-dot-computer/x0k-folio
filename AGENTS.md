@@ -35,10 +35,12 @@ wins where this file and the binary disagree.
    the `deny.toml` supply-chain policy when `cargo-deny` is installed, then a
    re-tangle of every document that fails if the tree changed.
 
-Going the other way, a chunk marked `from=` is filled from the source file it
-names by `x0k-tangle sync <doc> --workspace .`. That is the supported path
-when it is easier to work in the code; it is not a licence to skip the
-document.
+Going the other way, a chunk marked `from="<path from the workspace root>"
+symbol="<item>"` is a reference to code the document does not own, and
+`x0k-tangle sync <doc> --workspace .` fills its body in from that file. That
+is the supported path when it is easier to work in the code; it is not a
+licence to skip the document. The syntax and its limits are under
+[Starting from code you already have](guides/INTEGRATING.md#starting-from-code-you-already-have).
 
 ## If you are asked to type a document
 
