@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/document-source.md",
-  "source_hash": "13046bad3b0566c3",
+  "source_hash": "22c27d7748169901",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -13,7 +13,7 @@
         },
         {
           "path": "crates/x0k-folio-cli/src/source.rs",
-          "hash": "d398e47d3851c250"
+          "hash": "ce1b1bf400cadc16"
         }
       ]
     }

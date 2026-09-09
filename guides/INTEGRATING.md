@@ -27,15 +27,22 @@ the tangler locks files with the standard library's file lock, stable since
 rather than asserting it. You also need a C compiler: `x0k-syntax` compiles
 tree-sitter grammars and `x0k-tangle` links `tree-sitter-rust` directly, so
 `cc` builds them. `cargo-deny` is optional — `tools/ci` skips the supply-chain
-policy when it is absent. Today the binary comes from this clone, at
-`target/debug/x0k-tangle`. The release lane that ends that requirement is
-in this repository — `.github/workflows/release.yml` builds a static binary
-per platform on a tag, and `npm/` wraps them as `@0k/folio`, verifying each
-download against a digest pinned inside the package and against its SLSA
-build provenance before it will install. **No release has been cut yet**, so
-none of it is reachable from a registry; when one is, fetching the verified
-binary becomes the first instruction on this page and building from source
-becomes the fallback.
+policy when it is absent.
+
+**The tangler is on crates.io**, so the shortest path to a working binary is
+`cargo install x0k-tangle` — it needs a Rust toolchain and a C compiler for
+the tree-sitter grammars, but no clone. Building from this checkout, at
+`target/debug/x0k-tangle`, is the other way, and the one to use if you are
+changing the tool rather than using it.
+
+For a project with no Rust toolchain at all, the path that removes it is the
+release lane in this repository: `.github/workflows/release.yml` builds a
+static binary per platform on a tag, and `npm/` wraps them as `@0k/folio`,
+verifying each download against a digest pinned inside the package and
+against its SLSA build provenance before it will install, failing closed if
+either check does not hold. **No tagged release has been cut yet**, so that
+half is not reachable from a registry; when one is, fetching the verified
+binary becomes the first instruction on this page.
 
 Five verbs are the ones you will use, and each has a `--help`:
 

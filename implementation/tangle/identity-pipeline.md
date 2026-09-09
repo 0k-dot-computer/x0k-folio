@@ -283,10 +283,91 @@ for `<<refs>>` (the Gallowglass body's fragments are as real as the
 Rust body's); single-target docs scan only the first, preserving
 their recorded output hashes.
 
-The two `literate_roots` entries and the style resolution in
-`resolve_comment_style` round out the trait impl. Style resolution is
-the one step in the compose loop that can fail: a malformed declared
-marker is a config error, reported rather than written into a file.
+## The root is a walk scope, not a definition
+
+`literate_roots` is the plugin's contribution to the discovery set
+`tangle_workspace` walks. It is tempting to read it as "where the
+literate documents are", and that reading is what broke it: the
+constant said `knowledge/implementation`, the corpus relayout moved
+every document to `corpora/x0k/implementation/`, and the sweep went on
+walking a path that no longer existed — reporting `tangled: 0,
+up-to-date: 0, errored: 0`, which reads as success, over nothing.
+
+A root is not where the documents are. **A root is only how far the
+walk goes.** Membership is decided one document at a time, downstream,
+by `doc_freshness`: a `.md` whose parsed frontmatter declares neither
+`tangle:` nor `pipelines:` is `DocFreshness::Skip` no matter which root
+it sits under.
+
+So the first instinct is to widen — claim `corpora/`, the container
+[`x0k:architecture/monorepo-layout`](../../decisions/architecture/production/monorepo-layout.md)
+puts every corpus under, and let the frontmatter sort it out. That is
+wrong, and the counterexample is one document.
+`corpora/x0k/publications/x0k-folio/x0k-folio.md` declares
+`tangle: root: README.md` with no `crate:`. It is a **region**
+document: its outputs are relative to the root of the repository the
+region publishes as, and the publishing face gives it that root. Walked
+by a monorepo-root sweep it resolves against the monorepo instead, and
+its `#readme`, `#implementation` and `#contributing` chunks land on the
+repo's own `README.md`, `IMPLEMENTATION.md` and `guides/CONTRIBUTING.md`.
+The clobber guard would not stop it: those files carry no sidecar
+record, and adopting an unrecorded file is allowed.
+
+The frontmatter gate is therefore weaker than it looks. It answers "is
+this a literate document?" — it does not answer "is this document's
+workspace *our* workspace?", which is the question a root is really
+scoping. Publications answer it differently from implementations, so
+a root that spans both is a root that clobbers.
+
+What is left is a path literal, and the honest defence of a path
+literal is not cleverness about its shape but **a check from both
+ends**:
+
+- every declared root must exist and hold tangled documents — so a
+  root the tree moved out from under turns red instead of sweeping
+  nothing (`declared_literate_roots_hold_literate_documents`, below);
+- every tangled document in the tree must lie under some declared
+  root — so a corpus that grows, or moves, outside the claimed set
+  turns red instead of going unswept
+  (`every_tangled_document_lies_under_a_declared_root`, in
+  `x0k-theme-codegen`, which can see both plugins).
+
+A literal checked in both directions cannot rot silently. The old one
+was checked in neither, which is why a whole corpus went unswept
+through a reorganization and the sweep called it success. The
+second check is the one that would have caught the relayout the
+morning it landed, and it also catches what the relayout did to
+`corpora/mattress-world/implementation` — 110 documents that used to
+sit under `knowledge/implementation/mattress-world/` and were swept,
+and afterwards were not.
+
+<a name="chunk-literate-roots"></a><sub>[`src/identity_pipeline.rs`](../../crates/x0k-tangle/src/identity_pipeline.rs) · `#literate-roots`</sub>
+
+```rust {#literate-roots}
+/// The literate trees this plugin claims, as workspace-relative paths.
+///
+/// One entry per corpus, naming its implementation genus — the genus
+/// whose `tangle:` targets are monorepo-relative. Publications are
+/// deliberately absent: a publication is a region document whose
+/// outputs resolve against the region's own repository root, and
+/// sweeping one from here overwrites the monorepo's `README.md`.
+///
+/// The set is machine-checked in both directions — every root exists
+/// and holds documents, every tangled document in the tree lies under
+/// a root — because the literal these replaced
+/// (`knowledge/implementation`) was checked in neither and went on
+/// naming a directory the 2026-09 relayout had emptied.
+pub const LITERATE_ROOTS: &[&str] = &[
+    "corpora/x0k/implementation",
+    "corpora/mattress-world/implementation",
+    "corpora/sci/implementation",
+];
+```
+
+The style resolution in `resolve_comment_style` rounds out the trait
+impl. Style resolution is the one step in the compose loop that can
+fail: a malformed declared marker is a config error, reported rather
+than written into a file.
 
 <a name="chunk-transform-impl"></a><sub>[`src/identity_pipeline.rs`](../../crates/x0k-tangle/src/identity_pipeline.rs) · `#transform-impl`</sub>
 
@@ -297,10 +378,7 @@ impl TanglePipeline for IdentityPipeline {
     }
 
     fn literate_roots(&self) -> Vec<&'static str> {
-        // Production code literate substrate (one subdir per crate /
-        // subsystem). Officina's literate docs live under
-        // `knowledge/implementation/0k.computer/`; future crates add siblings.
-        vec!["knowledge/implementation"]
+        LITERATE_ROOTS.to_vec()
     }
 
     fn transform(&self, ctx: &PipelineContext) -> Result<Vec<PipelineOutput>, PipelineError> {
@@ -1174,9 +1252,92 @@ mod tests {
     }
 
     #[test]
-    fn identity_pipeline_claims_knowledge_implementation_root() {
-        let roots = IdentityPipeline.literate_roots();
-        assert_eq!(roots, vec!["knowledge/implementation"]);
+    fn identity_pipeline_claims_one_root_per_corpus() {
+        assert_eq!(IdentityPipeline.literate_roots(), LITERATE_ROOTS.to_vec());
+        // A publication's outputs resolve against the region repository it
+        // publishes as, not against this one; sweeping one from here writes
+        // over the monorepo's own README.
+        assert!(
+            !LITERATE_ROOTS.iter().any(|r| r.contains("publications")),
+            "publications are region documents and are never swept from here"
+        );
+    }
+
+    /// The workspace this crate is checked out in, found by ascending to
+    /// the directory holding both `flake.nix` and `Cargo.lock`. Panics
+    /// rather than skipping: the root check below is worthless if it can
+    /// quietly decide it has nothing to look at.
+    fn workspace_root() -> std::path::PathBuf {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        manifest
+            .ancestors()
+            // `Cargo.lock` is the marker the monorepo and a projected
+            // repository share; `flake.nix` is only ever the monorepo's, and
+            // looking for it made this helper unusable in the projection.
+            .find(|dir| dir.join("Cargo.lock").is_file())
+            .unwrap_or_else(|| {
+                panic!(
+                    "no workspace root above {} (looked for a directory \
+                     holding Cargo.lock)",
+                    manifest.display()
+                )
+            })
+            .to_path_buf()
+    }
+
+    /// A declared root that does not exist is the failure this module was
+    /// repaired for, and it is silent by construction: `tangle_workspace`
+    /// skips a missing root without a word, so the sweep answers
+    /// `tangled: 0, up-to-date: 0, errored: 0` and reads as a clean tree.
+    /// Existing is not enough either — a root that survives a
+    /// reorganization as an empty husk sweeps nothing just as quietly — so
+    /// the claim checked here is that the root holds literate documents.
+    ///
+    /// The roots are a fact about the monorepo, and this crate also ships
+    /// standalone, where `corpora/` does not exist and the caller supplies
+    /// its own workspace. So the check is conditional — but never silently:
+    /// the other branch asserts we really are in a projection, because a
+    /// test that quietly passes in an unexpected context is the failure
+    /// this whole test exists to prevent.
+    #[test]
+    fn declared_literate_roots_hold_literate_documents() {
+        let root = workspace_root();
+        if !root.join("corpora").is_dir() {
+            assert!(
+                root.join("PROVENANCE.json").is_file(),
+                "no `corpora/` and no PROVENANCE.json at {} — this is neither \
+                 the monorepo nor a projection, so the declared roots cannot \
+                 be checked and this test must not pretend otherwise.",
+                root.display()
+            );
+            return;
+        }
+        for claimed in IdentityPipeline.literate_roots() {
+            let dir = root.join(claimed);
+            assert!(
+                dir.is_dir(),
+                "IdentityPipeline claims literate root `{claimed}`, but {} \
+                 is not a directory. tangle_workspace skips a missing root \
+                 silently, so the sweep would report `tangled: 0` over a \
+                 corpus it never walked.",
+                dir.display()
+            );
+            let found = walkdir::WalkDir::new(&dir)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .any(|e| {
+                    e.file_name()
+                        .to_str()
+                        .is_some_and(|n| n.ends_with(".tangle-map.json"))
+                });
+            assert!(
+                found,
+                "literate root `{claimed}` exists at {} but holds no tangled \
+                 document (no .tangle-map.json anywhere beneath it) — the \
+                 corpus moved and the claim did not follow it.",
+                dir.display()
+            );
+        }
     }
 
     // The join, one test per thing that must not move. The first two
@@ -1292,6 +1453,8 @@ mod tests {
 <<kind-and-config>>
 
 <<plugin-struct>>
+
+<<literate-roots>>
 
 <<transform-impl>>
 

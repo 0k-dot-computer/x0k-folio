@@ -167,16 +167,32 @@ enum CommentStyleDecl {
 /// [`crate::PipelineRegistry::default`].
 pub struct IdentityPipeline;
 
+/// The literate trees this plugin claims, as workspace-relative paths.
+///
+/// One entry per corpus, naming its implementation genus — the genus
+/// whose `tangle:` targets are monorepo-relative. Publications are
+/// deliberately absent: a publication is a region document whose
+/// outputs resolve against the region's own repository root, and
+/// sweeping one from here overwrites the monorepo's `README.md`.
+///
+/// The set is machine-checked in both directions — every root exists
+/// and holds documents, every tangled document in the tree lies under
+/// a root — because the literal these replaced
+/// (`knowledge/implementation`) was checked in neither and went on
+/// naming a directory the 2026-09 relayout had emptied.
+pub const LITERATE_ROOTS: &[&str] = &[
+    "corpora/x0k/implementation",
+    "corpora/mattress-world/implementation",
+    "corpora/sci/implementation",
+];
+
 impl TanglePipeline for IdentityPipeline {
     fn kind(&self) -> &str {
         IDENTITY_KIND
     }
 
     fn literate_roots(&self) -> Vec<&'static str> {
-        // Production code literate substrate (one subdir per crate /
-        // subsystem). Officina's literate docs live under
-        // `knowledge/implementation/0k.computer/`; future crates add siblings.
-        vec!["knowledge/implementation"]
+        LITERATE_ROOTS.to_vec()
     }
 
     fn transform(&self, ctx: &PipelineContext) -> Result<Vec<PipelineOutput>, PipelineError> {
@@ -821,9 +837,92 @@ mod tests {
     }
 
     #[test]
-    fn identity_pipeline_claims_knowledge_implementation_root() {
-        let roots = IdentityPipeline.literate_roots();
-        assert_eq!(roots, vec!["knowledge/implementation"]);
+    fn identity_pipeline_claims_one_root_per_corpus() {
+        assert_eq!(IdentityPipeline.literate_roots(), LITERATE_ROOTS.to_vec());
+        // A publication's outputs resolve against the region repository it
+        // publishes as, not against this one; sweeping one from here writes
+        // over the monorepo's own README.
+        assert!(
+            !LITERATE_ROOTS.iter().any(|r| r.contains("publications")),
+            "publications are region documents and are never swept from here"
+        );
+    }
+
+    /// The workspace this crate is checked out in, found by ascending to
+    /// the directory holding both `flake.nix` and `Cargo.lock`. Panics
+    /// rather than skipping: the root check below is worthless if it can
+    /// quietly decide it has nothing to look at.
+    fn workspace_root() -> std::path::PathBuf {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        manifest
+            .ancestors()
+            // `Cargo.lock` is the marker the monorepo and a projected
+            // repository share; `flake.nix` is only ever the monorepo's, and
+            // looking for it made this helper unusable in the projection.
+            .find(|dir| dir.join("Cargo.lock").is_file())
+            .unwrap_or_else(|| {
+                panic!(
+                    "no workspace root above {} (looked for a directory \
+                     holding Cargo.lock)",
+                    manifest.display()
+                )
+            })
+            .to_path_buf()
+    }
+
+    /// A declared root that does not exist is the failure this module was
+    /// repaired for, and it is silent by construction: `tangle_workspace`
+    /// skips a missing root without a word, so the sweep answers
+    /// `tangled: 0, up-to-date: 0, errored: 0` and reads as a clean tree.
+    /// Existing is not enough either — a root that survives a
+    /// reorganization as an empty husk sweeps nothing just as quietly — so
+    /// the claim checked here is that the root holds literate documents.
+    ///
+    /// The roots are a fact about the monorepo, and this crate also ships
+    /// standalone, where `corpora/` does not exist and the caller supplies
+    /// its own workspace. So the check is conditional — but never silently:
+    /// the other branch asserts we really are in a projection, because a
+    /// test that quietly passes in an unexpected context is the failure
+    /// this whole test exists to prevent.
+    #[test]
+    fn declared_literate_roots_hold_literate_documents() {
+        let root = workspace_root();
+        if !root.join("corpora").is_dir() {
+            assert!(
+                root.join("PROVENANCE.json").is_file(),
+                "no `corpora/` and no PROVENANCE.json at {} — this is neither \
+                 the monorepo nor a projection, so the declared roots cannot \
+                 be checked and this test must not pretend otherwise.",
+                root.display()
+            );
+            return;
+        }
+        for claimed in IdentityPipeline.literate_roots() {
+            let dir = root.join(claimed);
+            assert!(
+                dir.is_dir(),
+                "IdentityPipeline claims literate root `{claimed}`, but {} \
+                 is not a directory. tangle_workspace skips a missing root \
+                 silently, so the sweep would report `tangled: 0` over a \
+                 corpus it never walked.",
+                dir.display()
+            );
+            let found = walkdir::WalkDir::new(&dir)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .any(|e| {
+                    e.file_name()
+                        .to_str()
+                        .is_some_and(|n| n.ends_with(".tangle-map.json"))
+                });
+            assert!(
+                found,
+                "literate root `{claimed}` exists at {} but holds no tangled \
+                 document (no .tangle-map.json anywhere beneath it) — the \
+                 corpus moved and the claim did not follow it.",
+                dir.display()
+            );
+        }
     }
 
     // The join, one test per thing that must not move. The first two

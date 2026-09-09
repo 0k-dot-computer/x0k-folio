@@ -469,6 +469,16 @@ fn source_facts(facts: &mut Vec<FactEntry>, entity: &str, document: &str, bytes:
 These tests cross document boundaries, preserve typed fields and references,
 and distinguish ordinary Markdown from a malformed Folio document. A changed
 definition invalidates the untouched instance document's revision.
+Source recovery is asserted by reconciling until the checkpoint carries the
+acknowledged revision, and the wait is counted in reconcile passes rather than
+seconds. The claim is that acknowledgement arrives, not that it arrives
+quickly: a contended machine makes a pass slower without making it less
+complete, so a clock over the whole convergence would only test throughput.
+Every Dialog-backed test here hands delivery the grace the ingester permits,
+which makes the backend's own acknowledgement the thing waited on instead of
+the daemon's tuned default, and a pass that still falls short reports the file,
+the backend, and the wanted versus observed revision.
+short reports the file, the backend, and the wanted versus observed revision.
 
 <a name="chunk-test-source"></a><sub>[`src/source.rs`](../../crates/x0k-folio-cli/src/source.rs) · `#test-source`</sub>
 
@@ -476,6 +486,12 @@ definition invalidates the untouched instance document's revision.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The grace a durability assertion wants from delivery: a pass waits on
+    /// the backend's own acknowledgement rather than racing the ingester's
+    /// daemon-tuned default, so contention slows a test without changing what
+    /// it observes. Capped by the ingester at thirty seconds.
+    const GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 
     fn envelope(id: &str, body: &str) -> String {
         format!("---\nx0k:\n  format: folio/v1\n  id: {id}\n  type: wiki\n---\n{body}")
@@ -528,9 +544,60 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
 
     #[tokio::test]
     async fn selected_base_updates_and_removal_use_normal_source_recovery() {
-        // A visible Dialog commit can precede its lifecycle acknowledgement.
-        // Reconcile unchanged input until the durable checkpoint catches up;
-        // an absent acknowledgement or retained tombstone must still fail.
+        // A visible Dialog commit can precede its lifecycle acknowledgement, so
+        // the checkpoint is reconciled until it catches up. The budget is
+        // reconcile passes, never the clock: load makes a pass slower, not less
+        // complete, and a stopwatch over the whole convergence would assert
+        // throughput where durability is meant. Delivery is given the grace the
+        // ingester permits, so a pass waits on the backend's own acknowledgement
+        // rather than racing the daemon's tuned default; an absent
+        // acknowledgement or a retained tombstone must still fail.
+        const PASSES: usize = 8;
+
+        /// One entry per expectation the checkpoint has not met, naming the file,
+        /// the backend, and wanted versus observed revision. Empty means settled.
+        fn shortfall(
+            state: &x0k_folio_ingest::lifecycle::IngesterState,
+            expected: &[(PathBuf, String)],
+        ) -> Vec<String> {
+            let mut lines = Vec::new();
+            for (path, hash) in expected {
+                let key = path.to_string_lossy();
+                let file = state.files.get(key.as_ref());
+                let record = state.recovery.get(key.as_ref());
+                let applied = record.and_then(|record| record.revisions.get("dialog"))
+                    .and_then(|revision| revision.applied_hash.as_deref());
+                if file.is_some_and(|file| file.content_hash == *hash && file.acked_by.contains("dialog"))
+                    && record.is_some_and(|record| !record.deleted) && applied == Some(hash.as_str()) {
+                    continue;
+                }
+                lines.push(format!(
+                    "  {} via backend \"dialog\"\n    \
+                     want content {hash}, acknowledged, recovery live and applied\n    \
+                     have content {}, acknowledged by [{}], recovery {}, applied {}",
+                    path.display(),
+                    file.map(|file| file.content_hash.as_str()).unwrap_or("(no entry)"),
+                    file.map(|file| file.acked_by.iter().cloned().collect::<Vec<_>>().join(", "))
+                        .unwrap_or_default(),
+                    match record {
+                        None => "absent",
+                        Some(record) if record.deleted => "tombstoned",
+                        Some(_) => "live",
+                    },
+                    applied.unwrap_or("(none)")));
+            }
+            let wanted: std::collections::BTreeSet<String> = expected.iter()
+                .map(|(path, _)| path.to_string_lossy().to_string()).collect();
+            let present: std::collections::BTreeSet<&String> =
+                state.files.keys().chain(state.recovery.keys()).collect();
+            for key in present.into_iter().filter(|key| !wanted.contains(key.as_str())) {
+                lines.push(format!("  {key} via backend \"dialog\"\n    \
+                     want no checkpoint entry at all\n    \
+                     have a retained entry"));
+            }
+            lines
+        }
+
         async fn reconcile_until_acknowledged(
             source: &mut FolioSource,
             root: &Path,
@@ -538,24 +605,19 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
             sinks: &std::sync::Mutex<Vec<x0k_folio_ingest::backend::Backend>>,
             expected: &[(PathBuf, String)],
         ) {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            loop {
+            let started = std::time::Instant::now();
+            for pass in 1..=PASSES {
                 x0k_folio_ingest::lifecycle::reconcile(
                     source, root, checkpoint, sinks, None).await.unwrap();
                 let state = x0k_folio_ingest::checkpoint::load_state(checkpoint).unwrap();
-                let complete = state.files.len() == expected.len()
-                    && state.recovery.len() == expected.len()
-                    && expected.iter().all(|(path, hash)| {
-                        let key = path.to_string_lossy();
-                        state.files.get(key.as_ref()).is_some_and(|file|
-                            file.content_hash == *hash && file.acked_by.contains("dialog"))
-                            && state.recovery.get(key.as_ref()).is_some_and(|record|
-                                !record.deleted && record.revisions.get("dialog").is_some_and(
-                                    |revision| revision.applied_hash.as_ref() == Some(hash)))
-                    });
-                if complete { return; }
-                assert!(std::time::Instant::now() < deadline,
-                    "source recovery did not reach the exact acknowledged revisions: {state:?}");
+                let missing = shortfall(&state, expected);
+                if missing.is_empty() { return; }
+                assert!(pass < PASSES, "source recovery did not reach the acknowledged \
+                    revisions after {PASSES} reconcile passes ({:.1?} elapsed, informational \
+                    — the budget is passes, not time):\n{}", started.elapsed(), missing.join("\n"));
+                // A pass whose grace expired leaves its backend still writing;
+                // back off so the retry meets a free worker instead of spinning.
+                tokio::time::sleep(std::time::Duration::from_millis(10) * pass as u32).await;
             }
         }
 
@@ -565,7 +627,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let path = root.join("instance.md");
         std::fs::write(&path, envelope("x0k:wiki/instance", &paper("one", None))).unwrap();
         let backend = x0k_folio_dialog::DialogBackend::open(temporary.path().join("database")).unwrap();
-        let sinks = std::sync::Mutex::new(vec![backend.backend("dialog")]);
+        let sinks = std::sync::Mutex::new(vec![backend.backend("dialog").with_delivery_grace(GRACE)]);
         let checkpoint = temporary.path().join("checkpoint");
         let mut first = FolioSource::prepare_with_provenance(&root, selected_base("Old"), "directory:base.ttl").unwrap();
         assert_eq!(first.diagnostics().len(), 1);
@@ -619,7 +681,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
             path
         }).collect();
         let backend = x0k_folio_dialog::DialogBackend::open(temporary.path().join("database")).unwrap();
-        let sinks = std::sync::Mutex::new(vec![backend.backend("dialog")]);
+        let sinks = std::sync::Mutex::new(vec![backend.backend("dialog").with_delivery_grace(GRACE)]);
         let checkpoint = temporary.path().join("checkpoint");
         let mut first = FolioSource::prepare(&root, selected_base("Paper")).unwrap();
         x0k_folio_ingest::lifecycle::reconcile(&mut first, &root, &checkpoint, &sinks, None).await.unwrap();

@@ -2989,7 +2989,7 @@ broken = true
     fn tangle_workspace_errors_on_output_collision() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let dir = workspace.join("knowledge/implementation/x");
+        let dir = workspace.join("corpora/x0k/implementation/x");
         std::fs::create_dir_all(&dir).unwrap();
 
         // Two identity-tangle docs declaring the same `root:` output.
@@ -3411,7 +3411,7 @@ from b
     fn a_workspace_sweep_refuses_only_the_clobbered_document() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path();
-        let dir = ws.join("knowledge/implementation/x");
+        let dir = ws.join("corpora/x0k/implementation/x");
         std::fs::create_dir_all(&dir).unwrap();
         let registry = PipelineRegistry::default();
 
