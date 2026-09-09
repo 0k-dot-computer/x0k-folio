@@ -370,8 +370,8 @@ mod tests {
 
     #[test]
     fn a_chunk_in_an_unwalkable_language_errors_and_leaves_the_document_alone() {
-        let doc = "# Remap\n\n```python {#remap from=\"remap.py\" symbol=\"create_remap\"}\n```\n";
-        let (tmp, doc_path) = workspace("remap.py", "def create_remap():\n    return 1\n", doc);
+        let doc = "# Remap\n\n```ruby {#remap from=\"remap.rb\" symbol=\"create_remap\"}\n```\n";
+        let (tmp, doc_path) = workspace("remap.rb", "def create_remap\n  1\nend\n", doc);
 
         let result = sync_document(&doc_path, tmp.path()).unwrap();
         assert_eq!(result.chunks_populated, 0);

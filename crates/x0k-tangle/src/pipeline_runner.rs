@@ -287,6 +287,57 @@ fn contain_within_root(root: &Path, target: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
+/// Where the documents a tangle run reads can be *read back* — the base a
+/// workspace-relative source path resolves under.
+///
+/// Absent by default. Present, it turns the `@generated` header's path into
+/// a path *and* a URL; it never replaces the path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocSite {
+    base: String,
+}
+
+impl DocSite {
+    /// A base URL that workspace-relative document paths hang off, e.g.
+    /// `https://github.com/<owner>/<repo>/blob/main`. A trailing slash is
+    /// the caller's habit, not a distinction, so it is trimmed here rather
+    /// than doubled into every header.
+    pub fn new(base: impl Into<String>) -> Self {
+        Self {
+            base: base.into().trim_end_matches('/').to_string(),
+        }
+    }
+
+    /// The derivation from a publication's `repository:` scalar: the
+    /// `<repo>/blob/<branch>` form GitHub, Gitea and Forgejo all serve. A
+    /// forge that spells its blob route differently (GitLab's `/-/blob/`)
+    /// is one `new` call away; this is the common case, not the only one.
+    pub fn from_repository(repository: &str, branch: &str) -> Self {
+        let repo = repository.trim_end_matches('/').trim_end_matches(".git");
+        Self::new(format!("{repo}/blob/{branch}"))
+    }
+
+    /// The URL a workspace-relative document path reads at. Paths are joined
+    /// verbatim: corpus document paths are ASCII with no spaces, and a
+    /// percent-encoder here would be machinery for a shape no corpus has.
+    pub fn url_for(&self, rel_source: &str) -> String {
+        format!("{}/{}", self.base, rel_source.trim_start_matches('/'))
+    }
+}
+
+/// What a tangle run knows that no document carries.
+///
+/// One field today, and the reason it is a struct rather than that field:
+/// every run-scoped fact the tangler grows next belongs here, not in a
+/// fourth positional argument to the entry points.
+#[derive(Debug, Clone, Default)]
+pub struct TangleSettings {
+    /// Where this run's source documents can be read by someone who does
+    /// not have the tree. `None` — the default — leaves the header exactly
+    /// as it has always been.
+    pub doc_site: Option<DocSite>,
+}
+
 /// Run every pipeline declared (or synthesized) for one document.
 ///
 /// - `doc_path` — path to the source `.md` file; resolved to
@@ -301,10 +352,26 @@ fn contain_within_root(root: &Path, target: &Path) -> Result<PathBuf> {
 /// sidecar). On error before write, no files are touched. Holds the
 /// workspace tangle lock for its whole body, so a concurrent tangler
 /// in another process waits rather than interleaving writes.
+///
+/// Runs with default [`TangleSettings`]: no document site, so the
+/// `@generated` header names the source document by path alone. A caller
+/// that knows where its documents can be read calls
+/// [`tangle_document_with`].
 pub fn tangle_document(
     doc_path: &Path,
     workspace_root: &Path,
     registry: &PipelineRegistry,
+) -> Result<TangleResult> {
+    tangle_document_with(doc_path, workspace_root, registry, &TangleSettings::default())
+}
+
+/// [`tangle_document`], plus the run-scoped settings the documents cannot
+/// carry themselves.
+pub fn tangle_document_with(
+    doc_path: &Path,
+    workspace_root: &Path,
+    registry: &PipelineRegistry,
+    settings: &TangleSettings,
 ) -> Result<TangleResult> {
     let workspace_root = &absolutize(workspace_root);
     let doc_path = &absolutize(doc_path);
@@ -464,8 +531,13 @@ pub fn tangle_document(
                 .with_context(|| {
                     format!("pipeline `{}` in {}", decl.kind, doc_path.display())
                 })?;
-            let final_bytes =
-                compose_with_header(&out, doc_path, workspace_root, &decl.kind);
+            let final_bytes = compose_with_header(
+                &out,
+                doc_path,
+                workspace_root,
+                &decl.kind,
+                settings.doc_site.as_ref(),
+            );
             write_atomic(&abs_path, &final_bytes)?;
             let hash = content_hash_bytes(&final_bytes);
             sidecar_outputs.push(PipelineOutputRecord {
@@ -535,10 +607,24 @@ pub fn tangle_document(
 /// Walk `dir` and run [`tangle_document`] on each `.md` folio/v1
 /// file that declares `tangle:` or `pipelines:`. Skipped files (no
 /// frontmatter, no relevant blocks) yield no result entry.
+///
+/// Runs with default [`TangleSettings`]; [`tangle_directory_with`] takes
+/// a caller's.
 pub fn tangle_directory(
     dir: &Path,
     workspace_root: &Path,
     registry: &PipelineRegistry,
+) -> Result<Vec<TangleResult>> {
+    tangle_directory_with(dir, workspace_root, registry, &TangleSettings::default())
+}
+
+/// [`tangle_directory`], with the run-scoped settings every document under
+/// `dir` shares.
+pub fn tangle_directory_with(
+    dir: &Path,
+    workspace_root: &Path,
+    registry: &PipelineRegistry,
+    settings: &TangleSettings,
 ) -> Result<Vec<TangleResult>> {
     let workspace_root = &absolutize(workspace_root);
     let mut results = Vec::new();
@@ -556,7 +642,7 @@ pub fn tangle_directory(
         if !content.contains("tangle:") && !content.contains("pipelines:") {
             continue;
         }
-        let result = tangle_document(p, workspace_root, registry)?;
+        let result = tangle_document_with(p, workspace_root, registry, settings)?;
         if !result.identity_outputs.is_empty() || !result.pipeline_outputs.is_empty() {
             results.push(result);
         }
@@ -916,11 +1002,17 @@ fn sidecar_output_claims(
 /// content is returned verbatim. The `source` path is rendered
 /// workspace-relative (matching the identity-tangle convention) so
 /// header text doesn't drift with the operator's checkout location.
+///
+/// With a `site`, the document's URL follows the path in parentheses:
+/// `… from lit/remap.md (https://…/lit/remap.md) — DO NOT EDIT.` The path
+/// stays the first thing after ` from `, which is what both readers of
+/// this line parse for.
 fn compose_with_header(
     out: &PipelineOutput,
     source: &Path,
     workspace_root: &Path,
     kind: &str,
+    site: Option<&DocSite>,
 ) -> Vec<u8> {
     let Some(style) = out.header_comment_style else {
         return out.content.clone();
@@ -938,8 +1030,15 @@ fn compose_with_header(
         .unwrap_or(source)
         .display()
         .to_string();
+    // The URL is a suffix on the path, not a replacement for it: a
+    // receiver routing an edit back to its document reads the first token
+    // after ` from `, and that token has to stay a corpus path.
+    let where_read = match site {
+        None => rel_source.clone(),
+        Some(site) => format!("{rel_source} ({})", site.url_for(&rel_source)),
+    };
     let line1 = format!(
-        "@generated by x0k-tangle (pipeline: {kind}) from {rel_source} — DO NOT EDIT."
+        "@generated by x0k-tangle (pipeline: {kind}) from {where_read} — DO NOT EDIT."
     );
     let header = match style {
         CommentStyle::Line(prefix) => format!("{prefix} {line1}\n"),
@@ -1841,6 +1940,10 @@ two = 2
 
     /// Verify the @generated header is line-comment-styled when the
     /// plugin requested `CommentStyle::Line`.
+    ///
+    /// Byte-for-byte, because this is the no-site header every file in
+    /// this tree carries: a change here is a change to every generated
+    /// file in the corpus.
     #[test]
     fn header_uses_line_comment_style() {
         let out = PipelineOutput {
@@ -1849,9 +1952,12 @@ two = 2
             header_comment_style: Some(CommentStyle::Line("//")),
         };
         let composed =
-            compose_with_header(&out, Path::new("src.md"), Path::new("/ws"), "demo");
+            compose_with_header(&out, Path::new("src.md"), Path::new("/ws"), "demo", None);
         let s = std::str::from_utf8(&composed).unwrap();
-        assert!(s.starts_with("// @generated by x0k-tangle (pipeline: demo) from src.md"));
+        assert_eq!(
+            s,
+            "// @generated by x0k-tangle (pipeline: demo) from src.md — DO NOT EDIT.\nbody"
+        );
     }
 
     /// Verify the @generated header switches to block comments when
@@ -1864,10 +1970,177 @@ two = 2
             header_comment_style: Some(CommentStyle::Block("/*", "*/")),
         };
         let composed =
-            compose_with_header(&out, Path::new("src.md"), Path::new("/ws"), "demo");
+            compose_with_header(&out, Path::new("src.md"), Path::new("/ws"), "demo", None);
         let s = std::str::from_utf8(&composed).unwrap();
         assert!(s.starts_with("/* @generated by x0k-tangle (pipeline: demo) from src.md "));
         assert!(s.contains("*/"));
+    }
+
+    /// A base URL joins onto the document's workspace-relative path, and a
+    /// trailing slash on the base is not a second slash in the URL.
+    #[test]
+    fn doc_site_joins_the_base_to_the_document_path() {
+        assert_eq!(
+            DocSite::new("https://example.test/blob/main").url_for("lit/remap.md"),
+            "https://example.test/blob/main/lit/remap.md"
+        );
+        assert_eq!(
+            DocSite::new("https://example.test/blob/main/").url_for("lit/remap.md"),
+            "https://example.test/blob/main/lit/remap.md"
+        );
+        // The derivation from a publication's `repository:` scalar.
+        assert_eq!(
+            DocSite::from_repository("https://github.com/o/r", "main").url_for("implementation/a.md"),
+            "https://github.com/o/r/blob/main/implementation/a.md"
+        );
+        assert_eq!(
+            DocSite::from_repository("https://github.com/o/r.git", "main").url_for("a.md"),
+            "https://github.com/o/r/blob/main/a.md"
+        );
+    }
+
+    /// With a site, the URL follows the path in parentheses — appended, not
+    /// substituted.
+    #[test]
+    fn header_appends_the_document_url_when_a_site_is_known() {
+        let out = PipelineOutput {
+            path: PathBuf::from("a.txt"),
+            content: b"body".to_vec(),
+            header_comment_style: Some(CommentStyle::Line("//")),
+        };
+        let site = DocSite::new("https://github.com/o/r/blob/main");
+        let composed = compose_with_header(
+            &out,
+            Path::new("/ws/lit/remap.md"),
+            Path::new("/ws"),
+            "identity-tangle",
+            Some(&site),
+        );
+        let s = std::str::from_utf8(&composed).unwrap();
+        assert_eq!(
+            s,
+            "// @generated by x0k-tangle (pipeline: identity-tangle) from lit/remap.md \
+(https://github.com/o/r/blob/main/lit/remap.md) — DO NOT EDIT.\nbody"
+        );
+    }
+
+    /// The whole point of appending: the two parsers that already read this
+    /// line keep reading it.
+    ///
+    /// The first is `tools/x0k-guard-generated`, written into every
+    /// projected repository by region-repo.md's `GUARD_SCRIPT`. This test
+    /// runs its classifier and its `sed`, copied verbatim, over both header
+    /// forms — the shell is the parser, so the shell is what is tested.
+    #[test]
+    fn guard_script_still_reads_the_document_out_of_the_header() {
+        // Verbatim from `GUARD_SCRIPT` in region-repo.md: the `case` that
+        // decides a file is generated, and the `sed` that names its source.
+        const GUARD_PARSE: &str = r#"first="$1"
+case "$first" in
+  *"@generated by x0k-tangle"*"DO NOT EDIT"*)
+    src=$(printf '%s\n' "$first" | sed -n 's/.* from \(.*\) — DO NOT EDIT.*/\1/p')
+    echo "generated|$src"
+    ;;
+  *) echo "other|" ;;
+esac
+"#;
+        let guard = |line: &str| -> String {
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(GUARD_PARSE)
+                .arg("guard")
+                .arg(line)
+                .output()
+                .expect("the guard is a shell script; a shell is needed to test it");
+            assert!(out.status.success(), "guard parse exited non-zero");
+            String::from_utf8(out.stdout).unwrap().trim_end().to_string()
+        };
+
+        let plain = "// @generated by x0k-tangle (pipeline: identity-tangle) from lit/remap.md — DO NOT EDIT.";
+        let with_url = "// @generated by x0k-tangle (pipeline: identity-tangle) from lit/remap.md \
+(https://github.com/o/r/blob/main/lit/remap.md) — DO NOT EDIT.";
+
+        // Unchanged for a header with no site.
+        assert_eq!(guard(plain), "generated|lit/remap.md");
+        // Still classified as generated, and the source it names still
+        // begins with the document path — with the URL along for the ride,
+        // which is what a maintainer reading the refusal wants.
+        let named = guard(with_url);
+        let src = named
+            .strip_prefix("generated|")
+            .unwrap_or_else(|| panic!("still classified as generated: {named}"));
+        assert_eq!(
+            src,
+            "lit/remap.md (https://github.com/o/r/blob/main/lit/remap.md)"
+        );
+        assert_eq!(src.split_whitespace().next(), Some("lit/remap.md"));
+    }
+
+    /// The second parser: `doc_from_header` in receiving.md, the fallback
+    /// that routes an edit in a clone back to the document it came from.
+    /// It is private to that module, so its two lines are restated here;
+    /// what is being pinned is that the header's first token after ` from `
+    /// is still a bare document path.
+    #[test]
+    fn receive_fallback_still_reads_the_document_out_of_the_header() {
+        fn doc_from_header(text: &str) -> Option<String> {
+            let first = text.lines().next()?;
+            let rest = first.split(" from ").nth(1)?;
+            Some(rest.split([' ', '\u{2014}']).next()?.trim().to_string())
+        }
+        let plain = "// @generated by x0k-tangle (pipeline: identity-tangle) from lit/remap.md — DO NOT EDIT.";
+        let with_url = "// @generated by x0k-tangle (pipeline: identity-tangle) from lit/remap.md \
+(https://github.com/o/r/blob/main/lit/remap.md) — DO NOT EDIT.";
+        assert_eq!(doc_from_header(plain).as_deref(), Some("lit/remap.md"));
+        assert_eq!(doc_from_header(with_url).as_deref(), Some("lit/remap.md"));
+    }
+
+    /// End to end: the site reaches the file on disk through
+    /// `tangle_document_with`, and the default entry point still writes the
+    /// header this tree already carries.
+    #[test]
+    fn tangle_document_with_a_site_writes_the_url_into_the_file() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().to_path_buf();
+        let doc = r#"---
+x0k:
+  format: folio/v1
+  id: x0k:wiki/code/sited
+  type: wiki
+  status: proposed
+  tangle:
+    root: out/sited.txt
+---
+
+# Sited
+
+```text {#body}
+hello world
+```
+"#;
+        std::fs::create_dir_all(workspace.join("lit")).unwrap();
+        let doc_path = workspace.join("lit/sited.md");
+        std::fs::write(&doc_path, doc).unwrap();
+        let registry = PipelineRegistry::default();
+
+        let settings = TangleSettings {
+            doc_site: Some(DocSite::from_repository("https://github.com/o/r", "main")),
+        };
+        tangle_document_with(&doc_path, &workspace, &registry, &settings).expect("tangle ok");
+        let written = std::fs::read_to_string(workspace.join("out/sited.txt")).unwrap();
+        assert_eq!(
+            written.lines().next().unwrap(),
+            "// @generated by x0k-tangle (pipeline: identity-tangle) from lit/sited.md \
+(https://github.com/o/r/blob/main/lit/sited.md) — DO NOT EDIT."
+        );
+
+        // Same doc, default settings: the header this tree has always had.
+        tangle_document(&doc_path, &workspace, &registry).expect("tangle ok");
+        let written = std::fs::read_to_string(workspace.join("out/sited.txt")).unwrap();
+        assert_eq!(
+            written.lines().next().unwrap(),
+            "// @generated by x0k-tangle (pipeline: identity-tangle) from lit/sited.md — DO NOT EDIT."
+        );
     }
 
     /// Multi-input pipelines see all declared inputs.

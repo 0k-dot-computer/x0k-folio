@@ -5,7 +5,8 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -84,7 +85,8 @@ enum Command {
         #[arg(long, requires = "out")]
         palette: Option<PathBuf>,
     },
-    /// Sync from= chunks: populate code blocks from source files
+    /// Sync from= chunks: populate code blocks from source files.
+    /// Symbol extraction reads rust, typescript, javascript, tsx, python, julia
     Sync {
         /// Paths to scan for documents with from= chunks
         paths: Vec<PathBuf>,
@@ -277,8 +279,17 @@ fn main() -> Result<()> {
             let docs = discover_documents(&paths)?;
             let registry = x0k_tangle::PipelineRegistry::default();
             let mut total_files = 0;
+            let mut tangled_docs = 0;
+            let mut nowhere_to_write = 0;
 
             for doc_path in &docs {
+                let declared = declares(doc_path);
+                if !declared.target {
+                    eprintln!("  {}", nothing_to_write(doc_path, declared.chunks));
+                    nowhere_to_write += 1;
+                    continue;
+                }
+                tangled_docs += 1;
                 let result = x0k_tangle::tangle_document(doc_path, &ws, &registry)?;
                 for out in &result.identity_outputs {
                     eprintln!("  {} → {}", doc_path.display(), out.path.display());
@@ -296,9 +307,13 @@ fn main() -> Result<()> {
 
             eprintln!(
                 "tangled {} file(s) from {} document(s)",
-                total_files,
-                docs.len()
+                total_files, tangled_docs
             );
+
+            if nowhere_to_write > 0 {
+                eprintln!("{nowhere_to_write} document(s) named nowhere to write");
+                std::process::exit(1);
+            }
         }
 
         Command::Sync { paths, workspace } => {
@@ -339,17 +354,52 @@ fn main() -> Result<()> {
 
         Command::Check { paths, vocabulary } => {
             let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref())?;
-            let docs = discover_documents(&paths)?;
             let mut has_errors = false;
+            let mut chunked_documents = 0;
+            let mut ids: HashMap<String, PathBuf> = HashMap::new();
 
-            for doc_path in &docs {
-                let content = std::fs::read_to_string(doc_path)?;
-                let parsed = x0k_tangle::parser::parse_document(&content)?;
-                let errors = x0k_tangle::resolve::check_all_refs(&parsed)?;
+            for doc_path in markdown_under(&paths) {
+                let content = match std::fs::read_to_string(&doc_path) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        // A file the gate cannot read is a file it cannot vouch
+                        // for, and saying so beats counting it as clean.
+                        eprintln!("{}: cannot be read: {e}", doc_path.display());
+                        has_errors = true;
+                        continue;
+                    }
+                };
+                let parsed = match x0k_tangle::parser::parse_document(&content) {
+                    Ok(parsed) => parsed,
+                    Err(e) => {
+                        eprintln!("{}: does not parse: {e}", doc_path.display());
+                        has_errors = true;
+                        continue;
+                    }
+                };
 
-                for err in &errors {
-                    eprintln!("{}: {}", doc_path.display(), err);
-                    has_errors = true;
+                if !parsed.chunks.is_empty() {
+                    chunked_documents += 1;
+                    for err in &x0k_tangle::resolve::check_all_refs(&parsed)? {
+                        eprintln!("{}: {}", doc_path.display(), err);
+                        has_errors = true;
+                    }
+                }
+
+                if let Some(id) = parsed.id {
+                    match ids.get(&id) {
+                        Some(first) => {
+                            eprintln!(
+                                "{}: duplicate document id `{id}`, already declared by {}",
+                                doc_path.display(),
+                                first.display()
+                            );
+                            has_errors = true;
+                        }
+                        None => {
+                            ids.insert(id, doc_path.clone());
+                        }
+                    }
                 }
             }
 
@@ -377,7 +427,8 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             } else {
                 eprintln!(
-                    "all references OK; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
+                    "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
+                    references_verdict(chunked_documents),
                     report.corpus.checked,
                     report.declarations.checked,
                     report.corpus.dangling.len()
@@ -812,52 +863,124 @@ fn dangling_note(source: &str, predicate: &str, target: impl std::fmt::Display) 
     format!("{source}: note: edge `{predicate}` → `{target}` names no document under the paths scanned")
 }
 
-fn discover_documents_any(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    let mut docs = Vec::new();
+/// What `check` says about the reference half of a clean run.
+///
+/// The count is load-bearing. Zero is a real and common answer — a
+/// directory of decision documents declares no chunks — and it has to
+/// read as zero rather than as a pass, because the shape that produces
+/// it is also the shape a broken walk produces.
+fn references_verdict(chunked_documents: usize) -> String {
+    match chunked_documents {
+        0 => "no chunk references to check".to_string(),
+        1 => "all references OK in 1 document with chunks".to_string(),
+        n => format!("all references OK in {n} documents with chunks"),
+    }
+}
+
+/// What `tangle` says about a document it was named and cannot write from.
+fn nothing_to_write(path: &Path, chunks: usize) -> String {
+    format!(
+        "{}: declares {chunks} chunk(s) and no tangle target \
+         (tangle.root, tangle.crate, tangle.roots, or pipelines:); nothing to write",
+        path.display()
+    )
+}
+
+/// Every `.md` under `paths`, deduplicated and ordered: a file is taken
+/// as given, a directory is walked.
+///
+/// This step finds files and nothing else. What a verb *does* with a
+/// document is decided from its parse, below, so that the answer cannot
+/// depend on whether the reader named the file or the directory holding
+/// it.
+fn markdown_under(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
     for path in paths {
-        if path.is_file() && path.extension().is_some_and(|e| e == "md") {
-            docs.push(path.clone());
+        if path.is_file() {
+            if is_markdown(path) {
+                found.push(path.clone());
+            }
         } else if path.is_dir() {
             for entry in walkdir::WalkDir::new(path)
                 .into_iter()
                 .filter_map(|e| e.ok())
             {
-                let p = entry.path();
-                if p.extension().is_some_and(|e| e == "md") {
-                    if let Ok(content) = std::fs::read_to_string(p) {
-                        if content.contains("from=") || content.contains("tangle:") {
-                            docs.push(p.to_path_buf());
-                        }
-                    }
+                if is_markdown(entry.path()) {
+                    found.push(entry.path().to_path_buf());
                 }
             }
         }
     }
-    Ok(docs)
+    found.sort();
+    // Overlapping arguments (`check corpus corpus/implementation`) reach
+    // one file twice, and a document counted twice collides with itself
+    // on its own id.
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|p| seen.insert(p.canonicalize().unwrap_or_else(|_| p.clone())));
+    found
+}
+
+fn is_markdown(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "md")
+}
+
+/// What a document declares about itself, read off its parse.
+struct Declares {
+    /// It names somewhere to write: a `tangle:` crate or root,
+    /// per-language roots, or a `pipelines:` block. The same predicate
+    /// `tangle_document` applies before it does any work.
+    target: bool,
+    /// It has a chunk to fill from source (`from=`), which is what
+    /// `sync` is about.
+    fills: bool,
+    /// How many chunks it declares — the number that makes "nothing to
+    /// write" worth saying out loud instead of reporting as a zero.
+    chunks: usize,
+}
+
+fn declares(path: &Path) -> Declares {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Declares { target: false, fills: false, chunks: 0 };
+    };
+    let Ok(parsed) = x0k_tangle::parser::parse_document(&content) else {
+        return Declares { target: false, fills: false, chunks: 0 };
+    };
+    Declares {
+        target: parsed.tangle_crate.is_some()
+            || parsed.tangle_root.is_some()
+            || !parsed.tangle_roots.is_empty()
+            || !parsed.pipelines.is_empty(),
+        fills: parsed
+            .chunks
+            .values()
+            .flatten()
+            .any(|chunk| chunk.from.is_some()),
+        chunks: parsed.chunks.len(),
+    }
+}
+
+fn discover_documents_any(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let named = named_files(paths);
+    Ok(markdown_under(paths)
+        .into_iter()
+        .filter(|p| {
+            named.contains(p) || {
+                let d = declares(p);
+                d.fills || d.target
+            }
+        })
+        .collect())
 }
 
 fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    let mut docs = Vec::new();
+    let named = named_files(paths);
+    Ok(markdown_under(paths)
+        .into_iter()
+        .filter(|p| named.contains(p) || declares(p).target)
+        .collect())
+}
 
-    for path in paths {
-        if path.is_file() && path.extension().is_some_and(|e| e == "md") {
-            docs.push(path.clone());
-        } else if path.is_dir() {
-            for entry in walkdir::WalkDir::new(path)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let p = entry.path();
-                if p.extension().is_some_and(|e| e == "md") {
-                    if let Ok(content) = std::fs::read_to_string(p) {
-                        if content.contains("tangle:") {
-                            docs.push(p.to_path_buf());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(docs)
+/// The paths the reader named as files rather than directories.
+fn named_files(paths: &[PathBuf]) -> std::collections::HashSet<PathBuf> {
+    paths.iter().filter(|p| p.is_file()).cloned().collect()
 }

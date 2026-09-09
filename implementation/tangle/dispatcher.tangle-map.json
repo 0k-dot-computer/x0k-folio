@@ -1,6 +1,6 @@
 {
   "source": "implementation/tangle/dispatcher.md",
-  "source_hash": "41c6e465d8d464b4",
+  "source_hash": "67af391494058921",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-tangle/src/pipeline_runner.rs",
-          "hash": "ba7ce9a2c276b0ea"
+          "hash": "f61e72795f128e3b"
         }
       ]
     }

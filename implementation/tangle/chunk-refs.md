@@ -41,9 +41,13 @@ tree-sitter to identify spans inside string literals, raw strings,
 and comments, then filters out any naive match whose source line
 starts inside an excluded span. When the chunk's `lang` is one we
 have a grammar for — Rust, TypeScript (which also parses JavaScript),
-TSX — the aware scan applies; for anything else we fall back to the
-line-based rule (better to over-include and surface an "undefined
-chunk" error than silently drop a real ref).
+TSX, Python, Julia — the aware scan applies; for anything else we
+fall back to the line-based rule (better to over-include and surface
+an "undefined chunk" error than silently drop a real ref).
+
+The languages the scan speaks are the languages symbol extraction
+walks, and deliberately so: the two passes read the same chunk, and a
+grammar linked for one is free for the other.
 
 ## Imports
 
@@ -55,6 +59,7 @@ tree-sitter wiring.
 
 ```rust {#imports}
 use crate::chunk::{find_chunk_refs, ChunkRef};
+use crate::source_ref::is_julia_tag;
 use tree_sitter::{Node, Parser};
 use x0k_syntax::Language as FenceLanguage;
 ```
@@ -161,6 +166,16 @@ and `/* */` and one `string` kind covers `'…'` and `"…"`. A
 can hold code, but a `<<name>>` alone on a line inside a template is
 data by the same reasoning as a raw string.
 
+Python's `string` kind covers the triple-quoted docstring, which is
+where the interesting case lives: a `#` comment holding `<<name>>`
+never trips the line-based rule anyway (the trimmed line starts with
+`#`), but a docstring quoting a chunk reference on a line of its own
+does, and a module that explains its own literate document will hold
+exactly that. Julia names its comments `line_comment` and
+`block_comment` as Rust does, and carries two literal families —
+strings and backtick command literals — each with a `prefixed_`
+variant for `r"…"` and friends.
+
 <a name="chunk-exclude-kinds"></a><sub>[`src/chunk_refs.rs`](../../crates/x0k-tangle/src/chunk_refs.rs) · `#exclude-kinds`</sub>
 
 ```rust {#exclude-kinds}
@@ -171,20 +186,33 @@ const RUST_EXCLUDE_KINDS: &[&str] = &[
     "block_comment",
 ];
 const TS_EXCLUDE_KINDS: &[&str] = &["string", "template_string", "comment"];
+const PY_EXCLUDE_KINDS: &[&str] = &["string", "concatenated_string", "comment"];
+const JULIA_EXCLUDE_KINDS: &[&str] = &[
+    "string_literal",
+    "prefixed_string_literal",
+    "command_literal",
+    "prefixed_command_literal",
+    "line_comment",
+    "block_comment",
+];
 ```
 
 `collect_exclude_spans` picks that pair, parses, and walks the
 resulting tree collecting the byte ranges of any node whose `kind()`
 matches. The fence tag resolves through `x0k-syntax`, the same
-vocabulary the weaver highlights by, and then narrows: JSON and
-Python are tags it knows and we have no exclude list for, so they
-return `None` and fall back to naive.
+vocabulary the weaver highlights by, and then narrows: JSON is a tag
+it knows and we have no exclude list for, so it returns `None` and
+falls back to naive. Julia is the tag `x0k-syntax` does not know at
+all, recognised here through the same predicate symbol extraction
+uses.
 
 <a name="chunk-collect-exclude-spans-fn"></a><sub>[`src/chunk_refs.rs`](../../crates/x0k-tangle/src/chunk_refs.rs) · `#collect-exclude-spans-fn`</sub>
 
 ```rust {#collect-exclude-spans-fn}
 fn collect_exclude_spans(content: &str, lang: &str) -> Option<Vec<(usize, usize)>> {
-    let (language, exclude_kinds): (tree_sitter::Language, &[&str]) =
+    let (language, exclude_kinds): (tree_sitter::Language, &[&str]) = if is_julia_tag(lang) {
+        (tree_sitter_julia::LANGUAGE.into(), JULIA_EXCLUDE_KINDS)
+    } else {
         match FenceLanguage::from_str(lang)? {
             FenceLanguage::Rust => (tree_sitter_rust::LANGUAGE.into(), RUST_EXCLUDE_KINDS),
             FenceLanguage::Typescript => (
@@ -192,8 +220,10 @@ fn collect_exclude_spans(content: &str, lang: &str) -> Option<Vec<(usize, usize)
                 TS_EXCLUDE_KINDS,
             ),
             FenceLanguage::Tsx => (tree_sitter_typescript::LANGUAGE_TSX.into(), TS_EXCLUDE_KINDS),
+            FenceLanguage::Python => (tree_sitter_python::LANGUAGE.into(), PY_EXCLUDE_KINDS),
             _ => return None,
-        };
+        }
+    };
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;
     let tree = parser.parse(content, None)?;
@@ -241,6 +271,9 @@ Coverage hits the Rust edge cases:
   not crash; we don't make a strict assertion on count here.
 - An escaped ref inside a string is dropped like a plain one; outside,
   it is reported with `escaped` set.
+- Python `#` comments and docstrings, and Julia `#` comments, `#= =#`
+  blocks and triple-quoted strings — the two languages whose comment
+  marker the line-based rule has no opinion about.
 
 <a name="chunk-tests"></a><sub>[`src/chunk_refs.rs`](../../crates/x0k-tangle/src/chunk_refs.rs) · `#tests`</sub>
 
@@ -315,7 +348,7 @@ mod tests {
     #[test]
     fn falls_back_to_naive_for_unknown_lang() {
         let content = "let x = '<<imports>>';\n<<other>>\n";
-        let refs = find_chunk_refs_aware(content, Some("python"));
+        let refs = find_chunk_refs_aware(content, Some("ruby"));
         // No grammar → no filtering. The standalone <<other>> line is a
         // ref under the line-based rule; the inline `'<<imports>>'` is
         // not (text follows on the line).
@@ -363,6 +396,30 @@ mod tests {
     fn jsx_tag_reaches_the_tsx_grammar() {
         let content = "const App = () => <div/>;\nconst s = `\n<<in_template>>\n`;\n<<real>>\n";
         let refs = find_chunk_refs_aware(content, Some("jsx"));
+        assert_eq!(refs.len(), 1, "got {:?}", refs);
+        assert_eq!(refs[0].name, "real");
+    }
+
+    #[test]
+    fn python_comments_and_docstrings_are_not_references() {
+        let content = "# <<commented>>\ndef f():\n    \"\"\"\n<<in_docstring>>\n    \"\"\"\n    <<real>>\n";
+        let refs = find_chunk_refs_aware(content, Some("python"));
+        assert_eq!(refs.len(), 1, "got {:?}", refs);
+        assert_eq!(refs[0].name, "real");
+    }
+
+    #[test]
+    fn julia_comments_blocks_and_strings_are_not_references() {
+        let content = "# <<commented>>\n#=\n<<in_block>>\n=#\nconst s = \"\"\"\n<<in_string>>\n\"\"\"\nfunction f(x)\n    <<real>>\nend\n";
+        let refs = find_chunk_refs_aware(content, Some("julia"));
+        assert_eq!(refs.len(), 1, "got {:?}", refs);
+        assert_eq!(refs[0].name, "real");
+    }
+
+    #[test]
+    fn the_jl_alias_reaches_the_julia_grammar() {
+        let content = "#=\n<<in_block>>\n=#\n<<real>>\n";
+        let refs = find_chunk_refs_aware(content, Some("jl"));
         assert_eq!(refs.len(), 1, "got {:?}", refs);
         assert_eq!(refs[0].name, "real");
     }

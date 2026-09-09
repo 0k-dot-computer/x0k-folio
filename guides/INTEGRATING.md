@@ -27,8 +27,15 @@ the tangler locks files with the standard library's file lock, stable since
 rather than asserting it. You also need a C compiler: `x0k-syntax` compiles
 tree-sitter grammars and `x0k-tangle` links `tree-sitter-rust` directly, so
 `cc` builds them. `cargo-deny` is optional — `tools/ci` skips the supply-chain
-policy when it is absent. There is no crates.io release to install from; the
-binary comes from this clone, at `target/debug/x0k-tangle`.
+policy when it is absent. Today the binary comes from this clone, at
+`target/debug/x0k-tangle`. The release lane that ends that requirement is
+in this repository — `.github/workflows/release.yml` builds a static binary
+per platform on a tag, and `npm/` wraps them as `@0k/folio`, verifying each
+download against a digest pinned inside the package and against its SLSA
+build provenance before it will install. **No release has been cut yet**, so
+none of it is reachable from a registry; when one is, fetching the verified
+binary becomes the first instruction on this page and building from source
+becomes the fallback.
 
 Five verbs are the ones you will use, and each has a `--help`:
 
@@ -260,9 +267,13 @@ It reads every folio/v1 document under `docs`, finds each symbol in its file
 by parsing the file rather than by matching a line range, and rewrites the
 documents with the bodies in place. Run it again whenever the code moves on
 and the bodies are replaced. A symbol that has been renamed or deleted is
-reported against its chunk — `warn: chunk 'refill': symbol 'refil' not
-found` — the rest of the document still syncs, and the run does not fail, so
-this is a reference that goes stale loudly rather than a build that breaks.
+reported against its chunk — `error: <doc>: chunk 'refill': symbol 'refil'
+not found` — the rest of the document still syncs, and **the run exits
+non-zero**, because a sync that reports drift and returns success lets a
+CI job go green over a document that no longer says what its source says.
+A document with nothing to fill still passes. Note that the chunks that
+did resolve are written before the run fails, so a failed sync leaves the
+document partly updated; re-run it after fixing the reference.
 Which languages the extractor can parse is the one thing on this page that
 moves, so read `x0k-tangle sync --help` for the current set rather than
 trusting a list here. A file it cannot parse comes back as that same

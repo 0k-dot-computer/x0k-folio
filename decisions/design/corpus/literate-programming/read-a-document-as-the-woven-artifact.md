@@ -567,6 +567,223 @@ fn bad_math_falls_back_to_raw_tex() {
     let ok = render_math("x^2", false);
     assert!(ok.contains("<math") && ok.contains("display=\"inline\""), "got: {ok}");
 }
+
+/// The MathML body of an inline fragment, with the `<math>` wrapper peeled
+/// off so a test can pin the element structure exactly.
+fn mathml_body(tex: &str) -> String {
+    let out = render_math(tex, false);
+    out.split_once("display=\"inline\">")
+        .and_then(|(_, rest)| rest.strip_suffix("</math>"))
+        .unwrap_or_else(|| panic!("not MathML: {out}"))
+        .to_string()
+}
+```
+
+</details>
+
+<details><summary><code>a_base_with_both_scripts_is_one_msubsup</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn a_base_with_both_scripts_is_one_msubsup() {
+    // The recurrence coefficient: b sub k-1, squared. Not b sub (k-1)².
+    let expected = "<msubsup><mi>b</mi><mrow><mi>k</mi><mo>-</mo><mn>1</mn></mrow><mn>2</mn></msubsup>";
+    assert_eq!(mathml_body("b_{k-1}^2"), expected);
+    assert_eq!(mathml_body("b_{k-1}^{2}"), expected);
+    // Explicit re-bracing says the same thing and renders the same way.
+    assert_eq!(mathml_body("{b_{k-1}}^2"), expected);
+
+    // The commonest construct in numerical analysis, in both orders.
+    let x_i_2 = "<msubsup><mi>x</mi><mi>i</mi><mn>2</mn></msubsup>";
+    assert_eq!(mathml_body("x_i^2"), x_i_2);
+    assert_eq!(mathml_body("x^2_i"), x_i_2);
+
+    // An accent is part of the base, so the scripts hang off the accented
+    // atom rather than the accent drifting over the subscript.
+    assert_eq!(
+        mathml_body("\\hat{x}_i"),
+        "<msub><mover><mi>x</mi><mo accent=\"true\">^</mo></mover><mi>i</mi></msub>"
+    );
+    assert_eq!(
+        mathml_body("\\hat{x}_i^2"),
+        "<msubsup><mover><mi>x</mi><mo accent=\"true\">^</mo></mover><mi>i</mi><mn>2</mn></msubsup>"
+    );
+
+    // So is a `\left…\right` fence.
+    assert_eq!(
+        mathml_body("\\left(a+b\\right)_i^2"),
+        "<msubsup><mrow><mo stretchy=\"true\" form=\"prefix\">(</mo>\
+         <mrow><mi>a</mi><mo>+</mo><mi>b</mi></mrow>\
+         <mo stretchy=\"true\" form=\"postfix\">)</mo></mrow><mi>i</mi><mn>2</mn></msubsup>"
+    );
+
+    // And so is an environment: the script lands on the matrix, not on
+    // the `\end` that closes it.
+    assert_eq!(
+        mathml_body("\\begin{pmatrix}a\\end{pmatrix}_i^2"),
+        "<msubsup><mrow><mo stretchy=\"true\" form=\"prefix\">(</mo>\
+         <mtable><mtr><mtd><mi>a</mi></mtd></mtr></mtable>\
+         <mo stretchy=\"true\" form=\"postfix\">)</mo></mrow><mi>i</mi><mn>2</mn></msubsup>"
+    );
+}
+```
+
+</details>
+
+<details><summary><code>braces_keep_the_nesting_the_author_wrote</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn braces_keep_the_nesting_the_author_wrote() {
+    // These are the cases the fuse must NOT touch: each says something
+    // different from `x_i^2`, and the braces are the only evidence.
+    assert_eq!(
+        mathml_body("x_{i^2}"),
+        "<msub><mi>x</mi><msup><mi>i</mi><mn>2</mn></msup></msub>"
+    );
+    assert_eq!(
+        mathml_body("{x^2}_i"),
+        "<msub><msup><mi>x</mi><mn>2</mn></msup><mi>i</mi></msub>"
+    );
+    assert_eq!(
+        mathml_body("x^{i_2}"),
+        "<msup><mi>x</mi><msub><mi>i</mi><mn>2</mn></msub></msup>"
+    );
+    assert_eq!(
+        mathml_body("x_{i_j}"),
+        "<msub><mi>x</mi><msub><mi>i</mi><mi>j</mi></msub></msub>"
+    );
+}
+```
+
+</details>
+
+<details><summary><code>large_operators_keep_their_own_script_binding</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn large_operators_keep_their_own_script_binding() {
+    // A sum's limits go under and over the sigma, an integral's beside it.
+    assert_eq!(
+        mathml_body("\\sum_{i=1}^n"),
+        "<munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>"
+    );
+    assert_eq!(
+        mathml_body("\\int_a^b"),
+        "<msubsup><mo>∫</mo><mi>a</mi><mi>b</mi></msubsup>"
+    );
+    assert_eq!(
+        mathml_body("\\lim_{n\\to\\infty}"),
+        "<munder><mi>lim</mi><mrow><mi>n</mi><mo>→</mo><mi mathvariant=\"normal\">∞</mi></mrow></munder>"
+    );
+}
+```
+
+</details>
+
+<details><summary><code>primes_and_unbraced_scripts_follow_tex</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn primes_and_unbraced_scripts_follow_tex() {
+    // A prime is a superscript, so `f'_i` and `a_i'` are both one msubsup.
+    assert_eq!(
+        mathml_body("f'_i"),
+        "<msubsup><mi>f</mi><mi>i</mi><mo>′</mo></msubsup>"
+    );
+    assert_eq!(
+        mathml_body("a_i'"),
+        "<msubsup><mi>a</mi><mi>i</mi><mo>′</mo></msubsup>"
+    );
+    // An unbraced script takes ONE token: `x_10` is x₁ then a 0.
+    assert_eq!(
+        mathml_body("x_10"),
+        "<msub><mi>x</mi><mn>1</mn></msub><mn>0</mn>"
+    );
+    assert_eq!(mathml_body("x_{10}"), "<msub><mi>x</mi><mn>10</mn></msub>");
+    // A number is still one atom when it is the BASE.
+    assert_eq!(
+        mathml_body("10^{-3}"),
+        "<msup><mn>10</mn><mrow><mo>-</mo><mn>3</mn></mrow></msup>"
+    );
+}
+```
+
+</details>
+
+<details><summary><code>accepted_spellings_render_and_the_rest_still_fail_loudly</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn accepted_spellings_render_and_the_rest_still_fail_loudly() {
+    // "exact for degree ≤ 2n-1" is the definition of a Gauss rule.
+    assert_eq!(mathml_body("\\le"), "<mo>≤</mo>");
+    assert_eq!(mathml_body("\\ge"), "<mo>≥</mo>");
+    assert_eq!(mathml_body("\\leq"), "<mo>≤</mo>");
+    assert_eq!(mathml_body("\\geq"), "<mo>≥</mo>");
+    assert_eq!(
+        mathml_body("\\mathcal{O}"),
+        "<mi mathvariant=\"script\">O</mi>"
+    );
+    assert_eq!(mathml_body("\\dots"), "<mo>…</mo>");
+
+    // The alias table adds spellings; it never converts a failure into a
+    // silent success. An unknown macro still lands on `.math-error`.
+    let out = render_math("\\lessthanorequalto", false);
+    assert!(out.contains("class=\"math-error\""), "got: {out}");
+    // A prefix of a known alias is not the alias.
+    let out = render_math("\\lex", false);
+    assert!(out.contains("class=\"math-error\""), "got: {out}");
+}
+```
+
+</details>
+
+<details><summary><code>malformed_tex_never_panics_and_never_renders_silently</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn malformed_tex_never_panics_and_never_renders_silently() {
+    // The normaliser runs before the parser, so it meets every typo the
+    // parser used to meet first. None of these may panic, and none may
+    // come out as quiet MathML pretending to be the author's meaning.
+    for tex in [
+        "_", "^", "'", "x_", "x^", "{", "}", "{x", "x}", "\\", "\\left(",
+        "\\right)", "\\begin{pmatrix}a", "\\frac{1}{", "\\hat", "\\sqrt[",
+        "α_β^γ", "x_{{{{{a}}}}}^2", "\\left(\\left(a\\right)_i^2",
+    ] {
+        let out = render_math(tex, false);
+        assert!(
+            out.starts_with("<math") || out.contains("class=\"math-error\""),
+            "{tex:?} produced neither MathML nor a visible error: {out}"
+        );
+    }
+}
+```
+
+</details>
+
+<details><summary><code>the_recurrence_survives_the_whole_weave</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+```rust
+#[test]
+fn the_recurrence_survives_the_whole_weave() {
+    // End to end through the markdown path, not just render_math.
+    let content = "# Quadrature\n\n$p_{k+1} = (x-a_k)p_k - b_{k-1}^2 p_{k-1}$\n";
+    let doc = parse_document(content).unwrap();
+    let body = weave_html(content, &doc).unwrap().html;
+    let body = body.split("<article").nth(1).unwrap().to_string();
+    assert!(
+        body.contains(
+            "<msubsup><mi>b</mi><mrow><mi>k</mi><mo>-</mo><mn>1</mn></mrow><mn>2</mn></msubsup>"
+        ),
+        "b_{{k-1}}^2 must be an msubsup: {body}"
+    );
+    assert!(
+        !body.contains("<msub><mi>b</mi><msup>"),
+        "the old mis-nesting must be gone: {body}"
+    );
+}
 ```
 
 </details>

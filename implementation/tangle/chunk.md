@@ -101,6 +101,23 @@ goes into a `.rs` vs a `.ts` output target.
 A single fence's body, plus the line number in the source `.md` for
 diagnostics and stitch-back round-trips.
 
+The body is not quite the bytes between the fences. The parser
+([`parsing.md`](parsing.md)) `trim_end`s each fence as it captures it,
+so a chunk's **trailing** blank lines are gone before anything here
+sees them, while its **leading** blank lines arrive intact. That
+asymmetry is the substrate's, not the author's, and it is worth naming
+because two independent readers have found it the same way — by
+experiment, after their output came out spaced wrongly. A Python author
+who wants a blank line between two chunks cannot put it at the end of
+the first; they have to put it at the start of the second, and nothing
+in the document says so. The declared fix for the case that made this
+matter — top-level chunks concatenated into one file — is the `join:`
+setting in [`identity-pipeline.md`](identity-pipeline.md). Removing the
+asymmetry itself would mean changing what the parser keeps, which
+changes the meaning of every fence in the corpus that happens to end on
+a blank line; that is a decision for the parser's document, and this
+note exists so it is made deliberately rather than discovered.
+
 <a name="chunk-chunk-body"></a><sub>[`src/chunk.rs`](../../crates/x0k-tangle/src/chunk.rs) · `#chunk-body`</sub>
 
 ```rust {#chunk-body}
@@ -160,7 +177,10 @@ Two small affordances:
   during identity tangle (they're inputs, not outputs).
 - `combined_body()` — join all body sections with `\n`. Multi-body
   chunks (multiple `#name` fences in the same doc) become one
-  continuous string.
+  continuous string. One newline, so two fences sharing a `#name` are
+  adjacent in the output with no blank line between them, whatever the
+  document looked like — the same `trim_end` above, arriving here as a
+  join that has nothing left to preserve.
 
 <a name="chunk-chunk-methods"></a><sub>[`src/chunk.rs`](../../crates/x0k-tangle/src/chunk.rs) · `#chunk-methods`</sub>
 

@@ -127,9 +127,9 @@ pub struct ChunkVariant {
 /// can't host comments.
 #[derive(Debug, Clone, Copy)]
 pub enum CommentStyle {
-    /// Line-comment marker (`"//"`, `"#"`, `";"`).
+    /// Line-comment marker (`"//"`, `"#"`, `";"`, `"%"`, `"!"`).
     Line(&'static str),
-    /// Block-comment open/close pair (`("/*", "*/")`).
+    /// Block-comment open/close pair (`("/*", "*/")`, `("(*", "*)")`).
     Block(&'static str, &'static str),
 }
 
@@ -144,6 +144,137 @@ pub struct PipelineOutput {
     /// How to format the `@generated` header. `None` skips it
     /// (binary outputs, content-defining files).
     pub header_comment_style: Option<CommentStyle>,
+}
+
+/// What the bytes at an output path are, relative to what this
+/// document last wrote there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputProvenance {
+    /// Nothing on disk: a first tangle, a `git clean`, a deleted
+    /// output. There is nothing to destroy.
+    Absent,
+    /// Disk matches the hash the sidecar recorded for this path. The
+    /// bytes there are the ones we last wrote, so they are ours to
+    /// replace with whatever the document now says.
+    Ours,
+    /// Disk already holds exactly the bytes about to be written.
+    /// Whoever put them there, the write changes nothing.
+    AlreadyCurrent,
+    /// A file is on disk and no sidecar entry claims the path. Either
+    /// an existing file is being brought under literate authoring or
+    /// a sidecar was lost; both are legitimate and the two are
+    /// indistinguishable from here.
+    Unrecorded,
+    /// A file is on disk, the sidecar recorded different bytes for it,
+    /// and the bytes about to be written differ again. What is there
+    /// did not come from this document, and writing would destroy it.
+    Foreign,
+}
+
+/// Classify one output path from three content hashes: `recorded` as
+/// the sidecar has it (`None` when no entry claims the path),
+/// `on_disk` as the file reads now (`None` when there is no file),
+/// and `about_to_write` for the bytes this run composed.
+pub fn classify_output(
+    recorded: Option<&str>,
+    on_disk: Option<&str>,
+    about_to_write: &str,
+) -> OutputProvenance {
+    let Some(disk) = on_disk else {
+        return OutputProvenance::Absent;
+    };
+    if recorded == Some(disk) {
+        OutputProvenance::Ours
+    } else if disk == about_to_write {
+        OutputProvenance::AlreadyCurrent
+    } else if recorded.is_none() {
+        OutputProvenance::Unrecorded
+    } else {
+        OutputProvenance::Foreign
+    }
+}
+
+/// What a run does when an output holds bytes it did not write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClobberPolicy {
+    /// Refuse the document rather than overwrite content it did not
+    /// produce. The default.
+    #[default]
+    Refuse,
+    /// Overwrite regardless: the operator has said the bytes on disk
+    /// are expendable.
+    Force,
+}
+
+/// The outputs of one document that a write would have destroyed.
+///
+/// Every offending path, not the first. Someone who hand-edited one
+/// generated file has usually hand-edited its neighbours, and a
+/// refusal that reveals them one run at a time is a refusal they learn
+/// to route around.
+#[derive(Debug, Clone)]
+pub struct ClobberRefusal {
+    /// The literate document whose tangle was refused.
+    pub source_doc: PathBuf,
+    /// Every output of that document holding foreign content.
+    pub paths: Vec<PathBuf>,
+}
+
+impl fmt::Display for ClobberRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "tangle refused to overwrite {} file(s) it did not write:",
+            self.paths.len()
+        )?;
+        for p in &self.paths {
+            writeln!(f, "  {}", p.display())?;
+        }
+        writeln!(
+            f,
+            "\nEach differs from what tangling {} last produced, so it was\n\
+             edited by hand or by another tool, and tangling would destroy that.\n\
+             \n  \
+             - to keep the change: move it into the document's chunks, then tangle\n  \
+             - to discard it:      restore the file from version control, then tangle\n  \
+             - to overwrite it:    re-run with --force",
+            self.source_doc.display()
+        )
+    }
+}
+
+impl std::error::Error for ClobberRefusal {}
+
+/// Screen one document's outputs before any of them is written.
+///
+/// Returns the paths that warrant an `Unrecorded` warning, leaving the
+/// caller to choose how to say it. Errors — before any write — when
+/// the policy is [`ClobberPolicy::Refuse`] and any output holds
+/// foreign content.
+pub fn guard_outputs<'a>(
+    source_doc: &Path,
+    outputs: impl IntoIterator<Item = (&'a Path, OutputProvenance)>,
+    policy: ClobberPolicy,
+) -> Result<Vec<&'a Path>, ClobberRefusal> {
+    let mut unrecorded = Vec::new();
+    let mut clobbered = Vec::new();
+    for (path, provenance) in outputs {
+        match provenance {
+            OutputProvenance::Unrecorded => unrecorded.push(path),
+            OutputProvenance::Foreign if policy == ClobberPolicy::Refuse => {
+                clobbered.push(path.to_path_buf());
+            }
+            _ => {}
+        }
+    }
+    if clobbered.is_empty() {
+        Ok(unrecorded)
+    } else {
+        Err(ClobberRefusal {
+            source_doc: source_doc.to_path_buf(),
+            paths: clobbered,
+        })
+    }
 }
 
 /// Pipeline-side failure. Tangle promotes this into the top-level
@@ -408,5 +539,118 @@ mod tests {
         registry.register(OtherMirror);
         // Still one entry; the second registration overwrote the first.
         assert_eq!(registry.len(), 1);
+    }
+
+    // The clobber guard, one test per failure mode it was designed
+    // against. `h(..)` stands in for a content hash; the guard never
+    // computes one, it only compares them.
+
+    #[test]
+    fn first_tangle_writes_when_nothing_is_on_disk() {
+        // No sidecar entry, no file. The overwhelmingly common shape of
+        // a new output, and the one a guard must never block.
+        let p = PathBuf::from("src/new.rs");
+        let v = classify_output(None, None, "new");
+        assert_eq!(v, OutputProvenance::Absent);
+        let warn = guard_outputs(Path::new("doc.md"), [(p.as_path(), v)], ClobberPolicy::Refuse)
+            .expect("a first tangle must not be refused");
+        assert!(warn.is_empty());
+    }
+
+    #[test]
+    fn document_changed_so_the_output_changes() {
+        // The check is disk against what we last wrote, not against
+        // what we are about to write. An edited document produces
+        // different bytes every time and must still tangle.
+        let p = PathBuf::from("src/lib.rs");
+        let v = classify_output(Some("old"), Some("old"), "new");
+        assert_eq!(v, OutputProvenance::Ours);
+        assert!(
+            guard_outputs(Path::new("doc.md"), [(p.as_path(), v)], ClobberPolicy::Refuse).is_ok()
+        );
+    }
+
+    #[test]
+    fn hand_edited_output_is_caught() {
+        // The reported defect: `# HAND EDIT` added to a generated file,
+        // re-tangled, gone with no message and exit 0.
+        let p = PathBuf::from("src/lib.rs");
+        let v = classify_output(Some("ours"), Some("hand-edited"), "new");
+        assert_eq!(v, OutputProvenance::Foreign);
+        let err = guard_outputs(Path::new("doc.md"), [(p.as_path(), v)], ClobberPolicy::Refuse)
+            .expect_err("a hand edit must stop the write");
+        assert_eq!(err.paths, vec![p]);
+        let msg = err.to_string();
+        assert!(msg.contains("src/lib.rs"), "{msg}");
+        assert!(msg.contains("--force"), "{msg}");
+    }
+
+    #[test]
+    fn a_write_that_changes_nothing_is_not_a_clobber() {
+        // Disk disagrees with the sidecar but agrees with what we are
+        // about to write — someone applied our own bytes by hand, or a
+        // sidecar went stale. Nothing is destroyed, so nothing is
+        // refused; this is what keeps a re-tangle-and-diff gate running.
+        let p = PathBuf::from("src/lib.rs");
+        let v = classify_output(Some("stale"), Some("new"), "new");
+        assert_eq!(v, OutputProvenance::AlreadyCurrent);
+        assert!(
+            guard_outputs(Path::new("doc.md"), [(p.as_path(), v)], ClobberPolicy::Refuse).is_ok()
+        );
+    }
+
+    #[test]
+    fn an_unclaimed_file_warns_rather_than_refusing() {
+        // Adopting an existing hand-written file into a document, or a
+        // lost sidecar. Indistinguishable from here, and refusing would
+        // block a workflow the substrate asks people to perform.
+        let p = PathBuf::from("src/legacy.rs");
+        let v = classify_output(None, Some("theirs"), "ours");
+        assert_eq!(v, OutputProvenance::Unrecorded);
+        let warn = guard_outputs(Path::new("doc.md"), [(p.as_path(), v)], ClobberPolicy::Refuse)
+            .expect("adoption must not be refused");
+        assert_eq!(warn, vec![p.as_path()]);
+    }
+
+    #[test]
+    fn a_deleted_output_regenerates() {
+        // `git clean`, a fresh checkout that gitignores the projection,
+        // an output the author removed on purpose.
+        assert_eq!(
+            classify_output(Some("ours"), None, "new"),
+            OutputProvenance::Absent
+        );
+    }
+
+    #[test]
+    fn force_overwrites_foreign_content() {
+        let p = PathBuf::from("src/lib.rs");
+        let v = classify_output(Some("ours"), Some("hand-edited"), "new");
+        assert!(
+            guard_outputs(Path::new("doc.md"), [(p.as_path(), v)], ClobberPolicy::Force).is_ok()
+        );
+    }
+
+    #[test]
+    fn one_clobber_refuses_the_whole_document() {
+        // All-or-nothing: three outputs, one foreign. The refusal names
+        // every offender and the caller writes none of them, rather than
+        // leaving two thirds of a module on disk.
+        let a = PathBuf::from("src/a.rs");
+        let b = PathBuf::from("src/b.rs");
+        let c = PathBuf::from("src/c.rs");
+        let outputs = [
+            (a.as_path(), classify_output(Some("x"), Some("x"), "x2")),
+            (b.as_path(), classify_output(Some("y"), Some("edited"), "y2")),
+            (c.as_path(), classify_output(Some("z"), Some("also-edited"), "z2")),
+        ];
+        let err = guard_outputs(Path::new("doc.md"), outputs, ClobberPolicy::Refuse)
+            .expect_err("a foreign output must stop the document");
+        assert_eq!(err.paths, vec![b, c]);
+    }
+
+    #[test]
+    fn refuse_is_the_default_policy() {
+        assert_eq!(ClobberPolicy::default(), ClobberPolicy::Refuse);
     }
 }

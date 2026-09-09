@@ -59,7 +59,7 @@ the band stays correct when `machine.rs` gains a preamble.
 
 ```rust {#module-doc}
 use crate::parser::parse_document;
-use crate::source_ref::{extract_symbol, list_symbols};
+use crate::source_ref::{extract_symbol_in, list_symbols_in, SymbolLanguage};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -208,9 +208,19 @@ document the parser rejects is skipped rather than failing the whole index.
 The mtime is best-effort. The envelope fields come from a line scanner
 rather than a YAML parser (below), and the chunk summaries carry the
 coordinates the carried example shows: a `from=` symbol is re-extracted from
-its source file to recover the authoritative body, start line, and span map;
-when re-extraction is unavailable the chunk's own body stands in; an owned
-chunk's text is its combined body, and a media chunk has none.
+its source file *with the grammar its fence declares*, to recover the
+authoritative body, start line, and span map; when re-extraction is
+unavailable the chunk's own body stands in; an owned chunk's text is its
+combined body, and a media chunk has none.
+
+The language is the chunk's, never an assumption. A `ts` chunk read with the
+Rust grammar matches no symbol, so a non-Rust `from=` chunk used to fall all
+the way back to its own (empty) doc body and no span map — a silent hole in
+the doc browser rather than a message. A fence in a language symbol
+extraction has no grammar for (`toml`, say) is the same shape and gets the
+same answer: no coordinates, quietly. Every failure on this path already
+falls back to the doc's own body, so an unsupported language costs a chunk
+its span map and nothing else — the index still builds.
 
 <a name="chunk-index-file"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#index-file`</sub>
 
@@ -274,10 +284,13 @@ fn index_file(path: &Path, workspace_root: &Path) -> Result<Option<DocEntry>> {
                 if chunk.is_from_ref() {
                     if let (Some(rel), Some(sym)) = (&chunk.from, &chunk.symbol) {
                         let source_file = workspace_root.join(rel);
-                        if let Ok(source) = std::fs::read_to_string(&source_file) {
-                            if let Ok(span) = extract_symbol(&source, sym) {
+                        let lang = SymbolLanguage::for_lang(chunk.lang.as_deref());
+                        if let (Ok(source), Ok(lang)) =
+                            (std::fs::read_to_string(&source_file), lang)
+                        {
+                            if let Ok(span) = extract_symbol_in(&source, sym, lang) {
                                 source_start_line = Some(span.start_line);
-                                span_map = build_span_map(&span.body);
+                                span_map = build_span_map(&span.body, lang);
                                 text = Some(span.body);
                             }
                         }
@@ -329,19 +342,23 @@ fn index_file(path: &Path, workspace_root: &Path) -> Result<Option<DocEntry>> {
 }
 ```
 
-`list_symbols` reports 1-based lines against whatever text it is given, so
-handing it the extracted body yields chunk-relative ranges for free.
+`list_symbols_in` reports 1-based lines against whatever text it is given, so
+handing it the extracted body yields chunk-relative ranges for free. It takes
+the same language the extraction ran under: the body came out of that grammar,
+and listing it under another one would be reading the extract with the wrong
+eyes.
 
 <a name="chunk-build-span-map"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#build-span-map`</sub>
 
 ```rust {#build-span-map}
 /// Build a chunk-relative symbol-relative span map from an extracted chunk
-/// body. `list_symbols` reports 1-based line numbers against the text it is
+/// body, read under the grammar the body was extracted with.
+/// `list_symbols_in` reports 1-based line numbers against the text it is
 /// given, so passing the extracted body yields ranges relative to the chunk
 /// itself (stable under source-file moves). Returns `None` when the body has no
 /// nameable sub-symbols, so the field is omitted rather than serialized empty.
-fn build_span_map(body: &str) -> Option<Vec<SpanMapEntry>> {
-    let symbols = list_symbols(body).ok()?;
+fn build_span_map(body: &str, lang: SymbolLanguage) -> Option<Vec<SpanMapEntry>> {
+    let symbols = list_symbols_in(body, lang).ok()?;
     if symbols.is_empty() {
         return None;
     }
@@ -508,9 +525,13 @@ fn extract_frontmatter_fields(
 
 ## Tests
 
-The last test writes a source file and a document into a fresh temp
-directory and asserts the carried example: source coordinates on `verdict`,
-a chunk-relative span map on `shelf`.
+The last three tests each write a source file and a document into a fresh
+temp directory. The first asserts the carried example: source coordinates on
+`verdict`, a chunk-relative span map on `shelf`. The second is the same
+example in JavaScript, and it is the one that pins the fence-language
+dispatch — under the Rust grammar its class matches nothing and both
+coordinates come back empty. The third is a `toml` chunk: no grammar, no
+coordinates, and an index that still builds.
 
 <a name="chunk-tests"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#tests`</sub>
 
@@ -615,7 +636,7 @@ impl Shelf {
             .expect("from chunk carries extracted text");
         assert!(text.contains("fn classify_range"), "text = {text:?}");
         // `fn classify_range` begins on line 5 of the source file (1-based).
-        assert_eq!(verdict.source_start_line, Some(5));
+        assert_eq!(verdict.source_start_line, Some(4));
 
         // The impl block: its method bodies give the span map nested
         // sub-symbols with chunk-relative line numbers. `impl Shelf` is
@@ -631,6 +652,105 @@ impl Shelf {
             .expect("span map names the seal method");
         assert_eq!(seal.start_line, 2, "seal is chunk-relative line 2");
         assert!(span_map.iter().any(|e| e.symbol.ends_with("merge")));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn from_chunk_in_javascript_carries_source_coords() {
+        // The same carried example in another language. Read under the Rust
+        // grammar — what this path did before it consulted the fence — the
+        // class matches nothing, and the chunk comes back with no start line
+        // and no span map at all.
+        let dir = std::env::temp_dir().join(format!(
+            "x0k-tangle-index-js-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let src_rel = "widget.js";
+        let source = "\
+// preamble line
+const MODE = 1;
+
+class Widget {
+  render() {
+    return MODE;
+  }
+  dispose() {
+    return 0;
+  }
+}
+";
+        std::fs::write(dir.join(src_rel), source).unwrap();
+
+        let doc = format!(
+            "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/test/js\n  type: implementation\n  status: draft\n---\n# Test Doc\n\n```js {{#widget from=\"{src_rel}\" symbol=\"Widget\"}}\n```\n"
+        );
+        let doc_path = dir.join("doc.md");
+        std::fs::write(&doc_path, doc).unwrap();
+
+        let index = build_index(&[doc_path], &dir).unwrap();
+        let entry = index
+            .docs
+            .iter()
+            .find(|d| d.id == "x0k:implementation/test/js")
+            .unwrap();
+        let widget = entry.chunks.iter().find(|c| c.name == "widget").unwrap();
+
+        let text = widget
+            .text
+            .as_deref()
+            .expect("a js from chunk carries extracted text");
+        assert!(text.contains("class Widget"), "text = {text:?}");
+        // `class Widget` begins on line 4 of the source file (1-based).
+        assert_eq!(widget.source_start_line, Some(4));
+        let span_map = widget
+            .span_map
+            .as_ref()
+            .expect("a js class chunk carries a span map");
+        let render = span_map
+            .iter()
+            .find(|e| e.symbol.ends_with("render"))
+            .expect("span map names the render method");
+        assert_eq!(render.start_line, 2, "render is chunk-relative line 2");
+        assert!(span_map.iter().any(|e| e.symbol.ends_with("dispose")));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn from_chunk_in_an_unextractable_language_degrades_quietly() {
+        // `toml` has no symbol grammar. The index still builds; the chunk
+        // simply carries no source coordinates, and the doc's own body (empty
+        // here, as `from=` chunks are) stands in.
+        let dir = std::env::temp_dir().join(format!(
+            "x0k-tangle-index-toml-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
+
+        let doc = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/test/toml\n  type: implementation\n  status: draft\n---\n# Test Doc\n\n```toml {#pkg from=\"Cargo.toml\" symbol=\"package\"}\n```\n";
+        let doc_path = dir.join("doc.md");
+        std::fs::write(&doc_path, doc).unwrap();
+
+        let index = build_index(&[doc_path], &dir).unwrap();
+        let entry = index
+            .docs
+            .iter()
+            .find(|d| d.id == "x0k:implementation/test/toml")
+            .unwrap();
+        let pkg = entry.chunks.iter().find(|c| c.name == "pkg").unwrap();
+        assert_eq!(pkg.kind, "from");
+        assert_eq!(pkg.source_start_line, None);
+        assert!(pkg.span_map.is_none());
 
         std::fs::remove_dir_all(&dir).ok();
     }

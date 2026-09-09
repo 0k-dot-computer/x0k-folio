@@ -261,7 +261,8 @@ by.
 ```rust {#cli-imports file="src/main.rs"}
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 ```
 
 <a name="chunk-cli-struct"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#cli-struct`</sub>
@@ -499,7 +500,8 @@ Icon {
 <a name="chunk-sync-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#sync-command`</sub>
 
 ```rust {#sync-command file="src/main.rs"}
-/// Sync from= chunks: populate code blocks from source files
+/// Sync from= chunks: populate code blocks from source files.
+/// Symbol extraction reads rust, typescript, javascript, tsx, python, julia
 Sync {
     /// Paths to scan for documents with from= chunks
     paths: Vec<PathBuf>,
@@ -802,6 +804,16 @@ fn main() -> Result<()> {
 directly, so a document that declares a pipeline this binary does not
 ship errors loudly instead of tangling half of itself.
 
+Naming a document is an imperative — *write this one out* — so a named
+document that names nowhere to write is a failed run, not a quiet zero.
+`tangle_document` answers such a document with an empty result, which is
+the right answer for a library and the wrong report for a shell: the
+summary line used to say `tangled 0 file(s) from 1 document(s)` and exit
+0 over a document with eight chunks and a root, and the only way to
+notice was to go looking for a file that was never written. So the verb
+reads what the document declares before it asks for the work, and says
+which of the two things is missing.
+
 <a name="chunk-dispatch-tangle"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-tangle`</sub>
 
 ```rust {#dispatch-tangle file="src/main.rs"}
@@ -814,8 +826,17 @@ Command::Tangle { paths, workspace } => {
     let docs = discover_documents(&paths)?;
     let registry = x0k_tangle::PipelineRegistry::default();
     let mut total_files = 0;
+    let mut tangled_docs = 0;
+    let mut nowhere_to_write = 0;
 
     for doc_path in &docs {
+        let declared = declares(doc_path);
+        if !declared.target {
+            eprintln!("  {}", nothing_to_write(doc_path, declared.chunks));
+            nowhere_to_write += 1;
+            continue;
+        }
+        tangled_docs += 1;
         let result = x0k_tangle::tangle_document(doc_path, &ws, &registry)?;
         for out in &result.identity_outputs {
             eprintln!("  {} → {}", doc_path.display(), out.path.display());
@@ -833,9 +854,13 @@ Command::Tangle { paths, workspace } => {
 
     eprintln!(
         "tangled {} file(s) from {} document(s)",
-        total_files,
-        docs.len()
+        total_files, tangled_docs
     );
+
+    if nowhere_to_write > 0 {
+        eprintln!("{nowhere_to_write} document(s) named nowhere to write");
+        std::process::exit(1);
+    }
 }
 ```
 
@@ -888,32 +913,84 @@ Command::Sync { paths, workspace } => {
 }
 ```
 
-`check` has two halves. The first walks the tangling documents and
-verifies their chunk references, as it always did. The second reads
-every folio/v1 envelope under the same paths against the shipped
+`check` has three halves — the arithmetic is wrong and the third one is
+why. The first walks every markdown document under the paths and
+verifies the chunk references of any that declares chunks. The second
+reads every folio/v1 envelope under the same paths against the shipped
 vocabulary ([`cli-faces.md`](cli-faces.md)) and prints what it found
 in the affordance's own two categories: a defect as `<path>: <defect>`,
 which fails the run, and a dangling edge as a `note:` that names the
-target and the set it is missing from. The summary line counts both, so
-a clean run still says how many envelopes were read and how many edges
-left the set.
+target and the set it is missing from. The third rides the first walk:
+it holds the id every envelope declared and fails the run when two
+documents declare the same one.
+
+The three run in one pass over one set, which is the repair. They used
+to run over two: the envelope half asked
+[`cli-faces.md`](cli-faces.md)'s discovery, which parses each file, and
+the reference half asked `discover_documents`, which grepped for the
+text `tangle:`. Two membership predicates over one argument is two
+answers to "what did you check", and only the second one got counted.
+
+A document id is the graph's primary key — every edge in every envelope
+resolves through it, and a `cites:` naming a doubled id names both
+documents or neither. Two documents holding one id is therefore a
+defect of the set rather than of either file, so the check is over the
+paths scanned (there is nothing else this process can see) and fails the
+run rather than noting it. The message names both files, because the
+answer is always to change one of them and the reader needs to know
+which two are in play.
 
 <a name="chunk-dispatch-check"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-check`</sub>
 
 ```rust {#dispatch-check file="src/main.rs"}
 Command::Check { paths, vocabulary } => {
     let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref())?;
-    let docs = discover_documents(&paths)?;
     let mut has_errors = false;
+    let mut chunked_documents = 0;
+    let mut ids: HashMap<String, PathBuf> = HashMap::new();
 
-    for doc_path in &docs {
-        let content = std::fs::read_to_string(doc_path)?;
-        let parsed = x0k_tangle::parser::parse_document(&content)?;
-        let errors = x0k_tangle::resolve::check_all_refs(&parsed)?;
+    for doc_path in markdown_under(&paths) {
+        let content = match std::fs::read_to_string(&doc_path) {
+            Ok(content) => content,
+            Err(e) => {
+                // A file the gate cannot read is a file it cannot vouch
+                // for, and saying so beats counting it as clean.
+                eprintln!("{}: cannot be read: {e}", doc_path.display());
+                has_errors = true;
+                continue;
+            }
+        };
+        let parsed = match x0k_tangle::parser::parse_document(&content) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                eprintln!("{}: does not parse: {e}", doc_path.display());
+                has_errors = true;
+                continue;
+            }
+        };
 
-        for err in &errors {
-            eprintln!("{}: {}", doc_path.display(), err);
-            has_errors = true;
+        if !parsed.chunks.is_empty() {
+            chunked_documents += 1;
+            for err in &x0k_tangle::resolve::check_all_refs(&parsed)? {
+                eprintln!("{}: {}", doc_path.display(), err);
+                has_errors = true;
+            }
+        }
+
+        if let Some(id) = parsed.id {
+            match ids.get(&id) {
+                Some(first) => {
+                    eprintln!(
+                        "{}: duplicate document id `{id}`, already declared by {}",
+                        doc_path.display(),
+                        first.display()
+                    );
+                    has_errors = true;
+                }
+                None => {
+                    ids.insert(id, doc_path.clone());
+                }
+            }
         }
     }
 
@@ -941,11 +1018,38 @@ Command::Check { paths, vocabulary } => {
         std::process::exit(1);
     } else {
         eprintln!(
-            "all references OK; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
+            "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
+            references_verdict(chunked_documents),
             report.corpus.checked,
             report.declarations.checked,
             report.corpus.dangling.len()
         );
+    }
+}
+```
+
+The green line says what it did, and the count is what makes that
+possible to read. `all references OK` used to print over a set whose
+references had never been read — the same six words for a corpus of
+forty chapters and for a directory the walk had dropped every document
+out of. A verdict that asserts the work it skipped is worse than no
+verdict at all: it is the gate reporting a pass it did not run, and a
+reader has no way to tell the two apart.
+
+<a name="chunk-references-verdict"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#references-verdict`</sub>
+
+```rust {#references-verdict file="src/main.rs"}
+/// What `check` says about the reference half of a clean run.
+///
+/// The count is load-bearing. Zero is a real and common answer — a
+/// directory of decision documents declares no chunks — and it has to
+/// read as zero rather than as a pass, because the shape that produces
+/// it is also the shape a broken walk produces.
+fn references_verdict(chunked_documents: usize) -> String {
+    match chunked_documents {
+        0 => "no chunk references to check".to_string(),
+        1 => "all references OK in 1 document with chunks".to_string(),
+        n => format!("all references OK in {n} documents with chunks"),
     }
 }
 ```
@@ -1453,57 +1557,172 @@ fn dangling_note(source: &str, predicate: &str, target: impl std::fmt::Display) 
 }
 ```
 
+## Which documents a verb is about
+
+Every verb here starts by turning paths into documents, and the shape of
+that step decides what the verb can be trusted to have done. It has two
+moves, and keeping them apart is the whole discipline: *find* the
+markdown, then *decide membership by parsing it*.
+
+The old code fused the two and did the deciding with `content.contains`.
+That failed three ways at once. It admitted any prose that merely wrote
+the word `tangle:`. It missed every document whose only declaration was
+`pipelines:`, since this binary's grep did not name that key — and a
+missed pipelines document is a loud error this binary would otherwise
+have raised, silently not raised. And, worst, the grep lived only in the
+directory branch: a named file was taken as given, so the *same
+document* answered differently depending on how you named it.
+`check dir/` walked past a document with a broken `<<ref>>` and no
+`tangle:` block and then printed `all references OK`; `check dir/doc.md`
+found the same broken reference and exited 1. The documents that shape
+recommends first — reference-only pages built from `from=`/`symbol=`
+chunks, which need no `tangle:` block at all — are exactly the ones the
+directory form dropped, and the directory form is the one every document
+here tells a reader to run.
+
+<a name="chunk-markdown-under"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#markdown-under`</sub>
+
+```rust {#markdown-under file="src/main.rs"}
+/// Every `.md` under `paths`, deduplicated and ordered: a file is taken
+/// as given, a directory is walked.
+///
+/// This step finds files and nothing else. What a verb *does* with a
+/// document is decided from its parse, below, so that the answer cannot
+/// depend on whether the reader named the file or the directory holding
+/// it.
+fn markdown_under(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for path in paths {
+        if path.is_file() {
+            if is_markdown(path) {
+                found.push(path.clone());
+            }
+        } else if path.is_dir() {
+            for entry in walkdir::WalkDir::new(path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if is_markdown(entry.path()) {
+                    found.push(entry.path().to_path_buf());
+                }
+            }
+        }
+    }
+    found.sort();
+    // Overlapping arguments (`check corpus corpus/implementation`) reach
+    // one file twice, and a document counted twice collides with itself
+    // on its own id.
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|p| seen.insert(p.canonicalize().unwrap_or_else(|_| p.clone())));
+    found
+}
+
+fn is_markdown(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "md")
+}
+```
+
+What a document declares is read once, off the parse, into the three
+facts the verbs actually ask about. `target` is `tangle_document`'s own
+precondition, restated here so the CLI can tell "declared nothing" from
+"declared something that produced nothing" and report the first without
+guessing at the second.
+
+<a name="chunk-declares"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#declares`</sub>
+
+```rust {#declares file="src/main.rs"}
+/// What a document declares about itself, read off its parse.
+struct Declares {
+    /// It names somewhere to write: a `tangle:` crate or root,
+    /// per-language roots, or a `pipelines:` block. The same predicate
+    /// `tangle_document` applies before it does any work.
+    target: bool,
+    /// It has a chunk to fill from source (`from=`), which is what
+    /// `sync` is about.
+    fills: bool,
+    /// How many chunks it declares — the number that makes "nothing to
+    /// write" worth saying out loud instead of reporting as a zero.
+    chunks: usize,
+}
+
+fn declares(path: &Path) -> Declares {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Declares { target: false, fills: false, chunks: 0 };
+    };
+    let Ok(parsed) = x0k_tangle::parser::parse_document(&content) else {
+        return Declares { target: false, fills: false, chunks: 0 };
+    };
+    Declares {
+        target: parsed.tangle_crate.is_some()
+            || parsed.tangle_root.is_some()
+            || !parsed.tangle_roots.is_empty()
+            || !parsed.pipelines.is_empty(),
+        fills: parsed
+            .chunks
+            .values()
+            .flatten()
+            .any(|chunk| chunk.from.is_some()),
+        chunks: parsed.chunks.len(),
+    }
+}
+```
+
+The two writing verbs sweep a directory for the documents they are
+about, and take a named file as given. That asymmetry is deliberate and
+it is not the one repaired above: `check` answers a *question* about a
+document, so the answer must not depend on how the document was reached,
+while `tangle` and `sync` take an *instruction*, and naming a file is a
+different instruction from naming the tree it sits in. Naming one is how
+a reader gets told that this document writes nothing —
+`tangle`'s arm says it; a sweep stays quiet about the documents
+that are simply not its business.
+
 <a name="chunk-discover-documents"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#discover-documents`</sub>
 
 ```rust {#discover-documents file="src/main.rs"}
 fn discover_documents_any(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    let mut docs = Vec::new();
-    for path in paths {
-        if path.is_file() && path.extension().is_some_and(|e| e == "md") {
-            docs.push(path.clone());
-        } else if path.is_dir() {
-            for entry in walkdir::WalkDir::new(path)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let p = entry.path();
-                if p.extension().is_some_and(|e| e == "md") {
-                    if let Ok(content) = std::fs::read_to_string(p) {
-                        if content.contains("from=") || content.contains("tangle:") {
-                            docs.push(p.to_path_buf());
-                        }
-                    }
-                }
+    let named = named_files(paths);
+    Ok(markdown_under(paths)
+        .into_iter()
+        .filter(|p| {
+            named.contains(p) || {
+                let d = declares(p);
+                d.fills || d.target
             }
-        }
-    }
-    Ok(docs)
+        })
+        .collect())
 }
 
 fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    let mut docs = Vec::new();
+    let named = named_files(paths);
+    Ok(markdown_under(paths)
+        .into_iter()
+        .filter(|p| named.contains(p) || declares(p).target)
+        .collect())
+}
 
-    for path in paths {
-        if path.is_file() && path.extension().is_some_and(|e| e == "md") {
-            docs.push(path.clone());
-        } else if path.is_dir() {
-            for entry in walkdir::WalkDir::new(path)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let p = entry.path();
-                if p.extension().is_some_and(|e| e == "md") {
-                    if let Ok(content) = std::fs::read_to_string(p) {
-                        if content.contains("tangle:") {
-                            docs.push(p.to_path_buf());
-                        }
-                    }
-                }
-            }
-        }
-    }
+/// The paths the reader named as files rather than directories.
+fn named_files(paths: &[PathBuf]) -> std::collections::HashSet<PathBuf> {
+    paths.iter().filter(|p| p.is_file()).cloned().collect()
+}
+```
 
-    Ok(docs)
+A document a writing verb was handed and cannot write from gets one
+sentence, and the sentence names both halves of what is missing — the
+chunks it does have, and the declaration it does not — because those are
+the two things a reader is deciding between when nothing appeared on
+disk.
+
+<a name="chunk-nothing-to-write"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#nothing-to-write`</sub>
+
+```rust {#nothing-to-write file="src/main.rs"}
+/// What `tangle` says about a document it was named and cannot write from.
+fn nothing_to_write(path: &Path, chunks: usize) -> String {
+    format!(
+        "{}: declares {chunks} chunk(s) and no tangle target \
+         (tangle.root, tangle.crate, tangle.roots, or pipelines:); nothing to write",
+        path.display()
+    )
 }
 ```
 
@@ -1519,7 +1738,7 @@ fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 <<exports>>
 ```
 
-<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-note](#chunk-dangling-note) · [discover-documents](#chunk-discover-documents)</sub>
+<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-note](#chunk-dangling-note) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
 
 ```rust {#bin-root file="src/main.rs"}
 <<bin-doc>>
@@ -1538,6 +1757,14 @@ fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 
 <<dangling-note>>
 
+<<references-verdict>>
+
+<<nothing-to-write>>
+
+<<markdown-under>>
+
+<<declares>>
+
 <<discover-documents>>
 ```
 
@@ -1550,22 +1777,31 @@ named from outside, it appears in the export list above.
 
 ## Pinning the verdicts
 
-Two of this chapter's claims are about what the process does rather than
-what it computes: `sync` exits non-zero when a chunk it was asked to fill
-stayed empty, and `check`'s dangling-edge note says only what is true of
-the tree it was pointed at. Neither is reachable from a unit test of a
-library function — the first is an exit code, the second is a sentence a
-reader believes or does not — so they are pinned the way
-[`cli-faces.md`](cli-faces.md) pins the other faces: run the built binary
-over a temp fixture, and let what it prints and how it exits be the claim.
+Most of this chapter's claims are about what the process does rather than
+what it computes — an exit code, or a sentence a reader believes or does
+not — and none of those is reachable from a unit test of a library
+function. So they are pinned the way [`cli-faces.md`](cli-faces.md) pins
+the other faces: run the built binary over a temp fixture, and let what
+it prints and how it exits be the claim. `sync` exits non-zero when a
+chunk it was asked to fill stayed empty. `check`'s dangling-edge note
+says only what is true of the tree it was pointed at.
+
+Three more are pins on the gate itself, and they exist because the gate
+failed open on all three. `check` returns the same verdict for a
+document whether it is handed the file or the directory holding it. Its
+green line names the work it did rather than asserting work it skipped.
+Two documents holding one id fail the run. And `tangle`, handed a
+document that names nowhere to write, says so instead of reporting a
+successful zero.
 
 <a name="chunk-cli-verdicts"></a><sub>[`tests/cli_verdicts.rs`](../../crates/x0k-tangle/tests/cli_verdicts.rs) · `#cli-verdicts`</sub>
 
 `````rust {#cli-verdicts file="tests/cli_verdicts.rs"}
 //! Pins for the verdicts the CLI returns
 //! (`x0k:implementation/tangle/crate`): what `sync` exits with when a
-//! chunk it was asked to fill stayed empty, and what `check` says about
-//! an edge that leaves the set.
+//! chunk it was asked to fill stayed empty, what `check` says about an
+//! edge that leaves the set, and the three ways `check` and `tangle`
+//! used to report a pass they had not run.
 
 use std::fs;
 use std::path::Path;
@@ -1575,6 +1811,18 @@ use tempfile::TempDir;
 
 const JS_SOURCE: &str =
     "export function createHorizonRemap(scale) {\n  return (u) => u * scale;\n}\n";
+
+/// A folio/v1 document with a chunk whose `<<ref>>` names nothing, and
+/// no `tangle:` block — the reference-only shape an adopter writes
+/// first. `{id}` distinguishes copies.
+fn broken_reference_doc(id: &str) -> String {
+    format!(
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/{id}\n  \
+         type: implementation\n  status: draft\n  summary: A document with a \
+         broken chunk reference and nowhere to write.\n---\n# Doc\n\n\
+         ```rust {{#root file=\"src/lib.rs\"}}\nfn f() {{\n    <<nope>>\n}}\n```\n"
+    )
+}
 
 fn write(dir: &Path, rel: &str, content: &str) {
     let path = dir.join(rel);
@@ -1643,11 +1891,11 @@ fn sync_exits_nonzero_when_a_chunk_it_was_asked_to_fill_stayed_empty() {
 #[test]
 fn sync_names_the_language_limit_rather_than_the_symbol() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "remap.py", "def create_remap():\n    return 1\n");
+    write(tmp.path(), "remap.rb", "def create_remap\n  1\nend\n");
     write(
         tmp.path(),
         "doc.md",
-        "# Remap\n\n```python {#remap from=\"remap.py\" symbol=\"create_remap\"}\n```\n",
+        "# Remap\n\n```ruby {#remap from=\"remap.rb\" symbol=\"create_remap\"}\n```\n",
     );
 
     let out = sync(tmp.path());
@@ -1709,6 +1957,150 @@ fn the_dangling_edge_note_claims_only_what_is_true_of_any_tree() {
     assert!(
         !stderr.contains("projected from"),
         "the note claims nothing about a corpus the reader may not have: {stderr}"
+    );
+}
+
+#[test]
+fn check_answers_the_same_for_a_file_and_for_the_directory_holding_it() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/d.md", &broken_reference_doc("no-target"));
+
+    let by_dir = run(&["check"], &tmp.path().join("docs"));
+    let by_file = run(&["check"], &tmp.path().join("docs/d.md"));
+
+    let dir_err = String::from_utf8_lossy(&by_dir.stderr).into_owned();
+    let file_err = String::from_utf8_lossy(&by_file.stderr).into_owned();
+    assert_eq!(
+        by_dir.status.code(),
+        by_file.status.code(),
+        "the same document answered differently by path shape.\n dir: {dir_err}\nfile: {file_err}"
+    );
+    assert!(
+        !by_dir.status.success(),
+        "a directory walk let a broken reference through: {dir_err}"
+    );
+    assert!(
+        dir_err.contains("references undefined chunk"),
+        "the directory form names the broken reference: {dir_err}"
+    );
+}
+
+#[test]
+fn check_says_it_checked_nothing_rather_than_asserting_a_pass() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/prose.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/prose\n  type: design\n  \
+         status: draft\n---\n# Prose\n\nNo chunks here.\n",
+    );
+
+    let out = run(&["check"], &tmp.path().join("docs"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "check failed: {stderr}");
+    assert!(
+        stderr.contains("no chunk references to check"),
+        "a run that read no references says so: {stderr}"
+    );
+    assert!(
+        !stderr.contains("all references OK"),
+        "a gate must not report a pass it never ran: {stderr}"
+    );
+}
+
+#[test]
+fn check_fails_two_documents_that_declare_one_id() {
+    let tmp = TempDir::new().unwrap();
+    let doc = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/collision\n  \
+               type: design\n  status: draft\n---\n# Copy\n";
+    write(tmp.path(), "docs/a.md", doc);
+    write(tmp.path(), "docs/b.md", doc);
+
+    let out = run(&["check"], &tmp.path().join("docs"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the graph's primary key was held twice and the check passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("duplicate document id `x0k:design/collision`"),
+        "the message names the colliding id: {stderr}"
+    );
+    assert!(
+        stderr.contains("a.md") && stderr.contains("b.md"),
+        "the message names both documents in play: {stderr}"
+    );
+}
+
+#[test]
+fn check_does_not_see_one_document_twice_through_overlapping_paths() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/inner/d.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/once\n  type: design\n  \
+         status: draft\n---\n# Once\n",
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("check")
+        .arg(tmp.path().join("docs"))
+        .arg(tmp.path().join("docs/inner"))
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a document reached twice collided with itself: {stderr}"
+    );
+}
+
+#[test]
+fn tangle_refuses_a_document_that_names_nowhere_to_write() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/d.md", &broken_reference_doc("nowhere"));
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg(tmp.path().join("docs/d.md"))
+        .arg("--workspace")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a document that wrote nothing reported a successful zero: {stderr}"
+    );
+    assert!(
+        stderr.contains("nothing to write") && stderr.contains("declares 1 chunk(s)"),
+        "the run says what the document has and what it lacks: {stderr}"
+    );
+}
+
+#[test]
+fn tangle_writes_a_document_that_names_a_target() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/d.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/writes\n  \
+         type: implementation\n  status: draft\n  tangle:\n    crate: .\n    \
+         root: src/lib.rs\n---\n# Doc\n\n```rust {#root}\npub fn f() {}\n```\n",
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg(tmp.path().join("docs/d.md"))
+        .arg("--workspace")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "tangle failed: {stderr}");
+    assert!(
+        stderr.contains("tangled 1 file(s) from 1 document(s)"),
+        "got {stderr}"
     );
 }
 `````
@@ -1779,6 +2171,12 @@ tree-sitter-rust = "0.23"
 # the fence-tag vocabulary for the toolchain but hands out classified tokens,
 # not grammars, so the TypeScript grammar is linked here beside the Rust one.
 tree-sitter-typescript = "0.23"
+# Python and Julia grammars for `from=` symbol extraction. Both are ABI-14
+# grammars (`LANGUAGE_VERSION 14`), the ABI `tree-sitter = "0.24"` speaks;
+# they move in lockstep with it and with `x0k-syntax`, which pins the same
+# generation for highlighting.
+tree-sitter-python = "0.23"
+tree-sitter-julia = "0.23"
 
 serde = { workspace = true }
 serde_json = { workspace = true }

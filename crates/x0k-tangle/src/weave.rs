@@ -1537,7 +1537,12 @@ fn escape_html(s: &str) -> String {
 /// On a LaTeX error (an unsupported macro, a typo) we never drop the math:
 /// fall back to the raw TeX in a `<code class="math-error">` carrying the
 /// parser message in `title`, so the author sees what failed instead of a
-/// blank.
+/// blank. The fallback always shows what the AUTHOR wrote, never the
+/// normalised form.
+///
+/// `normalize_math_tex` and `fuse_sub_sup` bracket the parser call because it
+/// mis-associates a base that carries both `_` and `^`; see "Scripts bind to
+/// an atom".
 fn render_math(tex: &str, display: bool) -> String {
     let style = if display {
         latex2mathml::DisplayStyle::Block
@@ -1551,12 +1556,12 @@ fn render_math(tex: &str, display: bool) -> String {
             escape_html(tex),
         )
     };
-    match latex2mathml::latex_to_mathml(tex, style) {
+    match latex2mathml::latex_to_mathml(&normalize_math_tex(tex), style) {
         // latex2mathml returns `Err` only for hard syntax errors; for an
         // UNKNOWN macro it returns `Ok` with an embedded `[PARSE ERROR: …]`
         // `<mtext>` marker. Treat that as a failure too so the author sees the
         // raw TeX rather than a broken-looking equation.
-        Ok(mathml) if !mathml.contains("[PARSE ERROR") => mathml,
+        Ok(mathml) if !mathml.contains("[PARSE ERROR") => fuse_sub_sup(&mathml),
         Ok(_) => fallback("unsupported LaTeX"),
         Err(err) => fallback(&err.to_string()),
     }
@@ -1635,6 +1640,434 @@ fn split_body(content: &str) -> (Option<&str>, &str) {
     } else {
         (None, content)
     }
+}
+
+/// Spellings we accept that `latex2mathml` doesn't, mapped to a synonym it
+/// knows. LaTeX itself treats each pair as the same macro.
+fn macro_alias(name: &str) -> &str {
+    match name {
+        "le" => "leq",
+        "ge" => "geq",
+        "dots" => "ldots",
+        "mathcal" => "mathscr",
+        other => other,
+    }
+}
+/// Macros whose own parser arm binds `_`/`^` correctly (`\sum` → munderover,
+/// `\int` → msubsup, `\overbrace{x}^{a}` → the label over the brace).
+/// Re-grouping their scripts would break them.
+const SCRIPT_BINDING_MACROS: &[&str] = &[
+    "sum", "prod", "coprod", "bigcap", "bigcup", "bigsqcup", "bigvee", "bigwedge", "bigodot",
+    "bitotimes", "bigoplus", "biguplus", "int", "iint", "iiint", "oint", "lim", "liminf",
+    "limsup", "min", "max", "inf", "sup", "overbrace", "underbrace", "overparen", "underparen",
+    "overbracket", "underbracket",
+];
+/// How many `{…}` arguments a macro swallows, so the atom `\frac{a}{b}` ends
+/// after `{b}` and not after `\frac`.
+fn macro_arity(name: &str) -> usize {
+    match name {
+        "frac" | "binom" | "tbinom" | "dbinom" | "overset" | "underset" => 2,
+        "sqrt" | "text" | "operatorname" | "slashed" | "begin" | "end" | "mathrm" | "mathit"
+        | "mathbf" | "mathbb" | "mathfrak" | "mathscr" | "mathsf" | "texttt" | "textit"
+        | "textbf" | "bm" | "symbf" | "boldsymbol" | "dot" | "ddot" | "bar" | "hat" | "check"
+        | "breve" | "acute" | "grave" | "tilde" | "vec" | "overline" | "underline" | "widehat"
+        | "widetilde" | "overrightarrow" | "overleftarrow" | "overbrace" | "underbrace"
+        | "overparen" | "underparen" | "overbracket" | "underbracket" => 1,
+        _ => 0,
+    }
+}
+
+/// Arguments that are prose or an environment name, not math: pass them
+/// through untouched.
+fn verbatim_arg(name: &str) -> bool {
+    matches!(name, "text" | "operatorname" | "begin" | "end")
+}
+
+fn char_len(s: &str, i: usize) -> usize {
+    s[i..].chars().next().map_or(1, char::len_utf8)
+}
+
+/// Index just past the `}` closing the group at `start`, or `None` if the
+/// group never closes.
+fn group_end(tex: &str, start: usize) -> Option<usize> {
+    let b = tex.as_bytes();
+    if b.get(start) != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => {
+                // An escaped brace is a character, not a delimiter.
+                i += 1;
+                if i < b.len() {
+                    i += char_len(tex, i);
+                }
+                continue;
+            }
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += char_len(tex, i);
+    }
+    None
+}
+fn command_end(tex: &str, start: usize) -> usize {
+    let rest = &tex[start + 1..];
+    let letters = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_alphabetic()).len();
+    if letters > 0 {
+        start + 1 + letters
+    } else {
+        start + 1 + rest.chars().next().map_or(0, char::len_utf8)
+    }
+}
+
+fn delim_end(tex: &str, mut i: usize) -> usize {
+    while tex[i..].starts_with(' ') {
+        i += 1;
+    }
+    if tex.as_bytes().get(i) == Some(&b'\\') {
+        command_end(tex, i)
+    } else {
+        i + char_len(tex, i)
+    }
+}
+/// For a `\left` whose name ends at `after_left`: (end of the open delimiter,
+/// start of the matching `\right`, end of the whole fence).
+fn fence_parts(tex: &str, after_left: usize) -> Option<(usize, usize, usize)> {
+    let open_end = delim_end(tex, after_left);
+    let mut depth = 1usize;
+    let mut i = open_end;
+    while i < tex.len() {
+        if tex.as_bytes()[i] == b'\\' {
+            let ce = command_end(tex, i);
+            match &tex[i + 1..ce] {
+                "left" => {
+                    depth += 1;
+                    i = delim_end(tex, ce);
+                }
+                "right" => {
+                    depth -= 1;
+                    let de = delim_end(tex, ce);
+                    if depth == 0 {
+                        return Some((open_end, i, de));
+                    }
+                    i = de;
+                }
+                _ => i = ce,
+            }
+            continue;
+        }
+        i += char_len(tex, i);
+    }
+    None
+}
+
+/// For a `\begin` whose name ends at `after_begin`: (end of `{env}`, start of
+/// the matching `\end`, end of the whole environment).
+fn environment_parts(tex: &str, after_begin: usize) -> Option<(usize, usize, usize)> {
+    let head_end = group_end(tex, after_begin)?;
+    let mut depth = 1usize;
+    let mut i = head_end;
+    while i < tex.len() {
+        if tex.as_bytes()[i] == b'\\' {
+            let ce = command_end(tex, i);
+            match &tex[i + 1..ce] {
+                "begin" => {
+                    depth += 1;
+                    i = group_end(tex, ce)?;
+                }
+                "end" => {
+                    depth -= 1;
+                    let de = group_end(tex, ce)?;
+                    if depth == 0 {
+                        return Some((head_end, i, de));
+                    }
+                    i = de;
+                }
+                _ => i = ce,
+            }
+            continue;
+        }
+        i += char_len(tex, i);
+    }
+    None
+}
+/// Append the normalised atom at `i` to `out`; return the index just past it
+/// and its macro name, if it is one.
+fn take_atom<'a>(tex: &'a str, i: usize, out: &mut String) -> (usize, Option<&'a str>) {
+    match tex.as_bytes()[i] {
+        b'{' => {
+            let Some(end) = group_end(tex, i) else {
+                out.push_str(&tex[i..]);
+                return (tex.len(), None);
+            };
+            out.push('{');
+            out.push_str(&normalize_math_tex(&tex[i + 1..end - 1]));
+            out.push('}');
+            (end, None)
+        }
+        b'\\' => take_command(tex, i, out),
+        b'0'..=b'9' => {
+            let end = number_end(tex, i);
+            out.push_str(&tex[i..end]);
+            (end, None)
+        }
+        _ => {
+            let end = i + char_len(tex, i);
+            out.push_str(&tex[i..end]);
+            (end, None)
+        }
+    }
+}
+
+/// A number is digits with at most one decimal point — the lexer's rule.
+fn number_end(tex: &str, i: usize) -> usize {
+    let mut end = i;
+    let mut seen_point = false;
+    while let Some(c) = tex.as_bytes().get(end) {
+        match c {
+            b'0'..=b'9' => end += 1,
+            b'.' if !seen_point => {
+                seen_point = true;
+                end += 1;
+            }
+            _ => break,
+        }
+    }
+    end
+}
+fn take_command<'a>(tex: &'a str, i: usize, out: &mut String) -> (usize, Option<&'a str>) {
+    let name_end = command_end(tex, i);
+    let name = &tex[i + 1..name_end];
+    // A fence or an environment is one atom: head, normalised body, tail.
+    let bracketed = match name {
+        "left" => fence_parts(tex, name_end),
+        "begin" => environment_parts(tex, name_end),
+        _ => None,
+    };
+    if let Some((head_end, tail_start, end)) = bracketed {
+        out.push_str(&tex[i..head_end]);
+        out.push_str(&normalize_math_tex(&tex[head_end..tail_start]));
+        out.push_str(&tex[tail_start..end]);
+        return (end, Some(name));
+    }
+    out.push('\\');
+    out.push_str(macro_alias(name));
+    let mut j = name_end;
+    if name == "sqrt" && tex[j..].starts_with('[') {
+        if let Some(close) = tex[j..].find(']') {
+            out.push_str(&tex[j..j + close + 1]);
+            j += close + 1;
+        }
+    }
+    for _ in 0..macro_arity(name) {
+        let Some(end) = group_end(tex, j) else { break };
+        if verbatim_arg(name) {
+            out.push_str(&tex[j..end]);
+        } else {
+            out.push('{');
+            out.push_str(&normalize_math_tex(&tex[j + 1..end - 1]));
+            out.push('}');
+        }
+        j = end;
+    }
+    (j, Some(name))
+}
+fn take_script_arg(tex: &str, mut i: usize) -> (String, usize) {
+    while tex[i..].starts_with(' ') {
+        i += 1;
+    }
+    if let (Some(&b'{'), Some(end)) = (tex.as_bytes().get(i), group_end(tex, i)) {
+        (normalize_math_tex(&tex[i + 1..end - 1]), end)
+    } else if i >= tex.len() {
+        (String::new(), i)
+    } else if tex.as_bytes()[i].is_ascii_digit() {
+        // One digit, not the run: `_1` takes a token, not a number.
+        (tex[i..i + 1].to_string(), i + 1)
+    } else {
+        let mut arg = String::new();
+        let (end, _) = take_atom(tex, i, &mut arg);
+        (arg, end)
+    }
+}
+
+/// Rewrite TeX so `latex2mathml` reads scripts the way TeX does: each `_`/`^`
+/// bound to the atom on its left, subscript written first, macro aliases
+/// resolved. Everything else passes through unchanged.
+fn normalize_math_tex(tex: &str) -> String {
+    let mut out = String::new();
+    // (offset in `out` where the current atom starts, does it bind its own scripts)
+    let mut atom: Option<(usize, bool)> = None;
+    let mut i = 0;
+    while i < tex.len() {
+        if matches!(tex.as_bytes()[i], b'_' | b'^' | b'\'') {
+            if let Some((start, binding)) = atom {
+                i = rewrite_scripts(tex, i, start, binding, &mut out);
+                atom = Some((start, false));
+                continue;
+            }
+        }
+        let start = out.len();
+        let (next, name) = take_atom(tex, i, &mut out);
+        atom = Some((start, name.is_some_and(|n| SCRIPT_BINDING_MACROS.contains(&n))));
+        i = next;
+    }
+    out
+}
+/// Collect the scripts starting at `i` and re-emit them onto the atom that
+/// starts at `start` in `out`. Returns the index just past the scripts.
+fn rewrite_scripts(
+    tex: &str,
+    i: usize,
+    start: usize,
+    binding: bool,
+    out: &mut String,
+) -> usize {
+    let (mut sub, mut sup, mut primes) = (None, None, String::new());
+    let mut j = i;
+    loop {
+        match tex.as_bytes().get(j) {
+            Some(b'_') if sub.is_none() => {
+                let (arg, next) = take_script_arg(tex, j + 1);
+                sub = Some(arg);
+                j = next;
+            }
+            Some(b'^') if sup.is_none() && primes.is_empty() => {
+                let (arg, next) = take_script_arg(tex, j + 1);
+                sup = Some(arg);
+                j = next;
+            }
+            Some(b'\'') if sup.is_none() => {
+                primes.push('\'');
+                j += 1;
+            }
+            _ => break,
+        }
+    }
+
+    let both = sub.is_some() && (sup.is_some() || !primes.is_empty());
+    if !binding {
+        out.insert_str(start, if both { "{{" } else { "{" });
+        out.push('}');
+    }
+    if let Some(sub) = &sub {
+        out.push_str("_{");
+        out.push_str(sub);
+        out.push('}');
+    }
+    if both && !binding {
+        out.push('}');
+    }
+    if let Some(sup) = &sup {
+        out.push_str("^{");
+        out.push_str(sup);
+        out.push('}');
+    }
+    out.push_str(&primes);
+    j
+}
+
+/// If an element opens at `start`, return (name, content start, content end,
+/// element end). A void element reports an empty content range.
+fn element_at(s: &str, start: usize) -> Option<(&str, usize, usize, usize)> {
+    if s.as_bytes().get(start) != Some(&b'<') {
+        return None;
+    }
+    let after = start + 1;
+    if !s[after..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let name_len = s[after..]
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(s.len() - after);
+    let name = &s[after..after + name_len];
+    let tag_end = start + s[start..].find('>')? + 1;
+    if s[..tag_end].ends_with("/>") {
+        return Some((name, tag_end, tag_end, tag_end));
+    }
+    let (open, close) = (format!("<{name}"), format!("</{name}>"));
+    let mut depth = 1usize;
+    let mut i = tag_end;
+    while i < s.len() {
+        if s[i..].starts_with(&close) {
+            depth -= 1;
+            if depth == 0 {
+                return Some((name, tag_end, i, i + close.len()));
+            }
+            i += close.len();
+        } else if s[i..].starts_with(&open) && s[i + open.len()..].starts_with([' ', '>', '/']) {
+            depth += 1;
+            i += open.len();
+        } else {
+            i += char_len(s, i);
+        }
+    }
+    None
+}
+
+/// Spans of the top-level child elements of `s`, or `None` if any text sits
+/// between them.
+fn child_elements(s: &str) -> Option<Vec<(usize, usize)>> {
+    let mut kids = Vec::new();
+    let mut i = 0;
+    while i < s.len() {
+        let (_, _, _, end) = element_at(s, i)?;
+        kids.push((i, end));
+        i = end;
+    }
+    Some(kids)
+}
+/// Fold `<msup><msub>b s</msub> p</msup>` into `<msubsup>b s p</msubsup>`.
+fn fuse_sub_sup(mathml: &str) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < mathml.len() {
+        let Some((name, open_end, close_start, end)) = element_at(mathml, i) else {
+            out.push_str(&mathml[i..i + char_len(mathml, i)]);
+            i += char_len(mathml, i);
+            continue;
+        };
+        let inner = &mathml[open_end..close_start];
+        match (name == "msup").then(|| fuse_msup(inner)).flatten() {
+            Some(fused) => out.push_str(&fused),
+            None => {
+                out.push_str(&mathml[i..open_end]);
+                out.push_str(&fuse_sub_sup(inner));
+                out.push_str(&mathml[close_start..end]);
+            }
+        }
+        i = end;
+    }
+    out
+}
+
+fn fuse_msup(inner: &str) -> Option<String> {
+    let kids = child_elements(inner)?;
+    let [(base_start, base_end), (sup_start, sup_end)] = kids[..] else {
+        return None;
+    };
+    let (name, content_start, content_end, elem_end) = element_at(inner, base_start)?;
+    if name != "msub" || elem_end != base_end {
+        return None;
+    }
+    let msub_inner = &inner[content_start..content_end];
+    let [(b0, b1), (s0, s1)] = child_elements(msub_inner)?[..] else {
+        return None;
+    };
+    Some(format!(
+        "<msubsup>{}{}{}</msubsup>",
+        fuse_sub_sup(&msub_inner[b0..b1]),
+        fuse_sub_sup(&msub_inner[s0..s1]),
+        fuse_sub_sup(&inner[sup_start..sup_end])
+    ))
 }
 
 const STYLESHEET: &str = r#"
@@ -2276,6 +2709,181 @@ let c = 3;
         // A valid fragment renders to MathML inline.
         let ok = render_math("x^2", false);
         assert!(ok.contains("<math") && ok.contains("display=\"inline\""), "got: {ok}");
+    }
+
+    /// The MathML body of an inline fragment, with the `<math>` wrapper peeled
+    /// off so a test can pin the element structure exactly.
+    fn mathml_body(tex: &str) -> String {
+        let out = render_math(tex, false);
+        out.split_once("display=\"inline\">")
+            .and_then(|(_, rest)| rest.strip_suffix("</math>"))
+            .unwrap_or_else(|| panic!("not MathML: {out}"))
+            .to_string()
+    }
+
+    #[test]
+    fn a_base_with_both_scripts_is_one_msubsup() {
+        // The recurrence coefficient: b sub k-1, squared. Not b sub (k-1)².
+        let expected = "<msubsup><mi>b</mi><mrow><mi>k</mi><mo>-</mo><mn>1</mn></mrow><mn>2</mn></msubsup>";
+        assert_eq!(mathml_body("b_{k-1}^2"), expected);
+        assert_eq!(mathml_body("b_{k-1}^{2}"), expected);
+        // Explicit re-bracing says the same thing and renders the same way.
+        assert_eq!(mathml_body("{b_{k-1}}^2"), expected);
+
+        // The commonest construct in numerical analysis, in both orders.
+        let x_i_2 = "<msubsup><mi>x</mi><mi>i</mi><mn>2</mn></msubsup>";
+        assert_eq!(mathml_body("x_i^2"), x_i_2);
+        assert_eq!(mathml_body("x^2_i"), x_i_2);
+
+        // An accent is part of the base, so the scripts hang off the accented
+        // atom rather than the accent drifting over the subscript.
+        assert_eq!(
+            mathml_body("\\hat{x}_i"),
+            "<msub><mover><mi>x</mi><mo accent=\"true\">^</mo></mover><mi>i</mi></msub>"
+        );
+        assert_eq!(
+            mathml_body("\\hat{x}_i^2"),
+            "<msubsup><mover><mi>x</mi><mo accent=\"true\">^</mo></mover><mi>i</mi><mn>2</mn></msubsup>"
+        );
+
+        // So is a `\left…\right` fence.
+        assert_eq!(
+            mathml_body("\\left(a+b\\right)_i^2"),
+            "<msubsup><mrow><mo stretchy=\"true\" form=\"prefix\">(</mo>\
+             <mrow><mi>a</mi><mo>+</mo><mi>b</mi></mrow>\
+             <mo stretchy=\"true\" form=\"postfix\">)</mo></mrow><mi>i</mi><mn>2</mn></msubsup>"
+        );
+
+        // And so is an environment: the script lands on the matrix, not on
+        // the `\end` that closes it.
+        assert_eq!(
+            mathml_body("\\begin{pmatrix}a\\end{pmatrix}_i^2"),
+            "<msubsup><mrow><mo stretchy=\"true\" form=\"prefix\">(</mo>\
+             <mtable><mtr><mtd><mi>a</mi></mtd></mtr></mtable>\
+             <mo stretchy=\"true\" form=\"postfix\">)</mo></mrow><mi>i</mi><mn>2</mn></msubsup>"
+        );
+    }
+
+    #[test]
+    fn braces_keep_the_nesting_the_author_wrote() {
+        // These are the cases the fuse must NOT touch: each says something
+        // different from `x_i^2`, and the braces are the only evidence.
+        assert_eq!(
+            mathml_body("x_{i^2}"),
+            "<msub><mi>x</mi><msup><mi>i</mi><mn>2</mn></msup></msub>"
+        );
+        assert_eq!(
+            mathml_body("{x^2}_i"),
+            "<msub><msup><mi>x</mi><mn>2</mn></msup><mi>i</mi></msub>"
+        );
+        assert_eq!(
+            mathml_body("x^{i_2}"),
+            "<msup><mi>x</mi><msub><mi>i</mi><mn>2</mn></msub></msup>"
+        );
+        assert_eq!(
+            mathml_body("x_{i_j}"),
+            "<msub><mi>x</mi><msub><mi>i</mi><mi>j</mi></msub></msub>"
+        );
+    }
+
+    #[test]
+    fn large_operators_keep_their_own_script_binding() {
+        // A sum's limits go under and over the sigma, an integral's beside it.
+        assert_eq!(
+            mathml_body("\\sum_{i=1}^n"),
+            "<munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>"
+        );
+        assert_eq!(
+            mathml_body("\\int_a^b"),
+            "<msubsup><mo>∫</mo><mi>a</mi><mi>b</mi></msubsup>"
+        );
+        assert_eq!(
+            mathml_body("\\lim_{n\\to\\infty}"),
+            "<munder><mi>lim</mi><mrow><mi>n</mi><mo>→</mo><mi mathvariant=\"normal\">∞</mi></mrow></munder>"
+        );
+    }
+
+    #[test]
+    fn primes_and_unbraced_scripts_follow_tex() {
+        // A prime is a superscript, so `f'_i` and `a_i'` are both one msubsup.
+        assert_eq!(
+            mathml_body("f'_i"),
+            "<msubsup><mi>f</mi><mi>i</mi><mo>′</mo></msubsup>"
+        );
+        assert_eq!(
+            mathml_body("a_i'"),
+            "<msubsup><mi>a</mi><mi>i</mi><mo>′</mo></msubsup>"
+        );
+        // An unbraced script takes ONE token: `x_10` is x₁ then a 0.
+        assert_eq!(
+            mathml_body("x_10"),
+            "<msub><mi>x</mi><mn>1</mn></msub><mn>0</mn>"
+        );
+        assert_eq!(mathml_body("x_{10}"), "<msub><mi>x</mi><mn>10</mn></msub>");
+        // A number is still one atom when it is the BASE.
+        assert_eq!(
+            mathml_body("10^{-3}"),
+            "<msup><mn>10</mn><mrow><mo>-</mo><mn>3</mn></mrow></msup>"
+        );
+    }
+
+    #[test]
+    fn accepted_spellings_render_and_the_rest_still_fail_loudly() {
+        // "exact for degree ≤ 2n-1" is the definition of a Gauss rule.
+        assert_eq!(mathml_body("\\le"), "<mo>≤</mo>");
+        assert_eq!(mathml_body("\\ge"), "<mo>≥</mo>");
+        assert_eq!(mathml_body("\\leq"), "<mo>≤</mo>");
+        assert_eq!(mathml_body("\\geq"), "<mo>≥</mo>");
+        assert_eq!(
+            mathml_body("\\mathcal{O}"),
+            "<mi mathvariant=\"script\">O</mi>"
+        );
+        assert_eq!(mathml_body("\\dots"), "<mo>…</mo>");
+
+        // The alias table adds spellings; it never converts a failure into a
+        // silent success. An unknown macro still lands on `.math-error`.
+        let out = render_math("\\lessthanorequalto", false);
+        assert!(out.contains("class=\"math-error\""), "got: {out}");
+        // A prefix of a known alias is not the alias.
+        let out = render_math("\\lex", false);
+        assert!(out.contains("class=\"math-error\""), "got: {out}");
+    }
+
+    #[test]
+    fn malformed_tex_never_panics_and_never_renders_silently() {
+        // The normaliser runs before the parser, so it meets every typo the
+        // parser used to meet first. None of these may panic, and none may
+        // come out as quiet MathML pretending to be the author's meaning.
+        for tex in [
+            "_", "^", "'", "x_", "x^", "{", "}", "{x", "x}", "\\", "\\left(",
+            "\\right)", "\\begin{pmatrix}a", "\\frac{1}{", "\\hat", "\\sqrt[",
+            "α_β^γ", "x_{{{{{a}}}}}^2", "\\left(\\left(a\\right)_i^2",
+        ] {
+            let out = render_math(tex, false);
+            assert!(
+                out.starts_with("<math") || out.contains("class=\"math-error\""),
+                "{tex:?} produced neither MathML nor a visible error: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_recurrence_survives_the_whole_weave() {
+        // End to end through the markdown path, not just render_math.
+        let content = "# Quadrature\n\n$p_{k+1} = (x-a_k)p_k - b_{k-1}^2 p_{k-1}$\n";
+        let doc = parse_document(content).unwrap();
+        let body = weave_html(content, &doc).unwrap().html;
+        let body = body.split("<article").nth(1).unwrap().to_string();
+        assert!(
+            body.contains(
+                "<msubsup><mi>b</mi><mrow><mi>k</mi><mo>-</mo><mn>1</mn></mrow><mn>2</mn></msubsup>"
+            ),
+            "b_{{k-1}}^2 must be an msubsup: {body}"
+        );
+        assert!(
+            !body.contains("<msub><mi>b</mi><msup>"),
+            "the old mis-nesting must be gone: {body}"
+        );
     }
 
     #[test]

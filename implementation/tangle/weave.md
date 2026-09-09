@@ -1725,7 +1725,12 @@ fn escape_html(s: &str) -> String {
 /// On a LaTeX error (an unsupported macro, a typo) we never drop the math:
 /// fall back to the raw TeX in a `<code class="math-error">` carrying the
 /// parser message in `title`, so the author sees what failed instead of a
-/// blank.
+/// blank. The fallback always shows what the AUTHOR wrote, never the
+/// normalised form.
+///
+/// `normalize_math_tex` and `fuse_sub_sup` bracket the parser call because it
+/// mis-associates a base that carries both `_` and `^`; see "Scripts bind to
+/// an atom".
 fn render_math(tex: &str, display: bool) -> String {
     let style = if display {
         latex2mathml::DisplayStyle::Block
@@ -1739,12 +1744,12 @@ fn render_math(tex: &str, display: bool) -> String {
             escape_html(tex),
         )
     };
-    match latex2mathml::latex_to_mathml(tex, style) {
+    match latex2mathml::latex_to_mathml(&normalize_math_tex(tex), style) {
         // latex2mathml returns `Err` only for hard syntax errors; for an
         // UNKNOWN macro it returns `Ok` with an embedded `[PARSE ERROR: …]`
         // `<mtext>` marker. Treat that as a failure too so the author sees the
         // raw TeX rather than a broken-looking equation.
-        Ok(mathml) if !mathml.contains("[PARSE ERROR") => mathml,
+        Ok(mathml) if !mathml.contains("[PARSE ERROR") => fuse_sub_sup(&mathml),
         Ok(_) => fallback("unsupported LaTeX"),
         Err(err) => fallback(&err.to_string()),
     }
@@ -1823,6 +1828,610 @@ fn split_body(content: &str) -> (Option<&str>, &str) {
     } else {
         (None, content)
     }
+}
+```
+
+## Scripts bind to an atom
+
+`render_math` hands the TeX to `latex2mathml` and, for most fragments,
+that is the whole story. For one construct it isn't, and the failure
+mode is the one a renderer is least forgiven for: the page comes out
+confident and wrong.
+
+Take the coefficient in a three-term recurrence, $b_{k-1}^2$ — *b* sub
+*k−1*, squared. The parser reads the base `b`, sees `_`, and then parses
+the **rest of the expression** as the subscript, so the `^2` lands on
+`k-1` and the page publishes $b_{(k-1)^2}$ under the author's name.
+`$x_i^2$` goes the same way, and nothing warns anyone: unsupported
+macros fall out visibly through `.math-error`, but a mis-associated
+script renders as clean MathML.
+
+What TeX actually does is bind `_` and `^` to the same *atom* — the
+single token, brace group, macro-with-arguments or `\left…\right` fence
+immediately to their left — in either order, and an atom carrying both
+is one `<msubsup>`. Two moves get us there. `normalize_math_tex`
+rewrites the TeX so the atom is explicitly grouped and the subscript is
+written first (`b_{k-1}^2` → `{{b}_{k-1}}^{2}`), which the parser reads
+correctly; `fuse_sub_sup` then folds the resulting
+`<msup><msub>…</msub>…</msup>` back into the `<msubsup>` TeX means.
+
+Neither half works alone. Repairing the MathML by itself is impossible
+because by then `x_i^2` and `x_{i^2}` are the *same tree* — the braces
+that distinguish them exist only in the TeX, and a rule that collapsed
+one would silently corrupt the other. Stopping at the re-grouping is
+possible but leaves a staircase where TeX stacks. So the fusion runs in
+exactly one direction — an `<msup>` whose base is an `<msub>` — and
+`{x^2}_i`, which is the other nesting and means something else, is left
+alone.
+
+Normalising is also the natural place for spellings we accept and the
+parser doesn't. `\le` and `\ge` are the ones that matter: "exact for
+degree $\le 2n-1$" is the definition of a Gauss rule, and there is no
+writing the chapter without it. Each alias below is a synonym *in
+LaTeX*, so the rewrite is a rename and nothing more — a macro with no
+synonym still reaches the `.math-error` fallback, which is the property
+this renderer is actually trusted for.
+
+<a name="chunk-math-macro-tables"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-macro-tables`</sub>
+
+```rust {#math-macro-tables}
+/// Spellings we accept that `latex2mathml` doesn't, mapped to a synonym it
+/// knows. LaTeX itself treats each pair as the same macro.
+fn macro_alias(name: &str) -> &str {
+    match name {
+        "le" => "leq",
+        "ge" => "geq",
+        "dots" => "ldots",
+        "mathcal" => "mathscr",
+        other => other,
+    }
+}
+```
+
+A few macros bind their own scripts, and correctly: `\sum_{i=1}^n` is a
+`<munderover>` and `\int_a^b` is already an `<msubsup>`, because the
+parser gives large operators their own arms. Re-grouping those would
+turn a limit that sits under the sigma into one perched beside it, so
+they are excluded by name rather than by luck.
+
+<a name="chunk-math-macro-tables-2"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-macro-tables` · continues</sub>
+
+```rust {#math-macro-tables}
+/// Macros whose own parser arm binds `_`/`^` correctly (`\sum` → munderover,
+/// `\int` → msubsup, `\overbrace{x}^{a}` → the label over the brace).
+/// Re-grouping their scripts would break them.
+const SCRIPT_BINDING_MACROS: &[&str] = &[
+    "sum", "prod", "coprod", "bigcap", "bigcup", "bigsqcup", "bigvee", "bigwedge", "bigodot",
+    "bitotimes", "bigoplus", "biguplus", "int", "iint", "iiint", "oint", "lim", "liminf",
+    "limsup", "min", "max", "inf", "sup", "overbrace", "underbrace", "overparen", "underparen",
+    "overbracket", "underbracket",
+];
+```
+
+To find an atom's left edge we have to know how far a macro's arguments
+reach: `\hat{x}_i` subscripts the accented *x*, not a bare `x` under a
+hat that has drifted over both. Arity is a small closed table because
+the parser's own vocabulary is one.
+
+<a name="chunk-math-macro-tables-3"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-macro-tables` · continues</sub>
+
+```rust {#math-macro-tables}
+/// How many `{…}` arguments a macro swallows, so the atom `\frac{a}{b}` ends
+/// after `{b}` and not after `\frac`.
+fn macro_arity(name: &str) -> usize {
+    match name {
+        "frac" | "binom" | "tbinom" | "dbinom" | "overset" | "underset" => 2,
+        "sqrt" | "text" | "operatorname" | "slashed" | "begin" | "end" | "mathrm" | "mathit"
+        | "mathbf" | "mathbb" | "mathfrak" | "mathscr" | "mathsf" | "texttt" | "textit"
+        | "textbf" | "bm" | "symbf" | "boldsymbol" | "dot" | "ddot" | "bar" | "hat" | "check"
+        | "breve" | "acute" | "grave" | "tilde" | "vec" | "overline" | "underline" | "widehat"
+        | "widetilde" | "overrightarrow" | "overleftarrow" | "overbrace" | "underbrace"
+        | "overparen" | "underparen" | "overbracket" | "underbracket" => 1,
+        _ => 0,
+    }
+}
+
+/// Arguments that are prose or an environment name, not math: pass them
+/// through untouched.
+fn verbatim_arg(name: &str) -> bool {
+    matches!(name, "text" | "operatorname" | "begin" | "end")
+}
+```
+
+### Walking the TeX
+
+Three scanners find the extents the rewrite needs. `group_end` returns
+`None` for an unbalanced group rather than guessing, so a truncated
+`\frac{1}{` is copied through verbatim and lands on the visible
+`.math-error` path instead of being silently repaired into something
+else.
+
+<a name="chunk-math-tex-scanning"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-tex-scanning`</sub>
+
+```rust {#math-tex-scanning}
+fn char_len(s: &str, i: usize) -> usize {
+    s[i..].chars().next().map_or(1, char::len_utf8)
+}
+
+/// Index just past the `}` closing the group at `start`, or `None` if the
+/// group never closes.
+fn group_end(tex: &str, start: usize) -> Option<usize> {
+    let b = tex.as_bytes();
+    if b.get(start) != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => {
+                // An escaped brace is a character, not a delimiter.
+                i += 1;
+                if i < b.len() {
+                    i += char_len(tex, i);
+                }
+                continue;
+            }
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += char_len(tex, i);
+    }
+    None
+}
+```
+
+A control sequence is a backslash plus a run of ASCII letters, or a
+backslash plus exactly one other character (`\\`, `\,`, `\{`). A
+delimiter after `\left` / `\right` is one character or one control
+sequence, possibly after spaces.
+
+<a name="chunk-math-tex-scanning-2"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-tex-scanning` · continues</sub>
+
+```rust {#math-tex-scanning}
+fn command_end(tex: &str, start: usize) -> usize {
+    let rest = &tex[start + 1..];
+    let letters = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_alphabetic()).len();
+    if letters > 0 {
+        start + 1 + letters
+    } else {
+        start + 1 + rest.chars().next().map_or(0, char::len_utf8)
+    }
+}
+
+fn delim_end(tex: &str, mut i: usize) -> usize {
+    while tex[i..].starts_with(' ') {
+        i += 1;
+    }
+    if tex.as_bytes().get(i) == Some(&b'\\') {
+        command_end(tex, i)
+    } else {
+        i + char_len(tex, i)
+    }
+}
+```
+
+Two atoms need their extent found by matching rather than counting: a
+`\left(` pairs with the `\right` that closes it, not the first one seen,
+and a `\begin{pmatrix}` with its own `\end`. Both are atoms a script can
+land on — `\left(a+b\right)_i^2`, a squared matrix — so both have to be
+read whole or the script binds to the closing delimiter instead.
+
+<a name="chunk-math-tex-scanning-3"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-tex-scanning` · continues</sub>
+
+```rust {#math-tex-scanning}
+/// For a `\left` whose name ends at `after_left`: (end of the open delimiter,
+/// start of the matching `\right`, end of the whole fence).
+fn fence_parts(tex: &str, after_left: usize) -> Option<(usize, usize, usize)> {
+    let open_end = delim_end(tex, after_left);
+    let mut depth = 1usize;
+    let mut i = open_end;
+    while i < tex.len() {
+        if tex.as_bytes()[i] == b'\\' {
+            let ce = command_end(tex, i);
+            match &tex[i + 1..ce] {
+                "left" => {
+                    depth += 1;
+                    i = delim_end(tex, ce);
+                }
+                "right" => {
+                    depth -= 1;
+                    let de = delim_end(tex, ce);
+                    if depth == 0 {
+                        return Some((open_end, i, de));
+                    }
+                    i = de;
+                }
+                _ => i = ce,
+            }
+            continue;
+        }
+        i += char_len(tex, i);
+    }
+    None
+}
+
+/// For a `\begin` whose name ends at `after_begin`: (end of `{env}`, start of
+/// the matching `\end`, end of the whole environment).
+fn environment_parts(tex: &str, after_begin: usize) -> Option<(usize, usize, usize)> {
+    let head_end = group_end(tex, after_begin)?;
+    let mut depth = 1usize;
+    let mut i = head_end;
+    while i < tex.len() {
+        if tex.as_bytes()[i] == b'\\' {
+            let ce = command_end(tex, i);
+            match &tex[i + 1..ce] {
+                "begin" => {
+                    depth += 1;
+                    i = group_end(tex, ce)?;
+                }
+                "end" => {
+                    depth -= 1;
+                    let de = group_end(tex, ce)?;
+                    if depth == 0 {
+                        return Some((head_end, i, de));
+                    }
+                    i = de;
+                }
+                _ => i = ce,
+            }
+            continue;
+        }
+        i += char_len(tex, i);
+    }
+    None
+}
+```
+
+`take_atom` reads exactly one atom and appends its *normalised* text —
+recursing into every group, so `\frac{a_i^2}{b}` is repaired inside the
+numerator too. It returns the macro name when the atom is one, which is
+how the caller knows whether the atom binds its own scripts. A digit run
+is one atom because the lexer reads `10` as one number: `10^{-3}` should
+keep its base intact.
+
+<a name="chunk-math-tex-scanning-4"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-tex-scanning` · continues</sub>
+
+```rust {#math-tex-scanning}
+/// Append the normalised atom at `i` to `out`; return the index just past it
+/// and its macro name, if it is one.
+fn take_atom<'a>(tex: &'a str, i: usize, out: &mut String) -> (usize, Option<&'a str>) {
+    match tex.as_bytes()[i] {
+        b'{' => {
+            let Some(end) = group_end(tex, i) else {
+                out.push_str(&tex[i..]);
+                return (tex.len(), None);
+            };
+            out.push('{');
+            out.push_str(&normalize_math_tex(&tex[i + 1..end - 1]));
+            out.push('}');
+            (end, None)
+        }
+        b'\\' => take_command(tex, i, out),
+        b'0'..=b'9' => {
+            let end = number_end(tex, i);
+            out.push_str(&tex[i..end]);
+            (end, None)
+        }
+        _ => {
+            let end = i + char_len(tex, i);
+            out.push_str(&tex[i..end]);
+            (end, None)
+        }
+    }
+}
+
+/// A number is digits with at most one decimal point — the lexer's rule.
+fn number_end(tex: &str, i: usize) -> usize {
+    let mut end = i;
+    let mut seen_point = false;
+    while let Some(c) = tex.as_bytes().get(end) {
+        match c {
+            b'0'..=b'9' => end += 1,
+            b'.' if !seen_point => {
+                seen_point = true;
+                end += 1;
+            }
+            _ => break,
+        }
+    }
+    end
+}
+```
+
+A macro atom is the (possibly renamed) control sequence plus its
+arguments, with a fence handled by extent.
+
+<a name="chunk-math-tex-scanning-5"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-tex-scanning` · continues</sub>
+
+```rust {#math-tex-scanning}
+fn take_command<'a>(tex: &'a str, i: usize, out: &mut String) -> (usize, Option<&'a str>) {
+    let name_end = command_end(tex, i);
+    let name = &tex[i + 1..name_end];
+    // A fence or an environment is one atom: head, normalised body, tail.
+    let bracketed = match name {
+        "left" => fence_parts(tex, name_end),
+        "begin" => environment_parts(tex, name_end),
+        _ => None,
+    };
+    if let Some((head_end, tail_start, end)) = bracketed {
+        out.push_str(&tex[i..head_end]);
+        out.push_str(&normalize_math_tex(&tex[head_end..tail_start]));
+        out.push_str(&tex[tail_start..end]);
+        return (end, Some(name));
+    }
+    out.push('\\');
+    out.push_str(macro_alias(name));
+    let mut j = name_end;
+    if name == "sqrt" && tex[j..].starts_with('[') {
+        if let Some(close) = tex[j..].find(']') {
+            out.push_str(&tex[j..j + close + 1]);
+            j += close + 1;
+        }
+    }
+    for _ in 0..macro_arity(name) {
+        let Some(end) = group_end(tex, j) else { break };
+        if verbatim_arg(name) {
+            out.push_str(&tex[j..end]);
+        } else {
+            out.push('{');
+            out.push_str(&normalize_math_tex(&tex[j + 1..end - 1]));
+            out.push('}');
+        }
+        j = end;
+    }
+    (j, Some(name))
+}
+```
+
+A script argument is a brace group's contents or, unbraced, the single
+token LaTeX would take — one character, one macro. That last clause is
+its own small correction: `x_10` is *x*₁ followed by a 0, and writing it
+back as `x_{1}0` is the only way to say so to a lexer that would
+otherwise read `10` as the whole subscript.
+
+<a name="chunk-math-tex-scanning-6"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-tex-scanning` · continues</sub>
+
+```rust {#math-tex-scanning}
+fn take_script_arg(tex: &str, mut i: usize) -> (String, usize) {
+    while tex[i..].starts_with(' ') {
+        i += 1;
+    }
+    if let (Some(&b'{'), Some(end)) = (tex.as_bytes().get(i), group_end(tex, i)) {
+        (normalize_math_tex(&tex[i + 1..end - 1]), end)
+    } else if i >= tex.len() {
+        (String::new(), i)
+    } else if tex.as_bytes()[i].is_ascii_digit() {
+        // One digit, not the run: `_1` takes a token, not a number.
+        (tex[i..i + 1].to_string(), i + 1)
+    } else {
+        let mut arg = String::new();
+        let (end, _) = take_atom(tex, i, &mut arg);
+        (arg, end)
+    }
+}
+```
+
+### The rewrite
+
+The pass copies atoms through, remembering where in the *output* the
+last one started. When a script operator arrives, that remembered offset
+is the atom's left edge, and the rewrite is an insertion there plus a
+few pushes: `{` `{atom}` `_{sub}` `}` `^{sup}` for an atom carrying
+both, `{atom}_{sub}` for one carrying a single script. Grouping even the
+single-script atom is what keeps `\hat{x}_i` from letting the accent
+swallow the subscript.
+
+A `'` is TeX's shorthand for a superscript prime; it is collected as one
+and emitted after the group, where the parser's own prime handling picks
+it up.
+
+<a name="chunk-math-tex-normalise"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-tex-normalise`</sub>
+
+```rust {#math-tex-normalise}
+/// Rewrite TeX so `latex2mathml` reads scripts the way TeX does: each `_`/`^`
+/// bound to the atom on its left, subscript written first, macro aliases
+/// resolved. Everything else passes through unchanged.
+fn normalize_math_tex(tex: &str) -> String {
+    let mut out = String::new();
+    // (offset in `out` where the current atom starts, does it bind its own scripts)
+    let mut atom: Option<(usize, bool)> = None;
+    let mut i = 0;
+    while i < tex.len() {
+        if matches!(tex.as_bytes()[i], b'_' | b'^' | b'\'') {
+            if let Some((start, binding)) = atom {
+                i = rewrite_scripts(tex, i, start, binding, &mut out);
+                atom = Some((start, false));
+                continue;
+            }
+        }
+        let start = out.len();
+        let (next, name) = take_atom(tex, i, &mut out);
+        atom = Some((start, name.is_some_and(|n| SCRIPT_BINDING_MACROS.contains(&n))));
+        i = next;
+    }
+    out
+}
+```
+
+<a name="chunk-math-tex-normalise-2"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-tex-normalise` · continues</sub>
+
+```rust {#math-tex-normalise}
+/// Collect the scripts starting at `i` and re-emit them onto the atom that
+/// starts at `start` in `out`. Returns the index just past the scripts.
+fn rewrite_scripts(
+    tex: &str,
+    i: usize,
+    start: usize,
+    binding: bool,
+    out: &mut String,
+) -> usize {
+    let (mut sub, mut sup, mut primes) = (None, None, String::new());
+    let mut j = i;
+    loop {
+        match tex.as_bytes().get(j) {
+            Some(b'_') if sub.is_none() => {
+                let (arg, next) = take_script_arg(tex, j + 1);
+                sub = Some(arg);
+                j = next;
+            }
+            Some(b'^') if sup.is_none() && primes.is_empty() => {
+                let (arg, next) = take_script_arg(tex, j + 1);
+                sup = Some(arg);
+                j = next;
+            }
+            Some(b'\'') if sup.is_none() => {
+                primes.push('\'');
+                j += 1;
+            }
+            _ => break,
+        }
+    }
+
+    let both = sub.is_some() && (sup.is_some() || !primes.is_empty());
+    if !binding {
+        out.insert_str(start, if both { "{{" } else { "{" });
+        out.push('}');
+    }
+    if let Some(sub) = &sub {
+        out.push_str("_{");
+        out.push_str(sub);
+        out.push('}');
+    }
+    if both && !binding {
+        out.push('}');
+    }
+    if let Some(sup) = &sup {
+        out.push_str("^{");
+        out.push_str(sup);
+        out.push('}');
+    }
+    out.push_str(&primes);
+    j
+}
+```
+
+### Fusing the pair back together
+
+What comes back is `<msup><msub>b <sub/></msub> <sup/></msup>`, and TeX
+means `<msubsup>`. The fuse walks the emitted markup, which is small,
+attribute-light and generated — a stack-depth scan over tag names is
+enough, and it has to be lenient about stray text because the parser
+emits an unescaped `<` for `\lt`.
+
+<a name="chunk-math-fuse-scripts"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-fuse-scripts`</sub>
+
+```rust {#math-fuse-scripts}
+/// If an element opens at `start`, return (name, content start, content end,
+/// element end). A void element reports an empty content range.
+fn element_at(s: &str, start: usize) -> Option<(&str, usize, usize, usize)> {
+    if s.as_bytes().get(start) != Some(&b'<') {
+        return None;
+    }
+    let after = start + 1;
+    if !s[after..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let name_len = s[after..]
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(s.len() - after);
+    let name = &s[after..after + name_len];
+    let tag_end = start + s[start..].find('>')? + 1;
+    if s[..tag_end].ends_with("/>") {
+        return Some((name, tag_end, tag_end, tag_end));
+    }
+    let (open, close) = (format!("<{name}"), format!("</{name}>"));
+    let mut depth = 1usize;
+    let mut i = tag_end;
+    while i < s.len() {
+        if s[i..].starts_with(&close) {
+            depth -= 1;
+            if depth == 0 {
+                return Some((name, tag_end, i, i + close.len()));
+            }
+            i += close.len();
+        } else if s[i..].starts_with(&open) && s[i + open.len()..].starts_with([' ', '>', '/']) {
+            depth += 1;
+            i += open.len();
+        } else {
+            i += char_len(s, i);
+        }
+    }
+    None
+}
+
+/// Spans of the top-level child elements of `s`, or `None` if any text sits
+/// between them.
+fn child_elements(s: &str) -> Option<Vec<(usize, usize)>> {
+    let mut kids = Vec::new();
+    let mut i = 0;
+    while i < s.len() {
+        let (_, _, _, end) = element_at(s, i)?;
+        kids.push((i, end));
+        i = end;
+    }
+    Some(kids)
+}
+```
+
+The fusion is deliberately one-directional. An `<msub>` whose *script*
+is an `<msup>` is `x_{i^2}`, written that way on purpose; an `<msub>`
+whose *base* is an `<msup>` is `{x^2}_i`, which means the square's
+*i*-th component. Only `<msup>`-over-`<msub>` — the shape the rewrite
+produces, and the shape `{x_i}^2` already meant — collapses.
+
+<a name="chunk-math-fuse-scripts-2"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#math-fuse-scripts` · continues</sub>
+
+```rust {#math-fuse-scripts}
+/// Fold `<msup><msub>b s</msub> p</msup>` into `<msubsup>b s p</msubsup>`.
+fn fuse_sub_sup(mathml: &str) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < mathml.len() {
+        let Some((name, open_end, close_start, end)) = element_at(mathml, i) else {
+            out.push_str(&mathml[i..i + char_len(mathml, i)]);
+            i += char_len(mathml, i);
+            continue;
+        };
+        let inner = &mathml[open_end..close_start];
+        match (name == "msup").then(|| fuse_msup(inner)).flatten() {
+            Some(fused) => out.push_str(&fused),
+            None => {
+                out.push_str(&mathml[i..open_end]);
+                out.push_str(&fuse_sub_sup(inner));
+                out.push_str(&mathml[close_start..end]);
+            }
+        }
+        i = end;
+    }
+    out
+}
+
+fn fuse_msup(inner: &str) -> Option<String> {
+    let kids = child_elements(inner)?;
+    let [(base_start, base_end), (sup_start, sup_end)] = kids[..] else {
+        return None;
+    };
+    let (name, content_start, content_end, elem_end) = element_at(inner, base_start)?;
+    if name != "msub" || elem_end != base_end {
+        return None;
+    }
+    let msub_inner = &inner[content_start..content_end];
+    let [(b0, b1), (s0, s1)] = child_elements(msub_inner)?[..] else {
+        return None;
+    };
+    Some(format!(
+        "<msubsup>{}{}{}</msubsup>",
+        fuse_sub_sup(&msub_inner[b0..b1]),
+        fuse_sub_sup(&msub_inner[s0..s1]),
+        fuse_sub_sup(&inner[sup_start..sup_end])
+    ))
 }
 ```
 
@@ -2199,6 +2808,14 @@ where it is defined, rather than again at every site that composes it.
 Expansion happens in the tangler, and a reader who was promised it here
 would be reading a different page from the one weave renders.
 
+The math tests pin whole MathML strings rather than asserting that
+something rendered, because the defect they guard against *did* render:
+`b_{k-1}^2` came out as clean, confident markup for $b_{(k-1)^2}$. An
+assertion that the output contains `<math` would have passed the whole
+time. They come in three shapes — the constructs the rewrite must
+repair, the ones it must leave exactly alone, and malformed input, which
+must still reach a visible error rather than a plausible-looking guess.
+
 <a name="chunk-tests"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#tests` · proves [Read a document as the woven artifact](../../decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)</sub>
 
 `````rust {#tests proves="x0k:affordance/weave_a_document"}
@@ -2503,6 +3120,181 @@ let c = 3;
         assert!(ok.contains("<math") && ok.contains("display=\"inline\""), "got: {ok}");
     }
 
+    /// The MathML body of an inline fragment, with the `<math>` wrapper peeled
+    /// off so a test can pin the element structure exactly.
+    fn mathml_body(tex: &str) -> String {
+        let out = render_math(tex, false);
+        out.split_once("display=\"inline\">")
+            .and_then(|(_, rest)| rest.strip_suffix("</math>"))
+            .unwrap_or_else(|| panic!("not MathML: {out}"))
+            .to_string()
+    }
+
+    #[test]
+    fn a_base_with_both_scripts_is_one_msubsup() {
+        // The recurrence coefficient: b sub k-1, squared. Not b sub (k-1)².
+        let expected = "<msubsup><mi>b</mi><mrow><mi>k</mi><mo>-</mo><mn>1</mn></mrow><mn>2</mn></msubsup>";
+        assert_eq!(mathml_body("b_{k-1}^2"), expected);
+        assert_eq!(mathml_body("b_{k-1}^{2}"), expected);
+        // Explicit re-bracing says the same thing and renders the same way.
+        assert_eq!(mathml_body("{b_{k-1}}^2"), expected);
+
+        // The commonest construct in numerical analysis, in both orders.
+        let x_i_2 = "<msubsup><mi>x</mi><mi>i</mi><mn>2</mn></msubsup>";
+        assert_eq!(mathml_body("x_i^2"), x_i_2);
+        assert_eq!(mathml_body("x^2_i"), x_i_2);
+
+        // An accent is part of the base, so the scripts hang off the accented
+        // atom rather than the accent drifting over the subscript.
+        assert_eq!(
+            mathml_body("\\hat{x}_i"),
+            "<msub><mover><mi>x</mi><mo accent=\"true\">^</mo></mover><mi>i</mi></msub>"
+        );
+        assert_eq!(
+            mathml_body("\\hat{x}_i^2"),
+            "<msubsup><mover><mi>x</mi><mo accent=\"true\">^</mo></mover><mi>i</mi><mn>2</mn></msubsup>"
+        );
+
+        // So is a `\left…\right` fence.
+        assert_eq!(
+            mathml_body("\\left(a+b\\right)_i^2"),
+            "<msubsup><mrow><mo stretchy=\"true\" form=\"prefix\">(</mo>\
+             <mrow><mi>a</mi><mo>+</mo><mi>b</mi></mrow>\
+             <mo stretchy=\"true\" form=\"postfix\">)</mo></mrow><mi>i</mi><mn>2</mn></msubsup>"
+        );
+
+        // And so is an environment: the script lands on the matrix, not on
+        // the `\end` that closes it.
+        assert_eq!(
+            mathml_body("\\begin{pmatrix}a\\end{pmatrix}_i^2"),
+            "<msubsup><mrow><mo stretchy=\"true\" form=\"prefix\">(</mo>\
+             <mtable><mtr><mtd><mi>a</mi></mtd></mtr></mtable>\
+             <mo stretchy=\"true\" form=\"postfix\">)</mo></mrow><mi>i</mi><mn>2</mn></msubsup>"
+        );
+    }
+
+    #[test]
+    fn braces_keep_the_nesting_the_author_wrote() {
+        // These are the cases the fuse must NOT touch: each says something
+        // different from `x_i^2`, and the braces are the only evidence.
+        assert_eq!(
+            mathml_body("x_{i^2}"),
+            "<msub><mi>x</mi><msup><mi>i</mi><mn>2</mn></msup></msub>"
+        );
+        assert_eq!(
+            mathml_body("{x^2}_i"),
+            "<msub><msup><mi>x</mi><mn>2</mn></msup><mi>i</mi></msub>"
+        );
+        assert_eq!(
+            mathml_body("x^{i_2}"),
+            "<msup><mi>x</mi><msub><mi>i</mi><mn>2</mn></msub></msup>"
+        );
+        assert_eq!(
+            mathml_body("x_{i_j}"),
+            "<msub><mi>x</mi><msub><mi>i</mi><mi>j</mi></msub></msub>"
+        );
+    }
+
+    #[test]
+    fn large_operators_keep_their_own_script_binding() {
+        // A sum's limits go under and over the sigma, an integral's beside it.
+        assert_eq!(
+            mathml_body("\\sum_{i=1}^n"),
+            "<munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>"
+        );
+        assert_eq!(
+            mathml_body("\\int_a^b"),
+            "<msubsup><mo>∫</mo><mi>a</mi><mi>b</mi></msubsup>"
+        );
+        assert_eq!(
+            mathml_body("\\lim_{n\\to\\infty}"),
+            "<munder><mi>lim</mi><mrow><mi>n</mi><mo>→</mo><mi mathvariant=\"normal\">∞</mi></mrow></munder>"
+        );
+    }
+
+    #[test]
+    fn primes_and_unbraced_scripts_follow_tex() {
+        // A prime is a superscript, so `f'_i` and `a_i'` are both one msubsup.
+        assert_eq!(
+            mathml_body("f'_i"),
+            "<msubsup><mi>f</mi><mi>i</mi><mo>′</mo></msubsup>"
+        );
+        assert_eq!(
+            mathml_body("a_i'"),
+            "<msubsup><mi>a</mi><mi>i</mi><mo>′</mo></msubsup>"
+        );
+        // An unbraced script takes ONE token: `x_10` is x₁ then a 0.
+        assert_eq!(
+            mathml_body("x_10"),
+            "<msub><mi>x</mi><mn>1</mn></msub><mn>0</mn>"
+        );
+        assert_eq!(mathml_body("x_{10}"), "<msub><mi>x</mi><mn>10</mn></msub>");
+        // A number is still one atom when it is the BASE.
+        assert_eq!(
+            mathml_body("10^{-3}"),
+            "<msup><mn>10</mn><mrow><mo>-</mo><mn>3</mn></mrow></msup>"
+        );
+    }
+
+    #[test]
+    fn accepted_spellings_render_and_the_rest_still_fail_loudly() {
+        // "exact for degree ≤ 2n-1" is the definition of a Gauss rule.
+        assert_eq!(mathml_body("\\le"), "<mo>≤</mo>");
+        assert_eq!(mathml_body("\\ge"), "<mo>≥</mo>");
+        assert_eq!(mathml_body("\\leq"), "<mo>≤</mo>");
+        assert_eq!(mathml_body("\\geq"), "<mo>≥</mo>");
+        assert_eq!(
+            mathml_body("\\mathcal{O}"),
+            "<mi mathvariant=\"script\">O</mi>"
+        );
+        assert_eq!(mathml_body("\\dots"), "<mo>…</mo>");
+
+        // The alias table adds spellings; it never converts a failure into a
+        // silent success. An unknown macro still lands on `.math-error`.
+        let out = render_math("\\lessthanorequalto", false);
+        assert!(out.contains("class=\"math-error\""), "got: {out}");
+        // A prefix of a known alias is not the alias.
+        let out = render_math("\\lex", false);
+        assert!(out.contains("class=\"math-error\""), "got: {out}");
+    }
+
+    #[test]
+    fn malformed_tex_never_panics_and_never_renders_silently() {
+        // The normaliser runs before the parser, so it meets every typo the
+        // parser used to meet first. None of these may panic, and none may
+        // come out as quiet MathML pretending to be the author's meaning.
+        for tex in [
+            "_", "^", "'", "x_", "x^", "{", "}", "{x", "x}", "\\", "\\left(",
+            "\\right)", "\\begin{pmatrix}a", "\\frac{1}{", "\\hat", "\\sqrt[",
+            "α_β^γ", "x_{{{{{a}}}}}^2", "\\left(\\left(a\\right)_i^2",
+        ] {
+            let out = render_math(tex, false);
+            assert!(
+                out.starts_with("<math") || out.contains("class=\"math-error\""),
+                "{tex:?} produced neither MathML nor a visible error: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_recurrence_survives_the_whole_weave() {
+        // End to end through the markdown path, not just render_math.
+        let content = "# Quadrature\n\n$p_{k+1} = (x-a_k)p_k - b_{k-1}^2 p_{k-1}$\n";
+        let doc = parse_document(content).unwrap();
+        let body = weave_html(content, &doc).unwrap().html;
+        let body = body.split("<article").nth(1).unwrap().to_string();
+        assert!(
+            body.contains(
+                "<msubsup><mi>b</mi><mrow><mi>k</mi><mo>-</mo><mn>1</mn></mrow><mn>2</mn></msubsup>"
+            ),
+            "b_{{k-1}}^2 must be an msubsup: {body}"
+        );
+        assert!(
+            !body.contains("<msub><mi>b</mi><msup>"),
+            "the old mis-nesting must be gone: {body}"
+        );
+    }
+
     #[test]
     fn doc_comment_lifts_to_symbol_and_card() {
         // The canonical shape: `/// foo` over `pub fn bar()` →
@@ -2756,7 +3548,7 @@ second
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#root` · assembles [imports](#chunk-imports) · [weave-html-fn](#chunk-weave-html-fn) · [render-code-block-fn](#chunk-render-code-block-fn) · [render-tabbed-chunk-fn](#chunk-render-tabbed-chunk-fn) · [capitalize-lang-fn](#chunk-capitalize-lang-fn) · [render-code-with-refs-fn](#chunk-render-code-with-refs-fn) · [render-param-panel-fn](#chunk-render-param-panel-fn) · [small-helpers](#chunk-small-helpers) · [stylesheet](#chunk-stylesheet) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#root` · assembles [imports](#chunk-imports) · [weave-html-fn](#chunk-weave-html-fn) · [render-code-block-fn](#chunk-render-code-block-fn) · [render-tabbed-chunk-fn](#chunk-render-tabbed-chunk-fn) · [capitalize-lang-fn](#chunk-capitalize-lang-fn) · [render-code-with-refs-fn](#chunk-render-code-with-refs-fn) · [render-param-panel-fn](#chunk-render-param-panel-fn) · [small-helpers](#chunk-small-helpers) · [math-macro-tables](#chunk-math-macro-tables) · [math-tex-scanning](#chunk-math-tex-scanning) · [math-tex-normalise](#chunk-math-tex-normalise) · [math-fuse-scripts](#chunk-math-fuse-scripts) · [stylesheet](#chunk-stylesheet) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<imports>>
@@ -2774,6 +3566,14 @@ second
 <<render-param-panel-fn>>
 
 <<small-helpers>>
+
+<<math-macro-tables>>
+
+<<math-tex-scanning>>
+
+<<math-tex-normalise>>
+
+<<math-fuse-scripts>>
 
 <<stylesheet>>
 
