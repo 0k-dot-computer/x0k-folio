@@ -1,0 +1,17 @@
+{
+  "source": "implementation/folio/layout.md",
+  "source_hash": "0e0dd4a6c3f6c8ee",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "d8099f4f694234dd",
+      "outputs": [
+        {
+          "path": "crates/x0k-folio/src/layout.rs",
+          "hash": "26b39d29847c1c6c"
+        }
+      ]
+    }
+  ]
+}

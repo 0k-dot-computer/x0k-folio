@@ -33,6 +33,7 @@ pub mod entity_id;
 pub mod envelope_check;
 pub mod html_canonical;
 pub mod inline_entity;
+pub mod layout;
 #[cfg(feature = "plugins")]
 pub mod projection;
 pub mod structural_block;

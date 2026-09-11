@@ -1,12 +1,17 @@
 {
+  "name": "@0k/folio",
+  "version": "0.1.0",
+  "description": "Literate programming tangler/weaver with bidirectional sync. Extracts compilable source from folio/v1 documents and reconciles edits from either side.",
+  "license": "MIT",
+  "homepage": "https://github.com/0k-dot-computer/x0k-folio",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0k-dot-computer/x0k-folio.git"
+  },
   "bin": {
     "folio": "bin/folio.js",
     "x0k-folio": "bin/x0k-folio.js",
     "x0k-tangle": "bin/x0k-tangle.js"
-  },
-  "description": "Literate programming tangler/weaver with bidirectional sync. Extracts compilable source from folio/v1 documents and reconciles edits from either side.",
-  "engines": {
-    "node": ">=18"
   },
   "files": [
     "bin",
@@ -14,57 +19,52 @@
     "install.js",
     "README.md"
   ],
-  "homepage": "https://github.com/0k-dot-computer/x0k-folio",
-  "license": "MIT",
-  "name": "@0k/folio",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/0k-dot-computer/x0k-folio.git"
-  },
   "scripts": {
     "postinstall": "node install.js",
     "test": "node test/resolve.test.js"
   },
-  "version": "0.1.0",
+  "engines": {
+    "node": ">=18"
+  },
   "x0k": {
     "assetPrefix": "x0k-folio",
+    "tagPrefix": "v",
+    "releaseBase": "https://github.com/0k-dot-computer/x0k-folio/releases/download",
     "checksums": "SHA256SUMS",
+    "envPrefix": "FOLIO",
+    "repo": "0k-dot-computer/x0k-folio",
     "commands": {
       "folio": "x0k-tangle",
       "x0k-folio": "x0k-folio-cli",
       "x0k-tangle": "x0k-tangle"
     },
-    "digests": {},
-    "envPrefix": "FOLIO",
-    "releaseBase": "https://github.com/0k-dot-computer/x0k-folio/releases/download",
-    "repo": "0k-dot-computer/x0k-folio",
-    "tagPrefix": "v",
     "targets": {
-      "darwin-arm64": {
+      "linux-x64": {
+        "target": "x86_64-unknown-linux-musl",
         "archive": ".tar.gz",
-        "exe": "",
-        "target": "aarch64-apple-darwin"
-      },
-      "darwin-x64": {
-        "archive": ".tar.gz",
-        "exe": "",
-        "target": "x86_64-apple-darwin"
+        "exe": ""
       },
       "linux-arm64": {
+        "target": "aarch64-unknown-linux-musl",
         "archive": ".tar.gz",
-        "exe": "",
-        "target": "aarch64-unknown-linux-musl"
+        "exe": ""
       },
-      "linux-x64": {
+      "darwin-x64": {
+        "target": "x86_64-apple-darwin",
         "archive": ".tar.gz",
-        "exe": "",
-        "target": "x86_64-unknown-linux-musl"
+        "exe": ""
+      },
+      "darwin-arm64": {
+        "target": "aarch64-apple-darwin",
+        "archive": ".tar.gz",
+        "exe": ""
       },
       "win32-x64": {
+        "target": "x86_64-pc-windows-msvc",
         "archive": ".zip",
-        "exe": ".exe",
-        "target": "x86_64-pc-windows-msvc"
+        "exe": ".exe"
       }
-    }
+    },
+    "digests": {}
   }
 }

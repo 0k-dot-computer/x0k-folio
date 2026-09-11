@@ -136,9 +136,21 @@ const RUST_VERSION: &str = "1.89";
 /// version the tree is known to build and test green on — and it is a
 /// different claim from [`RUST_VERSION`], which is the floor.
 const PINNED_TOOLCHAIN: &str = "1.95.0";
-/// Trailing comment on a severed feature's (now empty) list.
+/// Trailing comment on a feature severed because a dependency beneath it
+/// is not published. Enabling it genuinely cannot build.
 const SEVERED_FEATURE_NOTE: &str =
     "# severed in this publication: its dependency is not published; enabling it does not build";
+
+/// Trailing comment on a feature the publication severed BY DECLARATION.
+///
+/// A second note because the first one's claim is false here. A declared
+/// severance may gate only code, with every dependency beneath it
+/// published — the source ships and compiles, and the publication is
+/// saying it does not support the feature, not that the feature is broken.
+/// Reusing the derived note would put a false sentence in a manifest the
+/// audience reads (`publication-is-the-shipping-unit` §9, "Two acts").
+const DECLARED_SEVERANCE_NOTE: &str =
+    "# severed in this publication: not supported here; the crate declares it, this publication does not enable it";
 /// Workspace-inherited dependency keys the projector knows how to resolve into
 /// the standalone root `[workspace.dependencies]`. Values mirror the monorepo
 /// root `Cargo.toml`; keep in sync if a published crate adopts a new inherited
@@ -157,6 +169,13 @@ const RESOLVED_WORKSPACE_DEPS: &[(&str, &str)] = &[
     ("serde_json", "\"1.0\""),
     ("thiserror", "\"1.0\""),
     ("tracing", "\"0.1\""),
+    // Added 2026-09-09 with the tangle CLI's tracing subscriber (N1). The
+    // table's own instruction — keep in sync when a published crate adopts a
+    // new inherited key — was not followed in that unit, and the projection
+    // emitted an x0k-tangle manifest cargo could not load: ten of
+    // publication_repo_bootstrap's twenty-one tests, red, in a gate nothing
+    // was running.
+    ("tracing-subscriber", "{ version = \"0.3\", features = [\"env-filter\"] }"),
 ];
 
 /// Options controlling a repository projection.
@@ -229,6 +248,13 @@ pub struct RepoProjectReport {
     /// projection's literate set — dropped from the tree (their document
     /// is outside the region) and recorded in `PROVENANCE.json`.
     pub dropped_generated: Vec<String>,
+    /// Features this publication severed by declaration, as
+    /// `<crate>#<feature>`. Recorded in `PROVENANCE.json`: a severed
+    /// feature TRAVELS (unlike an exclusion), so a receiver reading the
+    /// manifest finds it declared and empty and would otherwise have no
+    /// way to tell a publication's choice from a crate's own default-off
+    /// feature.
+    pub severed: Vec<String>,
     /// The vocabulary modules the publication ships
     /// (`x0k:ontology-module/<name>` under `publishes`), in declaration
     /// order; each is written to `<modules_dir>/<name>.ttl`.
@@ -415,7 +441,10 @@ pub fn project_publication_repo_with(
     // `docs` is always empty here: `member_names` refuses a *literate*
     // document URI outside `excludes`. `documents` is the other grain —
     // decision documents this publication names, whole or by section.
-    let Members { crates, modules, docs: _, documents } =
+    // `severed: _` — `publishes` never carries a fragment (member_names
+    // refuses one), so this is always empty here; the severances come from the
+    // `severs` edge read below.
+    let Members { crates, modules, docs: _, documents, severed: _ } =
         member_names(env.edges.get("publishes"), "publishes")?;
     if crates.is_empty() {
         bail!("publication has an empty `publishes` membership (no crate)");
@@ -429,6 +458,38 @@ pub fn project_publication_repo_with(
     }
     let excluded_docs: BTreeSet<String> = excluded.docs.into_iter().collect();
     let excluded: BTreeSet<String> = excluded.crates.into_iter().collect();
+
+    // Declared severances (`publication-is-the-shipping-unit` §9). Validated
+    // here rather than at the rewrite, because a severance that names nothing
+    // severs nothing while the publication's prose goes on telling the
+    // audience that a feature still live in `default` is unsupported. The same
+    // rule an `excludes` document id matching no document already gets.
+    let severed = member_names(env.edges.get("severs"), "severs")?.severed;
+    let published_set: BTreeSet<&str> = crates.iter().map(String::as_str).collect();
+    for sev in &severed {
+        if !published_set.contains(sev.krate.as_str()) {
+            bail!(
+                "`severs` names `{}#{}` but `{}` is not in `publishes`; a \
+                 publication severs a feature of a crate it ships",
+                sev.krate, sev.feature, sev.krate
+            );
+        }
+        if excluded.contains(&sev.krate) {
+            bail!(
+                "`severs` names `{}#{}` while `excludes` holds `{}` back; an \
+                 excluded crate has no manifest in the projection to sever in",
+                sev.krate, sev.feature, sev.krate
+            );
+        }
+        if sev.feature == "default" {
+            bail!(
+                "`severs` names `{}#default`; severing empties a feature and \
+                 takes it out of `default`, which is not a thing `default` can \
+                 be done to. Name the features it lists instead",
+                sev.krate
+            );
+        }
+    }
     let published: BTreeSet<String> = crates.iter().cloned().collect();
 
     // The palette the icons on the contents page and the affordance pages
@@ -643,6 +704,18 @@ pub fn project_publication_repo_with(
         None
     };
 
+    // Declared severances, grouped by the crate whose manifest carries them.
+    let declared_severances: BTreeMap<String, BTreeSet<String>> =
+        severed.iter().fold(BTreeMap::new(), |mut acc, sev| {
+            acc.entry(sev.krate.clone())
+                .or_default()
+                .insert(sev.feature.clone());
+            acc
+        });
+    report.severed = severed
+        .iter()
+        .map(|s| format!("{}#{}", s.krate, s.feature))
+        .collect();
     let vendor_ctx = VendorCtx {
         packages: &packages,
         license: &license,
@@ -651,6 +724,7 @@ pub fn project_publication_repo_with(
         versions: &versions,
         crates_io: &crates_io,
         literate_set: &literate_set,
+        declared_severances: &declared_severances,
     };
     for name in &crates {
         let dropped = vendor_crate(output_dir, name, &vendor_ctx)
@@ -904,6 +978,26 @@ struct Members {
     /// Documents the publication selects — whole, or one section of one.
     /// Only `publishes` fills this.
     documents: Vec<DocSelection>,
+    /// Features this publication severs, by crate and feature name. Only
+    /// `severs` fills this.
+    severed: Vec<Severance>,
+}
+
+/// One declared feature severance: `x0k:software-module/<crate>#<feature>`.
+///
+/// A severance is NOT an `excludes` entry, and the distinction is what
+/// `excludes` means to everything that reads it: every member of that list
+/// is a part which does NOT TRAVEL, and the projection records it so a
+/// receiver can account for each absence against the tree. A severed
+/// feature travels — the crate ships, the feature ships declared, and
+/// unless a document exclusion fires too, so does the source. Naming it
+/// under `excludes` would make the residency closure read a published
+/// crate as held back (`publication-is-the-shipping-unit` §9, "Two facts,
+/// two edges").
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Severance {
+    krate: String,
+    feature: String,
 }
 
 /// Read a membership edge (`publishes`, `excludes`, `entryPoint`): crates
@@ -915,7 +1009,37 @@ fn member_names(uris: Option<&Vec<String>>, edge: &str) -> Result<Members> {
     let mut out = Members::default();
     for u in uris.into_iter().flatten() {
         if let Some(c) = u.strip_prefix(SOFTWARE_MODULE_PREFIX) {
-            out.crates.push(c.split('#').next().unwrap_or(c).to_string());
+            // The fragment is the feature, and where it is legal is the
+            // whole point. This used to be `split('#').next()` on every
+            // edge, which silently dropped the fragment — so
+            // `excludes: [x0k:software-module/foo#bar]` excluded the ENTIRE
+            // crate `foo` while reading, to its author, like a severance of
+            // one feature. Severance has its own edge; a fragment anywhere
+            // else is a mistake to name, never a suffix to discard.
+            match (edge, c.split_once('#')) {
+                ("severs", Some((krate, feature))) => {
+                    if feature.is_empty() {
+                        bail!("`severs` member `{u}` has an empty feature fragment");
+                    }
+                    out.severed.push(Severance {
+                        krate: krate.to_string(),
+                        feature: feature.to_string(),
+                    });
+                }
+                ("severs", None) => bail!(
+                    "`severs` member `{u}` carries no `#<feature>` fragment; a \
+                     severance names one feature of one crate, and a member \
+                     without a fragment would sever the crate itself, which is \
+                     what `excludes` is for"
+                ),
+                (_, Some(_)) => bail!(
+                    "`{edge}` member `{u}` carries a `#<feature>` fragment; only \
+                     `severs` names a feature. Under `{edge}` the fragment used \
+                     to be dropped silently, which excluded or published the \
+                     whole crate while reading like one feature"
+                ),
+                (_, None) => out.crates.push(c.to_string()),
+            }
         } else if let Some(m) = u.strip_prefix(ONTOLOGY_MODULE_PREFIX) {
             out.modules.push(m.to_string());
         } else if u.starts_with(IMPLEMENTATION_DOC_PREFIX) {
@@ -1090,6 +1214,8 @@ struct VendorCtx<'a> {
     /// Workspace-relative paths of every document in the projection's
     /// literate set — the sources a vendored `@generated` file may name.
     literate_set: &'a BTreeSet<String>,
+    /// Features this publication severs by declaration, by crate.
+    declared_severances: &'a BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Cargo owns source residency; publication identities remain package names.
@@ -1450,8 +1576,31 @@ fn rewrite_vendored_manifest(path: &Path, ctx: &VendorCtx<'_>) -> Result<()> {
     // Sever features that reference a dropped dep (via `dep:<name>`): the
     // declaration stays (the crate's `#[cfg(feature = …)]` sites ship), its
     // list is emptied, and the name leaves `default`.
+    // The two forms UNION. A feature is severed when a dropped dependency
+    // makes it unbuildable (derived, below) OR when the publication names it
+    // under `severs:` (declared). The second form is what makes severance a
+    // grain of the publication rather than a by-product of crate exclusion: a
+    // feature that gates only code, with no excluded dependency beneath it,
+    // has nothing to derive from.
+    let this_crate = package_name(&doc, path)?;
+    let no_severances = BTreeSet::new();
+    let declared_here: &BTreeSet<String> = ctx
+        .declared_severances
+        .get(&this_crate)
+        .unwrap_or(&no_severances);
     if let Some(features) = doc.get_mut("features").and_then(|f| f.as_table_mut()) {
         let feat_names: Vec<String> = features.iter().map(|(k, _)| k.to_string()).collect();
+        // A severance that names a feature the manifest does not declare
+        // severs nothing while the publication goes on saying it did.
+        for want in declared_here {
+            if !feat_names.iter().any(|f| f == want) {
+                bail!(
+                    "`severs` names `{this_crate}#{want}`, which that crate's \
+                     manifest does not declare; a publication cannot invent a \
+                     feature, only select one"
+                );
+            }
+        }
         let mut removed_feats: BTreeSet<String> = BTreeSet::new();
         for feat in feat_names {
             if feat == "default" {
@@ -1471,9 +1620,19 @@ fn rewrite_vendored_manifest(path: &Path, ctx: &VendorCtx<'_>) -> Result<()> {
                     })
                 })
                 .unwrap_or(false);
-            if refs_dropped {
+            let declared = declared_here.contains(&feat);
+            if refs_dropped || declared {
                 let mut empty = toml_edit::Array::new();
-                empty.decor_mut().set_suffix(format!(" {SEVERED_FEATURE_NOTE}"));
+                // The derived note claims the feature cannot build, which is
+                // true only when a dependency beneath it is gone. A purely
+                // declared severance ships source that compiles, so it gets
+                // the note that says what is actually true.
+                let note = if refs_dropped {
+                    SEVERED_FEATURE_NOTE
+                } else {
+                    DECLARED_SEVERANCE_NOTE
+                };
+                empty.decor_mut().set_suffix(format!(" {note}"));
                 features.insert(&feat, toml_edit::value(empty));
                 removed_feats.insert(feat);
             }
@@ -5065,6 +5224,7 @@ fn emit_provenance(
         // `@generated` files that arrived with a vendored crate but whose
         // source document is outside this projection's literate set.
         "dropped_generated": report.dropped_generated,
+        "severed": report.severed,
         // Documents the publication named (reference → projected path).
         // A section's reference carries the `#anchor` that cut it, so a
         // receiver can route an edit back to the heading it came from.
@@ -6247,6 +6407,66 @@ mod tests {
     use super::*;
 
     const HOLDER: Option<&str> = Some("0k.computer");
+
+    fn uris(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A severance names one feature of one crate.
+    #[test]
+    fn severs_reads_the_fragment_as_a_feature() {
+        let m = member_names(
+            Some(&uris(&[
+                "x0k:software-module/x0k-fact-projection#envelope",
+                "x0k:software-module/x0k-fact-projection#seam",
+            ])),
+            "severs",
+        )
+        .expect("severances parse");
+        assert_eq!(
+            m.severed,
+            vec![
+                Severance { krate: "x0k-fact-projection".into(), feature: "envelope".into() },
+                Severance { krate: "x0k-fact-projection".into(), feature: "seam".into() },
+            ]
+        );
+        // A severance is not a crate membership: the crate is already in
+        // `publishes`, and pushing it here would double-count it.
+        assert!(m.crates.is_empty());
+    }
+
+    /// A fragment outside `severs` is a mistake to name, not a suffix to
+    /// discard.
+    ///
+    /// This is the shape the projector got WRONG: `member_names` did
+    /// `split('#').next()` on every edge, so
+    /// `excludes: [x0k:software-module/foo#bar]` excluded the entire crate
+    /// `foo` while reading, to whoever wrote it, like a severance of one
+    /// feature. Silence in the permissive direction, over a boundary.
+    #[test]
+    fn a_feature_fragment_outside_severs_refuses() {
+        for edge in ["publishes", "excludes", "entryPoint"] {
+            let err = member_names(
+                Some(&uris(&["x0k:software-module/x0k-folio#plugins"])),
+                edge,
+            )
+            .expect_err("a fragment is only legal under `severs`");
+            let msg = err.to_string();
+            assert!(msg.contains("only `severs` names a feature"), "{edge}: {msg}");
+        }
+    }
+
+    /// And a severance without a fragment names the crate, which is
+    /// `excludes`'s job and a very different fact.
+    #[test]
+    fn severs_without_a_fragment_refuses() {
+        let err = member_names(
+            Some(&uris(&["x0k:software-module/x0k-folio"])),
+            "severs",
+        )
+        .expect_err("a severance needs a feature");
+        assert!(err.to_string().contains("carries no `#<feature>` fragment"), "{err}");
+    }
 
     #[test]
     fn license_files_reads_the_expression_not_substrings() {

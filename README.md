@@ -223,6 +223,22 @@ To try it yourself, write the document above and run the tangle command under
 it, or [add a header to one document you already have](guides/INTEGRATING.md)
 and run `cargo run -p x0k-tangle -- check <your folder>` from this checkout.
 
+## What is in this repository
+
+Both the literate sources and their tangled `@generated` outputs are
+committed, and that is a bootstrap requirement rather than redundancy: the
+tangler that regenerates the code is itself a crate here, so a fresh clone has
+no `x0k-tangle` until it builds one. The committed projections are what break
+that circle. An integration test pins the pairing — a projected `.md` source
+with no committed output is a projection failure.
+
+Everything outside `overlay:` is regenerated wholesale from the corpus this
+repository is projected from, so a hand edit to any other file is overwritten
+on the next publish. The overlay is the declared exception: paths this public
+side owns — currently `CONTRIBUTING.md`, under `guides/` — which re-projection preserves
+exactly as found and which never flow back. The resolved list is recorded in
+`PROVENANCE.json`, so both directions read the same policy.
+
 ## License
 
 MIT — [`LICENSE-MIT`](LICENSE-MIT), Copyright (c) 2026 0k.computer. Single-license

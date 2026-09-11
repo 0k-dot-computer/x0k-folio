@@ -49,6 +49,7 @@ The envelope at the top, the identity it declares, and the block tree beneath it
 - [x0k-folio: the format library](implementation/folio/format.md) — The crate root — its chapter map, and the one feature flag that severs the substrate-facing half so a standalone build is pure functions over strings.
 - [The colophon: one envelope, one parser, one renderer](implementation/folio/colophon.md) — The envelope's single parser and renderer, permissive about keys it does not own and closed about the keywords it does, consumed by every crate that touches a folio file.
 - [Who a document says it is](implementation/folio/identity.md) — The identity half of an x0k URI — scheme, class, slug, and the fragment that names a part of what the slug names — parsed and rendered by the format library itself, so a document can say who it is without a substrate underneath it.
+- [Where a genus lives](implementation/folio/layout.md) — Where a genus lives inside a corpus, and the scope a caller must name to ask — one table replacing six copies, all of which had drifted and none of which said so.
 - [The structural block tree](implementation/folio/structural.md) — The parser-agnostic block tree both the markdown and the HTML sides parse into: syntactic, orthogonal to the editorial axis, and owned here so two renderer crates can share it without a dependency cycle.
 
 ### The vocabulary a document is written in
@@ -82,6 +83,15 @@ Prepare a collection, reconcile its source contributions, and query its facts wi
 - [A local database for document facts](implementation/folio/dialog.md) — Source-owned projections in a caller-selected local Dialog database.
 - [Querying a directory of documents](implementation/folio/query-cli.md) — Explicit corpus and database selection for standalone Folio queries.
 - [A collection survives its commands](implementation/folio/cli-acceptance.md) — Exercise the standalone CLI through separate processes and real Paper documents.
+
+### Facts, and the substrates that hold them
+
+The neutral tuple a document projects into, its wire form, and the way back out to a file. The read seam and the derived folds are severed from this publication, and their chapters travel with them.
+
+- [What a fact is, before any substrate has it](implementation/fact-projection/fact.md) — The substrate-neutral fact tuple, and the projection of a folio/v1 envelope into a batch of them — typed, ordered, and deliberately uncaused.
+- [The bytes a fact rides on](implementation/fact-projection/payload.md) — The wire form of a fact — a separate type from the in-memory one, because a field reorder must never change the bytes of every fact in the system.
+- [Rendering facts back to a file](implementation/fact-projection/materialize.md) — The facts→file half of materialization — a materializer renders facts to bytes and names where they land, with no Loro, no ops, and no daemon in the contract.
+- [Facts back out to a folio](implementation/folio/materialize.md) — The folio/v1 materializer — facts back out to an envelope, with no Loro anywhere in it, so the published build ships a facts→file implementation instead of a feature-gated one.
 
 ### One canonical form
 

@@ -51,8 +51,11 @@ enum Command {
     ///
     /// Every `from=` chunk is resolved against its source file too —
     /// missing file, missing symbol, ambiguous symbol, a language symbol
-    /// extraction cannot walk — and each failure fails the check. Nothing
-    /// is written: this is the read-only half of `sync`.
+    /// extraction cannot walk — and the body it resolves to is compared
+    /// against the body the document shows, so a mirror that still points
+    /// somewhere but no longer shows what is there fails as well. Each
+    /// failure fails the check. Nothing is written: this is the read-only
+    /// half of `sync`.
     Check {
         /// Paths to scan
         paths: Vec<PathBuf>,
@@ -282,6 +285,7 @@ enum Command {
 }
 
 fn main() -> Result<()> {
+    x0k_tangle::init_diagnostics();
     let cli = Cli::parse();
 
     match cli.command {

@@ -1,0 +1,17 @@
+{
+  "source": "implementation/fact-projection/fact.md",
+  "source_hash": "1a30d92c6bcd02f6",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "6231430e49d4a0ec",
+      "outputs": [
+        {
+          "path": "crates/x0k-fact-projection/src/fact.rs",
+          "hash": "bc679f7f60fe0dcd"
+        }
+      ]
+    }
+  ]
+}

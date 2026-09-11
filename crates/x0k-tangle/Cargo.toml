@@ -72,6 +72,10 @@ serde_norway = "0.9"
 anyhow = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
+# The subscriber both binaries install (`init_diagnostics`). Without it the
+# crate's `warn!`s — `tangle.output.unrecorded` above all — are emitted into
+# no collector and print nothing at any level.
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 walkdir = "2"
 # Format-preserving TOML editing for the repository projector (region_repo):
 # rewrites vendored crate manifests (strip workspace-hack + publish-excluded

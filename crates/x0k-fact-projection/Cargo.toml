@@ -19,6 +19,24 @@ keywords = ["literate-programming", "tangle", "markdown", "documentation"]
 # solely for the spine payload encoding in `payload.rs` (single-spine C1):
 # the core `FactEntry`/`FactValue` types stay serde-free — the wire schema
 # is the separate, explicitly versioned `FactPayload` type.
+[features]
+# The severance grain (`publication-is-the-shipping-unit` §9). A publication
+# names these under `severs:`; the crate's job is only to DRAW the boundary,
+# and a publication naming a feature this table does not declare is refused.
+#
+# The split is by subject, not by dependency: this crate is deliberately
+# wasm-clean and holds no private path dependency, so nothing beneath these
+# parts is excluded and none of them could be derived from a dropped dep.
+default = ["core"]
+
+# Always published. Declared so the boundary is nameable, not because it can
+# be severed: the fact tuple, its wire form, the predicate vocabulary, and
+# the facts-to-file materializer seam every published consumer reaches for.
+core = []
+envelope = [] # severed in this publication: not supported here; the crate declares it, this publication does not enable it
+seam = [] # severed in this publication: not supported here; the crate declares it, this publication does not enable it
+fold = [] # severed in this publication: not supported here; the crate declares it, this publication does not enable it
+
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 postcard = { version = "1.0", default-features = false, features = ["use-std"] }

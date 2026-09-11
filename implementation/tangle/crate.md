@@ -251,6 +251,28 @@ other by construction, and a duplicated format string that drifts costs a
 reader a confusing line; a duplicated *resolution rule* that drifts costs
 them a gate that disagrees with itself about whether the tree is sound.
 
+Resolution alone was not enough, and the corpus proved it. Asking whether
+a `from=` still resolves asks whether the mirror still POINTS somewhere;
+it never asks whether the mirror still SHOWS what is there. Measured
+2026-09-09, with resolution the only question being put: 100 of the 150
+mirror bodies under `corpora/x0k/implementation` would have changed
+under `sync`, across 12 of the 25 documents that carry one — all of them
+green. The cause is mostly benign and therefore permanent: an author
+trims the `///` doc comments out of a mirrored body so the prose around
+it does not say everything twice — `author-literate-program`'s rule
+against duplicating prose, colliding with a mirror that is verbatim by
+construction. The consequence is not benign. The document shows a reader
+code that is not the code, and the next `sync` replaces the trim without
+asking.
+
+So the extracted body is compared against the body the document shows,
+and a difference is a finding like any other. The predicate is exactly
+"would `sync` rewrite this file?" — line sequences, because that is what
+`apply_from_patches` writes — which is what lets a gate run `check` and
+believe the answer. `tools/mirror-drift` is that gate, with a baseline
+holding the 100 mirrors that were already drifted when the comparison
+landed.
+
 <a name="chunk-source-check"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#source-check`</sub>
 
 ```rust {#source-check}
@@ -261,6 +283,7 @@ them a gate that disagrees with itself about whether the tree is sound.
 /// touches the document. That is what makes it usable as a gate — `sync`
 /// rewrites the tree it judges, so no CI job can run it.
 pub mod source_check {
+    use crate::chunk::Chunk;
     use crate::parser::ParsedDocument;
     use crate::source_ref::{extract_symbol_in, SymbolLanguage};
     use std::path::Path;
@@ -345,8 +368,16 @@ pub mod source_check {
                 }
             };
 
-            if let Err(e) = extract_symbol_in(&source_content, symbol, lang) {
-                report.findings.push(format!("chunk '{name}': {e}"));
+            let span = match extract_symbol_in(&source_content, symbol, lang) {
+                Ok(span) => span,
+                Err(e) => {
+                    report.findings.push(format!("chunk '{name}': {e}"));
+                    continue;
+                }
+            };
+
+            if let Some(finding) = drift_finding(name, chunk, from_path, &span.body) {
+                report.findings.push(finding);
             }
         }
 
@@ -385,6 +416,65 @@ pub mod source_check {
         None
     }
 
+    /// The body a document shows for a mirrored chunk, against the body
+    /// its source holds now.
+    ///
+    /// This is the half of `sync` that `check` used to leave out, and it
+    /// is the half that was wrong in the corpus: resolving a symbol
+    /// proves the mirror still POINTS somewhere, never that it still
+    /// SHOWS what is there. Measured 2026-09-09 — 100 of the 150 mirror
+    /// bodies under `corpora/x0k/implementation` would change under
+    /// `sync`, across 12 of the 25 documents that carry one, and every
+    /// one of them passed `check` green. The dominant cause is benign and therefore
+    /// permanent: an author trims `///` doc comments out of a mirrored
+    /// body so the prose around it does not say everything twice, which
+    /// is `author-literate-program`'s rule colliding with a verbatim
+    /// mirror. Benign or not, the document is then showing a reader code
+    /// that is not the code, and the next `sync` silently replaces it.
+    ///
+    /// The comparison is line sequences, not strings, because that is
+    /// exactly the predicate "would `sync` rewrite this file?":
+    /// `apply_from_patches` emits `new_body.lines()` between the fences,
+    /// so trailing-newline differences are not drift and a single changed
+    /// line is.
+    ///
+    /// An EMPTY body is not drift. That is an unfilled mirror — the shape
+    /// an author writes before the first `sync`, and the one `sync` exists
+    /// to fill. Reporting it here would make the ordinary first-fill a
+    /// failure.
+    fn drift_finding(
+        name: &str,
+        chunk: &Chunk,
+        from_path: &Path,
+        source_body: &str,
+    ) -> Option<String> {
+        let shown = chunk.bodies.first()?;
+        if shown.text.trim().is_empty() {
+            return None;
+        }
+        if shown.text.lines().eq(source_body.lines()) {
+            return None;
+        }
+        // Name the first line that differs. A mirror is usually dozens of
+        // lines and usually drifted in one place; "they differ" sends the
+        // reader to a diff, "they differ at line 7" sends them to line 7.
+        let at = shown
+            .text
+            .lines()
+            .zip(source_body.lines())
+            .position(|(a, b)| a != b)
+            .map(|i| i + 1)
+            .unwrap_or_else(|| shown.text.lines().count().min(source_body.lines().count()) + 1);
+        Some(format!(
+            "chunk '{name}': the mirrored body is not what {} holds now — \
+             first difference at body line {at} (document {} line(s), source {} line(s)); \
+             sync would rewrite it",
+            from_path.display(),
+            shown.text.lines().count(),
+            source_body.lines().count()
+        ))
+    }
+
     /// The one spelling of a source file that is not there. `sync` says
     /// this sentence too.
     fn not_found(name: &str, source_file: &Path) -> String {
@@ -393,6 +483,65 @@ pub mod source_check {
             source_file.display()
         )
     }
+}
+```
+
+## Diagnostics
+
+The crate warns, and until 2026-09-09 nobody heard it.
+`tangle.output.unrecorded` is the only signal that a document is about
+to write a file this tangler has never written — a first-time
+graduation, or a hand-authored file whose path a chunk has quietly
+started targeting — and `screen_outputs` emits it as a `warn!` before
+the write lands. Neither binary installed a subscriber, so it went
+nowhere: verified silent at the default level *and* under
+`RUST_LOG=warn` while a run deleted a module header and a helper and
+exited 0. A `warn!` with no subscriber is not a quiet warning, it is an
+absent one, and the guard above it had been working into a closed pipe
+for as long as the crate has had it.
+
+The subscriber is installed here, next to `source_check` and for the
+same reason: there are two binaries, and a diagnostics policy that
+drifts between them is a tool that tells two authors different things
+about the same tree. Both call `init_diagnostics()` as their first
+statement, before `Cli::parse()`, so a clap failure is the only path
+that can precede it.
+
+Three choices in it carry weight. **stderr**, because stdout is
+reserved for data — `index`, `weave` without an output path, `list` and
+`affordances` all write parseable output there, and a diagnostic mixed
+into it corrupts the caller's parse. **`warn` by default**, because the
+CLI's ordinary reporting is its own summary and a default of `info`
+would bury the two lines that matter under twenty-three that do not;
+`RUST_LOG` raises it for anyone who wants the rest. **`try_init`**,
+because a host that has already installed a subscriber — a test
+harness, an embedding daemon — should keep it; a second subscriber is
+not a reason to fail a tangle.
+
+<a name="chunk-diagnostics"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#diagnostics`</sub>
+
+```rust {#diagnostics}
+/// Install the process-wide tracing subscriber for an `x0k-tangle` binary.
+///
+/// Both CLIs call this first. Diagnostics go to **stderr** (stdout carries
+/// data), the default level is `warn` (the CLI's own report is its
+/// summary), and `RUST_LOG` overrides. Idempotent: a host that already
+/// installed a subscriber keeps it.
+///
+/// Incident (2026-09-09): before this existed, `tangle.output.unrecorded`
+/// — the only warning that a document is about to overwrite a file the
+/// tangler never wrote — was emitted into no subscriber and printed
+/// nothing at any level. Incident test:
+/// `tests/cli_verdicts.rs::tangle_warns_before_overwriting_a_file_it_never_wrote`.
+pub fn init_diagnostics() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .without_time()
+        .try_init();
 }
 ```
 
@@ -590,8 +739,11 @@ edges:
 ///
 /// Every `from=` chunk is resolved against its source file too —
 /// missing file, missing symbol, ambiguous symbol, a language symbol
-/// extraction cannot walk — and each failure fails the check. Nothing
-/// is written: this is the read-only half of `sync`.
+/// extraction cannot walk — and the body it resolves to is compared
+/// against the body the document shows, so a mirror that still points
+/// somewhere but no longer shows what is there fails as well. Each
+/// failure fails the check. Nothing is written: this is the read-only
+/// half of `sync`.
 Check {
     /// Paths to scan
     paths: Vec<PathBuf>,
@@ -975,6 +1127,7 @@ build or test, `receive-repo` when any change was refused.
 
 ```rust {#main-fn file="src/main.rs"}
 fn main() -> Result<()> {
+    x0k_tangle::init_diagnostics();
     let cli = Cli::parse();
 
     match cli.command {
@@ -1988,7 +2141,7 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 
 ## Composing the crate root and the binary
 
-<a name="chunk-root"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#root` · assembles [crate-doc](#chunk-crate-doc) · [modules](#chunk-modules) · [exports](#chunk-exports) · [source-check](#chunk-source-check)</sub>
+<a name="chunk-root"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#root` · assembles [crate-doc](#chunk-crate-doc) · [modules](#chunk-modules) · [exports](#chunk-exports) · [source-check](#chunk-source-check) · [diagnostics](#chunk-diagnostics)</sub>
 
 ```rust {#root}
 <<crate-doc>>
@@ -1998,6 +2151,8 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 <<exports>>
 
 <<source-check>>
+
+<<diagnostics>>
 ```
 
 <a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [clobber-settings](#chunk-clobber-settings) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-note](#chunk-dangling-note) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
@@ -2779,6 +2934,120 @@ fn tangle_rewrites_the_output_it_last_wrote() {
     let text = fs::read_to_string(tmp.path().join("src/lib.rs")).unwrap();
     assert!(text.contains("second") && !text.contains("first"), "got {text}");
 }
+
+/// The warning is audible. `Unrecorded` is the one verdict `guard_outputs`
+/// lets through — a file on disk that no sidecar claims is as likely a
+/// first-time graduation as a lost sidecar, and refusing graduations would
+/// make the common adoption move impossible — so the write proceeds and the
+/// `warn!` is the whole of the signal. Until 2026-09-09 neither binary
+/// installed a subscriber, and that signal reached nobody: a run overwrote
+/// an unclaimed file at the default level and under `RUST_LOG=warn`, printed
+/// nothing about it, and exited 0. This asserts through the shell, which is
+/// the only place the absence was observable.
+#[test]
+fn tangle_warns_before_overwriting_a_file_it_never_wrote() {
+    let tmp = TempDir::new().unwrap();
+    // No prior tangle, so no sidecar claims the path: the file on disk is
+    // Unrecorded rather than Foreign, and the run is allowed to proceed.
+    write(tmp.path(), "src/lib.rs", "pub fn hand_authored() {}\n");
+    write(tmp.path(), "docs/d.md", &tangling_doc("first"));
+
+    let out = tangle_in(tmp.path(), false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "an unrecorded output is a graduation, not a refusal: {stderr}"
+    );
+    assert!(
+        stderr.contains("tangle.output.unrecorded"),
+        "the overwrite of an unclaimed file was silent: {stderr}"
+    );
+    assert!(
+        stderr.contains("src/lib.rs"),
+        "the warning names the file it is about to overwrite: {stderr}"
+    );
+    let text = fs::read_to_string(tmp.path().join("src/lib.rs")).unwrap();
+    assert!(
+        text.contains("first") && !text.contains("hand_authored"),
+        "the write did proceed, which is what makes the warning the signal: {text}"
+    );
+}
+
+/// The mirror comparison, through the shell. `check` resolved a symbol and
+/// stopped, so a document showing a body its source no longer held passed
+/// green — the state 100 of the corpus's 150 mirrors were in on 2026-09-09,
+/// every one of them invisible to every gate. Ratchet: `tools/mirror-drift`.
+#[test]
+fn check_fails_a_mirror_whose_body_the_source_no_longer_holds() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    // The symbol still resolves; only the body the document shows is old.
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" \
+         symbol=\"createHorizonRemap\"}\nexport function createHorizonRemap(scale) \
+         {\n  return (u) => u / scale;\n}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a mirror showing a body its source does not hold passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("the mirrored body is not what remap.js holds now"),
+        "the finding names the source it disagrees with: {stderr}"
+    );
+    assert!(
+        stderr.contains("first difference at body line 2"),
+        "the finding sends the reader to the line, not to a diff: {stderr}"
+    );
+}
+
+/// A mirror that agrees stays green. The predicate is `sync`'s — line
+/// sequences, the thing `apply_from_patches` writes — so a document is
+/// clean exactly when `sync` would leave it alone.
+#[test]
+fn check_passes_a_mirror_whose_body_matches_its_source() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" \
+         symbol=\"createHorizonRemap\"}\nexport function createHorizonRemap(scale) \
+         {\n  return (u) => u * scale;\n}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "a matching mirror was called drift: {stderr}");
+}
+
+/// An EMPTY mirror is not drift. It is what an author writes before the
+/// first `sync` — the shape `sync_fills_a_javascript_chunk_and_passes`
+/// exercises from the other side — and reporting it here would make the
+/// ordinary first fill a failure.
+#[test]
+fn check_passes_an_unfilled_mirror() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" \
+         symbol=\"createHorizonRemap\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "an unfilled mirror is sync's ordinary first fill, not drift: {stderr}"
+    );
+}
 `````
 
 ## The package manifest
@@ -2862,6 +3131,10 @@ serde_norway = "0.9"
 anyhow = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
+# The subscriber both binaries install (`init_diagnostics`). Without it the
+# crate's `warn!`s — `tangle.output.unrecorded` above all — are emitted into
+# no collector and print nothing at any level.
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 walkdir = "2"
 # Format-preserving TOML editing for the repository projector (region_repo):
 # rewrites vendored crate manifests (strip workspace-hack + publish-excluded

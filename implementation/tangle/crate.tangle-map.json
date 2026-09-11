@@ -1,6 +1,6 @@
 {
   "source": "implementation/tangle/crate.md",
-  "source_hash": "91d6bc4cfd8de06b",
+  "source_hash": "0eaee20ce817c7ad",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,19 +9,19 @@
       "outputs": [
         {
           "path": "crates/x0k-tangle/src/lib.rs",
-          "hash": "3ab719b2260466b0"
+          "hash": "ed127c992def63dd"
         },
         {
           "path": "crates/x0k-tangle/src/main.rs",
-          "hash": "c00969562f4cb8fc"
+          "hash": "10b7781cadf4b98c"
         },
         {
           "path": "crates/x0k-tangle/tests/cli_verdicts.rs",
-          "hash": "91b252de8386f971"
+          "hash": "3ad88069291013db"
         },
         {
           "path": "crates/x0k-tangle/Cargo.toml",
-          "hash": "50c70177f9cd983a"
+          "hash": "af72afba51b54ec4"
         }
       ]
     }

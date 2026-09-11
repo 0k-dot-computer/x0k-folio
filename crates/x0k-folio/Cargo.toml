@@ -28,6 +28,15 @@ plugins = [] # severed in this publication: its dependency is not published; ena
 document-vocabulary = ["x0k-ontology/load"]
 
 [dependencies]
+# The `Materializer` seam this crate implements unconditionally: a format
+# library that cannot write a document back out is the missing half
+# `filesystem-graph-materialization` §8 names. Non-optional and published
+# alongside, with a dependency list of serde/postcard/blake3.
+x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core"] , version = "0.1.0" }
+
+# `layout::CorpusScope::find_folio` walks a genus directory to resolve a
+# document by stem, since an id carries no topic.
+walkdir = "2"
 
 # The vocabulary the envelope's `edges:` predicates are terms of.
 # `envelope_check` reads a document against whichever ontology modules
@@ -68,6 +77,11 @@ pulldown-cmark = { version = "0.12", default-features = false, features = ["simd
 blake3 = "1"
 
 [dev-dependencies]
+# The envelope PROJECTION, for the materializer round-trip test only: the
+# library itself needs the predicate NAMES (in `core`) and never
+# `project_envelope`. Declaring it here rather than in `[dependencies]` is
+# what keeps the published crate on the core surface.
+x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core", "envelope"] , version = "0.1.0" }
 # The loader, for tests that read a genus or a namespace off a scratch
 # module directory rather than out of the compiled tables.
 x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.1.0" }

@@ -98,6 +98,7 @@ pub use region_weave::{
 /// touches the document. That is what makes it usable as a gate — `sync`
 /// rewrites the tree it judges, so no CI job can run it.
 pub mod source_check {
+    use crate::chunk::Chunk;
     use crate::parser::ParsedDocument;
     use crate::source_ref::{extract_symbol_in, SymbolLanguage};
     use std::path::Path;
@@ -182,8 +183,16 @@ pub mod source_check {
                 }
             };
 
-            if let Err(e) = extract_symbol_in(&source_content, symbol, lang) {
-                report.findings.push(format!("chunk '{name}': {e}"));
+            let span = match extract_symbol_in(&source_content, symbol, lang) {
+                Ok(span) => span,
+                Err(e) => {
+                    report.findings.push(format!("chunk '{name}': {e}"));
+                    continue;
+                }
+            };
+
+            if let Some(finding) = drift_finding(name, chunk, from_path, &span.body) {
+                report.findings.push(finding);
             }
         }
 
@@ -222,6 +231,65 @@ pub mod source_check {
         None
     }
 
+    /// The body a document shows for a mirrored chunk, against the body
+    /// its source holds now.
+    ///
+    /// This is the half of `sync` that `check` used to leave out, and it
+    /// is the half that was wrong in the corpus: resolving a symbol
+    /// proves the mirror still POINTS somewhere, never that it still
+    /// SHOWS what is there. Measured 2026-09-09 — 100 of the 150 mirror
+    /// bodies under `corpora/x0k/implementation` would change under
+    /// `sync`, across 12 of the 25 documents that carry one, and every
+    /// one of them passed `check` green. The dominant cause is benign and therefore
+    /// permanent: an author trims `///` doc comments out of a mirrored
+    /// body so the prose around it does not say everything twice, which
+    /// is `author-literate-program`'s rule colliding with a verbatim
+    /// mirror. Benign or not, the document is then showing a reader code
+    /// that is not the code, and the next `sync` silently replaces it.
+    ///
+    /// The comparison is line sequences, not strings, because that is
+    /// exactly the predicate "would `sync` rewrite this file?":
+    /// `apply_from_patches` emits `new_body.lines()` between the fences,
+    /// so trailing-newline differences are not drift and a single changed
+    /// line is.
+    ///
+    /// An EMPTY body is not drift. That is an unfilled mirror — the shape
+    /// an author writes before the first `sync`, and the one `sync` exists
+    /// to fill. Reporting it here would make the ordinary first-fill a
+    /// failure.
+    fn drift_finding(
+        name: &str,
+        chunk: &Chunk,
+        from_path: &Path,
+        source_body: &str,
+    ) -> Option<String> {
+        let shown = chunk.bodies.first()?;
+        if shown.text.trim().is_empty() {
+            return None;
+        }
+        if shown.text.lines().eq(source_body.lines()) {
+            return None;
+        }
+        // Name the first line that differs. A mirror is usually dozens of
+        // lines and usually drifted in one place; "they differ" sends the
+        // reader to a diff, "they differ at line 7" sends them to line 7.
+        let at = shown
+            .text
+            .lines()
+            .zip(source_body.lines())
+            .position(|(a, b)| a != b)
+            .map(|i| i + 1)
+            .unwrap_or_else(|| shown.text.lines().count().min(source_body.lines().count()) + 1);
+        Some(format!(
+            "chunk '{name}': the mirrored body is not what {} holds now — \
+             first difference at body line {at} (document {} line(s), source {} line(s)); \
+             sync would rewrite it",
+            from_path.display(),
+            shown.text.lines().count(),
+            source_body.lines().count()
+        ))
+    }
+
     /// The one spelling of a source file that is not there. `sync` says
     /// this sentence too.
     fn not_found(name: &str, source_file: &Path) -> String {
@@ -230,4 +298,27 @@ pub mod source_check {
             source_file.display()
         )
     }
+}
+
+/// Install the process-wide tracing subscriber for an `x0k-tangle` binary.
+///
+/// Both CLIs call this first. Diagnostics go to **stderr** (stdout carries
+/// data), the default level is `warn` (the CLI's own report is its
+/// summary), and `RUST_LOG` overrides. Idempotent: a host that already
+/// installed a subscriber keeps it.
+///
+/// Incident (2026-09-09): before this existed, `tangle.output.unrecorded`
+/// — the only warning that a document is about to overwrite a file the
+/// tangler never wrote — was emitted into no subscriber and printed
+/// nothing at any level. Incident test:
+/// `tests/cli_verdicts.rs::tangle_warns_before_overwriting_a_file_it_never_wrote`.
+pub fn init_diagnostics() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .without_time()
+        .try_init();
 }

@@ -692,3 +692,117 @@ fn tangle_rewrites_the_output_it_last_wrote() {
     let text = fs::read_to_string(tmp.path().join("src/lib.rs")).unwrap();
     assert!(text.contains("second") && !text.contains("first"), "got {text}");
 }
+
+/// The warning is audible. `Unrecorded` is the one verdict `guard_outputs`
+/// lets through — a file on disk that no sidecar claims is as likely a
+/// first-time graduation as a lost sidecar, and refusing graduations would
+/// make the common adoption move impossible — so the write proceeds and the
+/// `warn!` is the whole of the signal. Until 2026-09-09 neither binary
+/// installed a subscriber, and that signal reached nobody: a run overwrote
+/// an unclaimed file at the default level and under `RUST_LOG=warn`, printed
+/// nothing about it, and exited 0. This asserts through the shell, which is
+/// the only place the absence was observable.
+#[test]
+fn tangle_warns_before_overwriting_a_file_it_never_wrote() {
+    let tmp = TempDir::new().unwrap();
+    // No prior tangle, so no sidecar claims the path: the file on disk is
+    // Unrecorded rather than Foreign, and the run is allowed to proceed.
+    write(tmp.path(), "src/lib.rs", "pub fn hand_authored() {}\n");
+    write(tmp.path(), "docs/d.md", &tangling_doc("first"));
+
+    let out = tangle_in(tmp.path(), false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "an unrecorded output is a graduation, not a refusal: {stderr}"
+    );
+    assert!(
+        stderr.contains("tangle.output.unrecorded"),
+        "the overwrite of an unclaimed file was silent: {stderr}"
+    );
+    assert!(
+        stderr.contains("src/lib.rs"),
+        "the warning names the file it is about to overwrite: {stderr}"
+    );
+    let text = fs::read_to_string(tmp.path().join("src/lib.rs")).unwrap();
+    assert!(
+        text.contains("first") && !text.contains("hand_authored"),
+        "the write did proceed, which is what makes the warning the signal: {text}"
+    );
+}
+
+/// The mirror comparison, through the shell. `check` resolved a symbol and
+/// stopped, so a document showing a body its source no longer held passed
+/// green — the state 100 of the corpus's 150 mirrors were in on 2026-09-09,
+/// every one of them invisible to every gate. Ratchet: `tools/mirror-drift`.
+#[test]
+fn check_fails_a_mirror_whose_body_the_source_no_longer_holds() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    // The symbol still resolves; only the body the document shows is old.
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" \
+         symbol=\"createHorizonRemap\"}\nexport function createHorizonRemap(scale) \
+         {\n  return (u) => u / scale;\n}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a mirror showing a body its source does not hold passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("the mirrored body is not what remap.js holds now"),
+        "the finding names the source it disagrees with: {stderr}"
+    );
+    assert!(
+        stderr.contains("first difference at body line 2"),
+        "the finding sends the reader to the line, not to a diff: {stderr}"
+    );
+}
+
+/// A mirror that agrees stays green. The predicate is `sync`'s — line
+/// sequences, the thing `apply_from_patches` writes — so a document is
+/// clean exactly when `sync` would leave it alone.
+#[test]
+fn check_passes_a_mirror_whose_body_matches_its_source() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" \
+         symbol=\"createHorizonRemap\"}\nexport function createHorizonRemap(scale) \
+         {\n  return (u) => u * scale;\n}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "a matching mirror was called drift: {stderr}");
+}
+
+/// An EMPTY mirror is not drift. It is what an author writes before the
+/// first `sync` — the shape `sync_fills_a_javascript_chunk_and_passes`
+/// exercises from the other side — and reporting it here would make the
+/// ordinary first fill a failure.
+#[test]
+fn check_passes_an_unfilled_mirror() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n```javascript {#remap from=\"remap.js\" \
+         symbol=\"createHorizonRemap\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "an unfilled mirror is sync's ordinary first fill, not drift: {stderr}"
+    );
+}
