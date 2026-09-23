@@ -1637,7 +1637,8 @@ fn a_prebuilt_declaration_emits_the_release_lane_and_the_wrapper() {
     let workflow =
         std::fs::read_to_string(out.path().join(".github/workflows/release.yml")).unwrap();
     assert!(workflow.contains("- target: x86_64-unknown-linux-musl"), "{workflow}");
-    assert!(workflow.contains("runner: macos-14"), "{workflow}");
+    assert!(workflow.contains("runner: macos-15"), "{workflow}");
+    assert!(!workflow.contains("macos-13") && !workflow.contains("macos-14"), "{workflow}");
     assert!(
         workflow.contains("npm publish --provenance --access public"),
         "{workflow}"

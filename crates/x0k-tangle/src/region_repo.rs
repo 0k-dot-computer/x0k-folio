@@ -5030,10 +5030,14 @@ const PREBUILT_TARGETS: &[PrebuiltTarget] = &[
         setup: "sudo apt-get update && sudo apt-get install -y musl-tools" },
     PrebuiltTarget { triple: "aarch64-unknown-linux-gnu", node_platform: "linux",
         node_arch: "arm64", archive: ".tar.gz", exe: "", runner: "ubuntu-24.04-arm", setup: "" },
+    // GitHub retires macOS runner labels on a schedule: `macos-13` was gone
+    // when v0.1.1's release ran (2026-09-23) and the job queued forever;
+    // `macos-14` is deprecated. `macos-15-intel` is the Intel runner that
+    // remains, and `macos-15` its Apple-silicon sibling.
     PrebuiltTarget { triple: "x86_64-apple-darwin", node_platform: "darwin",
-        node_arch: "x64", archive: ".tar.gz", exe: "", runner: "macos-13", setup: "" },
+        node_arch: "x64", archive: ".tar.gz", exe: "", runner: "macos-15-intel", setup: "" },
     PrebuiltTarget { triple: "aarch64-apple-darwin", node_platform: "darwin",
-        node_arch: "arm64", archive: ".tar.gz", exe: "", runner: "macos-14", setup: "" },
+        node_arch: "arm64", archive: ".tar.gz", exe: "", runner: "macos-15", setup: "" },
     PrebuiltTarget { triple: "x86_64-pc-windows-msvc", node_platform: "win32",
         node_arch: "x64", archive: ".zip", exe: ".exe", runner: "windows-latest", setup: "" },
     PrebuiltTarget { triple: "aarch64-pc-windows-msvc", node_platform: "win32",
@@ -6613,6 +6617,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
       - name: Toolchain prerequisites for this target
         if: matrix.setup != ''
         shell: bash
@@ -6636,6 +6642,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -6678,6 +6686,8 @@ const NPM_PUBLISH_JOB: &str = r#"  npm:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
