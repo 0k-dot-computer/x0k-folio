@@ -203,6 +203,15 @@ before success, so a revision still names only durable blocks — and the
 concurrency upstream already asked for is now real. The cost law is the same
 one the fan-out section states: per changed source, not per corpus.
 
+The guard that keeps it so counts rather than times. The first cut compared
+the batch's wall clock against single writes and asked for better than 4×;
+that number is the filesystem's, not ours — ext4 here coalesces sixteen
+concurrent commits into about one, the GitHub runner's disk into about
+three, and the runner failed the release's first CI run on exactly that
+(2026-09-23). So the test holds each body for a few milliseconds and reads
+the peak number of bodies on the blocking pool at once: the fan-out width
+when `set` is off the calling task, exactly one when it is not.
+
 <a name="chunk-durable-storage"></a><sub>[`src/storage.rs`](../../crates/x0k-folio-dialog/src/storage.rs) · `#durable-storage`</sub>
 
 ```rust {#durable-storage file="src/storage.rs"}
@@ -217,6 +226,37 @@ pub struct DurableStorage {
     root: PathBuf, _lock: Option<Arc<File>>, read_only: bool,
     #[cfg(test)]
     pub(crate) fail_root: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    pub(crate) overlap: Arc<Overlap>,
+}
+/// Test-only: how many `set` bodies are on the blocking pool at once. The
+/// peak is 1 when the body runs on the calling task and the fan-out width
+/// when it does not — on any disk, which a wall clock cannot promise.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct Overlap {
+    current: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+    /// Held inside each body so the overlap is visible however fast the
+    /// disk syncs.
+    pub(crate) hold_millis: std::sync::atomic::AtomicU64,
+}
+#[cfg(test)]
+impl Overlap {
+    fn enter(self: &Arc<Self>) -> OverlapGuard {
+        use std::sync::atomic::Ordering::SeqCst;
+        let now = self.current.fetch_add(1, SeqCst) + 1;
+        self.peak.fetch_max(now, SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(self.hold_millis.load(SeqCst)));
+        OverlapGuard(self.clone())
+    }
+    pub(crate) fn peak(&self) -> usize { self.peak.load(std::sync::atomic::Ordering::SeqCst) }
+}
+#[cfg(test)]
+struct OverlapGuard(Arc<Overlap>);
+#[cfg(test)]
+impl Drop for OverlapGuard {
+    fn drop(&mut self) { self.0.current.fetch_sub(1, std::sync::atomic::Ordering::SeqCst); }
 }
 impl DurableStorage {
     pub fn open(root: &Path, read_only: bool) -> Result<Self> {
@@ -224,6 +264,7 @@ impl DurableStorage {
             anyhow::ensure!(root.is_dir(), "database directory does not exist");
             return Ok(Self { root: root.canonicalize()?, _lock: None, read_only,
                 #[cfg(test)] fail_root: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                #[cfg(test)] overlap: Arc::new(Overlap::default()),
             });
         }
         // Persist every newly created ancestor before allowing any database writes.
@@ -244,6 +285,7 @@ impl DurableStorage {
         File::open(&root)?.sync_all()?;
         Ok(Self { root, _lock: Some(Arc::new(lock)), read_only,
             #[cfg(test)] fail_root: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)] overlap: Arc::new(Overlap::default()),
         })
     }
     fn path(&self, key: &Blake3Hash) -> PathBuf {
@@ -266,13 +308,17 @@ impl StorageBackend for DurableStorage {
     /// `buffer_unordered(16)` before it mints the revision that names those
     /// blocks; syncing inline would block that one task at each `sync_all`
     /// and serialize the fan-out into one journal commit per block. See
-    /// "Two fsyncs per block, but never one after another"; the measurement
-    /// it reports is guarded by `a_batch_of_blocks_syncs_concurrently`.
+    /// "Two fsyncs per block, but never one after another"; the overlap it
+    /// relies on is guarded by `a_batch_of_blocks_syncs_concurrently`.
     async fn set(&mut self, key: Blake3Hash, value: Vec<u8>) -> Result<(), Self::Error> {
         let (root, path, read_only) = (self.root.clone(), self.path(&key), self.read_only);
         #[cfg(test)]
         let fail_root = self.fail_root.clone();
+        #[cfg(test)]
+        let overlap = self.overlap.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
+            #[cfg(test)]
+            let _overlap = overlap.enter();
             anyhow::ensure!(!read_only, "read-only database");
             #[cfg(test)]
             if key == dialog_artifacts::make_reference(b"folio-v1")
@@ -301,39 +347,35 @@ mod durability {
     }
 
     /// The incident test for "Two fsyncs per block, but never one after
-    /// another". Calibrated against the machine rather than a constant: four
-    /// blocks written one at a time price this disk's journal commit, and
-    /// sixty-four written through the same `buffer_unordered(16)` upstream's
-    /// `publish_root` uses must not cost what sixty-four sequential ones
-    /// would. A current-thread runtime on purpose — that is the runtime the
-    /// worker builds, and it is where an inline `sync_all` did its damage.
+    /// another". It counts rather than times: a wall-clock ratio measures
+    /// how much the filesystem coalesces, not where the body runs — arca's
+    /// ext4 gave 140× and the GitHub runner's disk 3.4×, and the first cut
+    /// of this test failed the release's CI on that difference (2026-09-23).
+    /// Each body holds for a few milliseconds so the overlap is visible
+    /// however fast the disk is; through upstream's own `buffer_unordered(16)`
+    /// the peak is the fan-out width when the body is on the blocking pool
+    /// and exactly 1 when it syncs on the calling task, which is what an
+    /// inline `sync_all` did. A current-thread runtime on purpose — that is
+    /// the runtime the worker builds, and where the inline sync did its damage.
     #[tokio::test]
     async fn a_batch_of_blocks_syncs_concurrently() -> Result<()> {
         let directory = tempfile::tempdir()?;
-        let mut storage = DurableStorage::open(directory.path(), false)?;
+        let storage = DurableStorage::open(directory.path(), false)?;
         let fail = |error: DialogStorageError| anyhow::anyhow!(error.to_string());
+        storage.overlap.hold_millis.store(20, std::sync::atomic::Ordering::SeqCst);
 
-        let alone = std::time::Instant::now();
-        for n in 0..4 {
-            let (key, value) = block(n);
-            storage.set(key, value).await.map_err(fail)?;
-        }
-        let alone = alone.elapsed() / 4;
-
-        let batched = std::time::Instant::now();
-        futures_util::stream::iter((4..68).map(|n| {
+        futures_util::stream::iter((0..64).map(|n| {
             let mut storage = storage.clone();
             async move { let (key, value) = block(n); storage.set(key, value).await }
         })).buffer_unordered(16).collect::<Vec<_>>().await
             .into_iter().collect::<std::result::Result<Vec<_>, _>>().map_err(fail)?;
-        let batched = batched.elapsed();
 
-        assert!(batched < alone * 16,
-            "64 blocks through a 16-way flush took {batched:?} against {alone:?} \
-             for one written alone; a fan-out that costs a multiple of the \
-             block count is syncing on the calling task again");
-        // 68 blocks and the writer lock: every block still reached the disk.
-        assert_eq!(std::fs::read_dir(directory.path())?.count(), 69);
+        let peak = storage.overlap.peak();
+        assert!(peak >= 8,
+            "at most {peak} of 64 blocks were on the blocking pool at once through a \
+             16-way flush; a peak of 1 is a body syncing on the calling task again");
+        // 64 blocks and the writer lock: every block still reached the disk.
+        assert_eq!(std::fs::read_dir(directory.path())?.count(), 65);
         Ok(())
     }
 }

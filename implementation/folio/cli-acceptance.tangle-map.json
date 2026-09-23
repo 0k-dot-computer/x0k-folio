@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/cli-acceptance.md",
-  "source_hash": "ab465f56fc50f1b1",
+  "source_hash": "a714bf674805197a",
   "pipelines": [
     {
       "kind": "identity-tangle",

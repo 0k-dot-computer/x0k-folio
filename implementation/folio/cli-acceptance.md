@@ -271,10 +271,12 @@ So this test asserts what it can actually see — the shipped base is read, no
 flag said, and nothing is rejected — under the same 30-second budget as every
 other command here, which is a hang detector. The mechanism has its own guard
 where the mechanism lives: `a_batch_of_blocks_syncs_concurrently` in
-`x0k:implementation/folio/dialog` prices this machine's journal commit first
-and compares the fan-out against *that*, so it reads the same on a fast disk
-and a slow one. A self-calibrating comparison can separate the defect from the
-weather; a constant cannot.
+`x0k:implementation/folio/dialog` counts how many block writes are on the
+blocking pool at once, each held long enough to be seen, so it reads the same
+on a fast disk and a slow one. A count can separate the defect from the
+weather; a clock cannot — its first cut compared wall clocks and failed on
+the GitHub runner, whose disk coalesces concurrent commits less than ext4
+here does (2026-09-23).
 
 <a name="chunk-accept-default-vocabulary"></a><sub>[`tests/acceptance.rs`](../../crates/x0k-folio-cli/tests/acceptance.rs) · `#accept-default-vocabulary`</sub>
 
