@@ -19,11 +19,10 @@ below are exactly the crates whose numbers moved in it. Reading a crate's
 version as "how recent is this bundle" will mislead you — read the release
 it is listed under instead.
 
-## 0.1.1 — not yet published
+## 0.1.1 — 2026-09-23
 
-The registry still serves 0.1.0, so `cargo install x0k-tangle` installs
-0.1.0 until this release goes out. Building from a clone of this
-repository gets you everything below today.
+On crates.io (`cargo install x0k-tangle` installs it) and on GitHub as
+[v0.1.1](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.1.1), with a binary per platform.
 
 ### x0k-fact-projection
 

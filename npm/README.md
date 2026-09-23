@@ -8,13 +8,14 @@ tangler/checker, and the `x0k-folio-cli` query surface — are documented in
 [the repository](https://github.com/0k-dot-computer/x0k-folio) and its
 [integration guide](https://github.com/0k-dot-computer/x0k-folio/blob/main/guides/INTEGRATING.md).
 
-## This package cannot install yet
+## This package is not on the registry yet
 
-**No tagged release has been cut**, so there is nothing for the postinstall to
-download and `npm install @0k/folio` fails. That is the honest state of it:
-the wrapper and its release workflow are written and tested, and the first tag
-has not been pushed. Until it is, the way to the binaries is a Rust toolchain
-and a C compiler (for the tree-sitter grammars):
+**The binaries exist — [v0.1.1](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.1.1) carries five platforms and their
+`SHA256SUMS` — but this wrapper has not been published to npm**, so
+`npm install @0k/folio` finds nothing. That is the honest state of it: the
+wrapper and its release workflow are written and tested, and the publish step
+waits on a registry token. Until then, the way to the binaries is the release
+page, or a Rust toolchain and a C compiler (for the tree-sitter grammars):
 
 ```sh
 cargo install x0k-tangle    # the tangler and checker, published on crates.io

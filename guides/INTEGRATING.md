@@ -54,8 +54,10 @@ release lane in this repository: `.github/workflows/release.yml` builds a
 static binary per platform on a tag, and `npm/` wraps them as `@0k/folio`,
 verifying each download against a digest pinned inside the package and
 against its SLSA build provenance before it will install, failing closed if
-either check does not hold. **No tagged release has been cut yet**, so that
-half is not reachable from a registry; when one is, fetching the verified
+either check does not hold. [v0.1.1](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.1.1) is that release: a static
+binary for five platforms and one `SHA256SUMS`, attested at build. **The
+wrapper is not on the npm registry yet**, so the way in today is the release
+page or `cargo install`; when `@0k/folio` is published, fetching the verified
 binary becomes the first instruction on this page.
 
 Five verbs are the ones you will use, and each has a `--help`:
