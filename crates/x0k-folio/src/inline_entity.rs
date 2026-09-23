@@ -53,7 +53,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
-use tracing::warn;
+use tracing::debug;
 
 use crate::entity_id::EntityId;
 use crate::structural_block::FenceInfo;
@@ -170,10 +170,19 @@ impl std::fmt::Display for InlineEntityError {
             Self::MissingId {
                 marker_class,
                 heading,
-            } => write!(
-                f,
-                "inline `{marker_class}` block in section `{heading}` is missing the required `id:` field"
-            ),
+            } => {
+                write!(
+                    f,
+                    "inline `{marker_class}` block in section `{heading}` is missing the required `id:` field"
+                )?;
+                if marker_class.contains(':') {
+                    write!(
+                        f,
+                        " — the info string `yaml {marker_class}` is what makes this fence a typed declaration; an ordinary code fence names a language and nothing else"
+                    )?;
+                }
+                Ok(())
+            }
             Self::InvalidUri {
                 marker_class,
                 heading,
@@ -187,10 +196,22 @@ impl std::fmt::Display for InlineEntityError {
                 marker_class,
                 heading,
                 uri_class,
-            } => write!(
-                f,
-                "inline `{marker_class}` block in section `{heading}` carries a `{uri_class}` id; info-string marker and id class must agree"
-            ),
+            } => {
+                let (prefix, local) = marker_class
+                    .split_once(':')
+                    .unwrap_or(("x0k", marker_class.as_str()));
+                write!(
+                    f,
+                    "inline `{marker_class}` block in section `{heading}` carries a `{uri_class}` id; info-string marker and id class must agree"
+                )?;
+                if local.eq_ignore_ascii_case(uri_class) {
+                    write!(
+                        f,
+                        " — they differ only in case: spell the marker `{prefix}:{uri_class}`, the class's local name lower-cased"
+                    )?;
+                }
+                Ok(())
+            }
             Self::ExplicitDefinedIn {
                 marker_class,
                 heading,
@@ -244,10 +265,11 @@ fn parse_info_string(info: &str) -> Option<String> {
 /// Walk a markdown body and return one `Result` per attempted record, so
 /// a caller can warn per error without dropping the batch.
 ///
-/// `allowed_inline_classes` is the eligible set for this parent: markers
-/// outside it are logged and skipped rather than reported as errors,
-/// because a class this document may not host is not this document's
-/// mistake.
+/// `allowed_inline_classes` is the set this caller asked for: markers
+/// outside it are skipped at `debug`, not `warn`, because a marker this
+/// caller did not ask for is not this document's mistake and usually not
+/// anyone's — `check` asks for affordances and signifiers, and every
+/// correctly declared icon in the set goes past it.
 pub fn extract_from_markdown(
     body: &str,
     allowed_inline_classes: &HashSet<String>,
@@ -329,9 +351,9 @@ fn extract_with_model(
                 };
                 if let Some(marker) = marker {
                     if model.is_none() && !allowed_inline_classes.contains(&marker) {
-                        warn!(
+                        debug!(
                             marker_class = %marker,
-                            "inline-entity: marker class is not allowed under this parent class; skipping"
+                            "inline-entity: marker outside the set this caller asked for; skipping"
                         );
                     } else {
                         active_marker = Some(marker);
@@ -878,27 +900,41 @@ pub fn document_edges(
 }
 
 pub(crate) fn declaration_marker(info: &str) -> Option<String> {
+    let mut tokens = info.split_ascii_whitespace();
     // Generic ontology declarations use YAML. SVG icons keep their separate
     // legacy carrier and rendering path; they are not generic instances.
-    if !info.split_ascii_whitespace().next()?.eq_ignore_ascii_case("yaml") {
+    if !tokens.next()?.eq_ignore_ascii_case("yaml") {
         return None;
     }
     if let Some(marker) = parse_info_string(info) {
         return Some(marker);
     }
-    let mut tokens = info.split_ascii_whitespace();
-    if !tokens.next()?.eq_ignore_ascii_case("yaml") {
-        return None;
-    }
     let marker = tokens.next()?;
     if tokens.next().is_some() {
         return None;
     }
-    let (scheme, class) = marker.split_once(':')?;
-    if scheme == "x0k" || scheme.is_empty() || class.is_empty() || class.starts_with('!') || class.contains(':') {
-        return None;
-    }
-    Some(marker.to_string())
+    let (prefix, class) = marker.split_once(':')?;
+    (prefix != "x0k" && is_namespace_prefix(prefix) && is_class_marker(class))
+        .then(|| marker.to_string())
+}
+
+/// A namespace prefix as Turtle — and the vocabulary loader that reads
+/// the `turtle folio:ontology` blocks — spells one: ASCII lowercase to
+/// open, then lowercase, digits, `+`, `.`, `-`.
+fn is_namespace_prefix(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '.' | '-'))
+}
+
+/// A class's local name, or the kebab-case of one: ASCII letter to open,
+/// then letters, digits, `-`, `_`. Deliberately wider than the kebab
+/// spelling the loader wants, so `paper:Paper` is still refused *by
+/// name* one layer up instead of vanishing into prose here.
+fn is_class_marker(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
 }
 
 #[cfg(test)]
@@ -1334,6 +1370,71 @@ status: wip
         assert_eq!(parse_info_string("yaml"), None);
         assert_eq!(parse_info_string("yaml x0k:"), None);
         assert_eq!(parse_info_string("json x0k:affordance"), None);
+    }
+
+    /// The regression this guard exists for: an ordinary fence whose
+    /// info string happens to hold a colon is a code fence, not a
+    /// declaration missing its `id:`
+    /// (`docs/backend-system/building-backends/08-migrating.md:896` in
+    /// the Backstage tree, 2026-09-23).
+    #[test]
+    fn a_fence_title_is_not_a_declaration_marker() {
+        assert_eq!(declaration_marker("yaml title:\"app-config.yaml\""), None);
+        assert_eq!(declaration_marker("yaml title:app-config.yaml"), None);
+        assert_eq!(declaration_marker("yaml title=\"app-config.yaml\""), None);
+        assert_eq!(declaration_marker("yaml linenums:1"), None);
+        assert_eq!(declaration_marker("yaml Title:paper"), None);
+        assert_eq!(declaration_marker("yaml :paper"), None);
+        assert_eq!(declaration_marker("yaml paper:"), None);
+    }
+
+    /// The other half of the same rule: a real namespaced marker still
+    /// declares, and a near miss still reaches the loader to be named.
+    #[test]
+    fn a_namespaced_marker_declares_and_near_misses_still_arrive() {
+        assert_eq!(
+            declaration_marker("yaml paper:paper"),
+            Some("paper:paper".to_string())
+        );
+        assert_eq!(
+            declaration_marker("yaml zzz:gizmo"),
+            Some("zzz:gizmo".to_string())
+        );
+        // Wrong spelling, right shape: the collection loader says
+        // `unknown concept paper:Paper` rather than this walk saying
+        // nothing at all.
+        assert_eq!(
+            declaration_marker("yaml paper:Paper"),
+            Some("paper:Paper".to_string())
+        );
+        assert_eq!(
+            declaration_marker("yaml paper:review_note"),
+            Some("paper:review_note".to_string())
+        );
+        // The shipped marker keeps its own path.
+        assert_eq!(
+            declaration_marker("yaml x0k:affordance"),
+            Some("affordance".to_string())
+        );
+        assert_eq!(declaration_marker("yaml x0k:!affordance"), None);
+    }
+
+    #[test]
+    fn a_namespaced_block_without_an_id_says_what_made_it_a_declaration() {
+        let message = InlineEntityError::MissingId {
+            marker_class: "title:\"app-config.yaml\"".to_string(),
+            heading: "The Auth Plugin".to_string(),
+        }
+        .to_string();
+        assert!(message.contains("typed declaration"), "{message}");
+        // The shipped marker's message is unchanged: `x0k:affordance`
+        // is unambiguous, so it needs no lesson about code fences.
+        let shipped = InlineEntityError::MissingId {
+            marker_class: "affordance".to_string(),
+            heading: "Publish".to_string(),
+        }
+        .to_string();
+        assert!(!shipped.contains("typed declaration"), "{shipped}");
     }
 
     #[test]

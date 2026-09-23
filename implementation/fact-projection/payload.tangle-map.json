@@ -1,6 +1,6 @@
 {
   "source": "implementation/fact-projection/payload.md",
-  "source_hash": "b89fdc8d489b77e1",
+  "source_hash": "1f6e16dbf3f91ac9",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-fact-projection/src/payload.rs",
-          "hash": "df4d79ac0cb379f5"
+          "hash": "2ec80ffc5fbf23f3"
         }
       ]
     }

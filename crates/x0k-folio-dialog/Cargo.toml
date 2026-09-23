@@ -2,6 +2,9 @@
 [package]
 name = "x0k-folio-dialog"
 version = "0.1.0"
+# Not on crates.io: `dialog-artifacts` is a git dependency, which the
+# registry refuses. This crate ships inside the release binaries.
+publish = false
 edition = { workspace = true }
 license = "MIT"
 description = "Source-owned local Dialog database adapter for Folio"
@@ -11,7 +14,7 @@ readme = "../../README.md"
 keywords = ["literate-programming", "tangle", "markdown", "documentation"]
 [dependencies]
 x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.1.0" }
-x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.1" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

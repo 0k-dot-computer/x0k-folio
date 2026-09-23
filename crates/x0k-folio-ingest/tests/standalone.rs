@@ -232,6 +232,59 @@ async fn timed_out_backend_stays_pending_while_next_source_reaches_healthy_sink(
     }
 }
 #[tokio::test]
+async fn a_backend_slower_than_any_grace_still_acknowledges_every_source_when_waiting() {
+    // The Backstage/jj ingest collapse, 2026-09-22: fifteen typed ADRs
+    // ending with sixteen pending sources, acknowledged_sources 0 and an
+    // empty database, because one source crossed the grace and left the
+    // worker busy for every source after it.
+    struct Slow { view: MemorySink, delay: std::time::Duration }
+    impl FactSink for Slow {
+        fn replace(&mut self, entity:&str,facts:&[FactEntry],cause:&str)->Result<usize> {
+            std::thread::sleep(self.delay);
+            self.view.replace(entity,facts,cause)
+        }
+        fn retract(&mut self,facts:&[FactEntry],cause:&str)->Result<usize> { self.view.retract(facts,cause) }
+        fn retains_history(&self)->bool { false }
+    }
+
+    // Bounded: slower than the grace, so the first source is abandoned and
+    // the busy worker refuses the rest.
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let state_path = scratch.path().join("state");
+    let view = MemorySink::default();
+    let bounded = Mutex::new(vec![
+        Backend::new("slow", Slow { view: view.clone(), delay: std::time::Duration::from_millis(120) })
+            .with_delivery_grace(std::time::Duration::from_millis(20)),
+    ]);
+    for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B"),("c.txt","urn:c=C")] {
+        let path=root.path().join(name); std::fs::write(&path,text).unwrap();
+        lifecycle::apply_path_change(&Lines,&path,&state_path,&bounded).unwrap();
+    }
+    let abandoned = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
+    assert!(abandoned.files.values().all(|file| !file.acked_by.contains("slow")),
+        "a grace shorter than the write acknowledges nothing");
+
+    // Waiting: the same sink, the same delay, every source acknowledged.
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let state_path = scratch.path().join("state");
+    let view = MemorySink::default();
+    let waiting = Mutex::new(vec![
+        Backend::new("slow", Slow { view: view.clone(), delay: std::time::Duration::from_millis(120) })
+            .waiting_for_quiescence(),
+    ]);
+    for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B"),("c.txt","urn:c=C")] {
+        let path=root.path().join(name); std::fs::write(&path,text).unwrap();
+        lifecycle::apply_path_change(&Lines,&path,&state_path,&waiting).unwrap();
+    }
+    let settled = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
+    assert_eq!(settled.files.len(), 3);
+    assert!(settled.files.values().all(|file| file.acked_by.contains("slow")),
+        "waiting for the backend acknowledges every source");
+    assert_eq!(view.facts().len(), 3);
+}
+#[tokio::test]
 async fn identity_failure_and_loss_do_not_reuse_acks_and_new_store_replays_only_itself() {
     use std::sync::atomic::AtomicUsize;
     struct Identified { mode:Arc<AtomicUsize>,writes:Arc<AtomicUsize>,view:MemorySink }

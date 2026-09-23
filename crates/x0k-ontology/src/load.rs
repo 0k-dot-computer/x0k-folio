@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 
 use oxttl::TurtleParser;
 
-use crate::concept_facts::{ModuleRecord, OntologyFact, OntologyModel, STRUCTURAL_NODE_PREFIX};
+use crate::concept_facts::{
+    ModuleRecord, OntologyFact, OntologyModel, MODULE_IRI_PREFIX, STRUCTURAL_NODE_PREFIX,
+};
 
 const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
 
@@ -73,10 +75,31 @@ impl fmt::Display for LoadError {
                 write!(f, "no ontology module files under {}", path.display())
             }
             Self::Imports(reason) => write!(f, "ontology module set: {reason}"),
-            Self::ModuleFiles { declared, files } => write!(
-                f,
-                "ontology module facts {declared:?} do not match the module files {files:?}"
-            ),
+            Self::ModuleFiles { declared, files } => {
+                write!(
+                    f,
+                    "ontology module facts {declared:?} do not match the module files {files:?}: \
+                     a module file is named for the module it declares — its \
+                     `vann:preferredNamespacePrefix`, or the last segment of an IRI under \
+                     {MODULE_IRI_PREFIX}"
+                )?;
+                let unfiled: Vec<&str> =
+                    declared.iter().filter(|name| !files.contains(name)).map(String::as_str).collect();
+                let unnamed: Vec<&str> =
+                    files.iter().filter(|name| !declared.contains(name)).map(String::as_str).collect();
+                match (unfiled.as_slice(), unnamed.as_slice()) {
+                    ([module], [file]) => write!(f, " — rename `{file}.ttl` to `{module}.ttl`"),
+                    _ => {
+                        if !unnamed.is_empty() {
+                            write!(f, "; no module fact names {unnamed:?}")?;
+                        }
+                        if !unfiled.is_empty() {
+                            write!(f, "; no file is named for {unfiled:?}")?;
+                        }
+                        Ok(())
+                    }
+                }
+            }
             Self::ShapeFile { name } => {
                 write!(f, "shape file {name}.ttl names no module of the set")
             }
@@ -546,13 +569,35 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path().join("modules");
         scratch_modules(&dir, &[("mycorp", "# no module fact at all\n")]);
-        assert!(
-            matches!(
-                OntologyModel::load(&dir),
-                Err(LoadError::ModuleFiles { .. })
-            ),
-            "a file declaring no module is a set the tree did not receive in full"
+        let error = OntologyModel::load(&dir).expect_err("a file declaring no module is not a set");
+        assert!(matches!(&error, LoadError::ModuleFiles { .. }), "wrong error: {error}");
+        assert!(error.to_string().contains("no module fact names [\"mycorp\"]"), "{error}");
+    }
+
+    /// A reader of the public integration guide wrote `pydantic.ttl` for a
+    /// module declaring the prefix `pyd`, and the refusal showed them two
+    /// lists without the rule that relates them. One file named for the
+    /// wrong module is the shape that happens, so the message names the
+    /// rename.
+    #[test]
+    fn a_file_named_for_the_wrong_module_names_the_rename() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("modules");
+        scratch_modules(
+            &dir,
+            &[(
+                "pydantic",
+                "<https://pydantic.dev/ontology/pydantic> \
+                 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> \
+                 <http://www.w3.org/2002/07/owl#Ontology> .\n\
+                 <https://pydantic.dev/ontology/pydantic> \
+                 <http://purl.org/vocab/vann/preferredNamespacePrefix> \"pyd\" .\n",
+            )],
         );
+        let error = OntologyModel::load(&dir).expect_err("the filename is load-bearing");
+        let message = error.to_string();
+        assert!(message.contains("rename `pydantic.ttl` to `pyd.ttl`"), "{message}");
+        assert!(message.contains("`vann:preferredNamespacePrefix`"), "{message}");
     }
 
     #[test]

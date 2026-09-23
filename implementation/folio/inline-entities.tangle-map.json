@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/inline-entities.md",
-  "source_hash": "16fcaf0c20f4bdbd",
+  "source_hash": "c5e4043d9b5a6b5d",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-folio/src/inline_entity.rs",
-          "hash": "6414a91782f434f2"
+          "hash": "5ee599db53c7731a"
         }
       ]
     }

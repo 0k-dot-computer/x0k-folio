@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/dialog.md",
-  "source_hash": "868a6875339be28a",
+  "source_hash": "6d74027e8df555a7",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -13,11 +13,11 @@
         },
         {
           "path": "crates/x0k-folio-dialog/src/storage.rs",
-          "hash": "f68d158214845dec"
+          "hash": "7375b37f7725f328"
         },
         {
           "path": "crates/x0k-folio-dialog/Cargo.toml",
-          "hash": "d2cb12e9d3cac1a4"
+          "hash": "1f6489602e003ab8"
         },
         {
           "path": "crates/x0k-folio-dialog/src/database.rs",

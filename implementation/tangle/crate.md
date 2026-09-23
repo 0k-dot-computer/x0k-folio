@@ -442,6 +442,15 @@ pub mod source_check {
     /// an author writes before the first `sync`, and the one `sync` exists
     /// to fill. Reporting it here would make the ordinary first-fill a
     /// failure.
+    ///
+    /// The finding does not say WHICH side moved, because nothing here
+    /// knows: two live artifacts are compared and no record of the last
+    /// sync exists to arbitrate them. The sentence used to read "the
+    /// mirrored body is not what <source> holds now … sync would rewrite
+    /// it", which an adopter read as an accusation against their source
+    /// file (2026-09-22) — and the measurement above says the document is
+    /// the usual mover. So it names the disagreement, says the record is
+    /// not there, and names what `sync` will do about it.
     fn drift_finding(
         name: &str,
         chunk: &Chunk,
@@ -466,9 +475,10 @@ pub mod source_check {
             .map(|i| i + 1)
             .unwrap_or_else(|| shown.text.lines().count().min(source_body.lines().count()) + 1);
         Some(format!(
-            "chunk '{name}': the mirrored body is not what {} holds now — \
+            "chunk '{name}': the mirrored body and {} disagree — \
              first difference at body line {at} (document {} line(s), source {} line(s)); \
-             sync would rewrite it",
+             nothing records which side moved, and `sync` resolves it the one way it can, \
+             by rewriting the document from the source",
             from_path.display(),
             shown.text.lines().count(),
             source_body.lines().count()
@@ -733,9 +743,18 @@ edges:
 /// edge whose target names no document under the paths scanned simply
 /// leaves the set — often into a wider corpus this selection was drawn
 /// from, and expected either way: printed as a note, never a failure.
+/// `--closed` is the reader saying there is no wider corpus: under
+/// it, an edge that leaves the set is a defect like any other.
+/// A Markdown file with no envelope at all is skipped, and counted
+/// on the summary line so that skipping it is not silent;
+/// `--require-envelope` is the reader saying every file here is
+/// supposed to be typed, under which such a file is a defect too.
 /// A third thing is checked across the set: an
 /// affordance claimed for a human that no signifier signifies is a
-/// defect, because the audience has nothing to perceive.
+/// defect, because the audience has nothing to perceive — unless the
+/// set declares no signifier anywhere, in which case it is a note,
+/// because signifiers live beside the faces that present them and a
+/// set holding none is not the set that could answer.
 ///
 /// Every `from=` chunk is resolved against its source file too —
 /// missing file, missing symbol, ambiguous symbol, a language symbol
@@ -751,11 +770,30 @@ Check {
     /// (defaults to current directory)
     #[arg(long)]
     workspace: Option<PathBuf>,
-    /// Directory of ontology module files (*.ttl) to check against.
-    /// Defaults to the modules this projection's PROVENANCE.json names,
-    /// then to the set this build compiled.
+    /// Directory of ontology module files (*.ttl) to check against,
+    /// read in addition to the set this build compiled. Defaults to the
+    /// modules this projection's PROVENANCE.json names, then to the set
+    /// this build compiled.
     #[arg(long)]
     vocabulary: Option<PathBuf>,
+    /// Read --vocabulary alone, without the compiled set. Say this only
+    /// when that directory holds every term the documents use, the
+    /// folio/v1 envelope's own included.
+    #[arg(long, requires = "vocabulary")]
+    only_vocabulary: bool,
+    /// Fail on an edge whose target names no document under the paths
+    /// scanned. Say this when the collection is a closed set: every
+    /// document an edge can name is here, so a target that resolves to
+    /// nothing is a broken link rather than a boundary.
+    #[arg(long)]
+    closed: bool,
+    /// Fail on a Markdown file under the paths scanned that carries no
+    /// folio/v1 envelope. Say this when every file in the set is
+    /// supposed to be typed: a file without one is skipped in silence,
+    /// which is what lets a corpus adopt one directory at a time and
+    /// what leaves a generated board quietly one row short.
+    #[arg(long)]
+    require_envelope: bool,
 },
 ```
 
@@ -1177,6 +1215,19 @@ notice was to go looking for a file that was never written. So the verb
 reads what the document declares before it asks for the work, and says
 which of the two things is missing.
 
+Two shapes reach that arm and only one is a mistake. A document with
+chunks and no `tangle:` block is usually an author who forgot the block,
+and the sentence above is for them. A document whose chunks are *all*
+`from=` mirrors owns no code at all: it shows what other files hold, and
+the integration guide recommends it as the first thing an existing
+codebase writes. Naming nowhere to write is that document's shape, so
+the run says what it saw and passes. The old arm could not tell them
+apart and failed both — which meant the explicit-file form refused
+exactly the document the guide had just told the reader to write, while
+the directory form skipped it and exited 0. The two forms now agree,
+and the predicate that separates them is a property of the document
+rather than of how it was reached.
+
 <a name="chunk-dispatch-tangle"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-tangle`</sub>
 
 ```rust {#dispatch-tangle file="src/main.rs"}
@@ -1196,14 +1247,23 @@ Command::Tangle { paths, workspace, force } => {
     for doc_path in &docs {
         let declared = declares(doc_path);
         if !declared.target {
-            eprintln!("  {}", nothing_to_write(doc_path, declared.chunks));
-            nowhere_to_write += 1;
+            if declared.mirrors_only {
+                eprintln!("  {}", mirror_only(doc_path, declared.chunks));
+            } else {
+                eprintln!("  {}", nothing_to_write(doc_path, declared.chunks));
+                nowhere_to_write += 1;
+            }
             continue;
         }
         tangled_docs += 1;
         let result = x0k_tangle::tangle_document_with(doc_path, &ws, &registry, &settings)?;
+        // Both halves of the arrow are written the way the reader named
+        // them. The tangler resolves an output against the workspace
+        // root and holds it absolute, so this line used to pair
+        // `docs/ratelimit.md` with `/tmp/rl/crates/…` — one path a
+        // reader can act on and one they cannot (jj, 2026-09-23).
         for out in &result.identity_outputs {
-            eprintln!("  {} → {}", doc_path.display(), out.path.display());
+            eprintln!("  {} → {}", doc_path.display(), under(&out.path, &ws));
             total_files += 1;
         }
         for out in &result.pipeline_outputs {
@@ -1211,7 +1271,7 @@ Command::Tangle { paths, workspace, force } => {
                 // Already reported via identity_outputs.
                 continue;
             }
-            eprintln!("  {} → {}", doc_path.display(), out.path.display());
+            eprintln!("  {} → {}", doc_path.display(), under(&out.path, &ws));
             total_files += 1;
         }
     }
@@ -1281,10 +1341,15 @@ Command::Sync { paths, workspace } => {
 why. The first walks every markdown document under the paths and
 verifies the chunk references of any that declares chunks. The second
 reads every folio/v1 envelope under the same paths against the shipped
-vocabulary ([`cli-faces.md`](cli-faces.md)) and prints what it found
+vocabulary *extended by the one the set carries*
+([`cli-faces.md`](cli-faces.md)) and prints what it found
 in the affordance's own two categories: a defect as `<path>: <defect>`,
 which fails the run, and a dangling edge as a `note:` that names the
-target and the set it is missing from. The third rides the first walk:
+target and the set it is missing from. The typed instances declared
+inside those documents are read in the same two categories, which is
+why the same loop prints a second kind of note: `0 declaration(s)
+checked` over a collection that declares two papers was the gate
+reporting a pass it had not run. The third rides the first walk:
 it holds the id every envelope declared and fails the run when two
 documents declare the same one.
 
@@ -1307,12 +1372,22 @@ which two are in play.
 <a name="chunk-dispatch-check"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-check`</sub>
 
 ```rust {#dispatch-check file="src/main.rs"}
-Command::Check { paths, workspace, vocabulary } => {
+Command::Check {
+    paths,
+    workspace,
+    vocabulary,
+    only_vocabulary,
+    closed,
+    require_envelope,
+} => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref())?;
+    let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref(), only_vocabulary)?;
     let mut has_errors = false;
     let mut chunked_documents = 0;
+    let mut splice_failed = 0;
     let mut source_refs = 0;
+    let mut source_ref_failures = 0;
+    let mut envelope_less = Vec::new();
     let mut ids: HashMap<String, PathBuf> = HashMap::new();
 
     for doc_path in markdown_under(&paths) {
@@ -1335,14 +1410,27 @@ Command::Check { paths, workspace, vocabulary } => {
             }
         };
 
+        // A file the vocabulary pass will never see, because it claims
+        // no envelope. Skipping it is what makes adoption incremental;
+        // holding on to its name is what keeps skipping it from being
+        // silent.
+        if !x0k_folio::colophon::is_colophon(&content) {
+            envelope_less.push(doc_path.clone());
+        }
+
         if !parsed.chunks.is_empty() {
             chunked_documents += 1;
-            for err in &x0k_tangle::resolve::check_all_refs(&parsed)? {
+            let splices = x0k_tangle::resolve::check_all_refs(&parsed)?;
+            if !splices.is_empty() {
+                splice_failed += 1;
+            }
+            for err in &splices {
                 eprintln!("{}: {}", doc_path.display(), err);
                 has_errors = true;
             }
             let sources = x0k_tangle::source_check::check_source_refs(&parsed, &ws);
             source_refs += sources.checked;
+            source_ref_failures += sources.findings.len();
             for finding in &sources.findings {
                 eprintln!("{}: {}", doc_path.display(), finding);
                 has_errors = true;
@@ -1379,29 +1467,62 @@ Command::Check { paths, workspace, vocabulary } => {
         eprintln!("{defect}");
         has_errors = true;
     }
+    for note in &report.declarations.notes {
+        let standing = if closed { "" } else { "note: " };
+        eprintln!("{standing}{note}");
+        has_errors |= closed;
+    }
     for edge in &report.corpus.dangling {
         eprintln!(
             "{}",
-            dangling_note(&edge.source, &edge.predicate, &edge.target)
+            dangling_finding(closed, &edge.source, &edge.predicate, &edge.target)
         );
+        has_errors |= closed;
+    }
+    for edge in &report.declarations.dangling {
+        eprintln!(
+            "{}",
+            dangling_declaration_finding(closed, &edge.source, &edge.predicate, &edge.target)
+        );
+        has_errors |= closed;
     }
 
+    if require_envelope {
+        for path in &envelope_less {
+            eprintln!(
+                "{}: carries no folio/v1 envelope, so nothing in this set reads it",
+                path.display()
+            );
+        }
+        has_errors |= !envelope_less.is_empty();
+    }
+
+    // The counts are the denominator, and a reader wants them most
+    // when something failed: one dangling edge reads differently over
+    // fifteen envelopes than over seven hundred. So the line prints
+    // either way, and the exit code carries the verdict.
+    eprintln!(
+        "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set{}",
+        references_verdict(chunked_documents, splice_failed, source_refs, source_ref_failures),
+        report.corpus.checked,
+        report.declarations.checked,
+        report.corpus.dangling.len() + report.declarations.dangling.len(),
+        untyped_clause(envelope_less.len())
+    );
     if has_errors {
         std::process::exit(1);
-    } else {
-        eprintln!(
-            "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
-            references_verdict(chunked_documents, source_refs),
-            report.corpus.checked,
-            report.declarations.checked,
-            report.corpus.dangling.len()
-        );
     }
 }
 ```
 
-The green line says what it did, and the counts are what make that
-possible to read. `all references OK` used to print over a set whose
+The line says what the run did, and the counts are what make that
+possible to read. It prints on a failing run too, which it did not
+always: a maintainer running `--closed` over a fifteen-ADR log lost
+`15 envelope(s) read` at the moment the denominator was worth most,
+because one dangling edge over fifteen documents and one over seven
+hundred are different situations and only the count tells them apart.
+The exit code carries the verdict; the line carries the arithmetic.
+`all references OK` used to print over a set whose
 references had never been read — the same six words for a corpus of
 forty chapters and for a directory the walk had dropped every document
 out of. A verdict that asserts the work it skipped is worse than no
@@ -1409,16 +1530,35 @@ verdict at all: it is the gate reporting a pass it did not run, and a
 reader has no way to tell the two apart.
 
 The line names its two kinds separately because they are two claims,
-and the same sentence has now overstated three separate times. A
+and the same sentence has now overstated four separate times. A
 `<<splice>>` resolves inside the document; a `from=` resolves against a
 file on disk. A run can read forty documents of splices and open no
 source file at all, and a line that folded both into "all references
 OK" would say the same words either way.
 
+The fourth time was printing on a failing run without rewriting the
+sentence for it. `7 from= source references resolve` under a defect
+naming the one that did not is the reader's last line contradicting the
+exit code — "the one thing I want before I let the job block a merge,
+and it's a sentence" (jj, 2026-09-23). Each kind is therefore reported
+as resolved-of-read the moment any of them did not resolve, and as a
+plain count when they all did, because `7 of 7` is arithmetic nobody
+asked for.
+
+And the line now says what it walked past. A Markdown file with no
+envelope is skipped — that is what lets a corpus adopt this one
+directory at a time, and it was praised as such — but a maintainer
+generating an ADR board from the fifteen envelopes in a directory of
+sixteen files gets a board that is silently one row short, and every
+count on this line agrees with the board rather than with the
+directory. `--require-envelope` is the reader saying the set is meant
+to be wholly typed; the count is there either way, because the reader
+who most needs it is the one who did not know to ask.
+
 <a name="chunk-references-verdict"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#references-verdict`</sub>
 
 ```rust {#references-verdict file="src/main.rs"}
-/// What `check` says about the reference half of a clean run.
+/// What `check` says about the reference half of a run.
 ///
 /// The counts are load-bearing, and they are separate because they are
 /// separate claims. Zero is a real and common answer for either — a
@@ -1426,7 +1566,17 @@ OK" would say the same words either way.
 /// documents that do declare chunks name no source file — and each has
 /// to read as zero rather than as a pass, because the shape that
 /// produces it is also the shape a broken walk produces.
-fn references_verdict(chunked_documents: usize, source_refs: usize) -> String {
+///
+/// Each kind is reported as resolved-of-read once any of them did not
+/// resolve, because this line prints on a failing run: over one broken
+/// mirror in seven, `7 from= source references resolve` is the last
+/// sentence a reader meets and it says the opposite of the verdict.
+fn references_verdict(
+    chunked_documents: usize,
+    splice_failed: usize,
+    source_refs: usize,
+    source_ref_failures: usize,
+) -> String {
     if chunked_documents == 0 {
         return "no chunk references to check".to_string();
     }
@@ -1434,12 +1584,38 @@ fn references_verdict(chunked_documents: usize, source_refs: usize) -> String {
         1 => "1 document with chunks".to_string(),
         n => format!("{n} documents with chunks"),
     };
-    let sources = match source_refs {
-        0 => "no from= source references declared".to_string(),
-        1 => "1 from= source reference resolves".to_string(),
-        n => format!("{n} from= source references resolve"),
+    let splices = match splice_failed {
+        0 => format!("splice references resolve in {docs}"),
+        failed => format!(
+            "splice references resolve in {} of {docs}",
+            chunked_documents - failed
+        ),
     };
-    format!("splice references resolve in {docs}, {sources}")
+    let sources = match (source_refs, source_ref_failures) {
+        (0, _) => "no from= source references declared".to_string(),
+        (1, 0) => "1 from= source reference resolves".to_string(),
+        (n, 0) => format!("{n} from= source references resolve"),
+        (n, failed) => format!("{} of {n} from= source references resolve", n - failed),
+    };
+    format!("{splices}, {sources}")
+}
+
+/// What `check` says about the Markdown it walked past.
+///
+/// A file with no envelope is not a defect — ignoring Markdown it does
+/// not own is why a corpus can adopt this verb one directory at a time
+/// — but it is invisible to every other count on the line, and a board
+/// generated from those counts is quietly one row short (Backstage,
+/// 2026-09-23). Saying how many were skipped costs a clause and is the
+/// only way a reader learns the set is not the set they think it is.
+/// Saying it when there were none would be noise, so the clause is
+/// empty then.
+fn untyped_clause(envelope_less: usize) -> String {
+    match envelope_less {
+        0 => String::new(),
+        1 => ", 1 markdown file carried no envelope".to_string(),
+        n => format!(", {n} markdown files carried no envelope"),
+    }
 }
 ```
 
@@ -1954,19 +2130,55 @@ What `check` says about an edge whose target is not in the set it read
 lives in one place, because it is a claim about the reader's tree and
 the tree is the one thing this process cannot see past.
 
-<a name="chunk-dangling-note"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dangling-note`</sub>
+Which is why the reader gets to settle it. A collection whose edges can
+only name documents inside it — an ADR directory, a docs tree that is
+the whole world it links into — has no boundary for an edge to cross, so
+every edge that leaves is a rename nobody finished. `--closed` is that
+sentence said once on the command line, and it moves the finding from a
+note to a defect without changing what the finding observed. The default
+stays the other way because this corpus is the opposite case: its edges
+leave for a private corpus all day, and a gate that failed on them would
+be a gate nobody ran.
 
-```rust {#dangling-note file="src/main.rs"}
-/// The note `check` prints for an edge that leaves the set.
+<a name="chunk-dangling-finding"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dangling-finding`</sub>
+
+```rust {#dangling-finding file="src/main.rs"}
+/// What `check` says about an edge that leaves the set.
 ///
 /// The set is whatever the paths on the command line contain, and nothing
 /// beyond it is knowable from here: not whether a wider corpus exists, not
-/// whether this tree was projected out of one. So the note names the
-/// situation and stops. A note that instead told the reader their edge
+/// whether this tree was projected out of one. So the line names the
+/// situation and stops. A line that instead told the reader their edge
 /// pointed into "the corpus this was projected from" would be true of one
 /// repository and read as a misconfiguration to everyone else.
-fn dangling_note(source: &str, predicate: &str, target: impl std::fmt::Display) -> String {
-    format!("{source}: note: edge `{predicate}` → `{target}` names no document under the paths scanned")
+///
+/// `closed` is the reader answering the one question the process cannot:
+/// whether anything exists outside these paths. It changes the standing of
+/// the finding and not a word of what it observed — the same sentence,
+/// with `note:` dropped, because under `--closed` there is nothing left
+/// for the reader to go and look at.
+fn dangling_finding(
+    closed: bool,
+    source: &str,
+    predicate: &str,
+    target: impl std::fmt::Display,
+) -> String {
+    let standing = if closed { "" } else { "note: " };
+    format!("{source}: {standing}edge `{predicate}` → `{target}` names no document under the paths scanned")
+}
+
+/// The same finding one level down: a declared instance's edge target that
+/// names no declaration in the set. Separate wording because a
+/// declaration lives inside a document, so "names no document" would
+/// send its reader looking for the wrong thing.
+fn dangling_declaration_finding(
+    closed: bool,
+    source: &str,
+    predicate: &str,
+    target: impl std::fmt::Display,
+) -> String {
+    let standing = if closed { "" } else { "note: " };
+    format!("{source}: {standing}declared edge `{predicate}` → `{target}` names no declaration under the paths scanned")
 }
 ```
 
@@ -2003,6 +2215,26 @@ here tells a reader to run.
 /// document is decided from its parse, below, so that the answer cannot
 /// depend on whether the reader named the file or the directory holding
 /// it.
+/// A path as the reader named it: relative to the workspace root when it
+/// is under one, and unchanged when it is not.
+///
+/// The root is tried twice, because the reader writes `--workspace .`
+/// and the tangler resolves outputs against the real directory. A
+/// literal strip against `.` matches nothing, which is how the absolute
+/// destination survived the first attempt at this line.
+fn under<'a>(path: &'a Path, workspace_root: &Path) -> std::path::Display<'a> {
+    path.strip_prefix(workspace_root)
+        .ok()
+        .or_else(|| {
+            workspace_root
+                .canonicalize()
+                .ok()
+                .and_then(|root| path.strip_prefix(root).ok())
+        })
+        .unwrap_or(path)
+        .display()
+}
+
 fn markdown_under(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for path in paths {
@@ -2053,28 +2285,41 @@ struct Declares {
     /// It has a chunk to fill from source (`from=`), which is what
     /// `sync` is about.
     fills: bool,
+    /// Every chunk it declares is a `from=` mirror, and there is at
+    /// least one. Such a document owns no code: it shows what other
+    /// files hold, so naming nowhere to write is its shape rather
+    /// than an omission.
+    mirrors_only: bool,
     /// How many chunks it declares — the number that makes "nothing to
     /// write" worth saying out loud instead of reporting as a zero.
     chunks: usize,
 }
 
+impl Declares {
+    /// A file this process cannot read or parse declares nothing it
+    /// can act on, and saying so in one place keeps the three
+    /// answers from drifting apart as the struct grows.
+    fn nothing() -> Self {
+        Self { target: false, fills: false, mirrors_only: false, chunks: 0 }
+    }
+}
+
 fn declares(path: &Path) -> Declares {
     let Ok(content) = std::fs::read_to_string(path) else {
-        return Declares { target: false, fills: false, chunks: 0 };
+        return Declares::nothing();
     };
     let Ok(parsed) = x0k_tangle::parser::parse_document(&content) else {
-        return Declares { target: false, fills: false, chunks: 0 };
+        return Declares::nothing();
     };
+    let bodies: Vec<_> = parsed.chunks.values().flatten().collect();
     Declares {
         target: parsed.tangle_crate.is_some()
             || parsed.tangle_root.is_some()
             || !parsed.tangle_roots.is_empty()
             || !parsed.pipelines.is_empty(),
-        fills: parsed
-            .chunks
-            .values()
-            .flatten()
-            .any(|chunk| chunk.from.is_some()),
+        fills: bodies.iter().any(|chunk| chunk.from.is_some()),
+        mirrors_only: !bodies.is_empty()
+            && bodies.iter().all(|chunk| chunk.from.is_some()),
         chunks: parsed.chunks.len(),
     }
 }
@@ -2137,6 +2382,17 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
         path.display()
     )
 }
+
+/// What `tangle` says about a document whose every chunk mirrors code it
+/// does not own. It names nowhere to write because writing is not what
+/// it is for, so the run says what it saw and passes.
+fn mirror_only(path: &Path, chunks: usize) -> String {
+    format!(
+        "{}: mirrors {chunks} chunk(s) from source it does not own; \
+         nothing to tangle (`sync` fills these and `check` catches them going stale)",
+        path.display()
+    )
+}
 ```
 
 ## Composing the crate root and the binary
@@ -2155,7 +2411,7 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 <<diagnostics>>
 ```
 
-<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [clobber-settings](#chunk-clobber-settings) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-note](#chunk-dangling-note) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
+<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [clobber-settings](#chunk-clobber-settings) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-finding](#chunk-dangling-finding) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
 
 ```rust {#bin-root file="src/main.rs"}
 <<bin-doc>>
@@ -2174,7 +2430,7 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 
 <<print-workspace-summary>>
 
-<<dangling-note>>
+<<dangling-finding>>
 
 <<references-verdict>>
 
@@ -2209,7 +2465,8 @@ function. So they are pinned the way [`cli-faces.md`](cli-faces.md) pins
 the other faces: run the built binary over a temp fixture, and let what
 it prints and how it exits be the claim. `sync` exits non-zero when a
 chunk it was asked to fill stayed empty. `check`'s dangling-edge note
-says only what is true of the tree it was pointed at.
+says only what is true of the tree it was pointed at, and under
+`--closed` the same edge is a defect that fails the run.
 
 Three more are pins on the gate itself, and they exist because the gate
 failed open on all three. `check` returns the same verdict for a
@@ -2312,6 +2569,52 @@ fn sync_fills_a_javascript_chunk_and_passes() {
     assert!(
         synced.contains("export function createHorizonRemap(scale)"),
         "got {synced}"
+    );
+}
+
+/// A class documented the way a Python library documents one: a fenced
+/// example indented inside the docstring.
+const PY_WITH_FENCE: &str = "class Thing:\n    \"\"\"A thing.\n\n    Example:\n        ```python\n        from thing import Thing\n        t = Thing()\n        ```\n    \"\"\"\n\n    x: int = 1\n";
+
+/// The adopter's reproducer at the face they actually run. `sync` used
+/// to end the chunk at the indented nested fence, splice the new body
+/// ahead of it, and leave the tail standing as prose — so the document
+/// grew on every run while the run reported success, and `check` then
+/// blamed the source file (2026-09-22). Four syncs, one body, and a
+/// green `check` over the result.
+#[test]
+fn sync_is_idempotent_over_a_mirror_whose_body_holds_a_fence() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "thing.py", PY_WITH_FENCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# doc\n\n```python {#thing from=\"thing.py\" symbol=\"Thing\"}\n```\n",
+    );
+
+    let mut runs: Vec<String> = Vec::new();
+    for _ in 0..4 {
+        let out = sync(tmp.path());
+        assert!(
+            out.status.success(),
+            "sync failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        runs.push(fs::read_to_string(tmp.path().join("doc.md")).unwrap());
+    }
+    assert_eq!(runs[0], runs[3], "the document grew across syncs:\n{}", runs[3]);
+    assert_eq!(
+        runs[3].matches("from thing import Thing").count(),
+        1,
+        "the docstring example was duplicated:\n{}",
+        runs[3]
+    );
+
+    let out = check_in(tmp.path());
+    assert!(
+        out.status.success(),
+        "check on a freshly-synced mirror: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
@@ -2543,6 +2846,112 @@ fn check_fails_a_whole_file_from_whose_file_is_gone() {
     );
 }
 
+/// The summary line prints on a failing run, which is when it is worth
+/// most and when it was written for the other case: seven references
+/// read, one of them broken, and the last line the reader met said all
+/// seven resolved (jj, 2026-09-23).
+#[test]
+fn check_counts_the_source_references_that_did_not_resolve() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n\
+         ```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n\n\
+         ```javascript {#gone from=\"remap.js\" symbol=\"noSuchSymbol\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the broken mirror passed: {stderr}");
+    assert!(
+        stderr.contains("1 of 2 from= source references resolve"),
+        "the summary counts what resolved, not what it read: {stderr}"
+    );
+    assert!(
+        !stderr.contains("chunks, 2 from= source references resolve"),
+        "the line that said the opposite of the exit code is gone: {stderr}"
+    );
+}
+
+/// A Markdown file with no envelope is skipped — that is what makes
+/// adoption incremental — and the count is what keeps skipping it from
+/// being silent. `--require-envelope` is the reader saying every file
+/// under these paths is supposed to be typed (Backstage, 2026-09-23).
+#[test]
+fn check_counts_the_markdown_it_walked_past_and_can_be_told_to_refuse_it() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "typed.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/typed\n  type: design\n  \
+         status: draft\n---\n# Typed\n",
+    );
+    write(tmp.path(), "untyped.md", "# Untyped\n\nNo envelope here.\n");
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "an untyped file is not a defect: {stderr}");
+    assert!(
+        stderr.contains("1 envelope(s) read against the vocabulary")
+            && stderr.contains("1 markdown file carried no envelope"),
+        "the line says what it read and what it walked past: {stderr}"
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("check")
+        .arg(tmp.path())
+        .arg("--workspace")
+        .arg(tmp.path())
+        .arg("--require-envelope")
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "--require-envelope let it through: {stderr}");
+    assert!(
+        stderr.contains("untyped.md: carries no folio/v1 envelope"),
+        "the defect names the file: {stderr}"
+    );
+}
+
+/// Every path a verb prints is written the way the reader named it. The
+/// tangler holds an output absolute, so this line paired a relative
+/// document with an absolute destination (jj, 2026-09-23).
+#[test]
+fn tangle_names_its_outputs_the_way_the_reader_named_the_workspace() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/ratelimit.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/ratelimit\n  \
+         type: implementation\n  status: draft\n  tangle:\n    \
+         crate: crates/ratelimit\n    root: src/bucket.rs\n---\n# Bucket\n\n\
+         ```rust {#root}\npub fn take() {}\n```\n",
+    );
+
+    // `--workspace .` from the repository root is how the guide says to
+    // run it, and the shape the absolute destination survived under.
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg("docs")
+        .arg("--workspace")
+        .arg(".")
+        .current_dir(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "tangle failed: {stderr}");
+    assert!(
+        stderr.contains("→ crates/ratelimit/src/bucket.rs"),
+        "the destination is workspace-relative: {stderr}"
+    );
+    assert!(
+        !stderr.contains(&format!("→ {}", tmp.path().display())),
+        "no absolute destination survives: {stderr}"
+    );
+}
+
 #[test]
 fn check_counts_the_source_references_it_resolved() {
     let tmp = TempDir::new().unwrap();
@@ -2699,6 +3108,66 @@ fn the_dangling_edge_note_claims_only_what_is_true_of_any_tree() {
 }
 
 #[test]
+fn closed_makes_an_edge_that_leaves_the_set_fail_the_run() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/fixture.md",
+        &format!(
+            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/fixture\n  type: design\n  \
+             status: draft\n  edges:\n    {}:\n      - x0k:design/elsewhere\n---\n# Fixture\n",
+            shipped_predicate()
+        ),
+    );
+
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the set is closed and an edge left it, and check passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("`x0k:design/elsewhere` names no document under the paths scanned"),
+        "the defect names the target that resolves to nothing: {stderr}"
+    );
+    assert!(
+        !stderr.contains("note:"),
+        "under --closed the finding is a defect, not a note: {stderr}"
+    );
+}
+
+#[test]
+fn a_declared_edge_that_leaves_the_set_fails_the_run_under_closed_too() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/fixture.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/fixture\n  type: wiki\n  \
+         status: draft\n---\n# Fixture\n\n```yaml x0k:affordance\nid: \
+         x0k:affordance/do_the_thing\nedges:\n  enabledBy:\n    - \
+         x0k:software-module/elsewhere\n```\n",
+    );
+
+    let open = run(&["check"], tmp.path());
+    assert!(
+        open.status.success(),
+        "the default still notes it: {}",
+        String::from_utf8_lossy(&open.stderr)
+    );
+
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a declared edge left a closed set and check passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("names no declaration under the paths scanned"),
+        "the defect says which level it is about: {stderr}"
+    );
+}
+
+#[test]
 fn check_answers_the_same_for_a_file_and_for_the_directory_holding_it() {
     let tmp = TempDir::new().unwrap();
     write(tmp.path(), "docs/d.md", &broken_reference_doc("no-target"));
@@ -2813,6 +3282,75 @@ fn tangle_refuses_a_document_that_names_nowhere_to_write() {
     assert!(
         stderr.contains("nothing to write") && stderr.contains("declares 1 chunk(s)"),
         "the run says what the document has and what it lacks: {stderr}"
+    );
+}
+
+/// The shape the integration guide tells an existing codebase to write
+/// first: chunks that mirror symbols out of code the document does not
+/// own, and no `tangle:` block, because there is nothing to write.
+fn mirror_only_doc() -> String {
+    "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/mirror\n  \
+     type: implementation\n  status: draft\n  summary: A document that \
+     mirrors code it does not own.\n---\n# Doc\n\n\
+     ```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n"
+        .to_string()
+}
+
+#[test]
+fn tangle_passes_a_mirror_only_document_it_was_named() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(tmp.path(), "docs/d.md", &mirror_only_doc());
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg(tmp.path().join("docs/d.md"))
+        .arg("--workspace")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "the document the guide recommends writing first was refused: {stderr}"
+    );
+    assert!(
+        stderr.contains("mirrors 1 chunk(s) from source it does not own"),
+        "the run says why nothing was written: {stderr}"
+    );
+    assert!(
+        !tmp.path().join("src").exists(),
+        "a mirror-only document wrote something"
+    );
+}
+
+#[test]
+fn tangle_answers_the_same_for_a_mirror_only_file_and_its_directory() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(tmp.path(), "docs/d.md", &mirror_only_doc());
+
+    let by_file = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg(tmp.path().join("docs/d.md"))
+        .arg("--workspace")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let by_dir = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg(tmp.path().join("docs"))
+        .arg("--workspace")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+
+    assert_eq!(
+        by_file.status.code(),
+        by_dir.status.code(),
+        "the two forms disagree about a mirror-only document: file said {:?}, directory said {:?}",
+        String::from_utf8_lossy(&by_file.stderr),
+        String::from_utf8_lossy(&by_dir.stderr)
     );
 }
 
@@ -2997,8 +3535,12 @@ fn check_fails_a_mirror_whose_body_the_source_no_longer_holds() {
         "a mirror showing a body its source does not hold passed: {stderr}"
     );
     assert!(
-        stderr.contains("the mirrored body is not what remap.js holds now"),
+        stderr.contains("the mirrored body and remap.js disagree"),
         "the finding names the source it disagrees with: {stderr}"
+    );
+    assert!(
+        !stderr.contains("holds now"),
+        "and does not accuse the source of having moved: {stderr}"
     );
     assert!(
         stderr.contains("first difference at body line 2"),
@@ -3060,7 +3602,7 @@ The manifest is a complete chunk so repository projection can carry its public f
 ```toml {#package-manifest file="Cargo.toml"}
 [package]
 name = "x0k-tangle"
-version = "0.1.0"
+version = "0.1.1"
 edition = { workspace = true }
 description = "Literate programming tangler/weaver with bidirectional sync. Extracts compilable source from folio/v1 documents and reconciles edits from either side."
 license = "MIT"
@@ -3089,7 +3631,7 @@ default = []
 motifs = [] # severed in this publication: its dependency is not published; enabling it does not build
 
 [dependencies]
-x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.1.0" }
+x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.1.1" }
 # The vocabulary a `check` reads documents against. Default features carry
 # the runtime module loader, which is what `--vocabulary <dir>` and the
 # PROVENANCE-recorded default are: a projected repository checks its own

@@ -1,6 +1,6 @@
 {
   "source": "implementation/ontology/load.md",
-  "source_hash": "2d1e166142387cf3",
+  "source_hash": "13852fb12ae19a73",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-ontology/src/load.rs",
-          "hash": "e3e13e05e92ec275"
+          "hash": "cb9c8977584a9da0"
         }
       ]
     }

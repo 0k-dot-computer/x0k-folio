@@ -1,6 +1,6 @@
 {
   "source": "implementation/fact-projection/materialize.md",
-  "source_hash": "d17d0b0d16138c47",
+  "source_hash": "afdb55f41f515dcc",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-fact-projection/src/materialize.rs",
-          "hash": "c38ac9e1fd3d56e2"
+          "hash": "ed1f14107c6b34f1"
         }
       ]
     }

@@ -148,6 +148,9 @@ pub mod envelope_check;
 pub mod html_canonical;
 pub mod inline_entity;
 pub mod layout;
+// Unconditional: this is the half of materialization the published build
+// must carry. Its Loro-backed sibling below stays behind `plugins`.
+pub mod materialize;
 #[cfg(feature = "plugins")]
 pub mod projection;
 pub mod structural_block;
@@ -162,9 +165,13 @@ pub use block_segment::{hash_block, segment_body, BlockKind, BlockSegment};
 pub use entity_id::{EntityId, EntityIdError};
 pub use envelope_check::{
     check_corpus, check_declarations, check_envelope, predicate_standing, CorpusReport,
-    DanglingEdge, DeclarationDefect, DeclarationReport, Defect, EnvelopeReport,
-    PredicateStanding,
+    DanglingDeclaration, DanglingEdge, DeclarationDefect, DeclarationReport, Defect,
+    EnvelopeReport, PredicateStanding,
 };
+// The instance pass reads the vocabulary a collection carries, so it
+// exists only where that loader does.
+#[cfg(feature = "document-vocabulary")]
+pub use envelope_check::{check_instances, InstanceCheck};
 pub use inline_entity::{
     declared_facts, declared_facts_with, defined_in_fact, document_edges, extract_from_markdown,
     inline_entity_facts, prose_edges, InlineEntity, InlineEntityError, ICON_CLASS,
@@ -203,7 +210,7 @@ two routes converge on one factory entry.
 /// `x0k_types::class_registry::PLUGIN_FACTORIES`. Daemons call this once at
 /// startup (before loading their `ClassRegistry`) so that
 /// `plugin = "folio/v1"` entries in `config/projection-classes.toml`
-/// resolve to a [`ColophonProjection`] instance.
+/// resolve to a `ColophonProjection` instance.
 ///
 /// Wrapped in a `std::sync::Once` so duplicate calls are no-ops — mirrors
 /// the inline `ensure_builtin_plugins_registered` path that

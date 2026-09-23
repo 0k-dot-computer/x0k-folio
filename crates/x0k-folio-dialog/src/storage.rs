@@ -55,20 +55,78 @@ impl StorageBackend for DurableStorage {
             Err(error) => Err(DialogStorageError::Storage(error.to_string())),
         }
     }
+    /// Durable, and off the calling task. Upstream flushes a delta through
+    /// `buffer_unordered(16)` before it mints the revision that names those
+    /// blocks; syncing inline would block that one task at each `sync_all`
+    /// and serialize the fan-out into one journal commit per block. See
+    /// "Two fsyncs per block, but never one after another"; the measurement
+    /// it reports is guarded by `a_batch_of_blocks_syncs_concurrently`.
     async fn set(&mut self, key: Blake3Hash, value: Vec<u8>) -> Result<(), Self::Error> {
-        (|| -> Result<()> {
-            anyhow::ensure!(!self.read_only, "read-only database");
+        let (root, path, read_only) = (self.root.clone(), self.path(&key), self.read_only);
+        #[cfg(test)]
+        let fail_root = self.fail_root.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            anyhow::ensure!(!read_only, "read-only database");
             #[cfg(test)]
             if key == dialog_artifacts::make_reference(b"folio-v1")
-                && self.fail_root.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                && fail_root.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 anyhow::bail!("injected root publication failure");
             }
-            let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
+            let mut file = tempfile::NamedTempFile::new_in(&root)?;
             file.write_all(&value)?;
             file.as_file().sync_all()?;
-            file.persist(self.path(&key))?;
-            File::open(&self.root)?.sync_all()?;
+            file.persist(path)?;
+            File::open(&root)?.sync_all()?;
             Ok(())
-        })().map_err(|error| DialogStorageError::Storage(error.to_string()))
+        }).await
+            .map_err(|error| DialogStorageError::Storage(format!("durable write did not finish: {error}")))?
+            .map_err(|error| DialogStorageError::Storage(error.to_string()))
+    }
+}
+#[cfg(test)]
+mod durability {
+    use super::*;
+    use futures_util::StreamExt;
+
+    fn block(n: u32) -> (Blake3Hash, Vec<u8>) {
+        let value = format!("block-{n}").into_bytes();
+        (*blake3::hash(&value).as_bytes(), value)
+    }
+
+    /// The incident test for "Two fsyncs per block, but never one after
+    /// another". Calibrated against the machine rather than a constant: four
+    /// blocks written one at a time price this disk's journal commit, and
+    /// sixty-four written through the same `buffer_unordered(16)` upstream's
+    /// `publish_root` uses must not cost what sixty-four sequential ones
+    /// would. A current-thread runtime on purpose — that is the runtime the
+    /// worker builds, and it is where an inline `sync_all` did its damage.
+    #[tokio::test]
+    async fn a_batch_of_blocks_syncs_concurrently() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut storage = DurableStorage::open(directory.path(), false)?;
+        let fail = |error: DialogStorageError| anyhow::anyhow!(error.to_string());
+
+        let alone = std::time::Instant::now();
+        for n in 0..4 {
+            let (key, value) = block(n);
+            storage.set(key, value).await.map_err(fail)?;
+        }
+        let alone = alone.elapsed() / 4;
+
+        let batched = std::time::Instant::now();
+        futures_util::stream::iter((4..68).map(|n| {
+            let mut storage = storage.clone();
+            async move { let (key, value) = block(n); storage.set(key, value).await }
+        })).buffer_unordered(16).collect::<Vec<_>>().await
+            .into_iter().collect::<std::result::Result<Vec<_>, _>>().map_err(fail)?;
+        let batched = batched.elapsed();
+
+        assert!(batched < alone * 16,
+            "64 blocks through a 16-way flush took {batched:?} against {alone:?} \
+             for one written alone; a fan-out that costs a multiple of the \
+             block count is syncing on the calling task again");
+        // 68 blocks and the writer lock: every block still reached the disk.
+        assert_eq!(std::fs::read_dir(directory.path())?.count(), 69);
+        Ok(())
     }
 }

@@ -22,24 +22,32 @@ pub(crate) struct Worker {
 }
 pub(crate) struct Ticket(mpsc::Receiver<Result<Reply>>);
 impl Ticket {
-    pub(crate) fn identity_until(self, deadline: Instant) -> Result<Option<String>> {
-        match self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| anyhow!("backend identity pending"))?? {
+    /// One reply, waited for until `deadline` — or until it arrives, when
+    /// there is no deadline. `recv` rather than some very distant instant,
+    /// because "no clock is watching this" is what a batch verb means and a
+    /// far-future `Instant` is arithmetic that can overflow.
+    fn receive(self, deadline: Option<Instant>, pending: &'static str) -> Result<Reply> {
+        match deadline {
+            Some(deadline) => self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|_| anyhow!(pending))?,
+            None => self.0.recv().map_err(|_| anyhow!(pending))?,
+        }
+    }
+    pub(crate) fn identity_until(self, deadline: Option<Instant>) -> Result<Option<String>> {
+        match self.receive(deadline, "backend identity pending")? {
             Reply::Identity(identity) => Ok(identity),
             _ => Err(anyhow!("unexpected backend response")),
         }
     }
 
-    pub(crate) fn facts_until(self, deadline: Instant) -> Result<Option<Vec<FactEntry>>> {
-        match self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| anyhow!("backend read pending"))?? {
+    pub(crate) fn facts_until(self, deadline: Option<Instant>) -> Result<Option<Vec<FactEntry>>> {
+        match self.receive(deadline, "backend read pending")? {
             Reply::Facts(facts) => Ok(facts),
             _ => Err(anyhow!("unexpected backend response")),
         }
     }
-    pub(crate) fn count_until(self, deadline: Instant) -> Result<usize> {
-        match self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| anyhow!("backend completion pending"))?? {
+    pub(crate) fn count_until(self, deadline: Option<Instant>) -> Result<usize> {
+        match self.receive(deadline, "backend completion pending")? {
             Reply::Count(count) => Ok(count),
             _ => Err(anyhow!("unexpected backend response")),
         }
@@ -92,17 +100,17 @@ impl Worker {
 }
 impl FactSink for Worker {
     fn incarnation(&mut self) -> Result<Option<String>> {
-        self.start_identity()?.identity_until(Instant::now()+Duration::from_secs(30))
+        self.start_identity()?.identity_until(Some(Instant::now()+Duration::from_secs(30)))
     }
 
     fn replace_source(&mut self,source:&str,batches:&FactBatches,prior:&[FactEntry],cause:&str) -> Result<usize> {
-        self.source(source,batches,prior.to_vec(),cause)?.count_until(Instant::now()+Duration::from_secs(30))
+        self.source(source,batches,prior.to_vec(),cause)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
     fn replace(&mut self,entity:&str,facts:&[FactEntry],cause:&str) -> Result<usize> {
-        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()))?.count_until(Instant::now()+Duration::from_secs(30))
+        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()))?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
     fn retract(&mut self,facts:&[FactEntry],cause:&str) -> Result<usize> {
-        self.submit(Operation::Retract(facts.into(),cause.into()))?.count_until(Instant::now()+Duration::from_secs(30))
+        self.submit(Operation::Retract(facts.into(),cause.into()))?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
     fn facts_caused_by(&self,cause:&str) -> Result<Option<Vec<FactEntry>>> { self.read(cause,Duration::from_secs(30)) }
     fn retains_history(&self) -> bool { self.history }

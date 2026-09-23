@@ -174,6 +174,16 @@ fn lonely_doc(actors: &str) -> String {
          actors: [{actors}]\n```\n"
     )
 }
+
+/// A chapter declaring a signifier for some *other* affordance: enough
+/// for the set to be one where signification lives, and no answer at all
+/// for `frob_alone`.
+const SIGNIFYING_CHAPTER: &str = "---\nx0k:\n  format: folio/v1\n  \
+     id: x0k:implementation/elsewhere\n  type: implementation\n  \
+     status: draft\n---\n# Elsewhere\n\n### `frob_together`\n\n\
+     ```yaml x0k:signifier\nid: x0k:signifier/frob-together\nedges:\n  \
+     signifies:\n    - x0k:affordance/frob_together\n  presentedOn:\n    \
+     - x0k:surface/cli\n```\n";
 ````
 
 </details>
@@ -185,6 +195,7 @@ fn lonely_doc(actors: &str) -> String {
 fn check_names_a_human_claim_no_signifier_signifies_and_fails() {
     let tmp = TempDir::new().unwrap();
     write(tmp.path(), "docs/lonely.md", &lonely_doc("human"));
+    write(tmp.path(), "docs/elsewhere.md", SIGNIFYING_CHAPTER);
 
     let out = run(&["check"], tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -192,6 +203,44 @@ fn check_names_a_human_claim_no_signifier_signifies_and_fails() {
     assert!(
         stderr.contains("x0k:affordance/frob_alone") && stderr.contains("signifier"),
         "the defect names the affordance and what is missing: {stderr}"
+    );
+}
+
+/// The jj maintainer persona's first command on a pristine clone
+/// (2026-09-22): the guide says "check the folder, any folder", the
+/// affordances live in `decisions/` and every signifier one directory
+/// over, and seven red errors came back. A set with no signifier in it
+/// is not answering the question, so it says so and passes.
+```
+
+</details>
+
+<details><summary><code>check_notes_a_human_claim_when_the_set_declares_no_signifier_at_all</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+
+```rust
+#[test]
+fn check_notes_a_human_claim_when_the_set_declares_no_signifier_at_all() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/lonely.md", &lonely_doc("human"));
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a scan that holds no signifier failed over its own shape: {stderr}"
+    );
+    assert!(
+        stderr.contains("note:") && stderr.contains("declares no signifier at all"),
+        "the note says why it could not answer: {stderr}"
+    );
+
+    // The reader who knows the set is the whole collection says so, and
+    // the same finding becomes a defect.
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "--closed says there is nowhere else to look, and check passed: {stderr}"
     );
 }
 ```

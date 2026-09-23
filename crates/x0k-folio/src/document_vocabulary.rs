@@ -10,6 +10,7 @@ use x0k_ontology::concept_facts::{
     RDFS_IS_DEFINED_BY, STRUCTURAL_NODE_PREFIX, X0K_NS,
 };
 use x0k_ontology::load::TurtleSource;
+use crate::envelope_check::camel_form;
 use crate::inline_entity::{declaration_marker, extract_from_markdown_in, InlineEntity};
 
 /// The caller's stable document identity and its Markdown body.
@@ -21,7 +22,20 @@ pub struct DocumentSource<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockSource {
     pub document: String,
+    /// 1-based line the block's opening fence sits on, counted in the
+    /// text the caller supplied as the body. Zero for a source that is
+    /// not a block — the base vocabulary a conflict names.
+    pub line: usize,
     pub bytes: Range<usize>,
+}
+
+impl fmt::Display for BlockSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.line {
+            0 => write!(f, "{}", self.document),
+            line => write!(f, "{}:{}", self.document, line),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +57,11 @@ pub struct VocabularyError {
 }
 impl fmt::Display for VocabularyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at {:?}", self.message, self.sources)
+        write!(f, "{}", self.message)?;
+        for (index, source) in self.sources.iter().enumerate() {
+            write!(f, "{}{source}", if index == 0 { " at " } else { ", " })?;
+        }
+        Ok(())
     }
 }
 impl std::error::Error for VocabularyError {}
@@ -98,7 +116,8 @@ fn blocks(document: &DocumentSource<'_>) -> Vec<Block> {
         match event {
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
                 active = Some(Block { info: info.to_string(), text: String::new(),
-                    source: BlockSource { document: document.id.to_string(), bytes: span } });
+                    source: BlockSource { document: document.id.to_string(),
+                        line: 1 + document.body[..span.start].matches('\n').count(), bytes: span } });
             }
             Event::Text(text) if active.is_some() => active.as_mut().unwrap().text.push_str(&text),
             Event::End(TagEnd::CodeBlock) => {
@@ -121,6 +140,29 @@ fn ontology_marker(info: &str) -> bool {
 
 fn error(kind: VocabularyErrorKind, message: impl Into<String>, sources: &[BlockSource]) -> VocabularyError {
     VocabularyError { kind, message: message.into(), sources: sources.to_vec() }
+}
+/// The base vocabulary a verb reads documents against.
+///
+/// `explicit` is a directory of `*.ttl` module files, read *in addition to*
+/// the set this build compiled; `without_shipped` reads that directory
+/// alone, for a caller whose set is genuinely complete. With no directory,
+/// the shipped set — a folio/v1 document is written in terms the shipped
+/// modules declare, so no vocabulary at all is not a useful answer.
+///
+/// One function because two verbs that load differently disagree about one
+/// document, which is the defect this replaced.
+pub fn select_vocabulary(explicit: Option<&Path>, without_shipped: bool) -> Result<OntologyModel, String> {
+    let Some(dir) = explicit else {
+        return Ok(OntologyModel::shipped());
+    };
+    let mine = OntologyModel::load(dir)
+        .map_err(|error| format!("loading a vocabulary from {}: {error}", dir.display()))?;
+    if without_shipped {
+        return Ok(mine);
+    }
+    let mut facts = OntologyModel::shipped().facts().to_vec();
+    facts.extend_from_slice(mine.facts());
+    Ok(OntologyModel::new(facts))
 }
 /// Collect and validate definitions without interpreting instance declarations.
 /// Imports refer only to the supplied base and document collection.
@@ -186,7 +228,7 @@ pub fn load_definitions(
                 .filter(|fact| fact.entity == iri).cloned().collect();
             if base_definitions.get(&iri).is_some_and(|prior| prior != &signature) {
                 return Err(error(VocabularyErrorKind::Conflict, format!("definition of {iri} conflicts with the selected base vocabulary"),
-                    &[BlockSource { document: "<base vocabulary>".into(), bytes: 0..0 }, block.source.clone()]));
+                    &[BlockSource { document: "<base vocabulary>".into(), line: 0, bytes: 0..0 }, block.source.clone()]));
             }
             match definitions.get_mut(&iri) {
                 Some((prior, sources)) if prior == &signature => sources.push(block.source.clone()),
@@ -339,13 +381,24 @@ fn class_index(model: &OntologyModel) -> Result<BTreeMap<(String, String), Strin
     }
     Ok(out)
 }
-/// Resolve a declared property; bare camelCase and snake_case keys retain x0k compatibility.
+/// Resolve a declared property from the spelling an `edges:` block uses:
+/// `<prefix>:<snake_case local>`, or a bare local, which means `x0k:`.
+///
+/// The casing rule belongs to the ontology and not to a namespace, so the
+/// camelCase term is asked for under whatever prefix was written —
+/// `jj:superseded_by` reaches `jj:supersededBy` exactly as `superseded_by`
+/// reaches `x0k:supersededBy`. This is `camel_form`, the same function
+/// `check` asks with, because a reader whose module the guide invited them
+/// to write should not find that one verb reads their document and the
+/// other drops it. A key already written as an IRI or in camelCase is
+/// matched as it came.
 pub fn resolve_property(model: &OntologyModel, key: &str) -> Option<String> {
+    let (prefix, snake) = key.split_once(':').unwrap_or(("x0k", key));
+    let spelled = model.expand(&format!("{prefix}:{}", camel_form(snake)));
+    let asked = model.expand(key);
     model.object_properties().iter().find_map(|property| {
         let iri = model.expand(&property.uri);
-        let legacy = iri.strip_prefix(X0K_NS).is_some_and(|local|
-            local == key || x0k_ontology::concept_facts::camel_to_snake(local) == key);
-        (iri == model.expand(key) || (!key.contains(':') && legacy)).then_some(iri)
+        (iri == asked || iri == spelled).then_some(iri)
     })
 }
 /// Resolve a selected CURIE or an explicit HTTP(S)/URN IRI.
@@ -444,6 +497,22 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         load_documents(&docs, &OntologyModel::new([]))
     }
 
+
+    /// Incident: the maintainer eval of 2026-09-22 found `ingest` saying
+    /// `at [BlockSource { document: "alpha.md", bytes: 129..264 }]` — a
+    /// Rust struct where an editor's address belongs.
+    #[test]
+    fn a_rejected_block_names_its_line_and_not_a_rust_struct() {
+        let vocabulary = definition("paper", "https://example.test/paper#");
+        let body = format!("{vocabulary}{}",
+            instance("paper", "one", Some("paper:paper/two")).replace("paper:cites", "paper:shreds"));
+        let error = load(&[("alpha.md", &body)]).err().unwrap();
+        let rendered = error.to_string();
+        assert!(!rendered.contains("BlockSource"), "{rendered}");
+        let line = error.sources[0].line;
+        assert!(rendered.ends_with(&format!(" at alpha.md:{line}")), "{rendered}");
+        assert!(body.lines().nth(line - 1).unwrap().starts_with("```yaml paper:paper"), "{body}");
+    }
 
     #[test]
     fn supplied_union_domain_and_range_accept_members_and_reject_outsiders() {

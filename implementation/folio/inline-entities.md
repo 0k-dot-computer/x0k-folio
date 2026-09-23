@@ -147,7 +147,7 @@ bare string there is malformed in a way any reader can see.
 use std::collections::{BTreeMap, HashSet};
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
-use tracing::warn;
+use tracing::debug;
 
 use crate::entity_id::EntityId;
 use crate::structural_block::FenceInfo;
@@ -201,6 +201,25 @@ affordance in a design does not cost the document its other seven. So
 extraction returns a `Result` per attempted record rather than a
 `Result` over the batch, and every variant carries enough to name the
 offending section in a log line.
+
+One of them corrects rather than only refusing. The marker and the id's
+class are the same word in two casings — a `Paper` class is marked
+`yaml paper:paper` and identified `paper:paper/alpha` — so a mismatch
+that is *only* a casing difference is a near miss with exactly one
+intended spelling, and `ClassMismatch` says which. It is the same move
+the `type:` refusal makes, and it lands in the same place: these
+messages did not use to fire at all, and since `check` began reading
+declarations in a reader's own namespace they are the first thing
+anyone adopting a custom vocabulary meets (a maintainer reached the
+rule by trying spellings until one stopped failing, 2026-09-22).
+
+One variant carries a second sentence for the opposite reason. A
+missing `id:` under a namespaced marker is the error a person meets
+when they wrote a code fence and the info string was read as a
+declaration, so that variant names the token that made it one. The
+shape rule below keeps this from firing on ordinary prose; the sentence
+is for the case where it fires correctly and the reader still has no
+idea what the tool wants.
 
 <a name="chunk-error"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#error`</sub>
 
@@ -288,10 +307,19 @@ impl std::fmt::Display for InlineEntityError {
             Self::MissingId {
                 marker_class,
                 heading,
-            } => write!(
-                f,
-                "inline `{marker_class}` block in section `{heading}` is missing the required `id:` field"
-            ),
+            } => {
+                write!(
+                    f,
+                    "inline `{marker_class}` block in section `{heading}` is missing the required `id:` field"
+                )?;
+                if marker_class.contains(':') {
+                    write!(
+                        f,
+                        " — the info string `yaml {marker_class}` is what makes this fence a typed declaration; an ordinary code fence names a language and nothing else"
+                    )?;
+                }
+                Ok(())
+            }
             Self::InvalidUri {
                 marker_class,
                 heading,
@@ -305,10 +333,22 @@ impl std::fmt::Display for InlineEntityError {
                 marker_class,
                 heading,
                 uri_class,
-            } => write!(
-                f,
-                "inline `{marker_class}` block in section `{heading}` carries a `{uri_class}` id; info-string marker and id class must agree"
-            ),
+            } => {
+                let (prefix, local) = marker_class
+                    .split_once(':')
+                    .unwrap_or(("x0k", marker_class.as_str()));
+                write!(
+                    f,
+                    "inline `{marker_class}` block in section `{heading}` carries a `{uri_class}` id; info-string marker and id class must agree"
+                )?;
+                if local.eq_ignore_ascii_case(uri_class) {
+                    write!(
+                        f,
+                        " — they differ only in case: spell the marker `{prefix}:{uri_class}`, the class's local name lower-cased"
+                    )?;
+                }
+                Ok(())
+            }
             Self::ExplicitDefinedIn {
                 marker_class,
                 heading,
@@ -428,16 +468,30 @@ Byte offsets are available because `into_offset_iter` gives each event
 its source range, which is also what makes the excision exact rather
 than a re-serialization of parsed events.
 
+A marker the caller did not ask for is skipped at `debug`. It used to be
+a `warn`, on the theory that an ineligible class was worth mentioning —
+but the common case is not an ineligible class, it is a second kind of
+declaration in a document that also holds the kind the caller wanted.
+`check` asks for affordances and signifiers, and x0k's own decisions
+declare their icons inline, so `x0k-tangle check decisions` on a clean
+clone printed seven `WARN … marker_class=icon` lines about seven
+documents with nothing wrong with them — the first output a new reader
+saw, from the first command the guide gives (jj evaluation, 2026-09-22).
+Silence about a marker nobody asked about is the honest level; the line
+is still there under `RUST_LOG=debug` for the case where a class really
+is misplaced.
+
 <a name="chunk-extract"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#extract`</sub>
 
 ```rust {#extract}
 /// Walk a markdown body and return one `Result` per attempted record, so
 /// a caller can warn per error without dropping the batch.
 ///
-/// `allowed_inline_classes` is the eligible set for this parent: markers
-/// outside it are logged and skipped rather than reported as errors,
-/// because a class this document may not host is not this document's
-/// mistake.
+/// `allowed_inline_classes` is the set this caller asked for: markers
+/// outside it are skipped at `debug`, not `warn`, because a marker this
+/// caller did not ask for is not this document's mistake and usually not
+/// anyone's — `check` asks for affordances and signifiers, and every
+/// correctly declared icon in the set goes past it.
 pub fn extract_from_markdown(
     body: &str,
     allowed_inline_classes: &HashSet<String>,
@@ -519,9 +573,9 @@ fn extract_with_model(
                 };
                 if let Some(marker) = marker {
                     if model.is_none() && !allowed_inline_classes.contains(&marker) {
-                        warn!(
+                        debug!(
                             marker_class = %marker,
-                            "inline-entity: marker class is not allowed under this parent class; skipping"
+                            "inline-entity: marker outside the set this caller asked for; skipping"
                         );
                     } else {
                         active_marker = Some(marker);
@@ -1205,31 +1259,73 @@ that the class exists; parsing an identity alone does not assert that.
 This entry point accepts YAML declarations only. The special SVG icon carrier
 continues through the legacy extractor and renderer.
 
+The `x0k:` marker could be recognized by its prefix alone, and this one
+cannot: the whole point is that the prefix is the reader's own word. So
+the shape has to carry the recognition, and shape here means both
+halves — a namespace prefix as Turtle spells one, and a class that is a
+local name. A marker that fails either test is not a malformed
+declaration; it is an ordinary code fence, and the walk must leave it
+alone.
+
+That is not a hypothetical. A Backstage maintainer running the gate over
+755 real documentation pages hit one file that carries
+
+````markdown
+```yaml title:"app-config.yaml"
+````
+
+— the colon form of the fence title that Docusaurus and MkDocs readers
+write — and a marker rule of "anything containing a colon, x0k excepted"
+read `title` as a namespace and `"app-config.yaml"` as a class, then
+failed the page for declaring an instance with no `id:`. The page
+declares nothing; it documents a config file. Quotes and dots cannot
+appear in a class local name, so the test that a code fence is a code
+fence is the same test that says what a declaration looks like.
+
+Near misses stay diagnosable. `paper:Paper` and `paper:review_note` are
+both marker-shaped and both wrong, and both reach the collection loader
+to be told so by name — the refusals this guard adds are for strings no
+spelling of a class could produce.
+
 <a name="chunk-namespaced-marker"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#namespaced-marker`</sub>
 
 ```rust {#namespaced-marker}
 pub(crate) fn declaration_marker(info: &str) -> Option<String> {
+    let mut tokens = info.split_ascii_whitespace();
     // Generic ontology declarations use YAML. SVG icons keep their separate
     // legacy carrier and rendering path; they are not generic instances.
-    if !info.split_ascii_whitespace().next()?.eq_ignore_ascii_case("yaml") {
+    if !tokens.next()?.eq_ignore_ascii_case("yaml") {
         return None;
     }
     if let Some(marker) = parse_info_string(info) {
         return Some(marker);
     }
-    let mut tokens = info.split_ascii_whitespace();
-    if !tokens.next()?.eq_ignore_ascii_case("yaml") {
-        return None;
-    }
     let marker = tokens.next()?;
     if tokens.next().is_some() {
         return None;
     }
-    let (scheme, class) = marker.split_once(':')?;
-    if scheme == "x0k" || scheme.is_empty() || class.is_empty() || class.starts_with('!') || class.contains(':') {
-        return None;
-    }
-    Some(marker.to_string())
+    let (prefix, class) = marker.split_once(':')?;
+    (prefix != "x0k" && is_namespace_prefix(prefix) && is_class_marker(class))
+        .then(|| marker.to_string())
+}
+
+/// A namespace prefix as Turtle — and the vocabulary loader that reads
+/// the `turtle folio:ontology` blocks — spells one: ASCII lowercase to
+/// open, then lowercase, digits, `+`, `.`, `-`.
+fn is_namespace_prefix(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '.' | '-'))
+}
+
+/// A class's local name, or the kebab-case of one: ASCII letter to open,
+/// then letters, digits, `-`, `_`. Deliberately wider than the kebab
+/// spelling the loader wants, so `paper:Paper` is still refused *by
+/// name* one layer up instead of vanishing into prose here.
+fn is_class_marker(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
 }
 ```
 
@@ -1675,6 +1771,71 @@ status: wip
         assert_eq!(parse_info_string("yaml"), None);
         assert_eq!(parse_info_string("yaml x0k:"), None);
         assert_eq!(parse_info_string("json x0k:affordance"), None);
+    }
+
+    /// The regression this guard exists for: an ordinary fence whose
+    /// info string happens to hold a colon is a code fence, not a
+    /// declaration missing its `id:`
+    /// (`docs/backend-system/building-backends/08-migrating.md:896` in
+    /// the Backstage tree, 2026-09-23).
+    #[test]
+    fn a_fence_title_is_not_a_declaration_marker() {
+        assert_eq!(declaration_marker("yaml title:\"app-config.yaml\""), None);
+        assert_eq!(declaration_marker("yaml title:app-config.yaml"), None);
+        assert_eq!(declaration_marker("yaml title=\"app-config.yaml\""), None);
+        assert_eq!(declaration_marker("yaml linenums:1"), None);
+        assert_eq!(declaration_marker("yaml Title:paper"), None);
+        assert_eq!(declaration_marker("yaml :paper"), None);
+        assert_eq!(declaration_marker("yaml paper:"), None);
+    }
+
+    /// The other half of the same rule: a real namespaced marker still
+    /// declares, and a near miss still reaches the loader to be named.
+    #[test]
+    fn a_namespaced_marker_declares_and_near_misses_still_arrive() {
+        assert_eq!(
+            declaration_marker("yaml paper:paper"),
+            Some("paper:paper".to_string())
+        );
+        assert_eq!(
+            declaration_marker("yaml zzz:gizmo"),
+            Some("zzz:gizmo".to_string())
+        );
+        // Wrong spelling, right shape: the collection loader says
+        // `unknown concept paper:Paper` rather than this walk saying
+        // nothing at all.
+        assert_eq!(
+            declaration_marker("yaml paper:Paper"),
+            Some("paper:Paper".to_string())
+        );
+        assert_eq!(
+            declaration_marker("yaml paper:review_note"),
+            Some("paper:review_note".to_string())
+        );
+        // The shipped marker keeps its own path.
+        assert_eq!(
+            declaration_marker("yaml x0k:affordance"),
+            Some("affordance".to_string())
+        );
+        assert_eq!(declaration_marker("yaml x0k:!affordance"), None);
+    }
+
+    #[test]
+    fn a_namespaced_block_without_an_id_says_what_made_it_a_declaration() {
+        let message = InlineEntityError::MissingId {
+            marker_class: "title:\"app-config.yaml\"".to_string(),
+            heading: "The Auth Plugin".to_string(),
+        }
+        .to_string();
+        assert!(message.contains("typed declaration"), "{message}");
+        // The shipped marker's message is unchanged: `x0k:affordance`
+        // is unambiguous, so it needs no lesson about code fences.
+        let shipped = InlineEntityError::MissingId {
+            marker_class: "affordance".to_string(),
+            heading: "Publish".to_string(),
+        }
+        .to_string();
+        assert!(!shipped.contains("typed declaration"), "{shipped}");
     }
 
     #[test]

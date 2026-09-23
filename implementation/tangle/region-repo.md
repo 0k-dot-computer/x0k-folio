@@ -595,13 +595,18 @@ documents, resolve the documents the publication named and check
 that what they declare is closed over the crate set,
 prepare the output directory, vendor the crates and the
 modules, copy the documents, emit the scaffolding, put the overlay
-back, commit. The order matters in two places — every guard runs
-before any write (the module checks included), and the literate set is
-known before a crate is vendored, because vendoring judges each
-`@generated` file against it — and the fragments below hang off this
+back, commit, with
+[the links a severance left dangling](#the-links-a-severance-leaves-dangling)
+demoted between the scaffolding and the relayout. The order matters in
+three places — every guard runs before any write (the module checks
+included); the literate set is known before a crate is vendored, because
+vendoring judges each `@generated` file against it; and the severed
+links are demoted before the relayout, because the relayout re-tangles
+the projection's own documents and a rewrite that is not in those
+documents does not survive it — and the fragments below hang off this
 outline in that order.
 
-<a name="chunk-project-publication-repo"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#project-publication-repo` · assembles [read-publication](#chunk-read-publication) · [resolve-license](#chunk-resolve-license) · [resolve-overlay](#chunk-resolve-overlay) · [open-report](#chunk-open-report) · [gather-manifests-and-guard](#chunk-gather-manifests-and-guard) · [refuse-on-violations](#chunk-refuse-on-violations) · [select-modules](#chunk-select-modules) · [discover-literate-docs](#chunk-discover-literate-docs) · [select-documents](#chunk-select-documents) · [resolve-prebuilt](#chunk-resolve-prebuilt) · [prepare-output-dir](#chunk-prepare-output-dir) · [vendor-crates](#chunk-vendor-crates) · [vendor-modules](#chunk-vendor-modules) · [copy-docs-and-scaffold](#chunk-copy-docs-and-scaffold) · [restore-overlay-and-commit](#chunk-restore-overlay-and-commit)</sub>
+<a name="chunk-project-publication-repo"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#project-publication-repo` · assembles [read-publication](#chunk-read-publication) · [resolve-license](#chunk-resolve-license) · [resolve-overlay](#chunk-resolve-overlay) · [open-report](#chunk-open-report) · [gather-manifests-and-guard](#chunk-gather-manifests-and-guard) · [refuse-on-violations](#chunk-refuse-on-violations) · [select-modules](#chunk-select-modules) · [discover-literate-docs](#chunk-discover-literate-docs) · [select-documents](#chunk-select-documents) · [resolve-prebuilt](#chunk-resolve-prebuilt) · [prepare-output-dir](#chunk-prepare-output-dir) · [vendor-crates](#chunk-vendor-crates) · [vendor-modules](#chunk-vendor-modules) · [copy-docs-and-scaffold](#chunk-copy-docs-and-scaffold) · [sever-doc-links-call](#chunk-sever-doc-links-call) · [restore-overlay-and-commit](#chunk-restore-overlay-and-commit)</sub>
 
 ```rust {#project-publication-repo}
 /// Project the publication decision doc at `region_doc` into a standalone repo
@@ -651,6 +656,8 @@ pub fn project_publication_repo_with(
     <<vendor-modules>>
 
     <<copy-docs-and-scaffold>>
+
+    <<sever-doc-links-call>>
 
     <<restore-overlay-and-commit>>
 }
@@ -1147,10 +1154,14 @@ let vendor_ctx = VendorCtx {
     literate_set: &literate_set,
     declared_severances: &declared_severances,
 };
+let mut severed_features: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 for name in &crates {
-    let dropped = vendor_crate(output_dir, name, &vendor_ctx)
+    let (dropped, features) = vendor_crate(output_dir, name, &vendor_ctx)
         .with_context(|| format!("vendoring crate `{name}`"))?;
     report.dropped_generated.extend(dropped);
+    if !features.is_empty() {
+        severed_features.insert(name.clone(), features);
+    }
 }
 ```
 
@@ -1309,7 +1320,10 @@ emit_provenance(
     &source_licenses,
 )?;
 let publication_pages =
-    tangle_publication_doc(region_doc, workspace, output_dir, &overlay, &layout, palette.as_ref())?;
+    tangle_publication_doc(
+        region_doc, workspace, output_dir, &overlay, &layout, palette.as_ref(),
+        prebuilt.as_ref().is_some_and(|plan| plan.npm.is_some()),
+    )?;
 write_readme_contents(
     output_dir,
     &publication_pages,
@@ -2687,12 +2701,12 @@ projection settled before vendoring began.
 /// literate set, then rewrite the vendored manifest (drop workspace-hack +
 /// publish-excluded optional deps, sever the features that reference them;
 /// set the license + crates.io metadata). Returns the projected-repo-relative
-/// paths of the files it dropped.
+/// paths of the files it dropped, and the features it severed.
 fn vendor_crate(
     output_dir: &Path,
     crate_name: &str,
     ctx: &VendorCtx<'_>,
-) -> Result<Vec<String>> {
+) -> Result<(Vec<String>, BTreeSet<String>)> {
     let src = ctx.packages.root(crate_name)?.to_path_buf();
     let dst = output_dir.join(crate_name);
     let mut dropped = Vec::new();
@@ -2726,8 +2740,8 @@ fn vendor_crate(
             .with_context(|| format!("copying {}", entry.path().display()))?;
     }
     std::fs::write(dst.join("Cargo.toml"), ctx.packages.manifest(crate_name)?.to_string())?;
-    rewrite_vendored_manifest(&dst.join("Cargo.toml"), ctx)?;
-    Ok(dropped)
+    let severed = rewrite_vendored_manifest(&dst.join("Cargo.toml"), ctx)?;
+    Ok((dropped, severed))
 }
 
 /// The source document a file's `@generated by x0k-tangle … from <doc> —
@@ -2760,7 +2774,10 @@ them.
 /// the workspace, strip the corpus-only `[package.metadata.x0k]`, add the
 /// crates.io metadata (`repository`, `readme`, `keywords`), and give in-bundle
 /// path deps a `version` so `cargo publish` can resolve them off crates.io.
-fn rewrite_vendored_manifest(path: &Path, ctx: &VendorCtx<'_>) -> Result<()> {
+///
+/// Returns the features it severed — the caller needs them to find the items
+/// they take out of every build this projection can make.
+fn rewrite_vendored_manifest(path: &Path, ctx: &VendorCtx<'_>) -> Result<BTreeSet<String>> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mut doc = text
@@ -2776,7 +2793,7 @@ fn rewrite_vendored_manifest(path: &Path, ctx: &VendorCtx<'_>) -> Result<()> {
     <<rewrite-prune-features>>
 
     std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
+    Ok(removed_feats)
 }
 ```
 
@@ -2790,6 +2807,18 @@ The corpus-only `[package.metadata.x0k]` table (module naming, access
 class) is stripped: it is monorepo registry vocabulary, and it would
 ship inside every crates.io tarball otherwise.
 
+`[lints]` goes the same way, and for a sharper reason than tidiness.
+`lints.workspace = true` names a `[workspace.lints]` table in the workspace
+the crate lives in, and the crate is about to live somewhere else: the
+standalone workspace this projector writes declares no such table, so the
+inherited line does not merely lose its meaning — it makes the projected
+manifest unreadable, and `cargo generate-lockfile` refuses the whole
+projection with *`workspace.lints` was not defined*. The corpus's lint
+ratchet is a corpus-side development policy, measured against a backlog
+this repository does not carry; a published crate that wants lints declares
+them itself. (2026-09-22: the ratchet landed on every hand-authored crate
+and every projection died at the lockfile until this line existed.)
+
 <a name="chunk-rewrite-package-metadata"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#rewrite-package-metadata`</sub>
 
 ```rust {#rewrite-package-metadata}
@@ -2797,6 +2826,9 @@ ship inside every crates.io tarball otherwise.
 // (description, readme, keywords) are kept; the projection only fills
 // gaps — except `license`, which the publication act always sets, and
 // `edition`/`rust-version`, which are inherited from the workspace.
+// `lints.workspace = true` names a table only the corpus workspace has;
+// carried across, it makes the projected manifest unreadable.
+doc.remove("lints");
 if let Some(pkg) = doc.get_mut("package").and_then(|p| p.as_table_mut()) {
     pkg.insert("license", toml_edit::value(ctx.license));
     let mut inherit = toml_edit::InlineTable::new();
@@ -2925,6 +2957,9 @@ let declared_here: &BTreeSet<String> = ctx
     .declared_severances
     .get(&this_crate)
     .unwrap_or(&no_severances);
+// Hoisted out of the block below because it is also this function's
+// answer: which features this manifest ended up severing.
+let mut removed_feats: BTreeSet<String> = BTreeSet::new();
 if let Some(features) = doc.get_mut("features").and_then(|f| f.as_table_mut()) {
     let feat_names: Vec<String> = features.iter().map(|(k, _)| k.to_string()).collect();
     // A severance that names a feature the manifest does not declare
@@ -2938,7 +2973,6 @@ if let Some(features) = doc.get_mut("features").and_then(|f| f.as_table_mut()) {
             );
         }
     }
-    let mut removed_feats: BTreeSet<String> = BTreeSet::new();
     for feat in feat_names {
         if feat == "default" {
             continue;
@@ -2981,6 +3015,428 @@ if let Some(features) = doc.get_mut("features").and_then(|f| f.as_table_mut()) {
                 .unwrap_or(true)
         });
     }
+}
+```
+
+### The links a severance leaves dangling
+
+Severing a feature empties its list and leaves its `#[cfg(feature = …)]`
+sites alone, which is what keeps the crate buildable. The items behind
+those sites are still in the vendored source, and out of every build this
+publication can make. The *prose* above them did not get the message: a
+doc comment that says `[`FactSource`]` still asks rustdoc to resolve a
+name the projection no longer compiles, and `rustdoc -D warnings` — which
+the projected CI runs, because prose that links to nothing is a broken
+promise — refuses the whole crate. The 2026-09-22 pre-publication run
+found fourteen such errors across three files, all downstream of the one
+`severs:` edge that takes `envelope`, `seam` and `fold` out of
+`x0k-fact-projection`. The pass demotes twenty-one links across five
+files, because it also reaches the ones rustdoc never got to: a link in
+prose that is itself behind the severed feature is not compiled, so it
+is not an error and is stale all the same.
+
+Allowing the lint would close the gate and open a worse hole: the same
+allow hides the links that break for reasons nobody chose. So the
+severance goes one step further into the source it ships and **demotes
+the link to a code span** — `` `FactSource` `` still names the thing and
+the sentence still reads, it just stops promising a page that is not
+there. Both spellings go the same way, the shorthand `[`X`]` and the
+explicit `[`X`](path::to::X)`, because the second is the one a sibling
+crate reaches a severed item by.
+
+What this costs is one case, stated rather than engineered around: a
+purely *declared* severance leaves code that still compiles under
+`--features <severed>`, and in that build the demoted link is a link the
+reader no longer has. The publication's own manifest says that feature
+is not supported here, so the build is outside what this repository
+promises, and the sentence still names the item either way.
+
+**The rewrite lands in the documents, not in their projections**, and
+that is the whole of what makes it legal. A projected `.rs` is a
+*product*: the repository ships the chapter that produces it, its
+sidecar records what that chapter last wrote, and its CI re-tangles the
+lot and requires an unchanged tree. Demoting a link in the product
+alone leaves the chapter still saying the old thing, so the next tangle
+either reverts the demotion or — because the file no longer matches what
+the sidecar says the document produced — refuses to touch it at all,
+naming the file as hand-edited. Both outcomes were reached in order
+(2026-09-23): the pass first ran at vendoring time and was tangled away
+everywhere except the bundle's one hand-authored `lib.rs`; moved to the
+end, past the relayout's re-tangle, it survived and the projection's own
+`tools/ci` stopped with *tangle refused to overwrite 1 file(s) it did
+not write*. The tangle-hygiene rule this chapter states for the corpus
+holds inside the projection too, and the projector is not exempt from
+it.
+
+So the pass rewrites the two kinds of source a document does *not*
+regenerate — the chapter's own chunks, and the hand-authored files no
+chapter owns — and then re-tangles each chapter it changed, so the
+chapter, its outputs and its sidecar say one thing. It runs before the
+relayout, whose own re-tangle then reproduces exactly this.
+
+The test that says so is the one this chapter already ends on:
+`publication_self_tangle.rs` projects the real publication, re-tangles
+every document inside it, and requires an unchanged tree. It is the only
+check that can see this defect at all — `rustdoc -D warnings` was green
+the whole time the projection was refusing to tangle itself.
+
+<a name="chunk-sever-doc-links-call"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#sever-doc-links-call`</sub>
+
+```rust {#sever-doc-links-call}
+// Before the relayout: it re-tangles every literate document the
+// projection carries, and what this pass writes has to be what that
+// tangle produces.
+let crate_dirs: Vec<(String, PathBuf)> =
+    crates.iter().map(|name| (name.clone(), output_dir.join(name))).collect();
+sever_doc_links(
+    output_dir,
+    &crate_dirs,
+    &output_dir.join(layout.implementation_root()),
+    &severed_features,
+)?;
+```
+
+Two spellings of a target are read, and deliberately no more: a path
+rooted in the file's own crate (bare, `crate::`, `self::`) and one rooted
+in a severed crate by name (`x0k_fact_projection::…`). A *bare* name in
+another crate resolves through a `use` this pass does not read, and
+guessing at one would demote links that were fine. The projected CI's
+rustdoc run is what reports that case, and it should.
+
+<a name="chunk-sever-doc-links"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#sever-doc-links`</sub>
+
+```rust {#sever-doc-links}
+/// Demote every intra-doc link naming an item a severed feature took out
+/// to a plain code span, in the projected chapters and in the sources no
+/// chapter owns. Returns how many links were rewritten.
+fn sever_doc_links(
+    output_dir: &Path,
+    crate_dirs: &[(String, PathBuf)],
+    doc_root: &Path,
+    severed_features: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<usize> {
+    if severed_features.is_empty() {
+        return Ok(0);
+    }
+    let mut gone: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (name, dir) in crate_dirs {
+        let Some(features) = severed_features.get(name) else { continue };
+        let items = severed_items(dir, features)?;
+        if !items.is_empty() {
+            gone.insert(name.clone(), items);
+        }
+    }
+    if gone.is_empty() {
+        return Ok(0);
+    }
+    let mut rewritten = 0usize;
+    rewritten += demote_in_chapters(output_dir, doc_root, &gone)?;
+    rewritten += demote_in_unowned_sources(crate_dirs, &gone)?;
+    Ok(rewritten)
+}
+```
+
+A chapter says which crate it tangles into, so the file's own crate —
+the frame a bare name is read in — is read off the envelope rather than
+guessed from the path. A chapter that tangles nothing has no code to
+link from and is skipped.
+
+The re-tangle is per chapter and only for the ones that changed. It is
+what keeps the three things a reader can compare — the chunk, the file,
+and the sidecar's record of what that chunk last wrote — saying the same
+thing, and it is the step whose absence the projection's CI reported.
+
+<a name="chunk-demote-in-chapters"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#demote-in-chapters`</sub>
+
+```rust {#demote-in-chapters}
+/// Rewrite the projected literate chapters, and re-tangle each one that
+/// changed so its outputs and its sidecar match its chunks.
+fn demote_in_chapters(
+    output_dir: &Path,
+    doc_root: &Path,
+    gone: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<usize> {
+    let mut rewritten = 0usize;
+    for entry in walkdir::WalkDir::new(doc_root).into_iter() {
+        let entry = entry?;
+        if entry.path().extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let text = std::fs::read_to_string(entry.path())
+            .with_context(|| format!("reading {}", entry.path().display()))?;
+        // The crate this chapter's chunks land in, which is the frame a
+        // bare name in them is resolved against. A chapter that tangles
+        // nowhere has no code to link from.
+        let Some(krate) = parse_document(&text).ok().and_then(|d| d.tangle_crate) else {
+            continue;
+        };
+        let krate = Path::new(&krate)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or(krate);
+        let (count, next) = demote_severed_links(&text, &krate, gone);
+        if count == 0 {
+            continue;
+        }
+        std::fs::write(entry.path(), next)
+            .with_context(|| format!("writing {}", entry.path().display()))?;
+        tangle_document(entry.path(), output_dir, &PipelineRegistry::default()).with_context(
+            || format!("re-tangling {} after demoting severed links", entry.path().display()),
+        )?;
+        tracing::info!(
+            krate = %krate,
+            path = %entry.path().display(),
+            links = count,
+            "region_repo.severed.links_demoted"
+        );
+        rewritten += count;
+    }
+    Ok(rewritten)
+}
+```
+
+The other half is the source no chapter produces. A published bundle is
+rarely fully literate — this one carries a single hand-authored
+`lib.rs`, and it is the crate root of the very crate the severance cuts,
+so it holds more of these links than any chapter does. Nothing
+regenerates it, so the rewrite is the write; a `@generated` header is
+the test, and it is the same header vendoring already judges files by.
+
+<a name="chunk-demote-in-unowned-sources"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#demote-in-unowned-sources`</sub>
+
+```rust {#demote-in-unowned-sources}
+/// Rewrite the Rust sources no chapter tangles. A `@generated` header
+/// means a document owns the file and the chapter pass has it.
+fn demote_in_unowned_sources(
+    crate_dirs: &[(String, PathBuf)],
+    gone: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<usize> {
+    let mut rewritten = 0usize;
+    for (name, dir) in crate_dirs {
+        for entry in walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_entry(|e| e.file_name() != "target")
+        {
+            let entry = entry?;
+            if entry.path().extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(entry.path())
+                .with_context(|| format!("reading {}", entry.path().display()))?;
+            if text
+                .lines()
+                .next()
+                .is_some_and(|l| l.contains("@generated by x0k-tangle"))
+            {
+                continue;
+            }
+            let (count, next) = demote_severed_links(&text, name, gone);
+            if count > 0 {
+                std::fs::write(entry.path(), next)
+                    .with_context(|| format!("writing {}", entry.path().display()))?;
+                tracing::info!(
+                    krate = %name,
+                    path = %entry.path().display(),
+                    links = count,
+                    "region_repo.severed.links_demoted"
+                );
+                rewritten += count;
+            }
+        }
+    }
+    Ok(rewritten)
+}
+```
+
+Which names a severance takes out is read from the vendored source
+rather than from anything the publication declares, because the
+publication names a *feature* and rustdoc resolves an *item*. The
+grammar recognized between the two is the one the shipped crates
+actually write: a `#[cfg(feature = …)]` line, then the module
+declaration, re-export or single named item it gates. Anything else is
+not recognized, and its links are left alone — an unrecognized shape
+shows up as a red rustdoc run naming the link, never as a silent pass.
+
+<a name="chunk-severed-items"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#severed-items`</sub>
+
+```rust {#severed-items}
+/// The item names a crate's severed features take out of every build the
+/// projection can make, read from the vendored source.
+fn severed_items(crate_dir: &Path, features: &BTreeSet<String>) -> Result<BTreeSet<String>> {
+    let mut items = BTreeSet::new();
+    for entry in walkdir::WalkDir::new(crate_dir)
+        .into_iter()
+        .filter_entry(|e| e.file_name() != "target")
+    {
+        let entry = entry?;
+        if entry.path().extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(entry.path())
+            .with_context(|| format!("reading {}", entry.path().display()))?;
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("#[cfg(") {
+                continue;
+            }
+            if !features
+                .iter()
+                .any(|f| trimmed.contains(&format!("feature = \"{f}\"")))
+            {
+                continue;
+            }
+            collect_item_names(&lines[i + 1..], &mut items);
+        }
+    }
+    Ok(items)
+}
+
+/// The names the item after a `#[cfg]` line introduces, added to `out`.
+/// Attributes, doc comments and blank lines sit between the two.
+fn collect_item_names(rest: &[&str], out: &mut BTreeSet<String>) {
+    let mut lines = rest.iter().map(|l| l.trim()).skip_while(|l| {
+        l.is_empty() || l.starts_with("//") || l.starts_with("#[") || l.starts_with("#!")
+    });
+    let Some(first) = lines.next() else { return };
+    let mut head = first;
+    for prefix in ["pub(crate)", "pub(super)", "pub", "unsafe", "async", "default"] {
+        head = head.strip_prefix(prefix).unwrap_or(head).trim_start();
+    }
+    if let Some(after) = head.strip_prefix("use ") {
+        // A re-export may run over several lines; it ends at the `;`.
+        let mut path = after.to_string();
+        while !path.contains(';') {
+            let Some(next) = lines.next() else { break };
+            path.push_str(next);
+        }
+        let path = path.split(';').next().unwrap_or_default();
+        match (path.find('{'), path.rfind('}')) {
+            (Some(open), Some(close)) if open < close => {
+                out.extend(path[open + 1..close].split(',').filter_map(use_name));
+            }
+            _ => out.extend(use_name(path)),
+        }
+        return;
+    }
+    for keyword in [
+        "mod ", "fn ", "struct ", "enum ", "trait ", "type ", "const ", "static ", "union ",
+    ] {
+        if let Some(after) = head.strip_prefix(keyword) {
+            let name: String = after
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                out.insert(name);
+            }
+            return;
+        }
+    }
+}
+
+/// The name one `use` entry binds: its alias if it has one, else the last
+/// segment of its path. `self` names the module the enclosing path already
+/// contributed, and a glob names nothing this pass can see.
+fn use_name(entry: &str) -> Option<String> {
+    let bound = entry.trim().rsplit(" as ").next()?.trim();
+    let last = bound.rsplit("::").next()?.trim();
+    (!last.is_empty() && last != "self" && last != "*").then(|| last.to_string())
+}
+```
+
+The rewrite itself is line-oriented over doc comments only, so a `[` in
+code or in an ordinary comment is never a candidate. Each `[…]` is read
+with the target that follows it in parentheses, if there is one, and the
+whole construct collapses to the label when the target names a severed
+item.
+
+<a name="chunk-demote-severed-links"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#demote-severed-links`</sub>
+
+```rust {#demote-severed-links}
+/// Rewrite one file's doc comments; returns how many links were demoted
+/// and the new text.
+fn demote_severed_links(
+    text: &str,
+    this_crate: &str,
+    gone: &BTreeMap<String, BTreeSet<String>>,
+) -> (usize, String) {
+    let mut count = 0;
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_start();
+        if !body.starts_with("///") && !body.starts_with("//!") {
+            out.push_str(line);
+            continue;
+        }
+        let (n, rewritten) = demote_line(line, this_crate, gone);
+        count += n;
+        out.push_str(&rewritten);
+    }
+    (count, out)
+}
+
+/// One doc-comment line, with every severed link collapsed to its label.
+fn demote_line(
+    line: &str,
+    this_crate: &str,
+    gone: &BTreeMap<String, BTreeSet<String>>,
+) -> (usize, String) {
+    let mut out = String::with_capacity(line.len());
+    let mut count = 0;
+    let mut i = 0;
+    while i < line.len() {
+        let Some(open) = line[i..].find('[').map(|o| i + o) else { break };
+        let Some(close) = line[open + 1..].find(']').map(|o| open + 1 + o) else { break };
+        let label = &line[open + 1..close];
+        // An explicit target follows in parentheses; otherwise the label
+        // is the target, which is rustdoc's shorthand form.
+        let (target, end) = match line[close + 1..].strip_prefix('(') {
+            Some(rest) => match rest.find(')') {
+                Some(o) => (&rest[..o], close + 3 + o),
+                None => (label, close + 1),
+            },
+            None => (label, close + 1),
+        };
+        out.push_str(&line[i..open]);
+        if is_severed_path(target, this_crate, gone) {
+            out.push_str(label);
+            count += 1;
+        } else {
+            out.push_str(&line[open..end]);
+        }
+        i = end;
+    }
+    out.push_str(&line[i..]);
+    (count, out)
+}
+
+/// Does a link target name an item a severance took out?
+fn is_severed_path(
+    target: &str,
+    this_crate: &str,
+    gone: &BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    // A target carrying a space, a slash or a generic argument is a URL,
+    // a prose aside or a type expression — not a path to one item.
+    let target = target.trim().trim_matches('`').trim();
+    if target.is_empty() || target.contains([' ', '/', '<', '#']) {
+        return false;
+    }
+    let mut segments = target.split("::").filter(|s| !s.is_empty());
+    let Some(first) = segments.next() else { return false };
+    // A crate is spelled with underscores in a path and with hyphens in
+    // the manifest this pass keyed its answer by.
+    let named = first.replace('_', "-");
+    let (krate, item) = match first {
+        "crate" | "self" => (this_crate.to_string(), segments.next()),
+        _ if gone.contains_key(&named) => (named, segments.next()),
+        _ => (this_crate.to_string(), Some(first)),
+    };
+    let Some(item) = item else { return false };
+    gone.get(&krate)
+        .is_some_and(|items| items.contains(item.trim_end_matches("()")))
 }
 ```
 
@@ -5826,6 +6282,7 @@ fn tangle_publication_doc(
     overlay: &[String],
     layout: &CorpusLayout,
     palette: Option<&Palette>,
+    npm_page: bool,
 ) -> Result<Vec<PathBuf>> {
     let rel = region_doc
         .canonicalize()
@@ -5888,8 +6345,9 @@ fn tangle_publication_doc(
     let readme = Path::new("README.md");
     // A publication may tangle root-level Markdown: the README, a declared
     // overlay seed like CONTRIBUTING.md, and corpus-owned guidance such as
-    // AGENTS.md. One-level guides/*.md are also authored here; arbitrary
-    // package paths remain the projector's job and never the document's.
+    // AGENTS.md. One-level guides/*.md are also authored here, and
+    // `npm/README.md` when a wrapper is declared; every other package path
+    // remains the projector's job and never the document's.
     let root_markdown = |p: &Path| {
         p.parent().is_none_or(|d| d.as_os_str().is_empty())
             && p.extension().is_some_and(|e| e == "md")
@@ -5898,9 +6356,13 @@ fn tangle_publication_doc(
     let diagram = |p: &Path| {
         p.parent() == Some(Path::new("assets/diagrams")) && p.extension().is_some_and(|e| e == "svg")
     };
+    // The one package path a publication may write: the npm wrapper's page
+    // on the registry, and only when it declares a wrapper to have one.
+    let registry_page = |p: &Path| npm_page && p == Path::new("npm/README.md");
     let stray: Vec<&PathBuf> = outputs
         .iter()
         .filter(|p| !(p.as_path() == readme || is_overlay(p) || root_markdown(p) || diagram(p)
+            || registry_page(p)
             || (p.parent() == Some(Path::new("guides")) && p.extension().is_some_and(|e| e == "md"))))
         .collect();
     if !outputs.iter().any(|p| p == readme) || !stray.is_empty() {
@@ -6795,11 +7257,20 @@ fn emit_prebuilt(
 }
 ```
 
-The wrapper is six files and one of them is a copy. The data is in
+The wrapper is six files and one of them is a page. The data is in
 `package.json` — the platform table, the command map, the release base —
 and the logic is fixed text, which is the same division the contents
 page already makes: derived facts where the projector can compute them,
 authored logic where a reader has to be able to read it.
+
+The page is the registry's, and its reader is not always the repository's.
+Carrying the repository README across is the right default — for a package
+whose repository is about the package, they are the same page — but a
+repository about a format, whose README never says the word npm, publishes a
+page that does not describe what the reader is installing. So the publication
+may write `npm/README.md` itself, as a chunk like any other file it owns, and
+the copy is what happens when it does not. Either way the projector templates
+no prose; it chooses between two authored pages.
 
 <a name="chunk-emit-npm-wrapper"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#emit-npm-wrapper`</sub>
 
@@ -6834,11 +7305,14 @@ fn emit_npm_wrapper(
     // neither committed nor published, and without this entry `tools/ci` would
     // read a maintainer's local `npm install` as drift.
     std::fs::write(dir.join(".gitignore"), "/node_modules/\n/vendor/\n")?;
-    // The package's page on the registry is the repository's own README, not a
-    // second one written for npm: the projector templates no prose.
+    // The package's page on the registry: the publication's own, when its
+    // document tangled one here (this runs after the publication doc), and
+    // otherwise the repository's README. The projector templates no prose
+    // either way.
+    let page = dir.join("README.md");
     let readme = output_dir.join("README.md");
-    if readme.is_file() {
-        std::fs::copy(&readme, dir.join("README.md"))?;
+    if !page.is_file() && readme.is_file() {
+        std::fs::copy(&readme, &page)?;
     }
     Ok(())
 }
@@ -8770,6 +9244,73 @@ mod tests {
             record(&[], &["one"], &[("one", ProofOutcome::Passed)]).test_ids(),
             vec!["x0k:test/demo-crate/tests/proof.rs::one"]
         );
+    }
+
+    /// Severing a feature leaves the items behind it in the source and out
+    /// of every build the projection can make, so the prose above them has
+    /// to stop linking to what rustdoc can no longer resolve. The incident
+    /// is the 2026-09-22 pre-publication run: fourteen unresolved links
+    /// across three files, all behind one `severs:` edge.
+    #[test]
+    fn a_severance_demotes_the_links_to_what_it_took_out() {
+        let ws = tempfile::tempdir().expect("tempdir");
+        let krate = ws.path().join("demo-facts");
+        std::fs::create_dir_all(krate.join("src")).unwrap();
+        std::fs::write(
+            krate.join("src/lib.rs"),
+            concat!(
+                "//! - [`project_envelope`] projects an envelope, and\n",
+                "//!   [`relation_graph::fold_relation_graph`] folds it.\n",
+                "//! [`FactEntry`] and [the guide](https://example.invalid/a) stay.\n",
+                "pub mod fact;\n",
+                "#[cfg(feature = \"fold\")]\n",
+                "pub mod relation_graph;\n",
+                "#[cfg(feature = \"envelope\")]\n",
+                "pub use fact::{project_envelope, ColophonView};\n",
+                "pub use fact::FactEntry;\n",
+                "// [`project_envelope`] in an ordinary comment is not a link.\n",
+            ),
+        )
+        .unwrap();
+
+        let features: BTreeSet<String> =
+            ["envelope", "fold"].iter().map(|f| f.to_string()).collect();
+        let items = severed_items(&krate, &features).expect("severed items read");
+        assert_eq!(
+            items.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["ColophonView", "project_envelope", "relation_graph"],
+            "a gated module and a gated brace-list re-export are both severances"
+        );
+
+        let gone = BTreeMap::from([("demo-facts".to_string(), items)]);
+        let lib = std::fs::read_to_string(krate.join("src/lib.rs")).unwrap();
+        let (count, rewritten) = demote_severed_links(&lib, "demo-facts", &gone);
+        assert_eq!(count, 2);
+        assert!(rewritten.contains("//! - `project_envelope` projects an envelope, and"));
+        assert!(rewritten.contains("//!   `relation_graph::fold_relation_graph` folds it."));
+        assert!(
+            rewritten.contains("[`FactEntry`] and [the guide](https://example.invalid/a) stay."),
+            "a live item and a URL are not severances"
+        );
+        assert!(
+            rewritten.contains("// [`project_envelope`] in an ordinary comment"),
+            "only doc comments carry intra-doc links"
+        );
+
+        // A sibling crate reaches a severed item by the crate's own name,
+        // and by that name only: a bare one resolves through a `use` this
+        // pass does not read, and demoting it would be a guess.
+        let consumer = concat!(
+            "//! [`Rendered`](demo_facts::Rendered) stays; ",
+            "[`project_envelope`](demo_facts::project_envelope) goes.\n",
+            "//! A bare [`ColophonView`] here is left for rustdoc to report.\n",
+        );
+        let (count, rewritten) = demote_severed_links(consumer, "demo-folio", &gone);
+        assert_eq!(count, 1);
+        assert!(
+            rewritten.contains("[`Rendered`](demo_facts::Rendered) stays; `project_envelope` goes.")
+        );
+        assert!(rewritten.contains("A bare [`ColophonView`] here"));
     }
 }
 `````
@@ -10969,6 +11510,42 @@ fn a_prebuilt_declaration_emits_the_release_lane_and_the_wrapper() {
 }
 ```
 
+The page is the one file of the wrapper a publication may write for
+itself, and the copy is the fallback rather than the rule. The test pins
+both directions, because the fallback is what every publication that does
+not care about npm relies on — and the override is what the one that does
+relies on. A reader of the `x0k-folio` registry page found the repository's
+README there, which never says the word npm: the page said nothing about
+what they were installing.
+
+<a name="chunk-prebuilt-registry-page"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#prebuilt-registry-page`</sub>
+
+```rust {#prebuilt-registry-page file="tests/region_repo_modules.rs"}
+#[test]
+fn a_publication_writing_the_registry_page_keeps_it() {
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT);
+    // The page is a chunk like any other file the publication owns.
+    let doc = std::fs::read_to_string(ws.path().join(PUB_REL)).unwrap();
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        format!(
+            "{doc}\n````markdown {{#npm-page file=\"npm/README.md\"}}\n# @demo/tool\n\nThe npm wrapper for the demo tool.\n````\n"
+        ),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project_github(ws.path(), out.path()).expect("projection");
+    let page = std::fs::read_to_string(out.path().join("npm/README.md")).unwrap();
+    assert!(page.contains("The npm wrapper for the demo tool."), "{page}");
+    assert_ne!(
+        page,
+        std::fs::read_to_string(out.path().join("README.md")).unwrap(),
+        "the publication's page is not the repository's README"
+    );
+}
+```
+
 `tools/ci` is the line this lane must not cross. A clone with no
 JavaScript toolchain has to go green, so the check is byte-identity of
 the script itself, not an absence of the word *npm* somewhere nearby.
@@ -11113,7 +11690,7 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 }
 ```
 
-<a name="chunk-modules-root"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-root` · assembles [modules-doc](#chunk-modules-doc) · [modules-uses](#chunk-modules-uses) · [modules-consts](#chunk-modules-consts) · [modules-publication-fixture](#chunk-modules-publication-fixture) · [modules-write-crate](#chunk-modules-write-crate) · [modules-workspace](#chunk-modules-workspace) · [modules-project-helpers](#chunk-modules-project-helpers) · [modules-closed-selection](#chunk-modules-closed-selection) · [modules-shapes-travel](#chunk-modules-shapes-travel) · [modules-import-outside-selection](#chunk-modules-import-outside-selection) · [modules-import-absent](#chunk-modules-import-absent) · [modules-instance-line](#chunk-modules-instance-line) · [modules-not-in-tree](#chunk-modules-not-in-tree) · [modules-ontology-without-module](#chunk-modules-ontology-without-module) · [modules-stamp-fallback](#chunk-modules-stamp-fallback) · [modules-no-module-still-lists](#chunk-modules-no-module-still-lists) · [modules-layout-published](#chunk-modules-layout-published) · [modules-layout-unpublished](#chunk-modules-layout-unpublished) · [modules-excluded-document](#chunk-modules-excluded-document) · [modules-unrecognised-excludes](#chunk-modules-unrecognised-excludes) · [modules-document-under-publishes](#chunk-modules-document-under-publishes) · [modules-excluded-matches-nothing](#chunk-modules-excluded-matches-nothing) · [modules-named-section](#chunk-modules-named-section) · [modules-named-whole-document](#chunk-modules-named-whole-document) · [modules-unnamed-document](#chunk-modules-unnamed-document) · [modules-anchor-matches-nothing](#chunk-modules-anchor-matches-nothing) · [modules-document-id-matches-nothing](#chunk-modules-document-id-matches-nothing) · [modules-affordance-closure-refused](#chunk-modules-affordance-closure-refused) · [modules-affordance-closure-excluded](#chunk-modules-affordance-closure-excluded) · [modules-reading-order](#chunk-modules-reading-order) · [modules-reading-order-unshipped-doc](#chunk-modules-reading-order-unshipped-doc) · [modules-reading-order-unshipped-area](#chunk-modules-reading-order-unshipped-area) · [modules-concept-groups](#chunk-modules-concept-groups) · [modules-group-unshipped-member](#chunk-modules-group-unshipped-member) · [modules-group-unnamed-document](#chunk-modules-group-unnamed-document) · [modules-group-claimed-twice](#chunk-modules-group-claimed-twice) · [modules-group-mixed-forms](#chunk-modules-group-mixed-forms) · [modules-no-contents-marker](#chunk-modules-no-contents-marker) · [modules-document-without-summary](#chunk-modules-document-without-summary) · [modules-affordance-rows](#chunk-modules-affordance-rows) · [modules-affordance-actor-set](#chunk-modules-affordance-actor-set) · [modules-affordance-none](#chunk-modules-affordance-none) · [modules-affordance-old-marker](#chunk-modules-affordance-old-marker) · [modules-proof-fixture](#chunk-modules-proof-fixture) · [modules-proof-proven](#chunk-modules-proof-proven) · [modules-proof-refused](#chunk-modules-proof-refused) · [modules-proof-skipped](#chunk-modules-proof-skipped) · [modules-proof-cargo](#chunk-modules-proof-cargo) · [modules-proof-unpublished](#chunk-modules-proof-unpublished) · [modules-rests-on](#chunk-modules-rests-on) · [modules-rests-on-unpublished](#chunk-modules-rests-on-unpublished) · [modules-woven-chapter](#chunk-modules-woven-chapter) · [modules-affordance-page](#chunk-modules-affordance-page) · [modules-icon-refusals](#chunk-modules-icon-refusals) · [prebuilt-fixture](#chunk-prebuilt-fixture) · [prebuilt-inert](#chunk-prebuilt-inert) · [prebuilt-emitted](#chunk-prebuilt-emitted) · [prebuilt-ci-untouched](#chunk-prebuilt-ci-untouched) · [prebuilt-refusals](#chunk-prebuilt-refusals) · [prebuilt-wrapper-test](#chunk-prebuilt-wrapper-test)</sub>
+<a name="chunk-modules-root"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-root` · assembles [modules-doc](#chunk-modules-doc) · [modules-uses](#chunk-modules-uses) · [modules-consts](#chunk-modules-consts) · [modules-publication-fixture](#chunk-modules-publication-fixture) · [modules-write-crate](#chunk-modules-write-crate) · [modules-workspace](#chunk-modules-workspace) · [modules-project-helpers](#chunk-modules-project-helpers) · [modules-closed-selection](#chunk-modules-closed-selection) · [modules-shapes-travel](#chunk-modules-shapes-travel) · [modules-import-outside-selection](#chunk-modules-import-outside-selection) · [modules-import-absent](#chunk-modules-import-absent) · [modules-instance-line](#chunk-modules-instance-line) · [modules-not-in-tree](#chunk-modules-not-in-tree) · [modules-ontology-without-module](#chunk-modules-ontology-without-module) · [modules-stamp-fallback](#chunk-modules-stamp-fallback) · [modules-no-module-still-lists](#chunk-modules-no-module-still-lists) · [modules-layout-published](#chunk-modules-layout-published) · [modules-layout-unpublished](#chunk-modules-layout-unpublished) · [modules-excluded-document](#chunk-modules-excluded-document) · [modules-unrecognised-excludes](#chunk-modules-unrecognised-excludes) · [modules-document-under-publishes](#chunk-modules-document-under-publishes) · [modules-excluded-matches-nothing](#chunk-modules-excluded-matches-nothing) · [modules-named-section](#chunk-modules-named-section) · [modules-named-whole-document](#chunk-modules-named-whole-document) · [modules-unnamed-document](#chunk-modules-unnamed-document) · [modules-anchor-matches-nothing](#chunk-modules-anchor-matches-nothing) · [modules-document-id-matches-nothing](#chunk-modules-document-id-matches-nothing) · [modules-affordance-closure-refused](#chunk-modules-affordance-closure-refused) · [modules-affordance-closure-excluded](#chunk-modules-affordance-closure-excluded) · [modules-reading-order](#chunk-modules-reading-order) · [modules-reading-order-unshipped-doc](#chunk-modules-reading-order-unshipped-doc) · [modules-reading-order-unshipped-area](#chunk-modules-reading-order-unshipped-area) · [modules-concept-groups](#chunk-modules-concept-groups) · [modules-group-unshipped-member](#chunk-modules-group-unshipped-member) · [modules-group-unnamed-document](#chunk-modules-group-unnamed-document) · [modules-group-claimed-twice](#chunk-modules-group-claimed-twice) · [modules-group-mixed-forms](#chunk-modules-group-mixed-forms) · [modules-no-contents-marker](#chunk-modules-no-contents-marker) · [modules-document-without-summary](#chunk-modules-document-without-summary) · [modules-affordance-rows](#chunk-modules-affordance-rows) · [modules-affordance-actor-set](#chunk-modules-affordance-actor-set) · [modules-affordance-none](#chunk-modules-affordance-none) · [modules-affordance-old-marker](#chunk-modules-affordance-old-marker) · [modules-proof-fixture](#chunk-modules-proof-fixture) · [modules-proof-proven](#chunk-modules-proof-proven) · [modules-proof-refused](#chunk-modules-proof-refused) · [modules-proof-skipped](#chunk-modules-proof-skipped) · [modules-proof-cargo](#chunk-modules-proof-cargo) · [modules-proof-unpublished](#chunk-modules-proof-unpublished) · [modules-rests-on](#chunk-modules-rests-on) · [modules-rests-on-unpublished](#chunk-modules-rests-on-unpublished) · [modules-woven-chapter](#chunk-modules-woven-chapter) · [modules-affordance-page](#chunk-modules-affordance-page) · [modules-icon-refusals](#chunk-modules-icon-refusals) · [prebuilt-fixture](#chunk-prebuilt-fixture) · [prebuilt-inert](#chunk-prebuilt-inert) · [prebuilt-emitted](#chunk-prebuilt-emitted) · [prebuilt-registry-page](#chunk-prebuilt-registry-page) · [prebuilt-ci-untouched](#chunk-prebuilt-ci-untouched) · [prebuilt-refusals](#chunk-prebuilt-refusals) · [prebuilt-wrapper-test](#chunk-prebuilt-wrapper-test)</sub>
 
 ```rust {#modules-root file="tests/region_repo_modules.rs"}
 <<modules-doc>>
@@ -11230,6 +11807,8 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 
 <<prebuilt-emitted>>
 
+<<prebuilt-registry-page>>
+
 <<prebuilt-ci-untouched>>
 
 <<prebuilt-refusals>>
@@ -11239,7 +11818,7 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [envelope-scalar](#chunk-envelope-scalar) · [envelope-string-list](#chunk-envelope-string-list) · [envelope-block](#chunk-envelope-block) · [envelope-palette](#chunk-envelope-palette) · [manifest-readers](#chunk-manifest-readers) · [path-deps](#chunk-path-deps) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [icons](#chunk-icons) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [prebuilt-decl](#chunk-prebuilt-decl) · [prebuilt-table](#chunk-prebuilt-table) · [prebuilt-envelope-types](#chunk-prebuilt-envelope-types) · [prebuilt-summary](#chunk-prebuilt-summary) · [prebuilt-plan](#chunk-prebuilt-plan) · [resolve-prebuilt-fn](#chunk-resolve-prebuilt-fn) · [crate-binaries](#chunk-crate-binaries) · [emit-prebuilt](#chunk-emit-prebuilt) · [emit-npm-wrapper](#chunk-emit-npm-wrapper) · [npm-manifest](#chunk-npm-manifest) · [npm-check-script](#chunk-npm-check-script) · [release-workflow](#chunk-release-workflow) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [release-script](#chunk-release-script) · [npm-check-text](#chunk-npm-check-text) · [npm-resolve-text](#chunk-npm-resolve-text) · [npm-install-text](#chunk-npm-install-text) · [npm-shim-text](#chunk-npm-shim-text) · [npm-pin-text](#chunk-npm-pin-text) · [npm-test-text](#chunk-npm-test-text) · [release-workflow-text](#chunk-release-workflow-text) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [envelope-scalar](#chunk-envelope-scalar) · [envelope-string-list](#chunk-envelope-string-list) · [envelope-block](#chunk-envelope-block) · [envelope-palette](#chunk-envelope-palette) · [manifest-readers](#chunk-manifest-readers) · [path-deps](#chunk-path-deps) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [sever-doc-links](#chunk-sever-doc-links) · [demote-in-chapters](#chunk-demote-in-chapters) · [demote-in-unowned-sources](#chunk-demote-in-unowned-sources) · [severed-items](#chunk-severed-items) · [demote-severed-links](#chunk-demote-severed-links) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [icons](#chunk-icons) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [prebuilt-decl](#chunk-prebuilt-decl) · [prebuilt-table](#chunk-prebuilt-table) · [prebuilt-envelope-types](#chunk-prebuilt-envelope-types) · [prebuilt-summary](#chunk-prebuilt-summary) · [prebuilt-plan](#chunk-prebuilt-plan) · [resolve-prebuilt-fn](#chunk-resolve-prebuilt-fn) · [crate-binaries](#chunk-crate-binaries) · [emit-prebuilt](#chunk-emit-prebuilt) · [emit-npm-wrapper](#chunk-emit-npm-wrapper) · [npm-manifest](#chunk-npm-manifest) · [npm-check-script](#chunk-npm-check-script) · [release-workflow](#chunk-release-workflow) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [release-script](#chunk-release-script) · [npm-check-text](#chunk-npm-check-text) · [npm-resolve-text](#chunk-npm-resolve-text) · [npm-install-text](#chunk-npm-install-text) · [npm-shim-text](#chunk-npm-shim-text) · [npm-pin-text](#chunk-npm-pin-text) · [npm-test-text](#chunk-npm-test-text) · [release-workflow-text](#chunk-release-workflow-text) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -11287,6 +11866,16 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 <<vendor-crate>>
 
 <<rewrite-vendored-manifest>>
+
+<<sever-doc-links>>
+
+<<demote-in-chapters>>
+
+<<demote-in-unowned-sources>>
+
+<<severed-items>>
+
+<<demote-severed-links>>
 
 <<vocab-module>>
 

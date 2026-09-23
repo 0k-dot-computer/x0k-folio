@@ -38,21 +38,9 @@ pub mod concept_facts;
 pub mod load;
 
 #[cfg(feature = "product")]
-pub mod admission_grant;
+pub mod entry_shape;
 #[cfg(feature = "product")]
-pub mod calendar;
-#[cfg(feature = "product")]
-pub mod declaration;
-#[cfg(feature = "product")]
-pub mod entry_vocab;
-#[cfg(feature = "product")]
-pub mod finding_vocab;
-#[cfg(feature = "product")]
-pub mod proposal_vocab;
-#[cfg(feature = "product")]
-pub mod settlement;
-#[cfg(feature = "product")]
-pub mod usage_vocab;
+pub mod settlement_fold;
 
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
@@ -157,7 +145,19 @@ mod tests {
             // fold has stopped reading the shape half of the T-box union and
             // every decision document's `realizes` edge has gone unrecognised.
             "core",
-            &[("realizes", "realizes")],
+            &[
+                ("realizes", "realizes"),
+                // The pair `vocabulary-shapes` §"seven properties" named and
+                // then cleared to move: subjects unioning `Decision` with
+                // `Observation`, two roots with no common ancestor, so the
+                // union is an enumeration of current usage and belongs in a
+                // shape. Residency here is what makes them reachable — a
+                // `[core, document]` build is what an adopter of the document
+                // format takes, and in `work` these were the edge a decision
+                // log is made of, spelled by no module such a build ships.
+                ("supersedes", "supersedes"),
+                ("superseded_by", "supersededBy"),
+            ],
         ),
         (
             "document",
@@ -200,13 +200,6 @@ mod tests {
                 // lands in the slice beside `implements`; range-free like
                 // `implements`, with the Architecture expectation a shape.
                 ("constrained_by", "constrainedBy"),
-            ],
-        ),
-        (
-            "work",
-            &[
-                ("supersedes", "supersedes"),
-                ("superseded_by", "supersededBy"),
             ],
         ),
         (
@@ -323,5 +316,666 @@ mod tests {
             // property this line is pinning.
             assert_eq!((document.snake_to_camel)("depends_on"), None);
         }
+    }
+
+    #[test]
+    fn usage_receipt_spellings_are_pinned() {
+        // The passive channel composes only when independent writers use the
+        // same predicates, so a renamed term is a wire change even when every
+        // local caller still compiles. `usage` is the first module whose terms
+        // are *spelled* by code rather than read out of a table
+        // (`x0k:implementation/ontology/usage`), so the spellings are pinned
+        // here, where the module that mints them can see the assertion.
+        //
+        // Read off `TERMS` rather than `usage::terms::*` because a publication
+        // compiles a subset and this crate's own tests may not name a module
+        // beyond `core`. Four of these reach no other table: `at`, `seq`,
+        // `produced` and `action` are datatype properties, so `CLASSES` and
+        // `OBJECT_PROPERTIES` between them cover only half the vocabulary.
+        let Some(usage) = MODULE_TABLES.iter().find(|t| t.name == "usage") else {
+            return;
+        };
+        assert_eq!(
+            usage.terms,
+            [
+                "x0kusage:acted-on",
+                "x0kusage:action",
+                "x0kusage:at",
+                "x0kusage:produced",
+                "x0kusage:proposal",
+                "x0kusage:seq",
+                "x0kusage:settlement",
+                "x0kusage:Usage",
+            ],
+        );
+        assert_eq!(usage.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn admission_grant_spellings_are_pinned() {
+        // A grant is read back by a fold that never saw the writer, so its
+        // predicates are a wire contract exactly as a receipt's are
+        // (`x0k:implementation/ontology/admission-grant`). Read off `TERMS`,
+        // not `admission_grant::terms::*`, so a publication compiling a
+        // subset still builds. Eight of the thirteen are datatype properties
+        // and reach neither `CLASSES` nor `OBJECT_PROPERTIES`; this slice is
+        // the only view that sees the whole vocabulary.
+        let Some(grant) = MODULE_TABLES.iter().find(|t| t.name == "admission-grant") else {
+            return;
+        };
+        assert_eq!(
+            grant.terms,
+            [
+                "x0kgrant:activated-at",
+                "x0kgrant:activated-by",
+                "x0kgrant:AdmissionGrant",
+                "x0kgrant:announcement-limit",
+                "x0kgrant:contradicted-by",
+                "x0kgrant:min-confidence",
+                "x0kgrant:origin",
+                "x0kgrant:proposer",
+                "x0kgrant:provenance",
+                "x0kgrant:retired-at",
+                "x0kgrant:retired-by",
+                "x0kgrant:side-effect-ceiling",
+                "x0kgrant:verb",
+            ],
+        );
+        assert_eq!(grant.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn finding_spellings_are_pinned() {
+        // Independent producers join one finding only by writing the same
+        // predicates on the same subject-determined entity
+        // (`x0k:implementation/ontology/finding`), so a renamed term
+        // silently turns one durable claim into two rival ones. Read off
+        // `TERMS`, not `finding::terms::*`, so a publication compiling a
+        // subset still builds; seven of the nine are datatype properties and
+        // reach neither `CLASSES` nor `OBJECT_PROPERTIES`.
+        let Some(finding) = MODULE_TABLES.iter().find(|t| t.name == "finding") else {
+            return;
+        };
+        assert_eq!(
+            finding.terms,
+            [
+                "x0kfinding:action",
+                "x0kfinding:check",
+                "x0kfinding:confidence",
+                "x0kfinding:evidence",
+                "x0kfinding:Finding",
+                "x0kfinding:proposer",
+                "x0kfinding:reason",
+                "x0kfinding:reported-by",
+                "x0kfinding:tree-state",
+            ],
+        );
+        assert_eq!(finding.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn calendar_spellings_are_pinned() {
+        // These seven ARE the calendar cell's coupling surface: a producer
+        // and the cell agree on nothing else, and two Gallowglass folds
+        // spell them as literals rather than reaching a table
+        // (`x0k:implementation/ontology/calendar`). Read off `TERMS`, not
+        // `calendar::terms::*`, so a publication compiling a subset still
+        // builds; six of the seven are datatype properties and reach
+        // neither `CLASSES` nor `OBJECT_PROPERTIES`.
+        let Some(calendar) = MODULE_TABLES.iter().find(|t| t.name == "calendar") else {
+            return;
+        };
+        assert_eq!(
+            calendar.terms,
+            [
+                "x0kcal:date",
+                "x0kcal:DesiredEvent",
+                "x0kcal:end",
+                "x0kcal:origin",
+                "x0kcal:start",
+                "x0kcal:status",
+                "x0kcal:title",
+            ],
+        );
+        assert_eq!(calendar.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn ordering_spellings_are_pinned() {
+        // Ten classes and thirty-nine predicates: seven structural, fifteen
+        // input, seventeen on the derivation and its parts
+        // (`x0k:implementation/ontology/ordering`). A change to this list is
+        // a change to what a basis or a record may hold, never a tidy-up.
+        // Read off `TERMS`, not `ordering::terms::*`, so a publication
+        // compiling a subset still builds.
+        let Some(ordering) = MODULE_TABLES.iter().find(|t| t.name == "ordering") else {
+            return;
+        };
+        assert_eq!(
+            ordering.terms,
+            [
+                "x0kordering:Correction",
+                "x0kordering:correction/against",
+                "x0kordering:correction/asserter",
+                "x0kordering:correction/reason",
+                "x0kordering:correction/seq",
+                "x0kordering:correction/side",
+                "x0kordering:correction/unit",
+                "x0kordering:Derivation",
+                "x0kordering:derivation/at",
+                "x0kordering:derivation/basis",
+                "x0kordering:derivation/estimate",
+                "x0kordering:derivation/method",
+                "x0kordering:derivation/placement",
+                "x0kordering:derivation/producer",
+                "x0kordering:derivation/question",
+                "x0kordering:Detection",
+                "x0kordering:detection/confidence",
+                "x0kordering:detection/evidence",
+                "x0kordering:detection/observed-at",
+                "x0kordering:detection/state",
+                "x0kordering:Estimate",
+                "x0kordering:estimate/high",
+                "x0kordering:estimate/kind",
+                "x0kordering:estimate/low",
+                "x0kordering:estimate/point",
+                "x0kordering:estimate/subject",
+                "x0kordering:Placement",
+                "x0kordering:placement/rank",
+                "x0kordering:placement/unit",
+                "x0kordering:Question",
+                "x0kordering:question/about",
+                "x0kordering:question/asks",
+                "x0kordering:question/strain",
+                "x0kordering:Route",
+                "x0kordering:route/member",
+                "x0kordering:route/reaches",
+                "x0kordering:State",
+                "x0kordering:state/label",
+                "x0kordering:state/route",
+                "x0kordering:Unit",
+                "x0kordering:unit/effort",
+                "x0kordering:unit/label",
+                "x0kordering:unit/survival",
+                "x0kordering:Valuation",
+                "x0kordering:valuation/asserter",
+                "x0kordering:valuation/reason",
+                "x0kordering:valuation/seq",
+                "x0kordering:valuation/state",
+                "x0kordering:valuation/value",
+            ],
+        );
+        assert_eq!(ordering.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn declaration_spellings_are_pinned() {
+        // The declaration plane's own words, and the only module whose term
+        // list crosses a namespace: `x0k:fact/fold-rule` keeps the base
+        // namespace because every module file in the corpus asserts it on
+        // every term, and §1 refuses a rename for tidiness
+        // (`x0k:implementation/ontology/declaration`). `rdfs:isDefinedBy` is
+        // what places a term in a module, not the shape of its URI, so the
+        // list below is what a base-namespace term in an extension looks
+        // like when it is deliberate.
+        let Some(declaration) = MODULE_TABLES.iter().find(|t| t.name == "declaration") else {
+            return;
+        };
+        assert_eq!(
+            declaration.terms,
+            [
+                "x0k:fact/fold-rule",
+                "x0kdecl:VocabularySet",
+                "x0kdecl:vocabulary-set/member",
+                "x0kdecl:vocabulary-set/read-set-shape",
+                "x0kdecl:vocabulary-set/read-set-type",
+            ],
+        );
+        assert_eq!(declaration.imports, ["https://0k.computer/ontology/core"]);
+        // The annotation property reaches neither table: it is not a class,
+        // and it relates a term to a rule rather than an individual to
+        // another individual. `TERMS` is the only view that holds it.
+        assert!(!declaration
+            .classes
+            .iter()
+            .any(|class| class.uri == "x0k:fact/fold-rule"));
+        assert!(!declaration
+            .object_properties
+            .iter()
+            .any(|property| property.uri == "x0k:fact/fold-rule"));
+    }
+
+    #[test]
+    fn proposal_spellings_are_pinned() {
+        // Three subsystems' producers write these twenty-three and one fold
+        // reads them (`x0k:implementation/ontology/proposal`), so a renamed
+        // field is a wire change even when every caller still compiles. Read
+        // off `TERMS`, not `proposal::terms::*`, so a publication compiling a
+        // subset still builds; seventeen are datatype properties and reach
+        // neither `CLASSES` nor `OBJECT_PROPERTIES`. `SETTLER` and
+        // `AUTHORITY` are deliberately absent: a disposition borrows them
+        // from `settlement` rather than declaring its own.
+        let Some(proposal) = MODULE_TABLES.iter().find(|t| t.name == "proposal") else {
+            return;
+        };
+        assert_eq!(
+            proposal.terms,
+            [
+                "x0kproposal:action-args",
+                "x0kproposal:action-verb",
+                "x0kproposal:confidence",
+                "x0kproposal:Disposition",
+                "x0kproposal:disposition-at",
+                "x0kproposal:disposition-kind",
+                "x0kproposal:disposition-policy",
+                "x0kproposal:disposition-proposal",
+                "x0kproposal:disposition-reason",
+                "x0kproposal:disposition-seq",
+                "x0kproposal:disposition-until",
+                "x0kproposal:evidence",
+                "x0kproposal:kind",
+                "x0kproposal:Proposal",
+                "x0kproposal:proposed-at",
+                "x0kproposal:proposer",
+                "x0kproposal:provenance-seq",
+                "x0kproposal:provenance-session",
+                "x0kproposal:reported-by",
+                "x0kproposal:statement",
+                "x0kproposal:what-becomes-possible",
+                "x0kproposal:why-it-matters",
+                "x0kproposal:why-now",
+            ],
+        );
+        assert_eq!(proposal.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn entry_spellings_are_pinned() {
+        // Capture is the one place a producer touches the fact plane without
+        // saying anything about meaning, and these six are the whole shape
+        // (`x0k:implementation/ontology/entry-vocab`). sci's Gallowglass fold
+        // spells four of them as literals, so a rename here is a wire change
+        // that no Rust build would catch. Read off `TERMS`, not
+        // `entry::terms::*`, so a publication compiling a subset still
+        // builds; `echoed-record` is the module's one object property and
+        // the four capture values reach neither `CLASSES` nor
+        // `OBJECT_PROPERTIES`.
+        let Some(entry) = MODULE_TABLES.iter().find(|t| t.name == "entry") else {
+            return;
+        };
+        assert_eq!(
+            entry.terms,
+            [
+                "x0kentry:captured-at",
+                "x0kentry:context",
+                "x0kentry:echoed-record",
+                "x0kentry:Entry",
+                "x0kentry:producer",
+                "x0kentry:words",
+            ],
+        );
+        assert_eq!(entry.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn claim_spellings_are_pinned() {
+        // A claim is a bid written in one claimant's own subspace and read by
+        // a fold that never met the claimant
+        // (`x0k:implementation/ontology/entry-vocab`), so these nine are
+        // exactly the agreement that lets the two meet. Read off `TERMS`, not
+        // `claim::terms::*`, so a publication compiling a subset still
+        // builds; four are datatype properties and reach neither `CLASSES`
+        // nor `OBJECT_PROPERTIES`.
+        let Some(claim) = MODULE_TABLES.iter().find(|t| t.name == "claim") else {
+            return;
+        };
+        assert_eq!(
+            claim.terms,
+            [
+                "x0kclaim:Claim",
+                "x0kclaim:claimant",
+                "x0kclaim:confidence",
+                "x0kclaim:corrects",
+                "x0kclaim:entry",
+                "x0kclaim:kind",
+                "x0kclaim:occasion",
+                "x0kclaim:polarity",
+                "x0kclaim:reason",
+            ],
+        );
+        assert_eq!(claim.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn routing_record_spellings_are_pinned() {
+        // The record is the address feedback aims at, so a renamed predicate
+        // does not break a build, it detaches every correction from what it
+        // corrects (`x0k:implementation/ontology/entry-vocab`). Nine terms
+        // here; `x0krecord:settlement` is the tenth in this namespace and
+        // belongs to `settlement`, which declares it and imports this module
+        // for its domain. Read off `TERMS`, not `routing_record::terms::*`,
+        // so a publication compiling a subset still builds.
+        let Some(record) = MODULE_TABLES.iter().find(|t| t.name == "routing-record") else {
+            return;
+        };
+        assert_eq!(
+            record.terms,
+            [
+                "x0krecord:claim",
+                "x0krecord:corrected-by",
+                "x0krecord:cut",
+                "x0krecord:entry",
+                "x0krecord:policy",
+                "x0krecord:reason",
+                "x0krecord:RoutingRecord",
+                "x0krecord:rule-version",
+                "x0krecord:verdict",
+            ],
+        );
+        assert_eq!(record.imports, ["https://0k.computer/ontology/core"]);
+        assert!(
+            !record.terms.contains(&"x0krecord:settlement"),
+            "x0krecord:settlement is declared by `settlement`, not by the namespace's owner"
+        );
+    }
+
+    #[test]
+    fn settlement_spellings_are_pinned() {
+        // The owner's answer and the attribution any durable settlement
+        // carries (`x0k:implementation/ontology/settlement`). Two Gallowglass
+        // folds and one Rust store write these at each other, so a rename is
+        // a wire change that compiles. Read off `TERMS`, not
+        // `settlement::terms::*`, so a publication compiling a subset still
+        // builds.
+        //
+        // `x0krecord:settlement` is here rather than in `routing-record`
+        // because `rdfs:isDefinedBy` places a term and the shape of its URI
+        // does not. It is why this is the only module of the five to import
+        // anything past `core`: its `rdfs:domain` is a `routing-record`
+        // class, and §3's closure check refuses a domain reference a module
+        // does not transitively import — which also guarantees no build ships
+        // this term without the namespace that compacts it.
+        let Some(settlement) = MODULE_TABLES.iter().find(|t| t.name == "settlement") else {
+            return;
+        };
+        assert_eq!(
+            settlement.terms,
+            [
+                "x0ksettle:authority",
+                "x0ksettle:entry",
+                "x0ksettle:grant",
+                "x0ksettle:kind",
+                "x0ksettle:OwnerSettlement",
+                // `TERMS` is in constant-name order, not URI order, so the
+                // crosser lands between `OWNER_SETTLEMENT` and `SETTLER`
+                // rather than at the front.
+                "x0krecord:settlement",
+                "x0ksettle:settler",
+            ],
+        );
+        assert_eq!(
+            settlement.imports,
+            [
+                "https://0k.computer/ontology/core",
+                "https://0k.computer/ontology/routing-record",
+            ],
+        );
+    }
+
+    #[test]
+    fn routing_policy_spellings_are_pinned() {
+        // A policy activates autonomously and is read by a fold that never
+        // met the learner (`x0k:implementation/ontology/settlement`), so
+        // these five are the whole parameter surface of the settle-or-queue
+        // rule. Read off `TERMS`, not `routing_policy::terms::*`, so a
+        // publication compiling a subset still builds; three are datatype
+        // properties and reach neither `CLASSES` nor `OBJECT_PROPERTIES`.
+        let Some(policy) = MODULE_TABLES.iter().find(|t| t.name == "routing-policy") else {
+            return;
+        };
+        assert_eq!(
+            policy.terms,
+            [
+                "x0kpolicy:axis",
+                "x0kpolicy:evidence",
+                "x0kpolicy:over",
+                "x0kpolicy:Policy",
+                "x0kpolicy:under",
+            ],
+        );
+        assert_eq!(policy.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn roster_spellings_are_pinned() {
+        // The roster is in the settlement fold's read set, and the pending
+        // verdict is computed against it
+        // (`x0k:implementation/ontology/roster`): a host states these nine,
+        // a fold reads them, and the two never meet. Read off `TERMS`, not
+        // `roster::terms::*`, so a publication compiling a subset still
+        // builds; eight are datatype properties or the class and only
+        // `x0kroster:claimant` reaches `OBJECT_PROPERTIES`.
+        let Some(roster) = MODULE_TABLES.iter().find(|t| t.name == "roster") else {
+            return;
+        };
+        assert_eq!(
+            roster.terms,
+            [
+                "x0kroster:brief",
+                "x0kroster:claimant",
+                "x0kroster:ClaimantDeclaration",
+                "x0kroster:horizon",
+                "x0kroster:kind",
+                "x0kroster:polarity",
+                "x0kroster:product",
+                "x0kroster:product-descriptor",
+                "x0kroster:version",
+            ],
+        );
+        assert_eq!(roster.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn claim_inference_spellings_are_pinned() {
+        // A host writes an attempt's facts and the caller's declared read
+        // wakes on them (`x0k:implementation/ontology/claim-inference`);
+        // neither side calls the other, so these fifteen spellings are the
+        // whole agreement. Read off `TERMS` for the same reason the roster
+        // is: a publication compiling a subset still builds.
+        let Some(inference) = MODULE_TABLES.iter().find(|t| t.name == "claim-inference") else {
+            return;
+        };
+        assert_eq!(
+            inference.terms,
+            [
+                "x0kinfer:attempt",
+                "x0kinfer:batch",
+                "x0kinfer:caller",
+                "x0kinfer:cancelled",
+                "x0kinfer:claim",
+                "x0kinfer:contract-pin",
+                "x0kinfer:input-cut",
+                "x0kinfer:Invocation",
+                "x0kinfer:method-pin",
+                "x0kinfer:obligation",
+                "x0kinfer:outcome",
+                "x0kinfer:published",
+                "x0kinfer:result",
+                "x0kinfer:state",
+                "x0kinfer:subject",
+            ],
+        );
+        assert_eq!(inference.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn session_arrival_spellings_are_pinned() {
+        // A settling steer or launch claim proposes these
+        // (`x0k:implementation/ontology/session-arrival`) and a delivering
+        // operation in another process writes the rest, so the nine
+        // spellings are the whole agreement between a reading and the
+        // session it is about. Read off `TERMS`, not
+        // `session_arrival::terms::*`, so a publication compiling a subset
+        // still builds; two are classes and only `x0karrival:session` and
+        // `x0karrival:launched-session` reach `OBJECT_PROPERTIES`.
+        let Some(arrival) = MODULE_TABLES.iter().find(|t| t.name == "session-arrival") else {
+            return;
+        };
+        assert_eq!(
+            arrival.terms,
+            [
+                "x0karrival:content",
+                "x0karrival:delivered-at",
+                "x0karrival:goal",
+                "x0karrival:InputArrival",
+                "x0karrival:launched-session",
+                "x0karrival:method",
+                "x0karrival:session",
+                "x0karrival:SessionLaunch",
+                "x0karrival:tempo",
+            ],
+        );
+        assert_eq!(arrival.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn thoughthook_spellings_are_pinned() {
+        // A capture's only channel out is these ten predicates
+        // (`x0k:implementation/ontology/thoughthook`): the cell addresses no
+        // consumer, so a reader joins the record by writing the same names
+        // against the same entity and by nothing else, and a rename is a wire
+        // change that leaves every local caller compiling. Read off `TERMS`,
+        // not `thoughthook::terms::*`, so a publication compiling a subset
+        // still builds; eight of the ten are datatype properties and reach
+        // neither `CLASSES` nor `OBJECT_PROPERTIES`.
+        let Some(thoughthook) = MODULE_TABLES.iter().find(|t| t.name == "thoughthook") else {
+            return;
+        };
+        assert_eq!(
+            thoughthook.terms,
+            [
+                "x0kthought:captured-at",
+                "x0kthought:description",
+                "x0kthought:icon-recipe",
+                "x0kthought:parent",
+                "x0kthought:short-name",
+                "x0kthought:source",
+                "x0kthought:status",
+                "x0kthought:text",
+                "x0kthought:Thoughthook",
+                "x0kthought:title",
+            ],
+        );
+        assert_eq!(thoughthook.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    /// "Refining never costs you the words you used" is carried by the fold
+    /// rules, not by the prose around them: the captured half of the record
+    /// is first-writer-wins, so racing appends keep the first words, and the
+    /// refined half is last-writer-wins, so refining overwrites the
+    /// refinement and never the text (`x0k:design/thoughthook-cell`). A
+    /// reader that folds these facts has only the rules to go on, so a rule
+    /// flipping is the promise breaking.
+    #[test]
+    fn the_capture_promise_is_a_fold_rule() {
+        if !shipped("thoughthook") {
+            return;
+        }
+        let model = concept_facts::OntologyModel::shipped();
+        let fold_rule = format!("{}fact/fold-rule", concept_facts::X0K_NS);
+        let rule = |local: &str| -> Option<String> {
+            let full = format!("https://0k.computer/ontology/thoughthook#{local}");
+            model
+                .facts()
+                .iter()
+                .find(|fact| fact.entity == full && fact.predicate == fold_rule)
+                .and_then(|fact| match &fact.value {
+                    concept_facts::OntologyValue::Text(value) => Some(value.clone()),
+                    concept_facts::OntologyValue::Entity(_) => None,
+                })
+        };
+
+        // What the catch states, and nothing after it may restate.
+        for captured in ["text", "source", "captured-at", "parent"] {
+            assert_eq!(
+                rule(captured).as_deref(),
+                Some("first-writer-wins"),
+                "{captured} must keep what the catch said",
+            );
+        }
+        // What a later act is free to replace — including the status, whose
+        // retraction is the one thing composting writes.
+        for refined in ["title", "description", "short-name", "icon-recipe", "status"] {
+            assert_eq!(
+                rule(refined).as_deref(),
+                Some("last-writer-wins"),
+                "{refined} must be replaceable",
+            );
+        }
+    }
+
+    /// Capture never interprets. What a caught thought IMPLIES — a size, a
+    /// priority, a season — is a shaping tool's to decide, and that boundary
+    /// is what keeps the gesture two seconds long
+    /// (`x0k:design/thoughthook-cell`). The vocabulary is where it would
+    /// erode first: a predicate arriving costs nobody a compile, and a
+    /// capture face would then have a field to fill. So the check is on
+    /// absence, and the module file is what it reads.
+    #[test]
+    fn capture_declares_no_interpretation() {
+        let Some(thoughthook) = MODULE_TABLES.iter().find(|t| t.name == "thoughthook") else {
+            return;
+        };
+        for interpretation in ["appetite", "priority", "size", "season", "intent", "rank"] {
+            assert!(
+                !thoughthook.terms.iter().any(|term| term.contains(interpretation)),
+                "a capture must not be able to state {interpretation}: {:?}",
+                thoughthook.terms,
+            );
+        }
+    }
+
+
+    /// Worth enters only by an operator's act, and a correction only ever
+    /// speaks of a neighbour. Both are enforced by what the vocabulary does
+    /// NOT contain, so the check is on absence and the module file is what
+    /// it reads — `prioritization-mechanism` §8 would be circumvented by a
+    /// predicate arriving, not by one changing.
+    #[test]
+    fn the_ordering_asymmetry_is_structural() {
+        if !shipped("ordering") {
+            return;
+        }
+        let model = concept_facts::OntologyModel::shipped();
+        let in_domain = |class: &str| -> Vec<String> {
+            let full = format!("https://0k.computer/ontology/ordering#{class}");
+            model
+                .facts()
+                .iter()
+                .filter(|fact| {
+                    fact.predicate == concept_facts::RDFS_DOMAIN
+                        && fact.value == concept_facts::OntologyValue::Entity(full.clone())
+                })
+                .filter_map(|fact| model.compact(&fact.entity))
+                .collect()
+        };
+
+        let detection = in_domain("Detection");
+        assert!(!detection.is_empty(), "the module shipped no Detection predicates");
+        assert!(
+            !detection.iter().any(|uri| uri.contains("worth")
+                || uri.contains("value")
+                || uri.contains("anchor")),
+            "a detection must not be able to state worth: {detection:?}"
+        );
+
+        let correction = in_domain("Correction");
+        assert!(!correction.is_empty(), "the module shipped no Correction predicates");
+        assert!(
+            !correction.iter().any(|uri| uri.contains("rank")
+                || uri.contains("position")
+                || uri.contains("index")),
+            "a correction must place against a neighbour, never at a position: {correction:?}"
+        );
     }
 }

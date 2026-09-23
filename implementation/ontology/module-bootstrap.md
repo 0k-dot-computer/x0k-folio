@@ -286,6 +286,7 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
              pub imports: &'static [&'static str],\n\
              pub classes: &'static [OntologyClass],\n\
              pub object_properties: &'static [OntologyObjectProperty],\n\
+             pub terms: &'static [&'static str],\n\
              pub edge_predicates: &'static [&'static str],\n\
              pub snake_to_camel: fn(&str) -> Option<&'static str>,\n\
          }\n\n\
@@ -295,7 +296,7 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
     for module in modules {
         let rust_name = module.name.replace('-', "_");
         out.push_str(&format!(
-            "    ModuleTables {{\n        name: {:?},\n        iri: {rust_name}::IRI,\n        imports: {rust_name}::IMPORTS,\n        classes: {rust_name}::CLASSES,\n        object_properties: {rust_name}::OBJECT_PROPERTIES,\n        edge_predicates: {rust_name}::EDGE_PREDICATES,\n        snake_to_camel: {rust_name}::snake_to_camel,\n    }},\n",
+            "    ModuleTables {{\n        name: {:?},\n        iri: {rust_name}::IRI,\n        imports: {rust_name}::IMPORTS,\n        classes: {rust_name}::CLASSES,\n        terms: {rust_name}::TERMS,\n        object_properties: {rust_name}::OBJECT_PROPERTIES,\n        edge_predicates: {rust_name}::EDGE_PREDICATES,\n        snake_to_camel: {rust_name}::snake_to_camel,\n    }},\n",
             module.name
         ));
     }
@@ -364,9 +365,103 @@ fn emit_module(out: &mut String, model: &OntologyModel, module: &ModuleRecord) {
         }
         out.push_str("            _ => return None,\n        })\n    }\n");
     }
+    emit_module_terms(out, model, &module.iri);
     out.push_str("}\n\n");
 }
 ```
+
+## Naming a term from Rust
+
+A table answers "what does this vocabulary hold"; it does not let a caller
+*spell* one term and be checked on it. Code that writes facts needs the
+second thing — the predicate a receipt carries, named once, so a renamed
+predicate is a compile error rather than a silent wire change — and
+`x0k:architecture/ontology-modules` §7 is explicit that the generated module
+is a term's only Rust representation. So each module also emits its terms as
+constants, under the compact spelling a fact carries.
+
+A term here is an entity the module claims with `rdfs:isDefinedBy` *and*
+declares as one of OWL's four kinds. That second condition is what keeps an
+enumerative individual out: `product` claims thirteen `Surface` instances
+(§3), and an instance is data the module ships, not a word a caller spells.
+
+`TERMS` carries the same set as a slice, because the two readings are
+different: code that knows which module it wants names a constant and is
+checked on it, while code walking the shipped set — the reason
+`MODULE_TABLES` exists — must not name a module at all. The slice is also
+the only view that reaches a datatype property, which belongs to neither
+`CLASSES` nor `OBJECT_PROPERTIES`.
+
+<a name="chunk-emit-module-terms"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#emit-module-terms`</sub>
+
+```rust {#emit-module-terms}
+fn emit_module_terms(out: &mut String, model: &OntologyModel, module_iri: &str) {
+    let terms = module_terms(model, module_iri);
+    out.push_str(
+        "\n    /// Every term this module defines, under the compact spelling a fact\n\
+         /// carries on the wire. A caller names the term; the string is the\n\
+         /// module's to change.\n\
+         pub mod terms {\n",
+    );
+    for (name, uri) in &terms {
+        out.push_str(&format!("        pub const {name}: &str = {uri:?};\n"));
+    }
+    out.push_str("    }\n\n");
+    out.push_str("    /// The same set as a slice, in `terms` order, for a walker that\n    /// must not name a module.\n    pub const TERMS: &[&str] = &[\n");
+    for (_, uri) in &terms {
+        out.push_str(&format!("        {uri:?},\n"));
+    }
+    out.push_str("    ];\n");
+}
+
+fn module_terms(model: &OntologyModel, module_iri: &str) -> Vec<(String, String)> {
+    use concept_facts::{
+        OWL_ANNOTATION_PROPERTY, OWL_CLASS, OWL_DATATYPE_PROPERTY, OWL_OBJECT_PROPERTY,
+        RDFS_IS_DEFINED_BY, RDF_TYPE,
+    };
+    let kinds = [OWL_CLASS, OWL_OBJECT_PROPERTY, OWL_DATATYPE_PROPERTY, OWL_ANNOTATION_PROPERTY];
+    let declares = |entity: &str| {
+        model.facts().iter().any(|fact| {
+            fact.entity == entity
+                && fact.predicate == RDF_TYPE
+                && matches!(&fact.value, OntologyValue::Entity(kind) if kinds.contains(&kind.as_str()))
+        })
+    };
+    let mut terms: Vec<(String, String)> = model
+        .facts()
+        .iter()
+        .filter(|fact| {
+            fact.predicate == RDFS_IS_DEFINED_BY
+                && fact.value == OntologyValue::Entity(module_iri.to_string())
+        })
+        .filter(|fact| declares(&fact.entity))
+        .filter_map(|fact| model.compact(&fact.entity))
+        .map(|uri| (constant_name(&uri), uri))
+        .collect();
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
+/// The local name of a compact term URI, screaming-snake: `acted-on` is
+/// `ACTED_ON`, `motivatedBy` is `MOTIVATED_BY`, and `valuation/value` is
+/// `VALUATION_VALUE`. Two terms of one module that collide here are a
+/// compile error in the generated file, which is the right place for a
+/// vocabulary to notice it has spelled one word twice.
+fn constant_name(compact: &str) -> String {
+    let local = compact.rsplit(':').next().unwrap_or(compact);
+    concept_facts::camel_to_snake(local)
+        .replace(['-', '/'], "_")
+        .to_ascii_uppercase()
+}
+```
+
+`/` joins the separator list because a local name may carry one. Both of the
+vocabularies that spell a term as `<part>/<field>` — `ordering`'s
+`valuation/value`, `declaration`'s `vocabulary-set/member` — were Rust
+chapters when this function was written, and a slash left in the name is not
+a bad constant but an unparsable one. The compaction itself never minded: a
+namespace is stripped by prefix, so what follows it is opaque.
 
 The rest is the same shape, once per table — the bootstrap facts that seed
 an empty concept region, the Decision-domain predicates in both spellings, and
@@ -475,7 +570,7 @@ fn option_literal(value: Option<&str>) -> String {
 
 ## Composing the file
 
-<a name="chunk-root"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [main](#chunk-main) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [emit-module](#chunk-emit-module) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes)</sub>
+<a name="chunk-root"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [main](#chunk-main) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [emit-module](#chunk-emit-module) · [emit-module-terms](#chunk-emit-module-terms) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -491,6 +586,8 @@ fn option_literal(value: Option<&str>) -> String {
 <<emit-module-set>>
 
 <<emit-module>>
+
+<<emit-module-terms>>
 
 <<emit-bootstrap-facts>>
 

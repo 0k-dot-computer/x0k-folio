@@ -94,6 +94,67 @@ pub fn sync_document(doc_path: &Path, workspace_root: &Path) -> Result<SyncResul
     })
 }
 
+/// A chunk's opening fence, and the rule for what closes it.
+///
+/// Only backticks: the info-string parser reads no other fence character,
+/// so a tilde fence never names a chunk in the first place.
+struct Fence {
+    /// Bytes of leading whitespace on the opening fence line.
+    indent: usize,
+    /// How many backticks the opener carries.
+    width: usize,
+}
+
+impl Fence {
+    /// Read `line` as an opening fence, if it is one.
+    fn open(line: &str) -> Option<Fence> {
+        let rest = line.trim_start();
+        let width = rest.bytes().take_while(|&b| b == b'`').count();
+        (width >= 3).then(|| Fence {
+            indent: line.len() - rest.len(),
+            width,
+        })
+    }
+
+    /// Does `line` close this fence? The reader's rule, and now the
+    /// writer's: wide enough, not indented past the allowance, nothing
+    /// else on the line.
+    fn closes(&self, line: &str) -> bool {
+        let rest = line.trim_start();
+        if line.len() - rest.len() > self.indent + 3 {
+            return false;
+        }
+        let width = rest.bytes().take_while(|&b| b == b'`').count();
+        width >= self.width && rest[width..].trim().is_empty()
+    }
+}
+
+impl Fence {
+    /// How wide this fence has to be to hold `body` without the reader
+    /// finding an end inside it.
+    fn width_for(&self, body: &str) -> usize {
+        body.lines()
+            .filter(|line| self.closes(line))
+            .map(|line| line.trim_start().bytes().take_while(|&b| b == b'`').count() + 1)
+            .fold(self.width, usize::max)
+    }
+
+    /// The opening line re-emitted at `width`, info string intact.
+    fn open_line(&self, line: &str, width: usize) -> String {
+        format!(
+            "{}{}{}",
+            &line[..self.indent],
+            "`".repeat(width),
+            &line.trim_start()[self.width..]
+        )
+    }
+
+    /// A closing fence at `width`, under the opener's indentation.
+    fn close_line(&self, width: usize) -> String {
+        format!("{}{}", " ".repeat(self.indent), "`".repeat(width))
+    }
+}
+
 struct FromPatch {
     chunk_name: String,
     new_body: String,
@@ -111,35 +172,36 @@ fn apply_from_patches(
     while i < lines.len() {
         let line = lines[i];
 
-        // Detect fenced code block opening with chunk attributes
-        if line.trim_start().starts_with("```") {
+        // A fence opens a patched chunk when its info string names one.
+        let patched = Fence::open(line).and_then(|fence| {
             let info = line.trim_start().trim_start_matches('`');
-            let attrs = crate::parser::parse_info_string(info);
+            let name = crate::parser::parse_info_string(info).name?;
+            let patch = patches.iter().find(|p| p.chunk_name == name)?;
+            Some((fence, patch))
+        });
 
-            if let Some(ref chunk_name) = attrs.name {
-                if let Some(patch) = patches.iter().find(|p| p.chunk_name == *chunk_name) {
-                    // Emit the opening fence
-                    result.push(line.to_string());
-                    i += 1;
+        if let Some((fence, patch)) = patched {
+            let width = fence.width_for(&patch.new_body);
+            result.push(fence.open_line(line, width));
+            i += 1;
 
-                    // Skip old body (everything until closing ```)
-                    while i < lines.len() && !lines[i].trim_start().starts_with("```") {
-                        i += 1;
-                    }
-
-                    // Emit new body
-                    for body_line in patch.new_body.lines() {
-                        result.push(body_line.to_string());
-                    }
-
-                    // Emit closing fence
-                    if i < lines.len() {
-                        result.push(lines[i].to_string());
-                    }
-                    i += 1;
-                    continue;
-                }
+            // Skip the old body to the line that ends it — by the
+            // reader's rule, not by the first indented backticks.
+            while i < lines.len() && !fence.closes(lines[i]) {
+                i += 1;
             }
+
+            result.extend(patch.new_body.lines().map(str::to_string));
+
+            if i < lines.len() {
+                result.push(if width == fence.width {
+                    lines[i].to_string()
+                } else {
+                    fence.close_line(width)
+                });
+            }
+            i += 1;
+            continue;
         }
 
         result.push(line.to_string());
@@ -168,41 +230,47 @@ fn apply_from_patches(
 /// single-body artifact chunks).
 pub fn replace_chunk_body(md: &str, chunk_name: &str, new_body: &str) -> Result<String> {
     let needle = format!("{{#{chunk_name}");
-    let mut out: Vec<&str> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
     let mut lines = md.lines();
     let mut replaced = false;
 
     while let Some(line) = lines.next() {
-        out.push(line);
         let trimmed = line.trim_start();
-        if !replaced && trimmed.starts_with("```") && {
-            // Match `{#name}` or `{#name <attrs>` — not a prefix of a longer name.
-            match trimmed.find(&needle) {
-                Some(pos) => {
-                    let after = trimmed[pos + needle.len()..].chars().next();
-                    matches!(after, Some('}') | Some(' ') | None)
-                }
-                None => false,
+        // Match `{#name}` or `{#name <attrs>` — not a prefix of a longer name.
+        let names_it = match trimmed.find(&needle) {
+            Some(pos) => {
+                let after = trimmed[pos + needle.len()..].chars().next();
+                matches!(after, Some('}') | Some(' ') | None)
             }
-        } {
-            // Emit the replacement body, then skip the old body through the
-            // closing fence (which we keep).
-            for body_line in new_body.lines() {
-                out.push(body_line);
+            None => false,
+        };
+        let Some(fence) = Fence::open(line).filter(|_| !replaced && names_it) else {
+            out.push(line.to_string());
+            continue;
+        };
+
+        // Emit the replacement body between fences wide enough to hold it,
+        // then skip the old body through the line that ends it.
+        let width = fence.width_for(new_body);
+        out.push(fence.open_line(line, width));
+        out.extend(new_body.lines().map(str::to_string));
+
+        let mut closed = false;
+        for inner in lines.by_ref() {
+            if fence.closes(inner) {
+                out.push(if width == fence.width {
+                    inner.to_string()
+                } else {
+                    fence.close_line(width)
+                });
+                closed = true;
+                break;
             }
-            let mut closed = false;
-            for inner in lines.by_ref() {
-                if inner.trim_start().starts_with("```") {
-                    out.push(inner);
-                    closed = true;
-                    break;
-                }
-            }
-            if !closed {
-                anyhow::bail!("chunk `{chunk_name}` has no closing fence");
-            }
-            replaced = true;
         }
+        if !closed {
+            anyhow::bail!("chunk `{chunk_name}` has no closing fence");
+        }
+        replaced = true;
     }
 
     if !replaced {
@@ -348,5 +416,116 @@ fn old_version() {}
         );
         assert!(synced.ends_with("```"), "got {synced:?}");
         assert!(!synced.ends_with('\n'), "got {synced:?}");
+    }
+
+    /// A class whose docstring holds a fenced example — how a Python
+    /// library documents its public surface, and the shape that made
+    /// `sync` grow a document on every run.
+    const PY_WITH_FENCE: &str = r#"class Thing:
+    """A thing.
+
+    Example:
+        ```python
+        from thing import Thing
+        t = Thing()
+        ```
+    """
+
+    x: int = 1
+"#;
+
+    /// A body carrying a line the reader would read as the end of a
+    /// three-backtick fence. Splicing it verbatim would cut the chunk in
+    /// half, so the fence has to widen.
+    const JS_WITH_BARE_FENCE: &str =
+        "export function readme() {\n  return `\n```\nhi\n```\n`;\n}\n";
+
+    /// Sync twice, demand the second run changed nothing, and hold the
+    /// result to `check`'s predicate: the body shown is the body the
+    /// source holds, line for line.
+    fn synced_twice_in(source_name: &str, source: &str, doc: &str) -> String {
+        let (tmp, doc_path) = workspace(source_name, source, doc);
+
+        let first = sync_document(&doc_path, tmp.path()).unwrap();
+        assert_eq!(first.errors, Vec::<String>::new());
+        assert_eq!(first.chunks_populated, 1);
+        let after_one = std::fs::read_to_string(&doc_path).unwrap();
+
+        sync_document(&doc_path, tmp.path()).unwrap();
+        let after_two = std::fs::read_to_string(&doc_path).unwrap();
+        assert_eq!(after_one, after_two, "sync is not idempotent");
+
+        let parsed = parse_document(&after_two).unwrap();
+        let chunk = parsed.chunk("thing").unwrap();
+        let lang = SymbolLanguage::for_lang(chunk.lang.as_deref()).unwrap();
+        let span = extract_symbol_in(source, chunk.symbol.as_ref().unwrap(), lang).unwrap();
+        assert!(
+            chunk.bodies[0].text.lines().eq(span.body.lines()),
+            "check would call this drifted:\n{}",
+            chunk.bodies[0].text
+        );
+        after_two
+    }
+
+    #[test]
+    fn a_mirror_whose_body_holds_a_fence_syncs_once() {
+        let synced = synced_twice_in(
+            "thing.py",
+            PY_WITH_FENCE,
+            "# doc\n\n```python {#thing from=\"thing.py\" symbol=\"Thing\"}\n```\n",
+        );
+        assert_eq!(
+            synced.matches("from thing import Thing").count(),
+            1,
+            "the docstring example was duplicated: {synced}"
+        );
+    }
+
+    /// Widening the outer fence by hand used to change nothing, because
+    /// the writer never read how wide the opener was. It has to work now,
+    /// since an author who hits this reaches for it first.
+    #[test]
+    fn a_four_backtick_mirror_holds_a_fence_too() {
+        let synced = synced_twice_in(
+            "thing.py",
+            PY_WITH_FENCE,
+            "# doc\n\n````python {#thing from=\"thing.py\" symbol=\"Thing\"}\n````\n",
+        );
+        assert_eq!(
+            synced.matches("from thing import Thing").count(),
+            1,
+            "the docstring example was duplicated: {synced}"
+        );
+        assert!(synced.contains("````python {#thing"), "got {synced}");
+    }
+
+    #[test]
+    fn a_body_that_would_close_the_fence_widens_it() {
+        let synced = synced_twice_in(
+            "readme.js",
+            JS_WITH_BARE_FENCE,
+            "# doc\n\n```javascript {#thing from=\"readme.js\" symbol=\"readme\"}\n```\n",
+        );
+        assert!(
+            synced.contains("````javascript {#thing"),
+            "the opener widened: {synced}"
+        );
+        assert!(synced.ends_with("````\n"), "and so did its closer: {synced}");
+    }
+
+    #[test]
+    fn a_fence_ends_only_where_the_reader_ends_it() {
+        let fence = Fence::open("```python {#thing}").unwrap();
+        assert!(!fence.closes("        ```"), "an indented nested fence");
+        assert!(!fence.closes("``"), "too few backticks");
+        assert!(!fence.closes("``` python"), "a closer carries nothing else");
+        assert!(fence.closes("```"), "the outer fence at the opener's column");
+        assert!(fence.closes("  ````  "), "wider, inside the allowance");
+
+        let wide = Fence::open("````rust {#thing}").unwrap();
+        assert!(!wide.closes("```"), "narrower than its opener");
+        assert_eq!(wide.width_for("```\nhi\n```"), 4, "narrower lines are safe");
+        assert_eq!(wide.width_for("````\nhi"), 5, "one wider than the widest");
+        assert_eq!(wide.width_for("    ````\nhi"), 4, "indented past the allowance");
     }
 }

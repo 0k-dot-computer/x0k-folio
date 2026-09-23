@@ -13,11 +13,24 @@ fn binary() -> std::ffi::OsString {
 const PAPER: &str = "https://example.org/papers#";
 static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
+/// Held for the life of a fixture, so exactly one test is spawning commands
+/// and measuring deadlines against them. Incident test: the suite itself —
+/// under `tools/ci` load the concurrent form failed one run in two.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Fixture {
     _temporary: tempfile::TempDir,
     home: PathBuf,
     corpus: PathBuf,
     database: PathBuf,
+    /// A module directory holding one module that declares nothing but
+    /// itself — as close to "no base vocabulary" as a selected base gets,
+    /// since a directory with no `*.ttl` at all is refused.
+    empty_vocabulary: PathBuf,
+    /// Declared last so it is dropped last: the next test may not start
+    /// while this one's temporary directory is still being deleted, or its
+    /// deletion becomes the disk load under the next one's deadline.
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
 
 struct Output {
@@ -40,6 +53,18 @@ impl Drop for Running {
 }
 
 impl Running {
+    /// Thirty seconds is the budget for every command these tests run, the
+    /// shipped-vocabulary ingest included. It used to need its own minutes:
+    /// `set` synced each block inline on the async task, so upstream's
+    /// sixteen-way flush ran one journal commit at a time and a fresh
+    /// `--shipped` store cost 449 serialized `fsync`s — 82.7s of a 90.3s
+    /// run against 0.77s of CPU, and 26s or 117s depending on the disk.
+    /// The fan-out is real now (`x0k:implementation/folio/dialog`) and the
+    /// same 449 `fsync`s take 0.28s, so one budget covers everything and no
+    /// command needs a budget of its own.
+    /// It is a hang detector and nothing finer: a deadline measures wall
+    /// clock, so it means even this much only while `ONE_AT_A_TIME` keeps a
+    /// second test off the disk.
     fn finish(&mut self) -> Output {
         let deadline = Instant::now() + Duration::from_secs(30);
         let status = loop {
@@ -67,16 +92,27 @@ impl Output {
 }
 impl Fixture {
     fn new() -> Self {
+        // A panicking test poisons the lock; its fixture is gone either way,
+        // so the next test takes the permit rather than cascading.
+        let serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let temporary = tempfile::tempdir().unwrap();
         let home = temporary.path().to_path_buf();
         let corpus = home.join("papers");
         let database = home.join("database");
+        let empty_vocabulary = home.join("no-modules");
         fs::create_dir(&corpus).unwrap();
+        fs::create_dir(&empty_vocabulary).unwrap();
+        // The filename carries the prefix the module fact declares.
+        fs::write(empty_vocabulary.join("fixture.ttl"), concat!(
+            "<https://example.test/module/fixture> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+            "<https://example.test/module/fixture> <http://purl.org/vocab/vann/preferredNamespacePrefix> \"fixture\" .\n",
+            "<https://example.test/module/fixture> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://example.test/fixture#\" .\n",
+        )).unwrap();
         let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/papers");
         for name in ["alpha.md", "beta.md", "vocabulary.md"] {
             fs::copy(example.join(name), corpus.join(name)).unwrap();
         }
-        Self { _temporary: temporary, home, corpus, database }
+        Self { _temporary: temporary, home, corpus, database, empty_vocabulary, _serial: serial }
     }
 
     fn spawn(&self, args: &[&str]) -> Running {
@@ -92,9 +128,16 @@ impl Fixture {
 
     fn run(&self, args: &[&str]) -> Output { self.spawn(args).finish() }
 
+    /// The papers corpus declares its whole vocabulary inside its own
+    /// documents, so these runs select an empty module directory rather than
+    /// the shipped set — the selected base is a source of its own, and these
+    /// tests are about the documents. `the_default_base_is_the_shipped_set`
+    /// below is the one that ingests the shipped modules, and it is also
+    /// where the cost of doing so is held to a number.
     fn corpus_command(&self, command: &str) -> Output {
         self.run(&[command, "--root", self.corpus.to_str().unwrap(),
-            "--database", self.database.to_str().unwrap()])
+            "--database", self.database.to_str().unwrap(),
+            "--vocabulary", self.empty_vocabulary.to_str().unwrap(), "--only-vocabulary"])
     }
 
     fn status(&self) -> Value {
@@ -133,6 +176,69 @@ fn rows(query: &Value) -> Vec<Value> {
     let mut rows = query["rows"].as_array().expect("query rows").clone();
     rows.sort_by_key(|row| serde_json::to_string(row).unwrap());
     rows
+}
+#[test]
+fn the_default_base_is_the_shipped_set() -> Result<(), String> {
+    let fixture = Fixture::new();
+    let decisions = fixture.home.join("decisions");
+    fs::create_dir(&decisions).unwrap();
+    let document = |id: &str, edges: &str| format!(
+        "---\nx0k:\n  format: folio/v1\n  id: {id}\n  type: design\n  status: accepted\n{edges}---\n# Body\n");
+    fs::write(decisions.join("alpha.md"),
+        document("x0k:design/alpha", "  edges:\n    refined_by: [x0k:design/beta]\n")).unwrap();
+    fs::write(decisions.join("beta.md"), document("x0k:design/beta", "")).unwrap();
+    let report = fixture.run(&["ingest", "--root", decisions.to_str().unwrap(),
+        "--database", fixture.home.join("default-db").to_str().unwrap()]).success();
+    assert_eq!(report["invalid_documents"], 0,
+        "a shipped edge with no flag said is not an unknown property");
+    assert_eq!(report["valid_documents"], 2);
+    assert_eq!(report["complete"], true);
+    Ok(())
+}
+#[test]
+fn the_board_reads_the_collections_predicates_and_roots_both_views() {
+    let fixture = Fixture::new();
+    let modules = fixture.home.join("bs-modules");
+    fs::create_dir(&modules).unwrap();
+    fs::write(modules.join("bs.ttl"), concat!(
+        "<https://backstage.io/module/bs> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+        "<https://backstage.io/module/bs> <http://purl.org/vocab/vann/preferredNamespacePrefix> \"bs\" .\n",
+        "<https://backstage.io/module/bs> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://backstage.io/ontology#\" .\n",
+        "<https://backstage.io/ontology#supersededBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .\n",
+        "<https://backstage.io/ontology#supersededBy> <http://www.w3.org/2000/01/rdf-schema#label> \"superseded by\" .\n",
+    )).unwrap();
+    let log = fixture.home.join("adrs");
+    fs::create_dir(&log).unwrap();
+    fs::write(log.join("adr013.md"), concat!(
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:architecture/adr013\n  type: architecture\n",
+        "  status: superseded\n  edges:\n    bs:superseded_by: [x0k:architecture/adr014]\n---\n# ADR013\n")).unwrap();
+    fs::write(log.join("adr014.md"), concat!(
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:architecture/adr014\n  type: architecture\n",
+        "  status: accepted\n---\n# ADR014\n")).unwrap();
+    let database = fixture.home.join("board-db");
+
+    // Both flags at once: `--shipped` names the default out loud and
+    // `--vocabulary` adds to it, so there is nothing left for them to
+    // disagree about.
+    let report = fixture.run(&["ingest", "--root", log.to_str().unwrap(),
+        "--database", database.to_str().unwrap(),
+        "--vocabulary", modules.to_str().unwrap(), "--shipped"]).success();
+    assert_eq!(report["invalid_documents"], 0, "the custom edge is not an unknown property");
+    assert_eq!(report["valid_documents"], 2);
+
+    let board = fixture.run(&["query", "--database", database.to_str().unwrap(),
+        "--named", "superseded", "--format", "json"]).success();
+    let found = rows(&board);
+    assert_eq!(found.len(), 1, "the collection's own supersession is on the board: {board}");
+    assert_eq!(found[0]["document"]["value"], "https://0k.computer/ontology#architecture/adr013");
+    assert_eq!(found[0]["path"]["value"], "adr013.md",
+        "the JSON view roots its paths the way the table does: {board}");
+
+    let table = fixture.run(&["query", "--database", database.to_str().unwrap(),
+        "--named", "superseded", "--format", "table"]);
+    assert!(table.status.success(), "table query failed: {}", table.stderr);
+    assert!(table.stdout.contains("\"adr013.md\""), "got {}", table.stdout);
+    assert!(table.stdout.contains("\n1 row ·"), "one answer is one row: {}", table.stdout);
 }
 #[test]
 fn ingest_query_reopen_preserve_types_and_native_join() {
@@ -186,7 +292,10 @@ fn edit_invalid_rename_delete_preserve_source_ownership() {
     fs::rename(alpha, &renamed).unwrap();
     fixture.corpus_command("ingest").success();
     assert_eq!(rows(&fixture.query(&format!("{PAPER}pages"))), partial);
-    assert_eq!(fixture.status()["last_reconciliation"]["checkpoint_sources"], 3);
+    // Three documents and the selected base vocabulary, which is a source of
+    // its own. `ingest` defaults to the shipped set now, so that fourth
+    // source is there whether or not a flag named it.
+    assert_eq!(fixture.status()["last_reconciliation"]["checkpoint_sources"], 4);
     fs::remove_file(renamed).unwrap();
     fixture.corpus_command("ingest").success();
     let remaining = rows(&fixture.query(&format!("{PAPER}pages")));

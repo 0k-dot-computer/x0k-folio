@@ -105,10 +105,18 @@ than a term filed in the wrong house.
 //! [`DeclarationDefect`]: an affordance `claimedFor` a human that no
 //! signifier signifies, which is a promise to a perception-dependent
 //! actor with nothing to perceive.
+//!
+//! A fourth is asked of those same inside-the-document declarations
+//! against the vocabulary the set itself carries — **is this a class
+//! something declares, a predicate something declares, a target the
+//! predicate's range admits?** `check_instances` (with the `document-vocabulary` feature) answers it for every
+//! namespace the collection loads, ours and the reader's alike, and
+//! hands back the extended model so the envelope pass can resolve a
+//! prefix the collection defined for itself.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use x0k_ontology::concept_facts::OntologyModel;
+use x0k_ontology::concept_facts::{OntologyModel, OntologyValue, RDFS_SUBCLASS_OF, X0K_NS};
 
 use crate::colophon::Colophon;
 use crate::entity_id::EntityId;
@@ -129,15 +137,46 @@ A predicate can therefore be outside the slice and still perfectly real:
 to use it. Calling that undeclared would be wrong. So standing has three
 values, not two.
 
+Neither question is about a namespace, and for a year the code answered
+as though both were. Standing built `x0k:<camel>` from the frontmatter
+key and looked that up, so an `edges:` block could name a term only if
+`x0k:` declared it — and a Backstage maintainer who wrote the module the
+guide invites, `bs:supersededBy` with an `rdfs:domain` of `x0k:Decision`,
+was told their own predicate "is declared by no ontology module"
+(2026-09-22). The escape hatch reached ids and classes and stopped at the
+edges, which is where a decision log actually lives: `supersededBy` is
+the first edge an ADR directory reaches for and the one it could not have.
+
+A predicate is spelled `<prefix>:<snake_case local>` in an `edges:` block
+— the prefix a loaded module declared, and the same snake_case the `x0k:`
+keys already use, because the casing rule is the ontology's and not the
+namespace's. An unprefixed key still means `x0k:`, so nothing already
+written changes. Whether the term is a decision's edge is then the test
+it always was, asked of whatever module declared it: is its domain
+`x0k:Decision`, or a class declared a subclass of it?
+
+That subject set is folded here rather than asked of the model, and the
+reason is the publication rather than the design. `decision_edge_predicates`
+computes the same set and then keys its table by `x0k:` local name, which a
+reader's term does not have — so the natural repair is a method on
+`OntologyModel`. But `x0k-folio` is packaged against the *released*
+`x0k-ontology`, and `cargo package` verifies the tarball against the
+registry: a method added upstream in the same change does not exist for
+that build until a release goes out. Six lines over `facts()` cost nothing
+and keep the gate honest. When the two crates next release together this
+belongs upstream.
+
 <a name="chunk-standing"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#standing`</sub>
 
 ```rust {#standing}
 /// What a vocabulary has to say about an `edges:` predicate, in its
-/// snake_case frontmatter form.
+/// frontmatter spelling: `<prefix>:<snake_case local>`, or a bare
+/// snake_case local, which means `x0k:`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicateStanding {
-    /// Declared with `x0k:Decision` in its domain — the slice a decision
-    /// document's `edges:` block draws from.
+    /// Declared with `x0k:Decision`, or a subclass of it, in its domain —
+    /// the slice a decision document's `edges:` block draws from,
+    /// whichever module declares the term.
     DocumentEdge { uri: String },
     /// Declared, but for some other subject (`child_of` is an intent's
     /// edge, not a decision's). Real, and not a defect on a document of
@@ -152,9 +191,9 @@ pub enum PredicateStanding {
     Undeclared,
 }
 
-/// Ask a vocabulary about one predicate.
-pub fn predicate_standing(model: &OntologyModel, snake: &str) -> PredicateStanding {
-    Vocabulary::of(model).standing(snake)
+/// Ask a vocabulary about one predicate, in its frontmatter spelling.
+pub fn predicate_standing(model: &OntologyModel, spelled: &str) -> PredicateStanding {
+    Vocabulary::of(model).standing(spelled)
 }
 ```
 
@@ -177,10 +216,15 @@ outlive the vocabulary it came from.
 ```rust {#vocabulary}
 /// The folds this module needs, taken once from a model.
 struct Vocabulary {
-    /// snake_case → camelCase for the Decision-domain slice.
+    /// snake_case → camelCase for the Decision-domain slice, `x0k:` only.
+    /// Every other namespace is answered from `properties` and
+    /// `decision_domains` instead, which is the same test spelled out.
     document_edges: BTreeMap<String, String>,
     /// Compact URI → `(domain, range)` for every declared object property.
     properties: BTreeMap<String, (Option<String>, Option<String>)>,
+    /// `x0k:Decision` and its subclasses, compacted — the domains that
+    /// make a declared property a document's edge.
+    decision_domains: BTreeSet<String>,
     /// The namespace prefixes an id may carry.
     schemes: BTreeSet<String>,
 }
@@ -194,23 +238,39 @@ impl Vocabulary {
                 .into_iter()
                 .map(|property| (property.uri, (property.domain, property.range)))
                 .collect(),
+            decision_domains: decision_domains(model),
             schemes: model.schemes(),
         }
     }
 
-    fn standing(&self, snake: &str) -> PredicateStanding {
-        if let Some(camel) = self.document_edges.get(snake) {
-            return PredicateStanding::DocumentEdge {
-                uri: format!("x0k:{camel}"),
-            };
+    fn standing(&self, spelled: &str) -> PredicateStanding {
+        let (prefix, snake) = match spelled.split_once(':') {
+            Some((prefix, local)) => (prefix, local),
+            None => ("x0k", spelled),
+        };
+        if prefix == "x0k" {
+            if let Some(camel) = self.document_edges.get(snake) {
+                return PredicateStanding::DocumentEdge {
+                    uri: format!("x0k:{camel}"),
+                };
+            }
         }
-        let uri = format!("x0k:{}", camel_form(snake));
+        let uri = format!("{prefix}:{}", camel_form(snake));
         match self.properties.get(&uri) {
-            Some((domain, range)) => PredicateStanding::DeclaredElsewhere {
-                uri,
-                domain: domain.clone(),
-                range: range.clone(),
-            },
+            Some((domain, range)) => {
+                let subject_is_a_decision = domain
+                    .as_deref()
+                    .is_some_and(|domain| self.decision_domains.contains(domain));
+                if subject_is_a_decision {
+                    PredicateStanding::DocumentEdge { uri }
+                } else {
+                    PredicateStanding::DeclaredElsewhere {
+                        uri,
+                        domain: domain.clone(),
+                        range: range.clone(),
+                    }
+                }
+            }
             None => PredicateStanding::Undeclared,
         }
     }
@@ -220,22 +280,45 @@ impl Vocabulary {
         EntityId::parse_with_schemes(raw, &self.schemes)
     }
 }
+
+/// `x0k:Decision` and every class declared a direct subclass of it, in the
+/// compact spelling `object_properties` reports a domain in. Direct
+/// subclasses only, which is the definition the model's own edge table has
+/// always used.
+fn decision_domains(model: &OntologyModel) -> BTreeSet<String> {
+    let decision = OntologyValue::Entity(format!("{X0K_NS}Decision"));
+    let mut out = BTreeSet::from(["x0k:Decision".to_string()]);
+    for fact in model.facts() {
+        if fact.predicate == RDFS_SUBCLASS_OF && fact.value == decision {
+            out.insert(model.compact(&fact.entity).unwrap_or_else(|| fact.entity.clone()));
+        }
+    }
+    out
+}
 ```
 
 The camelCase form is derivable rather than looked up, because the two
 spellings are one deterministic rule — the ontology's own view inserts
 `_` before an interior uppercase and lowercases, so the inverse
 capitalizes the letter after each `_`. Deriving it is what lets the
-question reach properties outside the Decision-domain slice, which is the
-whole reason `DeclaredElsewhere` can exist.
+question reach properties the `x0k:` slice does not key: those outside the
+Decision domain, which is the whole reason `DeclaredElsewhere` can exist,
+and those a reader's own module declares, which is what makes the
+frontmatter prefix mean anything.
 
 <a name="chunk-camel-form"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#camel-form`</sub>
 
 ```rust {#camel-form}
-/// snake_case → camelCase, the inverse of `camel_to_snake`. Used only to
-/// *ask* about a predicate outside the Decision-domain slice; inside it,
-/// the model's own map is authoritative.
-fn camel_form(snake: &str) -> String {
+/// snake_case → camelCase, the inverse of `camel_to_snake`. Used to *ask*
+/// about a predicate the `x0k:` slice does not key — one outside the
+/// Decision domain, or one another module declares; inside that slice the
+/// model's own map is authoritative.
+///
+/// Crate-visible because the projection asks the same question when it
+/// turns an `edges:` key into a fact
+/// ([`document_vocabulary::resolve_property`]): check and ingest reading one
+/// document and disagreeing about it is worse than either rule alone.
+pub(crate) fn camel_form(snake: &str) -> String {
     let mut out = String::with_capacity(snake.len());
     let mut capitalize_next = false;
     for ch in snake.chars() {
@@ -344,7 +427,7 @@ pub struct EnvelopeReport {
     /// Every `(predicate, target)` pair whose target parsed, ordered by
     /// predicate then by declaration — the envelope holds `edges:` in a
     /// `BTreeMap`, so the order is the vocabulary's, not the author's.
-    /// Predicates are kept in their snake_case form.
+    /// Predicates are kept in their frontmatter spelling.
     pub edges: Vec<(String, EntityId)>,
     /// Faults, in the order found.
     pub defects: Vec<Defect>,
@@ -524,6 +607,26 @@ when first run over this publication: two of its four affordances —
 through Rust, with nothing declared to say so. The two signifiers in
 this crate's chapters are what made those claims true.
 
+It is a join, and a join needs both sides present to mean anything.
+Affordances are declared beside the decision that shapes them;
+signifiers are declared beside the face that presents them, one
+directory over. A reader who scans only the decisions — which the
+integration guide invites, saying "check the folder, any folder" — hands
+this check every affordance and no signifier, and every human claim
+comes back unsignified. That is not seven broken promises, it is a
+question asked of a set that does not hold the answer, and on a pristine
+clone it printed seven red errors at the reader's first command.
+
+So the absence of a signifier is only evidence when the set declares at
+least one. With none, the finding is a note: the check says what it
+looked for and that nothing here could have answered. The predicate is
+about the set rather than about the affordance, which is why it is
+computed once and applied to all of them. Its limit is honest and worth
+saying: a set holding *some* signifiers and not the ones these
+affordances need still reports defects, because at that point silence is
+evidence again. And a reader who knows the set is the whole collection
+says `--closed`, under which every note is a defect.
+
 <a name="chunk-check-declarations"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#check-declarations`</sub>
 
 ```rust {#check-declarations}
@@ -535,6 +638,18 @@ pub enum DeclarationDefect {
     /// signifies. A human reaches an affordance through a perceivable
     /// cue; with none declared, the claim cannot be kept.
     HumanClaimWithoutSignifier { affordance: EntityId },
+    /// The vocabulary the set carries does not assemble: a
+    /// `turtle folio:ontology` block that will not parse, two blocks
+    /// binding one prefix to different namespaces, a term with no
+    /// owning module. Nothing downstream can be checked against a
+    /// vocabulary that does not exist, so this one defect stands for
+    /// every instance the set declares.
+    Vocabulary { reason: String },
+    /// A typed instance block does not hold against the loaded
+    /// vocabulary: an unknown class on the fence, a predicate no module
+    /// declares, a target whose type the predicate's range refuses. The
+    /// reason names its document and line.
+    Instance { reason: String },
 }
 
 impl std::fmt::Display for DeclarationDefect {
@@ -546,23 +661,73 @@ impl std::fmt::Display for DeclarationDefect {
                  declare a `yaml x0k:signifier` block beside the face that presents it, or \
                  drop `human` from its actors"
             ),
+            Self::Vocabulary { reason } => write!(
+                f,
+                "the vocabulary this set carries does not load, so no declaration in it could \
+                 be checked: {reason}"
+            ),
+            Self::Instance { reason } => write!(f, "declaration does not hold: {reason}"),
         }
     }
 }
 
 impl std::error::Error for DeclarationDefect {}
 
+/// A declaration question the set was not equipped to answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclarationNote {
+    /// An affordance claimed for a human, in a set that declares no
+    /// signifier at all. Signifiers live beside the faces that present
+    /// them, so a set holding none is not the set where signification
+    /// lives, and its silence about one is not evidence against the
+    /// claim.
+    HumanClaimUnsignifiable { affordance: EntityId },
+}
+
+impl std::fmt::Display for DeclarationNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HumanClaimUnsignifiable { affordance } => write!(
+                f,
+                "affordance `{affordance}` is claimed for a human and nothing here signifies \
+                 it; this set declares no signifier at all, so it cannot answer — scan the \
+                 documents that hold the faces too"
+            ),
+        }
+    }
+}
+
+/// A declared relationship whose target is well formed and names no
+/// declaration in the set. The instance-level twin of [`DanglingEdge`],
+/// and ordinary for the same reason: a collection is a region.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DanglingDeclaration {
+    /// The caller's name for the document that declared the instance.
+    pub source: String,
+    /// The subject instance, in its compact spelling.
+    pub subject: String,
+    /// The predicate, compacted.
+    pub predicate: String,
+    /// The target that names nothing here, compacted.
+    pub target: String,
+}
+
 /// What checking a set of inline declarations against each other found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeclarationReport {
-    /// How many inline entities were examined, of every class.
+    /// How many declarations were examined, of every class.
     pub checked: usize,
     /// Faults, in the order the affordances were given.
     pub defects: Vec<DeclarationDefect>,
+    /// Relationship targets that name no declaration in the set.
+    pub dangling: Vec<DanglingDeclaration>,
+    /// Questions this set could not answer, in the order asked.
+    pub notes: Vec<DeclarationNote>,
 }
 
 impl DeclarationReport {
-    /// True when every human claim has a cue.
+    /// True when every human claim has a cue and every instance holds.
+    /// Dangling targets and notes do not affect this.
     pub fn is_clean(&self) -> bool {
         self.defects.is_empty()
     }
@@ -585,6 +750,11 @@ where
         .filter_map(|(_, value)| value.strip_prefix("entity:")?.parse().ok())
         .collect();
 
+    // Whether this set can speak to signification at all, asked once of
+    // the set rather than once per affordance: with no signifier
+    // anywhere in it, every answer it gives is the same non-answer.
+    let signifies_anything = entities.iter().any(|e| e.marker_class == "signifier");
+
     let mut report = DeclarationReport {
         checked: entities.len(),
         ..DeclarationReport::default()
@@ -596,14 +766,153 @@ where
         let claims_human = declared_facts(entity)
             .iter()
             .any(|(p, v)| p == "claimedFor" && v == "entity:x0k:actor/human");
-        if claims_human && !signified.contains(&entity.uri) {
+        if !claims_human || signified.contains(&entity.uri) {
+            continue;
+        }
+        if signifies_anything {
             report.defects.push(DeclarationDefect::HumanClaimWithoutSignifier {
+                affordance: entity.uri.clone(),
+            });
+        } else {
+            report.notes.push(DeclarationNote::HumanClaimUnsignifiable {
                 affordance: entity.uri.clone(),
             });
         }
     }
 
     report
+}
+```
+
+## Instances: a collection's own words, checked like ours
+
+An affordance and a signifier are `x0k:` instances, and for a long time
+they were the only instances anyone checked. A collection that brings
+its own vocabulary — `paper:Paper` defined in a `turtle folio:ontology`
+block beside the papers that instantiate it — declared instances that
+nothing read. Three maintainers reached that hole independently in one
+afternoon (2026-09-22): each took the shipped `examples/papers`
+collection, broke it, and watched `check` pass at exit 0 saying **`0
+declaration(s) checked`**. The count was true, which was the worst part
+of it: the blocks were not passing, they were not being read.
+
+The validator already existed, one crate over. `x0k-folio-cli ingest`
+assembles a collection's vocabulary and checks every instance against it
+([`document-vocabulary.md`](document-vocabulary.md)), and catches all
+three breakages by name. So this is not a new check; it is the check
+`ingest` runs, reached from the gate a reader is told to put in CI. The
+guide put `check` in CI and never said that `check` was blind to the
+reader's own vocabulary while enforcing ours strictly, which is how a
+green gate came to mean nothing for exactly the collections the custom
+vocabulary story is for.
+
+Two things follow from reading the vocabulary the way `ingest` does.
+The model this returns is the caller's base *extended* by the blocks the
+set carries, and it is the model the envelopes should then be read
+against — `paper:Paper/alpha` was refused as an undeclared prefix with
+`vocabulary.md` sitting in the same directory, because the envelope pass
+never saw the block. And the failure grain is per document: one
+unreadable block should name its own file rather than stopping the set,
+so instances are collected a document at a time, and the whole-set pass
+runs only once every document has parsed — a range check needs the
+target's declaration, and a duplicate id needs both.
+
+A target that resolves to no declaration here is not a defect. It is the
+same region boundary the envelope pass reports as a dangling edge, one
+level down, so it is reported the same way and counted the same way:
+noted, never fatal. What makes it fatal is `--closed`, which is a
+different question about the collection and not this function's to
+answer.
+
+<a name="chunk-check-instances"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#check-instances`</sub>
+
+```rust {#check-instances}
+/// The vocabulary a set of documents carries, and what its typed
+/// instance declarations came to.
+#[cfg(feature = "document-vocabulary")]
+pub struct InstanceCheck {
+    /// The caller's base vocabulary, extended by every
+    /// `turtle folio:ontology` block the set carries. Read envelopes
+    /// against this, not against the base: a collection that defines a
+    /// namespace may use it in an id.
+    pub model: OntologyModel,
+    /// Instances checked, faults found, and targets that left the set.
+    pub report: DeclarationReport,
+}
+
+/// Assemble the vocabulary `documents` carry on top of `base`, then check
+/// every typed instance they declare against it.
+///
+/// Each document's `body` is whatever text the caller wants byte offsets
+/// and line numbers to be relative to; passing the whole file, frontmatter
+/// included, is what makes a reported line openable in an editor.
+#[cfg(feature = "document-vocabulary")]
+pub fn check_instances(
+    base: &OntologyModel,
+    documents: &[crate::document_vocabulary::DocumentSource<'_>],
+) -> InstanceCheck {
+    use crate::document_vocabulary::{collect_instances, load_definitions, validate_relationships};
+
+    let mut report = DeclarationReport::default();
+    let vocabulary = match load_definitions(documents, base) {
+        Ok(vocabulary) => vocabulary,
+        Err(e) => {
+            report.defects.push(DeclarationDefect::Vocabulary { reason: e.to_string() });
+            return InstanceCheck { model: OntologyModel::new(base.facts().to_vec()), report };
+        }
+    };
+
+    // A document at a time, so a block that will not parse names the file
+    // it is in instead of taking the collection down with it.
+    let mut instances = Vec::new();
+    let mut every_document_parsed = true;
+    for document in documents {
+        match collect_instances(std::slice::from_ref(document), &vocabulary.model) {
+            Ok(found) => instances.extend(found),
+            Err(e) => {
+                every_document_parsed = false;
+                report.defects.push(DeclarationDefect::Instance { reason: e.to_string() });
+            }
+        }
+    }
+    report.checked = instances.len();
+
+    // The questions one document cannot answer: an id declared twice in
+    // two files, and a range constraint whose target lives elsewhere.
+    let mut first_declared: BTreeMap<&str, &str> = BTreeMap::new();
+    for instance in &instances {
+        let document = instance.source.document.as_str();
+        if let Some(prior) = first_declared.insert(instance.iri.as_str(), document) {
+            report.defects.push(DeclarationDefect::Instance {
+                reason: format!(
+                    "duplicate instance {} at {}, already declared at {prior}",
+                    instance.iri, instance.source
+                ),
+            });
+        }
+    }
+    if !every_document_parsed {
+        return InstanceCheck { model: vocabulary.model, report };
+    }
+    match validate_relationships(&vocabulary.model, &instances) {
+        Ok(relationships) => {
+            let spell = |iri: &str| vocabulary.model.compact(iri).unwrap_or_else(|| iri.to_string());
+            for relationship in relationships {
+                if first_declared.contains_key(relationship.object.as_str()) {
+                    continue;
+                }
+                report.dangling.push(DanglingDeclaration {
+                    source: relationship.source.document.clone(),
+                    subject: spell(&relationship.subject),
+                    predicate: spell(&relationship.predicate),
+                    target: spell(&relationship.object),
+                });
+            }
+        }
+        Err(e) => report.defects.push(DeclarationDefect::Instance { reason: e.to_string() }),
+    }
+
+    InstanceCheck { model: vocabulary.model, report }
 }
 ```
 
@@ -735,6 +1044,69 @@ mod tests {
         );
     }
 
+    /// The Backstage maintainer persona's blocker (2026-09-22): they wrote
+    /// the module the guide invites, declaring `supersededBy` over
+    /// `x0k:Decision` because ADR014 reverses ADR013 and `refined_by` says
+    /// something else. The predicate was refused as declared by no module.
+    #[test]
+    fn a_readers_own_predicate_over_a_decision_stands_as_a_document_edge() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = scratch_vocabulary(&tmp.path().join("modules"));
+        assert_eq!(
+            predicate_standing(&model, "mycorp:superseded_by"),
+            PredicateStanding::DocumentEdge {
+                uri: "mycorp:supersededBy".to_string()
+            }
+        );
+        // And is refused by name when the module that declares it is not
+        // loaded — which is the same sentence the shipped vocabulary has
+        // always said about a term it does not have.
+        assert_eq!(
+            predicate_standing(&shipped(), "mycorp:superseded_by"),
+            PredicateStanding::Undeclared
+        );
+    }
+
+    #[test]
+    fn a_prefixed_term_no_loaded_module_declares_is_undeclared() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = scratch_vocabulary(&tmp.path().join("modules"));
+        assert_eq!(
+            predicate_standing(&model, "mycorp:shreds"),
+            PredicateStanding::Undeclared
+        );
+    }
+
+    #[test]
+    fn an_envelope_edge_in_a_readers_namespace_checks_clean() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = scratch_vocabulary(&tmp.path().join("modules"));
+        let envelope = doc(
+            "mycorp:design/adr013",
+            "  edges:\n    mycorp:superseded_by:\n      - mycorp:design/adr014\n",
+        );
+
+        let report = check_envelope(&model, &envelope);
+        assert!(report.is_clean(), "unexpected defects: {:?}", report.defects);
+        assert_eq!(
+            report.edges.first().map(|(p, t)| (p.as_str(), t.to_string())),
+            Some(("mycorp:superseded_by", "mycorp:design/adr014".to_string()))
+        );
+
+        // The same envelope with a term nothing declares: a defect naming
+        // the term, exactly as an unknown `x0k:` predicate is.
+        let envelope = doc(
+            "mycorp:design/adr013",
+            "  edges:\n    mycorp:shreds:\n      - mycorp:design/adr014\n",
+        );
+        match check_envelope(&model, &envelope).defects.as_slice() {
+            [Defect::UndeclaredPredicate { predicate }] => {
+                assert_eq!(predicate, "mycorp:shreds");
+            }
+            other => panic!("expected an UndeclaredPredicate, got {other:?}"),
+        }
+    }
+
     #[test]
     fn a_clean_envelope_yields_its_id_and_edges() {
         let report = check_envelope(&shipped(), &two_edged());
@@ -812,10 +1184,10 @@ mod tests {
     }
 
     /// A vocabulary a reader could write: a `mycorp` module in its own
-    /// namespace, declaring one genus class and one edge predicate over
-    /// it. Written to a scratch directory and loaded, because what is
-    /// under test is that a check can be made against files this build
-    /// compiled nothing about.
+    /// namespace, declaring one genus class and one edge predicate whose
+    /// subject is a decision. Written to a scratch directory and loaded,
+    /// because what is under test is that a check can be made against
+    /// files this build compiled nothing about.
     fn scratch_vocabulary(dir: &std::path::Path) -> OntologyModel {
         const CORE: &str = "\
 <https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
@@ -827,6 +1199,10 @@ mod tests {
 <https://mycorp.example/ontology#Brief> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://mycorp.example/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/mycorp> .
 <https://mycorp.example/ontology#Brief> <http://www.w3.org/2000/01/rdf-schema#label> \"Brief\" .
+<https://mycorp.example/ontology#supersededBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://mycorp.example/ontology#supersededBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
+<https://mycorp.example/ontology#supersededBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Decision> .
+<https://mycorp.example/ontology#supersededBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/mycorp> .
 ";
         std::fs::create_dir_all(dir).expect("scratch module directory");
         std::fs::write(dir.join("core.ttl"), CORE).expect("write core");
@@ -889,16 +1265,50 @@ actors: [human, ai_agent]
 ```
 "#;
 
+    /// A signifier for something else entirely, so the set can speak to
+    /// signification without answering for the affordance under test.
+    const UNRELATED_SIGNIFIER: &str = r#"### `weave`
+
+```yaml x0k:signifier
+id: x0k:signifier/x0k-tangle-weave
+edges:
+  signifies:
+    - x0k:affordance/weave_a_document
+  presentedOn:
+    - x0k:surface/cli
+```
+"#;
+
     #[test]
-    fn a_human_claim_with_no_signifier_is_a_defect() {
-        let entities = declarations(HUMAN_CLAIM);
+    fn a_human_claim_with_no_signifier_is_a_defect_in_a_set_that_signifies() {
+        let entities = declarations(&format!("{HUMAN_CLAIM}{UNRELATED_SIGNIFIER}"));
         let report = check_declarations(&entities);
-        assert_eq!(report.checked, 1);
+        assert_eq!(report.checked, 2);
+        assert!(report.notes.is_empty(), "the set can answer: {:?}", report.notes);
         match report.defects.as_slice() {
             [DeclarationDefect::HumanClaimWithoutSignifier { affordance }] => {
                 assert_eq!(affordance.to_string(), "x0k:affordance/read_declared_affordances");
             }
             other => panic!("expected one HumanClaimWithoutSignifier, got {other:?}"),
+        }
+    }
+
+    /// `check decisions` on a pristine clone: the affordances are here
+    /// and every signifier is one directory over, so the absence of a
+    /// signifier is the scan's shape and not a broken promise. Seven of
+    /// these greeted the jj maintainer persona at their first command on
+    /// 2026-09-22.
+    #[test]
+    fn a_human_claim_is_a_note_in_a_set_that_declares_no_signifier() {
+        let entities = declarations(HUMAN_CLAIM);
+        let report = check_declarations(&entities);
+        assert_eq!(report.checked, 1);
+        assert!(report.is_clean(), "unexpected defects: {:?}", report.defects);
+        match report.notes.as_slice() {
+            [DeclarationNote::HumanClaimUnsignifiable { affordance }] => {
+                assert_eq!(affordance.to_string(), "x0k:affordance/read_declared_affordances");
+            }
+            other => panic!("expected one HumanClaimUnsignifiable, got {other:?}"),
         }
     }
 
@@ -928,14 +1338,150 @@ edges:
     fn an_agent_only_claim_needs_no_signifier() {
         let body = HUMAN_CLAIM.replace("actors: [human, ai_agent]", "actors: [ai_agent]");
         let entities = declarations(&body);
-        assert!(check_declarations(&entities).is_clean());
+        let report = check_declarations(&entities);
+        assert!(report.is_clean());
+        assert!(report.notes.is_empty(), "nothing was asked: {:?}", report.notes);
+    }
+
+    /// The shipped `crates/x0k-folio-cli/examples/papers` collection,
+    /// carried inline: a vocabulary document and two papers, one citing
+    /// the other. The alpha block is the parameter because every one of
+    /// the tests below is that block broken a different way — which is
+    /// exactly what three maintainers did to the real directory on
+    /// 2026-09-22, each watching `check` pass at exit 0.
+    #[cfg(feature = "document-vocabulary")]
+    fn papers(alpha_block: &str) -> [(&'static str, String); 3] {
+        const VOCABULARY: &str = r#"---
+x0k:
+  format: folio/v1
+  id: x0k:wiki/paper-vocabulary
+  type: wiki
+---
+# Papers and citations
+
+```turtle folio:ontology
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix paper: <https://example.org/papers#> .
+
+<https://example.org/paper-vocabulary> a owl:Ontology ;
+    vann:preferredNamespacePrefix "paper" ;
+    vann:preferredNamespaceUri "https://example.org/papers#" .
+paper:Paper a owl:Class ;
+    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .
+paper:cites a owl:ObjectProperty ;
+    rdfs:domain paper:Paper ;
+    rdfs:range paper:Paper ;
+    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .
+```
+"#;
+        const BETA: &str = r#"---
+x0k:
+  format: folio/v1
+  id: x0k:wiki/paper-beta
+  type: wiki
+---
+# Beta
+
+```yaml paper:paper
+id: paper:paper/beta
+```
+"#;
+        let alpha = format!(
+            "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/paper-alpha\n  type: wiki\n---\n\
+             # Alpha\n\nA paper about reading a collection as a graph.\n\n{alpha_block}"
+        );
+        [
+            ("vocabulary.md", VOCABULARY.to_string()),
+            ("alpha.md", alpha),
+            ("beta.md", BETA.to_string()),
+        ]
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    const ALPHA_CITES_BETA: &str =
+        "```yaml paper:paper\nid: paper:paper/alpha\nedges:\n  paper:cites: [paper:paper/beta]\n```\n";
+
+    #[cfg(feature = "document-vocabulary")]
+    fn check_papers(alpha_block: &str) -> InstanceCheck {
+        let documents = papers(alpha_block);
+        let sources: Vec<_> = documents
+            .iter()
+            .map(|(id, body)| crate::document_vocabulary::DocumentSource { id, body })
+            .collect();
+        check_instances(&OntologyModel::new([]), &sources)
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn the_shipped_papers_collection_checks_clean_and_is_counted() {
+        let report = check_papers(ALPHA_CITES_BETA).report;
+        assert!(report.is_clean(), "unexpected defects: {:?}", report.defects);
+        assert_eq!(report.checked, 2, "both papers are declarations, and both were read");
+        assert!(report.dangling.is_empty());
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_predicate_the_collections_vocabulary_never_declares_is_a_defect() {
+        let report = check_papers(&ALPHA_CITES_BETA.replace("paper:cites", "paper:shreds")).report;
+        let rendered = match report.defects.as_slice() {
+            [defect] => defect.to_string(),
+            other => panic!("expected one defect, got {other:?}"),
+        };
+        assert!(rendered.contains("unknown object property"), "{rendered}");
+        assert!(rendered.contains("alpha.md:"), "the defect names a line: {rendered}");
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn an_instance_of_a_class_that_does_not_exist_is_a_defect() {
+        let broken = ALPHA_CITES_BETA
+            .replace("yaml paper:paper", "yaml paper:monograph")
+            .replace("id: paper:paper/alpha", "id: paper:monograph/alpha");
+        let report = check_papers(&broken).report;
+        let rendered = match report.defects.as_slice() {
+            [defect] => defect.to_string(),
+            other => panic!("expected one defect, got {other:?}"),
+        };
+        assert!(rendered.contains("unknown concept paper:monograph"), "{rendered}");
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_citation_of_a_paper_that_is_not_here_is_noted_and_not_a_defect() {
+        let report =
+            check_papers(&ALPHA_CITES_BETA.replace("paper:paper/beta", "paper:paper/nowhere")).report;
+        assert!(report.is_clean(), "a region boundary is not a fault: {:?}", report.defects);
+        match report.dangling.as_slice() {
+            [edge] => {
+                assert_eq!(edge.source, "alpha.md");
+                assert_eq!(edge.subject, "paper:paper/alpha");
+                assert_eq!(edge.predicate, "paper:cites");
+                assert_eq!(edge.target, "paper:paper/nowhere");
+            }
+            other => panic!("expected one dangling declaration, got {other:?}"),
+        }
+    }
+
+    /// The second half of the same hole: the block that declares `paper`
+    /// was live for `ingest` and dead for `check`, so an envelope id in
+    /// the collection's own namespace was refused with the module that
+    /// declares it sitting in the same directory.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn the_collections_own_prefix_reaches_the_envelope_pass() {
+        let model = check_papers(ALPHA_CITES_BETA).model;
+        assert!(EntityId::parse_in(&model, "paper:paper/alpha").is_ok());
+        assert!(EntityId::parse_in(&OntologyModel::new([]), "paper:paper/alpha").is_err());
     }
 }
 `````
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [standing](#chunk-standing) · [vocabulary](#chunk-vocabulary) · [camel-form](#chunk-camel-form) · [defect](#chunk-defect) · [check-envelope](#chunk-check-envelope) · [check-corpus](#chunk-check-corpus) · [check-declarations](#chunk-check-declarations) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [standing](#chunk-standing) · [vocabulary](#chunk-vocabulary) · [camel-form](#chunk-camel-form) · [defect](#chunk-defect) · [check-envelope](#chunk-check-envelope) · [check-corpus](#chunk-check-corpus) · [check-declarations](#chunk-check-declarations) · [check-instances](#chunk-check-instances) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -953,6 +1499,8 @@ edges:
 <<check-corpus>>
 
 <<check-declarations>>
+
+<<check-instances>>
 
 <<tests>>
 ```

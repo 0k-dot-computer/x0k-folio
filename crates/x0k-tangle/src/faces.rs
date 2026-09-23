@@ -12,10 +12,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use x0k_folio::colophon::{is_colophon, parse_envelope, parse_envelope_in, Colophon, DocType};
+use x0k_folio::document_vocabulary::DocumentSource;
 use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::{
-    check_corpus, check_declarations, declared_facts, document_edges, extract_from_markdown,
-    CorpusReport, DeclarationReport, EntityId, InlineEntity, ICON_CLASS,
+    check_corpus, check_declarations, check_instances, declared_facts, document_edges,
+    extract_from_markdown, CorpusReport, DeclarationReport, EntityId, InlineEntity, ICON_CLASS,
 };
 use x0k_icon::{check, emit, one_per_grid, Accepted, Grid, Label, Palette};
 use x0k_ontology::concept_facts::OntologyModel;
@@ -108,7 +109,8 @@ pub fn test_fn_sources(body: &str) -> Vec<(String, String)> {
 }
 
 /// Every `.md` under `paths` whose frontmatter claims folio/v1, sorted.
-/// A path that is a file is taken as given; a directory is walked.
+/// A path that is a file is taken as given; a directory is walked. A
+/// file reached through two overlapping paths appears once.
 pub fn discover_folio_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut docs = Vec::new();
     for path in paths {
@@ -129,6 +131,7 @@ pub fn discover_folio_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
         }
     }
     docs.sort();
+    docs.dedup();
     Ok(docs)
 }
 
@@ -148,11 +151,12 @@ pub struct VocabularyReport {
     /// The corpus check over every document that parsed: defects, and
     /// the edges that leave the set.
     pub corpus: CorpusReport,
-    /// The declarations the set carries — affordances and signifiers —
-    /// checked together: a human claim no signifier signifies is a
-    /// defect, and it is a question about the set, because the
-    /// signifier lives in the chapter that holds the face, not beside
-    /// the claim.
+    /// The declarations the set carries, checked together: a human claim
+    /// no signifier signifies is a defect, and it is a question about the
+    /// set, because the signifier lives in the chapter that holds the
+    /// face, not beside the claim. So is every typed instance read
+    /// against the vocabulary the set carries — ours and the reader's
+    /// alike — because that vocabulary is a property of the set too.
     pub declarations: DeclarationReport,
 }
 
@@ -167,13 +171,14 @@ impl VocabularyReport {
 /// The vocabulary a check reads against.
 ///
 /// `explicit` is `--vocabulary <dir>`, a directory of `*.ttl` module
-/// files. With none given, a projection's own `PROVENANCE.json` names the
+/// files, read on top of the set this build compiled — `only` reads it
+/// alone. With no directory, a projection's own `PROVENANCE.json` names the
 /// modules it shipped and those are loaded; with neither, the set this
 /// build compiled.
-pub fn vocabulary(explicit: Option<&Path>) -> Result<OntologyModel> {
-    if let Some(dir) = explicit {
-        return OntologyModel::load(dir)
-            .with_context(|| format!("loading a vocabulary from {}", dir.display()));
+pub fn vocabulary(explicit: Option<&Path>, only: bool) -> Result<OntologyModel> {
+    if explicit.is_some() {
+        return x0k_folio::document_vocabulary::select_vocabulary(explicit, only)
+            .map_err(|error| anyhow::anyhow!(error));
     }
     match projected_modules_dir(Path::new("PROVENANCE.json")) {
         Some(dir) => OntologyModel::load(&dir).with_context(|| {
@@ -195,8 +200,9 @@ fn projected_modules_dir(provenance: &Path) -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-/// Read every folio/v1 document under `paths` against `model`. Documents
-/// are named by their path in the report.
+/// Read every folio/v1 document under `paths` against `model`, extended
+/// by the vocabulary the set itself carries. Documents are named by their
+/// path in the report.
 pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<VocabularyReport> {
     let mut unparsed = Vec::new();
     let mut envelopes: Vec<(String, Colophon)> = Vec::new();
@@ -206,11 +212,29 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
     // `(document name, document id, proving chunk)` for every tangled
     // document, judged once the set's affordances are all known.
     let mut proofs: Vec<(String, String, ProvingChunk)> = Vec::new();
+
+    // Read the set once and assemble its vocabulary before parsing the
+    // first envelope: a collection that defines `paper:` in a
+    // `turtle folio:ontology` block may use `paper:` in an id, and the
+    // pass that refused it had never looked. The collector is handed
+    // whole files, frontmatter included, so the line it reports in a
+    // diagnostic is a line of the file a reader opens.
+    let mut documents: Vec<(String, String)> = Vec::new();
     for path in discover_folio_documents(paths)? {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let name = path.display().to_string();
-        match parse_envelope_in(model, &content) {
+        documents.push((path.display().to_string(), content));
+    }
+    let sources: Vec<DocumentSource<'_>> = documents
+        .iter()
+        .map(|(name, content)| DocumentSource { id: name.as_str(), body: content.as_str() })
+        .collect();
+    let instances = check_instances(model, &sources);
+    let model = &instances.model;
+
+    for (name, content) in &documents {
+        let name = name.clone();
+        match parse_envelope_in(model, content) {
             Ok((envelope, body)) => {
                 // A chapter's prose link is an edge — `presupposes` to a
                 // wiki page, `realizes` to an affordance — and is checked as
@@ -224,7 +248,7 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());
                 if envelope.tangle.is_some() {
-                    if let Ok(parsed) = parse_document(&content) {
+                    if let Ok(parsed) = parse_document(content) {
                         for chunk in proving_chunks(&parsed) {
                             proofs.push((name.clone(), envelope.id.clone(), chunk));
                         }
@@ -236,7 +260,15 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
         }
     }
     let mut corpus = check_corpus(model, envelopes.iter().map(|(name, env)| (name.as_str(), env)));
-    let declarations = check_declarations(entities.iter());
+    // Every affordance and signifier is a typed instance too, so the two
+    // passes read the same blocks and ask different questions of them.
+    // The count is therefore the larger of the two and never their sum,
+    // which would count every `x0k:` declaration twice.
+    let mut declarations = check_declarations(entities.iter());
+    declarations.checked = declarations.checked.max(instances.report.checked);
+    declarations.defects.extend(instances.report.defects);
+    declarations.dangling = instances.report.dangling;
+    declarations.notes.extend(instances.report.notes);
     let declared: HashSet<String> = entities
         .iter()
         .filter(|e| e.marker_class == "affordance")

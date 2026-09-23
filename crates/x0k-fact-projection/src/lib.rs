@@ -10,19 +10,19 @@
 //!   the shape facts have *between* substrates — before a Dialog-DB cache
 //!   writer applies its `string:`/`entity:` text encoding, and before the
 //!   entry spine wraps facts in entry payloads.
-//! - [`project_envelope`] — projects a folio/v1 envelope (viewed
-//!   through the neutral [`ColophonView`]) into typed facts. Lifted
+//! - `project_envelope` — projects a folio/v1 envelope (viewed
+//!   through the neutral `ColophonView`) into typed facts. Lifted
 //!   from the folio ingester's `envelope_facts`; the Dialog-DB value
 //!   encoding deliberately did NOT move here — it stays at the Dialog-DB
 //!   write site (`x0k-folio-daemon/src/folio_ingester.rs`).
-//! - [`FactSource`] — the read-side seam: "give me the facts for entity X /
+//! - `FactSource` — the read-side seam: "give me the facts for entity X /
 //!   all facts in scope", substrate-agnostic. Grove reconstruction folds
 //!   over this trait instead of raw Dialog-DB artifacts, so a spine-backed
 //!   implementation arrives without touching the fold logic.
-//! - [`IncrementalFactSource`] / [`CoverCursor`] — the *incremental* half of
+//! - `IncrementalFactSource` / `CoverCursor` — the *incremental* half of
 //!   that seam: a watermark that advances iff the source can have changed,
 //!   the entity worklist between two watermarks, and the cursor discipline
-//!   that turns them into "re-derive only what moved". [`FactSource`] alone
+//!   that turns them into "re-derive only what moved". `FactSource` alone
 //!   is snapshot-only, so a consumer that folds on every write had to reach
 //!   past it to a concrete source and hand-roll the loop; this is where that
 //!   capability lives instead.
@@ -40,14 +40,14 @@
 //! payload digest points at, and [`payload::file_content_cause`] is the
 //! cause convention for file-ingested facts.
 //!
-//! The [`relation_graph`] module is the derived
-//! relation-graph fold: [`relation_graph::fold_relation_graph`] groups a
+//! The `relation_graph` module is the derived
+//! relation-graph fold: `relation_graph::fold_relation_graph` groups a
 //! resolved view's stamped facts into `entity → predicate → observed
 //! set`, with the store's LWW ordering reused for single-value reads.
 //!
-//! The [`provenance`] module is the typed fact provenance of the
+//! The `provenance` module is the typed fact provenance of the
 //! `cell-substrate` provenance-outbound amendment:
-//! [`provenance::FactProvenance`] (producer identity + journal seq)
+//! `provenance::FactProvenance` (producer identity + journal seq)
 //! renders into the `cause` slot as `journal:<producer>@<seq>`,
 //! replacing free-form cause strings for substrate-connected journaled
 //! writers. Attribution metadata only — dominance rules do not change.

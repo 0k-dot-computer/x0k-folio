@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/query-cli.md",
-  "source_hash": "22e3e1b34231864c",
+  "source_hash": "8cd8be1df6a2ab89",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,11 +9,11 @@
       "outputs": [
         {
           "path": "crates/x0k-folio-cli/Cargo.toml",
-          "hash": "fec1d6918ed823eb"
+          "hash": "a53b0bb8e25a8b12"
         },
         {
           "path": "crates/x0k-folio-cli/src/main.rs",
-          "hash": "3ad88a1000bff5c7"
+          "hash": "38b649e05a9b8bdb"
         }
       ]
     }

@@ -255,7 +255,10 @@ impl fmt::Display for EntityIdError {
             Self::UnknownScheme { input, scheme } => write!(
                 f,
                 "id `{input}` uses the namespace prefix `{scheme}`, which no loaded \
-                 vocabulary module declares"
+                 vocabulary module declares — a `turtle folio:ontology` block \
+                 declares its prefix only to a scan that reads the document \
+                 holding it, so scan the directory rather than the one file, or \
+                 load the modules from a directory of `.ttl` files"
             ),
             Self::MissingSeparator(v) => {
                 write!(f, "id `{v}` is missing the `/` separator after the class")

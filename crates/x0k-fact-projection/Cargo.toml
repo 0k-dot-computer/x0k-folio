@@ -1,6 +1,6 @@
 [package]
 name = "x0k-fact-projection"
-version = "0.1.0"
+version = "0.1.1"
 edition = { workspace = true }
 description = "Wasm-safe fact-projection contract: substrate-neutral FactEntry tuples, folio envelope + grove entity projections, and the FactSource read seam (single-spine plan C0)"
 license = "MIT"

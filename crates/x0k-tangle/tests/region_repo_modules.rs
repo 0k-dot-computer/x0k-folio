@@ -1660,6 +1660,30 @@ fn a_prebuilt_declaration_emits_the_release_lane_and_the_wrapper() {
 }
 
 #[test]
+fn a_publication_writing_the_registry_page_keeps_it() {
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT);
+    // The page is a chunk like any other file the publication owns.
+    let doc = std::fs::read_to_string(ws.path().join(PUB_REL)).unwrap();
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        format!(
+            "{doc}\n````markdown {{#npm-page file=\"npm/README.md\"}}\n# @demo/tool\n\nThe npm wrapper for the demo tool.\n````\n"
+        ),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project_github(ws.path(), out.path()).expect("projection");
+    let page = std::fs::read_to_string(out.path().join("npm/README.md")).unwrap();
+    assert!(page.contains("The npm wrapper for the demo tool."), "{page}");
+    assert_ne!(
+        page,
+        std::fs::read_to_string(out.path().join("README.md")).unwrap(),
+        "the publication's page is not the repository's README"
+    );
+}
+
+#[test]
 fn the_lane_never_enters_the_repositorys_own_ci() {
     let plain_ws = workspace(&[], true);
     let plain = tempfile::tempdir().unwrap();

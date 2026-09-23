@@ -20,17 +20,24 @@ readme = "../../README.md"
 default = ["load"]
 load = ["dep:oxttl", "dep:oxrdf"]
 
-# The hand-authored vocabularies for x0k's own internal subjects — grants,
-# calendars, declarations, entries, findings, proposals, settlements, usage.
-# Off by default: a plain build is the concept-fact fold and its views.
-product = ["blake3"]
+# No hand-authored vocabulary is left: every chapter's terms are module
+# files now. What this guards is only what a migrated chapter left behind
+# because no module can declare it, and only the part of that residue whose
+# consumers are several crates or none — the settle-or-queue fold with its
+# read-side shapes and closed authority and axis vocabularies, the read-side
+# shapes of the entry plane with its two closed value vocabularies and the
+# one fixed interpretation kind
+# (`x0k:implementation/ontology/{settlement,entry-vocab}`). A residue with
+# exactly one consumer crate lives in that crate instead, which is where the
+# others went; these two are read by crates that are siblings with no shared
+# lower crate, so their home is a placement decision rather than a move.
+# Off by default: a plain build is the concept-fact fold and its views. The
+# exit condition is that the last residue finds a home, not that the last
+# chapter leaves — see `views.md`. The feature carries no dependency of its
+# own any more: the blake3 hash left with the finding vocabulary's URI mint.
+product = []
 
 [dependencies]
-# The finding vocabulary's subject-determined URI mint hashes its
-# (check, tree-state) pair; nothing RDF-shaped enters the runtime graph.
-# That vocabulary is behind `product`, and so is the hash.
-blake3 = { version = "1.5", optional = true }
-
 # The TTL parser behind the `load` feature. Also a build dependency below:
 # `build.rs` compiles `src/load.rs` in by path, so a build that switches the
 # feature off still parses the modules it emits tables from.

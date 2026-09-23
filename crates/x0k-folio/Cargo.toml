@@ -1,6 +1,6 @@
 [package]
 name = "x0k-folio"
-version = "0.1.0"
+version = "0.1.1"
 edition = { workspace = true }
 description = "folio/v1 envelope types, projection plugin, and HTML canonicalizer. Substrate for ontology-aware markdown/HTML documents."
 license = "MIT"
@@ -32,7 +32,7 @@ document-vocabulary = ["x0k-ontology/load"]
 # library that cannot write a document back out is the missing half
 # `filesystem-graph-materialization` §8 names. Non-optional and published
 # alongside, with a dependency list of serde/postcard/blake3.
-x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core"] , version = "0.1.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core"] , version = "0.1.1" }
 
 # `layout::CorpusScope::find_folio` walks a genus directory to resolve a
 # document by stem, since an id carries no topic.
@@ -81,7 +81,7 @@ blake3 = "1"
 # library itself needs the predicate NAMES (in `core`) and never
 # `project_envelope`. Declaring it here rather than in `[dependencies]` is
 # what keeps the published crate on the core surface.
-x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core", "envelope"] , version = "0.1.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core", "envelope"] , version = "0.1.1" }
 # The loader, for tests that read a genus or a namespace off a scratch
 # module directory rather than out of the compiled tables.
 x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.1.0" }

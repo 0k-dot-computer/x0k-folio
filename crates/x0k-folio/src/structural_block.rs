@@ -382,6 +382,12 @@ pub enum InlineSpan {
     Code(String),
     Strong(Vec<InlineSpan>),
     Emphasis(Vec<InlineSpan>),
+    /// `~~struck~~` / `<del>`. A structural span like the two above — it
+    /// carries children, not flat text — so an author's strikethrough
+    /// survives parse, edit, save and reopen instead of being flattened to
+    /// its text by the first tree that did not model it (2026-09-16,
+    /// vacation-evidence/reserves-map.md §R2).
+    Strikethrough(Vec<InlineSpan>),
     /// An inline element the author wrote that carries presentation the
     /// model does not otherwise model — `<span class="eyebrow">` or an
     /// `<img>` with a disallowed attribute. Held so a save can rebuild it

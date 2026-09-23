@@ -1,6 +1,6 @@
 {
   "source": "implementation/tangle/source-sync.md",
-  "source_hash": "960c454c6ddf975a",
+  "source_hash": "11d32aacef23b3e8",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-tangle/src/sync.rs",
-          "hash": "3c7a0d9ab28cc1da"
+          "hash": "0e12427fdb183ea6"
         }
       ]
     }

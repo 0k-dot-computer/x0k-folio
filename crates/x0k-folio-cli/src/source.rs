@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use std::io::Read;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_norway::Value;
-use x0k_fact_projection::{FactEntry, FactValue};
+use x0k_fact_projection::{envelope_predicates, FactEntry, FactValue};
 use x0k_folio::colophon::{is_colophon, parse_envelope_in};
 use x0k_folio::document_vocabulary::{
     self as vocabulary, DeclaredInstance, DocumentSource as VocabularySource,
 };
 use x0k_folio_ingest::lifecycle::{DocumentProjection, DocumentSource};
-use x0k_ontology::concept_facts::{camel_to_kebab, OntologyModel, OntologyValue, RDF_TYPE};
+use x0k_ontology::concept_facts::{camel_to_kebab, OntologyModel, OntologyValue, RDF_TYPE, X0K_NS};
 
 pub const MAX_FILES: usize = 100_000;
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
@@ -32,6 +32,8 @@ struct Prepared {
 pub struct FolioSource {
     root: PathBuf,
     fingerprint: String,
+    namespaces: BTreeMap<String, String>,
+    edge_predicates: BTreeMap<String, String>,
     prepared: BTreeMap<PathBuf, Prepared>,
     diagnostics: Vec<SourceDiagnostic>,
     base_bytes: Option<Vec<u8>>,
@@ -68,7 +70,9 @@ impl FolioSource {
         let vocabulary = vocabulary::load_definitions(&documents, &base)
             .context("prepare collection vocabulary")?;
         let fingerprint = vocabulary_fingerprint(&vocabulary.model);
-        let mut source = Self { root, fingerprint, prepared: BTreeMap::new(), diagnostics: Vec::new(), base_bytes: None };
+        let namespaces = namespace_table(&vocabulary.model);
+        let edge_predicates = edge_predicate_table(&vocabulary.model);
+        let mut source = Self { root, fingerprint, namespaces, edge_predicates, prepared: BTreeMap::new(), diagnostics: Vec::new(), base_bytes: None };
         let mut instances = Vec::new();
         for (path, bytes) in &contents {
             let result = prepare_document(path, bytes, &vocabulary, &mut instances);
@@ -122,6 +126,8 @@ impl FolioSource {
     }
     pub fn root(&self) -> &Path { &self.root }
     pub fn fingerprint(&self) -> &str { &self.fingerprint }
+    pub fn namespaces(&self) -> &BTreeMap<String, String> { &self.namespaces }
+    pub fn edge_predicates(&self) -> &BTreeMap<String, String> { &self.edge_predicates }
     pub fn diagnostics(&self) -> &[SourceDiagnostic] { &self.diagnostics }
 }
 fn ontology_fact(fact: &x0k_ontology::concept_facts::OntologyFact) -> FactEntry {
@@ -155,6 +161,26 @@ fn base_projection(root: &Path, base: &OntologyModel, origin: &str) -> Result<(V
         FactEntry::new(&uri, base.expand("x0k:folio/sourcePath"), FactValue::Text(path.to_string_lossy().into())),
     ]);
     Ok((bytes, DocumentProjection { uri, content_hash: String::new(), batches: batches.into_iter().collect() }))
+}
+/// Every compact prefix this collection's vocabulary licenses, and the
+/// namespace it expands to. The base namespace is always licensed; the rest
+/// come from the selected modules and the collection's own ontology blocks,
+/// which is the same set `expand` resolves against when a document's id is
+/// projected.
+fn namespace_table(model: &OntologyModel) -> BTreeMap<String, String> {
+    let mut table = BTreeMap::from([("x0k".to_string(), X0K_NS.to_string())]);
+    table.extend(model.extension_namespaces());
+    table
+}
+/// Every object property this collection's vocabulary declares, keyed by its
+/// `edges:` spelling. The value is the expanded IRI a fact is stored under.
+fn edge_predicate_table(model: &OntologyModel) -> BTreeMap<String, String> {
+    model.object_properties().into_iter().filter_map(|property| {
+        let (prefix, camel) = property.uri.split_once(':')?;
+        let snake = x0k_ontology::concept_facts::camel_to_snake(camel);
+        let spelled = if prefix == "x0k" { snake } else { format!("{prefix}:{snake}") };
+        Some((spelled, model.expand(&property.uri)))
+    }).collect()
 }
 fn vocabulary_fingerprint(model: &OntologyModel) -> String {
     let mut hash = blake3::Hasher::new();
@@ -240,12 +266,16 @@ fn prepare_document(
     let mut add = |key: &str, value: FactValue| {
         facts.push(FactEntry::new(&uri, model.expand(key), value));
     };
-    add("x0k:folio/docType", FactValue::Text(envelope.doc_type.as_str().into()));
-    add("x0k:folio/bodyFormat", FactValue::Text(envelope.body_format.clone()));
-    if let Some(status) = envelope.status { add("x0k:folio/status", FactValue::Text(status.as_str().into())); }
-    if let Some(summary) = envelope.summary { add("x0k:summary", FactValue::Text(summary)); }
-    for concern in envelope.concerns { add("x0k:folio/concern", FactValue::Text(concern)); }
-    add("x0k:folio/originalId", FactValue::Text(envelope.id.clone()));
+    // Envelope fields take the IRI the vocabulary declares, read from the
+    // one place that spells them — `x0k_fact_projection::envelope_predicates`,
+    // which the spine-side projector reads too. Only provenance — where this
+    // document was read from — wears the `folio/` prefix.
+    add(envelope_predicates::DOC_TYPE, FactValue::Text(envelope.doc_type.as_str().into()));
+    add(envelope_predicates::BODY_FORMAT, FactValue::Text(envelope.body_format.clone()));
+    if let Some(status) = envelope.status { add(envelope_predicates::STATUS, FactValue::Text(status.as_str().into())); }
+    if let Some(summary) = envelope.summary { add(envelope_predicates::SUMMARY, FactValue::Text(summary)); }
+    for concern in envelope.concerns { add(envelope_predicates::CONCERNS, FactValue::Text(concern)); }
+    add(envelope_predicates::ORIGINAL_ID, FactValue::Text(envelope.id.clone()));
     add("x0k:folio/sourcePath", FactValue::Text(path_id.to_string()));
     for (key, targets) in &envelope.edges {
         let predicate = vocabulary::resolve_property(model, key)
@@ -673,6 +703,64 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         assert_eq!(resolved, model.expand("x0k:motivatedBy"));
         assert_eq!(vocabulary::resolve_property(&model, "motivatedBy"), Some(resolved));
         assert!(vocabulary::resolve_property(&OntologyModel::new([]), "motivated_by").is_none());
+    }
+
+    /// One envelope, two projectors. The folio daemon writes an envelope to
+    /// the entry spine through `x0k_fact_projection::project_envelope`; this
+    /// module writes the same envelope to Dialog-DB. A reader who queries the
+    /// term one of them emitted and reads what the other wrote gets zero rows
+    /// and no error, so the two must name ONE term per field — which is why
+    /// both now read `x0k_fact_projection::envelope_predicates` instead of
+    /// spelling their own literals.
+    ///
+    /// The three assertions are the whole seam: which terms both sides
+    /// assert, and — named rather than tolerated — which fields only one of
+    /// them carries. Edges are excluded because they resolve through the
+    /// vocabulary here and stay camelCase there; that is a different seam.
+    #[test]
+    fn envelope_fields_carry_the_substrate_spelling() {
+        use std::collections::BTreeSet;
+        use x0k_fact_projection::{envelope_predicates as substrate, project_envelope, ColophonView};
+        const DOCUMENT: &str = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/example\n  \
+            type: design\n  status: proposed\n  summary: One line.\n  concerns: [a, b]\n  \
+            materialization:\n    loro_doc_id: x0k:document/abc\n    \
+            document_revision_id: x0k:document-revision/def\n    \
+            content_hash: blake3:0123\n---\n# Example\n";
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("decision.md");
+        std::fs::write(&path, DOCUMENT).unwrap();
+        let model = OntologyModel::shipped();
+        let source = FolioSource::prepare(root.path(), OntologyModel::shipped()).unwrap();
+        let projection = project(&source, &path);
+        let mine: BTreeSet<String> = projection.batches.iter()
+            .flat_map(|(_, facts)| facts)
+            .filter(|fact| fact.entity == projection.uri && matches!(fact.value, FactValue::Text(_)))
+            .map(|fact| fact.predicate.clone())
+            .collect();
+
+        let (colophon, _) = parse_envelope_in(&model, DOCUMENT).unwrap();
+        let materialization = colophon.materialization.clone().unwrap_or_default();
+        let theirs: BTreeSet<String> = project_envelope(&ColophonView {
+            uri: projection.uri.clone(),
+            status: colophon.status.unwrap().as_str().into(),
+            doc_type: colophon.doc_type.as_str().into(),
+            subtype: colophon.subtype.clone(),
+            body_format: colophon.body_format.clone(),
+            concerns: colophon.concerns.clone(),
+            materialization_loro_doc_id: materialization.loro_doc_id.clone(),
+            materialization_document_revision_id: materialization.document_revision_id.clone(),
+            materialization_content_hash: materialization.content_hash.clone(),
+            ..ColophonView::default()
+        }).iter().map(|fact| model.expand(&fact.predicate)).collect();
+
+        let expand = |terms: &[&str]| terms.iter().map(|term| model.expand(term)).collect::<BTreeSet<_>>();
+        assert_eq!(&theirs & &mine, expand(&[
+            substrate::STATUS, substrate::DOC_TYPE, substrate::BODY_FORMAT, substrate::CONCERNS]));
+        assert_eq!(&theirs - &mine, expand(&[
+            substrate::MATERIALIZATION_LORO_DOC, substrate::MATERIALIZATION_REVISION,
+            substrate::MATERIALIZATION_CONTENT_HASH]));
+        assert_eq!(&mine - &theirs, expand(&[
+            substrate::SUMMARY, substrate::ORIGINAL_ID, "x0k:folio/sourcePath"]));
     }
 
     /// Run explicitly against operator-selected files; never embed private corpus fixtures.

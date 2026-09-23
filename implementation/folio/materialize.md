@@ -84,7 +84,7 @@ refusals:
 ```rust {#from-facts}
 /// Rebuild a folio envelope from one entity's facts.
 ///
-/// The inverse of [`project_envelope`](x0k_fact_projection::project_envelope),
+/// The inverse of `project_envelope`,
 /// including its treatment of unknown predicates: anything carrying an
 /// entity reference is an edge, so a predicate this build has never heard
 /// of survives the trip.
@@ -145,7 +145,7 @@ pub fn colophon_from_facts(facts: &[FactEntry]) -> Result<(Colophon, String), Ma
                 }
                 envelope_predicates::SUBTYPE => envelope.subtype = Some(text.clone()),
                 envelope_predicates::BODY_FORMAT => envelope.body_format = text.clone(),
-                envelope_predicates::CONCERN => envelope.concerns.push(text.clone()),
+                envelope_predicates::CONCERNS => envelope.concerns.push(text.clone()),
                 envelope_predicates::MATERIALIZATION_LORO_DOC => {
                     materialization.loro_doc_id = Some(text.clone());
                     saw_materialization = true;
@@ -255,7 +255,7 @@ pub const FOLIO_V1_MATERIALIZER_NAME: &str = "folio/v1";
 //! The `folio/v1` materializer — facts back out to an envelope.
 //!
 //! [`FolioMaterializer`] implements
-//! [`Materializer`](x0k_fact_projection::Materializer) with no Loro, no
+//! [`Materializer`] with no Loro, no
 //! `DocumentOp` and no daemon, which is what lets the published build ship
 //! a facts→file implementation. The sibling `projection` module is the
 //! Loro-backed plugin the daemon calls; it is behind the `plugins` feature

@@ -73,6 +73,52 @@ fn sync_fills_a_javascript_chunk_and_passes() {
     );
 }
 
+/// A class documented the way a Python library documents one: a fenced
+/// example indented inside the docstring.
+const PY_WITH_FENCE: &str = "class Thing:\n    \"\"\"A thing.\n\n    Example:\n        ```python\n        from thing import Thing\n        t = Thing()\n        ```\n    \"\"\"\n\n    x: int = 1\n";
+
+/// The adopter's reproducer at the face they actually run. `sync` used
+/// to end the chunk at the indented nested fence, splice the new body
+/// ahead of it, and leave the tail standing as prose — so the document
+/// grew on every run while the run reported success, and `check` then
+/// blamed the source file (2026-09-22). Four syncs, one body, and a
+/// green `check` over the result.
+#[test]
+fn sync_is_idempotent_over_a_mirror_whose_body_holds_a_fence() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "thing.py", PY_WITH_FENCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# doc\n\n```python {#thing from=\"thing.py\" symbol=\"Thing\"}\n```\n",
+    );
+
+    let mut runs: Vec<String> = Vec::new();
+    for _ in 0..4 {
+        let out = sync(tmp.path());
+        assert!(
+            out.status.success(),
+            "sync failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        runs.push(fs::read_to_string(tmp.path().join("doc.md")).unwrap());
+    }
+    assert_eq!(runs[0], runs[3], "the document grew across syncs:\n{}", runs[3]);
+    assert_eq!(
+        runs[3].matches("from thing import Thing").count(),
+        1,
+        "the docstring example was duplicated:\n{}",
+        runs[3]
+    );
+
+    let out = check_in(tmp.path());
+    assert!(
+        out.status.success(),
+        "check on a freshly-synced mirror: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
 fn sync_exits_nonzero_when_a_chunk_it_was_asked_to_fill_stayed_empty() {
     let tmp = TempDir::new().unwrap();
@@ -301,6 +347,112 @@ fn check_fails_a_whole_file_from_whose_file_is_gone() {
     );
 }
 
+/// The summary line prints on a failing run, which is when it is worth
+/// most and when it was written for the other case: seven references
+/// read, one of them broken, and the last line the reader met said all
+/// seven resolved (jj, 2026-09-23).
+#[test]
+fn check_counts_the_source_references_that_did_not_resolve() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(
+        tmp.path(),
+        "doc.md",
+        "# Remap\n\n\
+         ```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n\n\
+         ```javascript {#gone from=\"remap.js\" symbol=\"noSuchSymbol\"}\n```\n",
+    );
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the broken mirror passed: {stderr}");
+    assert!(
+        stderr.contains("1 of 2 from= source references resolve"),
+        "the summary counts what resolved, not what it read: {stderr}"
+    );
+    assert!(
+        !stderr.contains("chunks, 2 from= source references resolve"),
+        "the line that said the opposite of the exit code is gone: {stderr}"
+    );
+}
+
+/// A Markdown file with no envelope is skipped — that is what makes
+/// adoption incremental — and the count is what keeps skipping it from
+/// being silent. `--require-envelope` is the reader saying every file
+/// under these paths is supposed to be typed (Backstage, 2026-09-23).
+#[test]
+fn check_counts_the_markdown_it_walked_past_and_can_be_told_to_refuse_it() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "typed.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/typed\n  type: design\n  \
+         status: draft\n---\n# Typed\n",
+    );
+    write(tmp.path(), "untyped.md", "# Untyped\n\nNo envelope here.\n");
+
+    let out = check_in(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "an untyped file is not a defect: {stderr}");
+    assert!(
+        stderr.contains("1 envelope(s) read against the vocabulary")
+            && stderr.contains("1 markdown file carried no envelope"),
+        "the line says what it read and what it walked past: {stderr}"
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("check")
+        .arg(tmp.path())
+        .arg("--workspace")
+        .arg(tmp.path())
+        .arg("--require-envelope")
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "--require-envelope let it through: {stderr}");
+    assert!(
+        stderr.contains("untyped.md: carries no folio/v1 envelope"),
+        "the defect names the file: {stderr}"
+    );
+}
+
+/// Every path a verb prints is written the way the reader named it. The
+/// tangler holds an output absolute, so this line paired a relative
+/// document with an absolute destination (jj, 2026-09-23).
+#[test]
+fn tangle_names_its_outputs_the_way_the_reader_named_the_workspace() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/ratelimit.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/ratelimit\n  \
+         type: implementation\n  status: draft\n  tangle:\n    \
+         crate: crates/ratelimit\n    root: src/bucket.rs\n---\n# Bucket\n\n\
+         ```rust {#root}\npub fn take() {}\n```\n",
+    );
+
+    // `--workspace .` from the repository root is how the guide says to
+    // run it, and the shape the absolute destination survived under.
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg("docs")
+        .arg("--workspace")
+        .arg(".")
+        .current_dir(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "tangle failed: {stderr}");
+    assert!(
+        stderr.contains("→ crates/ratelimit/src/bucket.rs"),
+        "the destination is workspace-relative: {stderr}"
+    );
+    assert!(
+        !stderr.contains(&format!("→ {}", tmp.path().display())),
+        "no absolute destination survives: {stderr}"
+    );
+}
+
 #[test]
 fn check_counts_the_source_references_it_resolved() {
     let tmp = TempDir::new().unwrap();
@@ -457,6 +609,66 @@ fn the_dangling_edge_note_claims_only_what_is_true_of_any_tree() {
 }
 
 #[test]
+fn closed_makes_an_edge_that_leaves_the_set_fail_the_run() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/fixture.md",
+        &format!(
+            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/fixture\n  type: design\n  \
+             status: draft\n  edges:\n    {}:\n      - x0k:design/elsewhere\n---\n# Fixture\n",
+            shipped_predicate()
+        ),
+    );
+
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the set is closed and an edge left it, and check passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("`x0k:design/elsewhere` names no document under the paths scanned"),
+        "the defect names the target that resolves to nothing: {stderr}"
+    );
+    assert!(
+        !stderr.contains("note:"),
+        "under --closed the finding is a defect, not a note: {stderr}"
+    );
+}
+
+#[test]
+fn a_declared_edge_that_leaves_the_set_fails_the_run_under_closed_too() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/fixture.md",
+        "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/fixture\n  type: wiki\n  \
+         status: draft\n---\n# Fixture\n\n```yaml x0k:affordance\nid: \
+         x0k:affordance/do_the_thing\nedges:\n  enabledBy:\n    - \
+         x0k:software-module/elsewhere\n```\n",
+    );
+
+    let open = run(&["check"], tmp.path());
+    assert!(
+        open.status.success(),
+        "the default still notes it: {}",
+        String::from_utf8_lossy(&open.stderr)
+    );
+
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a declared edge left a closed set and check passed: {stderr}"
+    );
+    assert!(
+        stderr.contains("names no declaration under the paths scanned"),
+        "the defect says which level it is about: {stderr}"
+    );
+}
+
+#[test]
 fn check_answers_the_same_for_a_file_and_for_the_directory_holding_it() {
     let tmp = TempDir::new().unwrap();
     write(tmp.path(), "docs/d.md", &broken_reference_doc("no-target"));
@@ -571,6 +783,75 @@ fn tangle_refuses_a_document_that_names_nowhere_to_write() {
     assert!(
         stderr.contains("nothing to write") && stderr.contains("declares 1 chunk(s)"),
         "the run says what the document has and what it lacks: {stderr}"
+    );
+}
+
+/// The shape the integration guide tells an existing codebase to write
+/// first: chunks that mirror symbols out of code the document does not
+/// own, and no `tangle:` block, because there is nothing to write.
+fn mirror_only_doc() -> String {
+    "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/mirror\n  \
+     type: implementation\n  status: draft\n  summary: A document that \
+     mirrors code it does not own.\n---\n# Doc\n\n\
+     ```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n"
+        .to_string()
+}
+
+#[test]
+fn tangle_passes_a_mirror_only_document_it_was_named() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(tmp.path(), "docs/d.md", &mirror_only_doc());
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg(tmp.path().join("docs/d.md"))
+        .arg("--workspace")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "the document the guide recommends writing first was refused: {stderr}"
+    );
+    assert!(
+        stderr.contains("mirrors 1 chunk(s) from source it does not own"),
+        "the run says why nothing was written: {stderr}"
+    );
+    assert!(
+        !tmp.path().join("src").exists(),
+        "a mirror-only document wrote something"
+    );
+}
+
+#[test]
+fn tangle_answers_the_same_for_a_mirror_only_file_and_its_directory() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "remap.js", JS_SOURCE);
+    write(tmp.path(), "docs/d.md", &mirror_only_doc());
+
+    let by_file = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg(tmp.path().join("docs/d.md"))
+        .arg("--workspace")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let by_dir = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("tangle")
+        .arg(tmp.path().join("docs"))
+        .arg("--workspace")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+
+    assert_eq!(
+        by_file.status.code(),
+        by_dir.status.code(),
+        "the two forms disagree about a mirror-only document: file said {:?}, directory said {:?}",
+        String::from_utf8_lossy(&by_file.stderr),
+        String::from_utf8_lossy(&by_dir.stderr)
     );
 }
 
@@ -755,8 +1036,12 @@ fn check_fails_a_mirror_whose_body_the_source_no_longer_holds() {
         "a mirror showing a body its source does not hold passed: {stderr}"
     );
     assert!(
-        stderr.contains("the mirrored body is not what remap.js holds now"),
+        stderr.contains("the mirrored body and remap.js disagree"),
         "the finding names the source it disagrees with: {stderr}"
+    );
+    assert!(
+        !stderr.contains("holds now"),
+        "and does not accuse the source of having moved: {stderr}"
     );
     assert!(
         stderr.contains("first difference at body line 2"),

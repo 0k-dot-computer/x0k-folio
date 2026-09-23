@@ -104,7 +104,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use x0k_ontology::concept_facts::OntologyModel;
+use x0k_ontology::concept_facts::{camel_to_kebab, OntologyModel};
 ```
 
 ## Format tokens
@@ -327,6 +327,17 @@ impl DocType {
             .contains(s)
             .then(|| DocType::Declared(s.to_string()))
     }
+
+    /// The genus names `model` admits beyond the ten this crate names, as a
+    /// `type:` keyword spells them. This is what a refusal shows a reader
+    /// whose own module declares the class they meant.
+    pub fn declared_beyond_named(model: &OntologyModel) -> Vec<String> {
+        model
+            .class_names()
+            .into_iter()
+            .filter(|name| Self::from_str(name).is_none())
+            .collect()
+    }
 }
 ```
 
@@ -489,6 +500,18 @@ file — skip it", while everything after means "this file *claims* to be
 folio/v1 and is broken — surface it". A directory walk over a mixed tree
 leans on exactly that split.
 
+`InvalidType` carries a second field, and it is there because the message
+without it lies. The accept set for `type:` is not the ten keywords this
+crate names: under a loaded vocabulary it is those ten *plus every class the
+modules declare*, spelled as the kebab-case of the class's local name. A
+message that enumerates only the ten tells a reader with their own module
+that their genus is impossible, and the only way past it is to guess
+spellings — which is what a reader of the public guide did, trying
+`ConceptPage`, `concept_page` and `conceptpage` before reaching
+`concept-page`. So the refusal carries the names the run actually admits,
+and when the keyword differs from an admitted class only by casing it says
+so instead of listing.
+
 <a name="chunk-folio-error"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#folio-error`</sub>
 
 ```rust {#folio-error}
@@ -502,7 +525,10 @@ pub enum FolioError {
     InvalidYaml(String),
     MissingField { field: &'static str },
     WrongFormat { got: String },
-    InvalidType { got: String },
+    /// `declared` holds the genus names the vocabulary this parse ran
+    /// against admits beyond the ten named above — empty for
+    /// [`parse_envelope`], which runs against no vocabulary at all.
+    InvalidType { got: String, declared: Vec<String> },
     InvalidStatus { got: String },
 }
 
@@ -518,10 +544,27 @@ impl std::fmt::Display for FolioError {
             Self::WrongFormat { got } => {
                 write!(f, "`x0k.format` must be `folio/v1`, got `{got}`")
             }
-            Self::InvalidType { got } => write!(
-                f,
-                "`x0k.type` must be one of commitment|design|architecture|publication|manuscript|wiki|implementation|seed|intent|affordance, got `{got}`"
-            ),
+            Self::InvalidType { got, declared } => {
+                write!(
+                    f,
+                    "`x0k.type` must be one of commitment|design|architecture|publication|manuscript|wiki|implementation|seed|intent|affordance, got `{got}`"
+                )?;
+                if declared.is_empty() {
+                    return Ok(());
+                }
+                let kebab = camel_to_kebab(got);
+                if declared.contains(&kebab) {
+                    return write!(
+                        f,
+                        " — a loaded vocabulary module declares that class; spell it `{kebab}`, the kebab-case of the class's local name"
+                    );
+                }
+                write!(
+                    f,
+                    ", or a class a loaded vocabulary module declares: {}",
+                    genus_list(declared)
+                )
+            }
             Self::InvalidStatus { got } => write!(
                 f,
                 "`x0k.status` must be one of proposed|accepted|superseded|draft|stable|stale, got `{got}`"
@@ -531,6 +574,18 @@ impl std::fmt::Display for FolioError {
 }
 
 impl std::error::Error for FolioError {}
+
+/// The admitted genus names, for a refusal message. Capped: a corpus-sized
+/// vocabulary declares dozens, and a reader who needs the whole list needs
+/// the vocabulary, not an error line.
+fn genus_list(declared: &[String]) -> String {
+    const SHOWN: usize = 10;
+    let head = declared.iter().take(SHOWN).cloned().collect::<Vec<_>>().join("|");
+    match declared.len().saturating_sub(SHOWN) {
+        0 => head,
+        rest => format!("{head} and {rest} more"),
+    }
+}
 ```
 
 ## The parsed envelope
@@ -778,7 +833,9 @@ where there are none.
 /// `status`) ARE validated against the known closed sets, so unknown values
 /// fail loudly.
 pub fn parse_envelope(content: &str) -> Result<(Colophon, String), FolioError> {
-    parse_envelope_with(content, DocType::from_str)
+    parse_envelope_with(content, |type_str| {
+        DocType::from_str(type_str).ok_or_else(Vec::new)
+    })
 }
 
 /// Parse an envelope against a vocabulary rather than the ten genera this
@@ -789,12 +846,15 @@ pub fn parse_envelope_in(
     model: &OntologyModel,
     content: &str,
 ) -> Result<(Colophon, String), FolioError> {
-    parse_envelope_with(content, |type_str| DocType::declared_in(model, type_str))
+    parse_envelope_with(content, |type_str| {
+        DocType::declared_in(model, type_str)
+            .ok_or_else(|| DocType::declared_beyond_named(model))
+    })
 }
 
 fn parse_envelope_with(
     content: &str,
-    genus: impl Fn(&str) -> Option<DocType>,
+    genus: impl Fn(&str) -> Result<DocType, Vec<String>>,
 ) -> Result<(Colophon, String), FolioError> {
     let (yaml_block, body) = split_frontmatter(content).ok_or(FolioError::NoFrontmatter)?;
     let root: WireRoot =
@@ -813,7 +873,8 @@ fn parse_envelope_with(
     let type_str = block
         .doc_type
         .ok_or(FolioError::MissingField { field: "type" })?;
-    let doc_type = genus(&type_str).ok_or(FolioError::InvalidType { got: type_str })?;
+    let doc_type =
+        genus(&type_str).map_err(|declared| FolioError::InvalidType { got: type_str, declared })?;
 
     let status = match block.status {
         Some(s) => Some(Status::from_str(&s).ok_or(FolioError::InvalidStatus { got: s })?),
@@ -1324,6 +1385,47 @@ Body.
         let known = content.replace("type: brief", "type: design");
         let (env, _) = parse_envelope_in(&model, &known).expect("a named genus parses");
         assert_eq!(env.doc_type, DocType::Design);
+    }
+
+    /// The refusal has to name what the run admits. A reader of the public
+    /// integration guide spelled a declared class three wrong ways —
+    /// `ConceptPage`, `concept_page`, `conceptpage` — before guessing
+    /// `concept-page`, because the message enumerated ten fixed keywords and
+    /// never mentioned the module they had just loaded.
+    #[test]
+    fn a_refusal_under_a_vocabulary_names_the_declared_genera() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = scratch_vocabulary(&tmp.path().join("modules"));
+        let content = r#"---
+x0k:
+  format: folio/v1
+  id: x0k:brief/tender-process
+  type: Brief
+  status: proposed
+---
+Body.
+"#;
+        // The class is declared and the keyword is only mis-cased: say which
+        // spelling, rather than listing.
+        let err = parse_envelope_in(&model, content).expect_err("`Brief` is not the spelling");
+        let message = err.to_string();
+        assert!(message.contains("spell it `brief`"), "{message}");
+
+        // A keyword nothing declares gets the admitted set instead.
+        let unknown = content.replace("type: Brief", "type: pamphlet");
+        let err = parse_envelope_in(&model, &unknown).expect_err("nothing declares `pamphlet`");
+        let message = err.to_string();
+        assert!(
+            message.contains("a class a loaded vocabulary module declares: brief"),
+            "{message}"
+        );
+
+        // With no vocabulary there is nothing to add, and the message is the
+        // closed set it always was.
+        let message = parse_envelope(&unknown)
+            .expect_err("the closed set still refuses")
+            .to_string();
+        assert!(message.ends_with("got `pamphlet`"), "{message}");
     }
 
     #[test]

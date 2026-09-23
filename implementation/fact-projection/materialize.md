@@ -228,6 +228,9 @@ impl LiveEditPolicy {
 
     /// Read a wire spelling. `None` for anything else — an unrecognized
     /// policy is a manifest to refuse, never a default to assume.
+    // Not `FromStr`: callers want `Option`, and a `FromStr` impl would
+    // hand them a `Result` they must invent an error type for.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "forbidden" => LiveEditPolicy::Forbidden,
@@ -290,6 +293,8 @@ impl MountPosture {
     /// unrecognized posture is a config to refuse, never a default to
     /// assume, because the default that would be assumed is the
     /// permissive one.
+    // Not `FromStr`, for the same reason as `LiveEditPolicy::from_str`.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "working-tree" => MountPosture::WorkingTree,
@@ -368,7 +373,7 @@ pub struct Rendered {
 /// Why a render could not happen.
 ///
 /// One string, in the crate's existing neutral-error style
-/// ([`FactSourceError`](crate::source::FactSourceError)): this crate stays
+/// (`FactSourceError`): this crate stays
 /// wasm-clean and dependency-free, so it carries no error library, and a
 /// materializer's failures are reported to a human rather than matched on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -443,7 +448,7 @@ pub trait Materializer: Send + Sync {
 //! its file and names where they land, with no Loro, no `DocumentOp` and
 //! no daemon in the contract. It is the counterpart of the storage half
 //! that already ships (`FactSink` plus its optional notifier and query
-//! engine), and the inverse of [`project_envelope`](crate::project_envelope)
+//! engine), and the inverse of `project_envelope`
 //! — which is why it lives beside that function rather than in a substrate
 //! crate the folio publication excludes.
 //!

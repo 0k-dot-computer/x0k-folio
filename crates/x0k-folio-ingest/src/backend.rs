@@ -79,7 +79,10 @@ pub trait QueryEngine: Send {
 pub struct Backend {
     pub name: String,
     pub(crate) worker: crate::delivery::Worker,
-    pub(crate) grace: std::time::Duration,
+    /// How long the fan-out waits for this backend, or `None` to wait for it
+    /// to finish. See "The grace is for a live delivery, and a batch is not
+    /// one" above.
+    pub(crate) grace: Option<std::time::Duration>,
     sink: Box<dyn FactSink>,
     pub notifier: Option<Box<dyn Notifier>>,
     pub query: Option<Box<dyn QueryEngine>>,
@@ -89,16 +92,33 @@ impl Backend {
     pub fn new(name: impl Into<String>, sink: impl FactSink + 'static) -> Self {
         let worker = crate::delivery::Worker::new(Box::new(sink));
         Self { name: name.into(), sink: Box::new(worker.clone()), worker,
-            grace: std::time::Duration::from_millis(250), notifier: None, query: None }
+            grace: Some(std::time::Duration::from_millis(250)), notifier: None, query: None }
     }
     /// Access the worker-backed sink without replacing its delivery identity.
     pub fn sink(&self) -> &dyn FactSink { self.sink.as_ref() }
     pub fn sink_mut(&mut self) -> &mut dyn FactSink { self.sink.as_mut() }
     /// Overall completion grace after fan-out admission, capped at 30 seconds.
-    /// Late success remains unacknowledged and is safely replayed.
+    /// Late success remains unacknowledged and is safely replayed. The
+    /// live-delivery answer: a watcher cannot stall its loop on the difference
+    /// between a slow sink and an absent one.
     pub fn with_delivery_grace(mut self, grace: std::time::Duration) -> Self {
-        self.grace = grace.min(std::time::Duration::from_secs(30));
+        self.grace = Some(grace.min(std::time::Duration::from_secs(30)));
         self
+    }
+    /// Wait for this backend to finish rather than for a clock — the answer
+    /// for a closed collection, where nothing is racing the write and
+    /// abandoning one leaves the worker busy and every later source refused.
+    pub fn waiting_for_quiescence(mut self) -> Self {
+        self.grace = None;
+        self
+    }
+    /// Either policy as one option, for a caller whose verb decides which:
+    /// a bounded wait, or `None` for quiescence.
+    pub fn grace_policy(self, grace: Option<std::time::Duration>) -> Self {
+        match grace {
+            Some(grace) => self.with_delivery_grace(grace),
+            None => self.waiting_for_quiescence(),
+        }
     }
     pub fn with_notifier(mut self, notifier: impl Notifier + 'static) -> Self {
         self.notifier = Some(Box::new(notifier));

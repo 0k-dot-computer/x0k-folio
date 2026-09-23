@@ -260,7 +260,7 @@ mod tests {
             FactValue::Float(2.5),
             FactValue::Bytes(vec![0, 1, 2]),
             FactValue::Record(vec![9, 9]),
-            FactValue::Symbol("x0k:folio/status".into()),
+            FactValue::Symbol("x0k:status".into()),
         ];
         for value in values {
             let fact = FactEntry {

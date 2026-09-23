@@ -40,31 +40,25 @@ pub fn weave_html_with_instances(
 ) -> Result<WeaveOutput> {
     let (_, body) = split_body(content);
     let mut html = String::new();
-    let mut title = None;
 
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     html.push_str("<meta charset=\"utf-8\">\n");
     html.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
 
-    // Extract title from first H1
     let opts = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_MATH
         | Options::ENABLE_FOOTNOTES;
-    let title_parser = Parser::new_ext(body, opts);
-    for event in title_parser {
-        if let Event::Start(Tag::Heading { level, .. }) = &event {
-            if *level == pulldown_cmark::HeadingLevel::H1 {
-                // Next text event is the title
-            }
-        }
-        if let Event::Text(text) = &event {
-            if title.is_none() {
-                title = Some(text.to_string());
-            }
-            break;
-        }
-    }
+
+    // The index's resolution, so a woven page and an index row agree about
+    // what the document is called. With no file to fall back on, a document
+    // that names itself nowhere is titled by the last segment of its id.
+    let title = crate::index::document_title(content).or_else(|| {
+        doc.id
+            .as_deref()
+            .and_then(|id| id.rsplit(['/', ':']).next())
+            .map(str::to_string)
+    });
 
     if let Some(ref t) = title {
         writeln!(html, "<title>{}</title>", escape_html(t))?;

@@ -85,6 +85,26 @@ and named relationships to other documents. An implementation can name the
 design it follows; a design can name the decision that supports it. The
 checker validates this metadata against the vocabulary you select.
 
+An edge whose target is not among the documents scanned is a note, not a
+failure, because a collection is usually part of something larger. When it
+is not — a docs tree where every id an edge can name is in the tree —
+`x0k-tangle check <dir> --closed` makes the same finding fail, which is
+what turns the checker into a CI gate against renames nobody finished.
+
+Once a set is typed, `x0k-folio-cli` answers questions across all of it:
+`query --named status` lists every document with its status, and
+`query --named superseded` names each dead decision and what replaced it,
+neither of them needing a query written by hand.
+
+A document can also quote code it does not own. A block that names a source
+file and a symbol is a **mirror**: `x0k-tangle sync` fills it from the source,
+and `check` fails when the two have parted, so a page that shows a signature
+cannot go on showing the old one. Mirroring is safe for a symbol whose own
+documentation contains a fenced example — a Python docstring, most often —
+which it was not before 0.1.1: the fence the writer emitted could be closed by
+the body it was quoting, and each `sync` re-read a little more of the document
+into the chunk and wrote it back, growing the file every run.
+
 The supplied vocabulary describes documents, software, and their
 relationships. You can extend it, replace it, or define a vocabulary
 inside your documents.

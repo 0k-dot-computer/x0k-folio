@@ -257,6 +257,15 @@ pub mod source_check {
     /// an author writes before the first `sync`, and the one `sync` exists
     /// to fill. Reporting it here would make the ordinary first-fill a
     /// failure.
+    ///
+    /// The finding does not say WHICH side moved, because nothing here
+    /// knows: two live artifacts are compared and no record of the last
+    /// sync exists to arbitrate them. The sentence used to read "the
+    /// mirrored body is not what <source> holds now … sync would rewrite
+    /// it", which an adopter read as an accusation against their source
+    /// file (2026-09-22) — and the measurement above says the document is
+    /// the usual mover. So it names the disagreement, says the record is
+    /// not there, and names what `sync` will do about it.
     fn drift_finding(
         name: &str,
         chunk: &Chunk,
@@ -281,9 +290,10 @@ pub mod source_check {
             .map(|i| i + 1)
             .unwrap_or_else(|| shown.text.lines().count().min(source_body.lines().count()) + 1);
         Some(format!(
-            "chunk '{name}': the mirrored body is not what {} holds now — \
+            "chunk '{name}': the mirrored body and {} disagree — \
              first difference at body line {at} (document {} line(s), source {} line(s)); \
-             sync would rewrite it",
+             nothing records which side moved, and `sync` resolves it the one way it can, \
+             by rewriting the document from the source",
             from_path.display(),
             shown.text.lines().count(),
             source_body.lines().count()

@@ -77,10 +77,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use x0k_folio::colophon::{is_colophon, parse_envelope, parse_envelope_in, Colophon, DocType};
+use x0k_folio::document_vocabulary::DocumentSource;
 use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::{
-    check_corpus, check_declarations, declared_facts, document_edges, extract_from_markdown,
-    CorpusReport, DeclarationReport, EntityId, InlineEntity, ICON_CLASS,
+    check_corpus, check_declarations, check_instances, declared_facts, document_edges,
+    extract_from_markdown, CorpusReport, DeclarationReport, EntityId, InlineEntity, ICON_CLASS,
 };
 use x0k_icon::{check, emit, one_per_grid, Accepted, Grid, Label, Palette};
 use x0k_ontology::concept_facts::OntologyModel;
@@ -200,13 +201,18 @@ document declares affordances and tangles nothing. So discovery here
 is the format's own cheap gate, `is_colophon`, which reads the
 frontmatter and nothing else. A file path is taken as given; a
 directory is walked. The result is sorted so two runs over the same
-tree print in the same order.
+tree print in the same order, and deduplicated because overlapping
+paths — `check docs docs/inner` — reach one file twice and the set is
+what the verb is about. A document counted twice is a document that
+collides with itself, which the vocabulary collector says out loud
+(regression: `check_does_not_see_one_document_twice_through_overlapping_paths`).
 
 <a name="chunk-discover"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#discover`</sub>
 
 ```rust {#discover}
 /// Every `.md` under `paths` whose frontmatter claims folio/v1, sorted.
-/// A path that is a file is taken as given; a directory is walked.
+/// A path that is a file is taken as given; a directory is walked. A
+/// file reached through two overlapping paths appears once.
 pub fn discover_folio_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut docs = Vec::new();
     for path in paths {
@@ -227,6 +233,7 @@ pub fn discover_folio_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
         }
     }
     docs.sort();
+    docs.dedup();
     Ok(docs)
 }
 
@@ -254,19 +261,26 @@ the set this build compiled. The middle step is what makes a projected
 repository check itself: the files are right there, the record says
 where, and nothing has to be passed.
 
+The first step *adds* to the compiled set rather than replacing it, and
+that half is [`select_vocabulary`](../folio/document-vocabulary.md), shared
+with `x0k-folio-cli` so the two verbs cannot drift apart again. The second
+does replace it, and should: a projection's recorded modules are that
+projection's whole vocabulary, not an extension of some other build's.
+
 <a name="chunk-vocabulary"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#vocabulary`</sub>
 
 ```rust {#vocabulary}
 /// The vocabulary a check reads against.
 ///
 /// `explicit` is `--vocabulary <dir>`, a directory of `*.ttl` module
-/// files. With none given, a projection's own `PROVENANCE.json` names the
+/// files, read on top of the set this build compiled — `only` reads it
+/// alone. With no directory, a projection's own `PROVENANCE.json` names the
 /// modules it shipped and those are loaded; with neither, the set this
 /// build compiled.
-pub fn vocabulary(explicit: Option<&Path>) -> Result<OntologyModel> {
-    if let Some(dir) = explicit {
-        return OntologyModel::load(dir)
-            .with_context(|| format!("loading a vocabulary from {}", dir.display()));
+pub fn vocabulary(explicit: Option<&Path>, only: bool) -> Result<OntologyModel> {
+    if explicit.is_some() {
+        return x0k_folio::document_vocabulary::select_vocabulary(explicit, only)
+            .map_err(|error| anyhow::anyhow!(error));
     }
     match projected_modules_dir(Path::new("PROVENANCE.json")) {
         Some(dir) => OntologyModel::load(&dir).with_context(|| {
@@ -312,7 +326,24 @@ perception-dependent actor has been promised something with nothing to
 perceive (`publish-a-region-as-a-repository`, amendment of 2026-09-05).
 It has to be the set, because the signifier is declared where the face
 lives — the CLI chapter, the library function's section — and never
-beside the claim.
+beside the claim. Which also means a set can be handed the claims and
+none of the faces: `check decisions` on a fresh clone scans every
+affordance in the collection and not one signifier. That set is not
+answering the question, and `check_declarations` says so — a note rather
+than a defect, whose standing `--closed` then decides like any other.
+
+The vocabulary those declarations are *typed* by is a property of the
+set as well, and that is the step this function used to skip. A
+collection defines `paper:Paper` in a `turtle folio:ontology` block and
+declares papers in `yaml paper:paper` fences beside it; the block was
+live for `ingest` and dead here, so the envelope pass refused
+`paper:Paper/alpha` as an undeclared prefix with the definition in the
+same directory, and the instance pass did not exist at all. Both are
+[`check_instances`](../folio/checking.md) now, called before the first
+envelope is parsed because its extended model is what the envelopes are
+then read against. Its defects join the declaration report's and its
+dangling targets join the note list, at the same grain and with the same
+meaning.
 
 And so is the fourth, which is the second outcome again from the code's
 side. A chunk's `proves=` is an edge from the chapter to an affordance,
@@ -337,11 +368,12 @@ pub struct VocabularyReport {
     /// The corpus check over every document that parsed: defects, and
     /// the edges that leave the set.
     pub corpus: CorpusReport,
-    /// The declarations the set carries — affordances and signifiers —
-    /// checked together: a human claim no signifier signifies is a
-    /// defect, and it is a question about the set, because the
-    /// signifier lives in the chapter that holds the face, not beside
-    /// the claim.
+    /// The declarations the set carries, checked together: a human claim
+    /// no signifier signifies is a defect, and it is a question about the
+    /// set, because the signifier lives in the chapter that holds the
+    /// face, not beside the claim. So is every typed instance read
+    /// against the vocabulary the set carries — ours and the reader's
+    /// alike — because that vocabulary is a property of the set too.
     pub declarations: DeclarationReport,
 }
 
@@ -357,8 +389,9 @@ impl VocabularyReport {
 <a name="chunk-check-vocabulary"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#check-vocabulary`</sub>
 
 ```rust {#check-vocabulary}
-/// Read every folio/v1 document under `paths` against `model`. Documents
-/// are named by their path in the report.
+/// Read every folio/v1 document under `paths` against `model`, extended
+/// by the vocabulary the set itself carries. Documents are named by their
+/// path in the report.
 pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<VocabularyReport> {
     let mut unparsed = Vec::new();
     let mut envelopes: Vec<(String, Colophon)> = Vec::new();
@@ -368,11 +401,29 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
     // `(document name, document id, proving chunk)` for every tangled
     // document, judged once the set's affordances are all known.
     let mut proofs: Vec<(String, String, ProvingChunk)> = Vec::new();
+
+    // Read the set once and assemble its vocabulary before parsing the
+    // first envelope: a collection that defines `paper:` in a
+    // `turtle folio:ontology` block may use `paper:` in an id, and the
+    // pass that refused it had never looked. The collector is handed
+    // whole files, frontmatter included, so the line it reports in a
+    // diagnostic is a line of the file a reader opens.
+    let mut documents: Vec<(String, String)> = Vec::new();
     for path in discover_folio_documents(paths)? {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let name = path.display().to_string();
-        match parse_envelope_in(model, &content) {
+        documents.push((path.display().to_string(), content));
+    }
+    let sources: Vec<DocumentSource<'_>> = documents
+        .iter()
+        .map(|(name, content)| DocumentSource { id: name.as_str(), body: content.as_str() })
+        .collect();
+    let instances = check_instances(model, &sources);
+    let model = &instances.model;
+
+    for (name, content) in &documents {
+        let name = name.clone();
+        match parse_envelope_in(model, content) {
             Ok((envelope, body)) => {
                 // A chapter's prose link is an edge — `presupposes` to a
                 // wiki page, `realizes` to an affordance — and is checked as
@@ -386,7 +437,7 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());
                 if envelope.tangle.is_some() {
-                    if let Ok(parsed) = parse_document(&content) {
+                    if let Ok(parsed) = parse_document(content) {
                         for chunk in proving_chunks(&parsed) {
                             proofs.push((name.clone(), envelope.id.clone(), chunk));
                         }
@@ -398,7 +449,15 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
         }
     }
     let mut corpus = check_corpus(model, envelopes.iter().map(|(name, env)| (name.as_str(), env)));
-    let declarations = check_declarations(entities.iter());
+    // Every affordance and signifier is a typed instance too, so the two
+    // passes read the same blocks and ask different questions of them.
+    // The count is therefore the larger of the two and never their sum,
+    // which would count every `x0k:` declaration twice.
+    let mut declarations = check_declarations(entities.iter());
+    declarations.checked = declarations.checked.max(instances.report.checked);
+    declarations.defects.extend(instances.report.defects);
+    declarations.dangling = instances.report.dangling;
+    declarations.notes.extend(instances.report.notes);
     let declared: HashSet<String> = entities
         .iter()
         .filter(|e| e.marker_class == "affordance")
@@ -1030,10 +1089,21 @@ fn lonely_doc(actors: &str) -> String {
     )
 }
 
+/// A chapter declaring a signifier for some *other* affordance: enough
+/// for the set to be one where signification lives, and no answer at all
+/// for `frob_alone`.
+const SIGNIFYING_CHAPTER: &str = "---\nx0k:\n  format: folio/v1\n  \
+     id: x0k:implementation/elsewhere\n  type: implementation\n  \
+     status: draft\n---\n# Elsewhere\n\n### `frob_together`\n\n\
+     ```yaml x0k:signifier\nid: x0k:signifier/frob-together\nedges:\n  \
+     signifies:\n    - x0k:affordance/frob_together\n  presentedOn:\n    \
+     - x0k:surface/cli\n```\n";
+
 #[test]
 fn check_names_a_human_claim_no_signifier_signifies_and_fails() {
     let tmp = TempDir::new().unwrap();
     write(tmp.path(), "docs/lonely.md", &lonely_doc("human"));
+    write(tmp.path(), "docs/elsewhere.md", SIGNIFYING_CHAPTER);
 
     let out = run(&["check"], tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1041,6 +1111,37 @@ fn check_names_a_human_claim_no_signifier_signifies_and_fails() {
     assert!(
         stderr.contains("x0k:affordance/frob_alone") && stderr.contains("signifier"),
         "the defect names the affordance and what is missing: {stderr}"
+    );
+}
+
+/// The jj maintainer persona's first command on a pristine clone
+/// (2026-09-22): the guide says "check the folder, any folder", the
+/// affordances live in `decisions/` and every signifier one directory
+/// over, and seven red errors came back. A set with no signifier in it
+/// is not answering the question, so it says so and passes.
+#[test]
+fn check_notes_a_human_claim_when_the_set_declares_no_signifier_at_all() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/lonely.md", &lonely_doc("human"));
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a scan that holds no signifier failed over its own shape: {stderr}"
+    );
+    assert!(
+        stderr.contains("note:") && stderr.contains("declares no signifier at all"),
+        "the note says why it could not answer: {stderr}"
+    );
+
+    // The reader who knows the set is the whole collection says so, and
+    // the same finding becomes a defect.
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "--closed says there is nowhere else to look, and check passed: {stderr}"
     );
 }
 
@@ -1061,6 +1162,8 @@ to decide (it is moving from a bare `x0k:affordance/actors` string to a
 `claimedFor` entity edge), and this face relays whichever it emits.
 The test asks only that the human claim survived into the record under
 some predicate.
+
+<a name="chunk-tests-affordances"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-affordances` · proves [Declare concepts and instances](../../decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md)</sub>
 
 ```rust {#tests-affordances file="tests/cli_faces.rs" proves="x0k:affordance/read_declared_affordances"}
 #[test]
@@ -1125,6 +1228,8 @@ says what it proves is relayed by `affordances` as the record's `proofs`
 no document under the paths, noted by `check` as a dangling `proves` edge
 that fails nothing.
 
+<a name="chunk-tests-proofs"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-proofs`</sub>
+
 ```rust {#tests-proofs file="tests/cli_faces.rs"}
 /// A tangled chapter whose one chunk tangles a test and says it proves
 /// `proves`. Nothing here tangles it: both faces read the document.
@@ -1180,6 +1285,8 @@ drawing the profile accepts. Accepted, it says so and exits clean; with
 one stroke painted as a colour instead of a role, it names the rule and
 the element and where, and fails.
 
+<a name="chunk-tests-icon"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-icon` · proves [Check an icon against the profile](../../decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md)</sub>
+
 ```rust {#tests-icon file="tests/cli_faces.rs" proves="x0k:affordance/check_an_icon_against_the_profile"}
 /// The design's mark for a person (`x0k:design/icon-profile` § "The
 /// first inhabitants"), verbatim.
@@ -1225,6 +1332,8 @@ accepted declaration becomes its light and dark files, named after the
 affordance declared in its section and bound to the publication's
 colours — the same pair the repository projector writes.
 
+<a name="chunk-tests-icon-files"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-icon-files` · proves [Show an icon on any surface](../../decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md)</sub>
+
 ```rust {#tests-icon-files file="tests/cli_faces.rs" proves="x0k:affordance/show_an_icon_on_a_surface"}
 /// A publication document carrying the palette block in the profile's
 /// shape — the `x0k-folio` publication's own literals.
@@ -1258,6 +1367,8 @@ fn icon_writes_each_declaration_as_its_light_and_dark_files() {
     assert!(!light.contains("\"ink\""), "roles are bound, never written: {light}");
 }
 ```
+
+<a name="chunk-tests-root"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-root` · assembles [tests-doc](#chunk-tests-doc) · [tests-uses](#chunk-tests-uses) · [tests-fixture](#chunk-tests-fixture) · [tests-check](#chunk-tests-check) · [tests-affordances](#chunk-tests-affordances) · [tests-proofs](#chunk-tests-proofs) · [tests-icon](#chunk-tests-icon) · [tests-icon-files](#chunk-tests-icon-files)</sub>
 
 ```rust {#tests-root file="tests/cli_faces.rs"}
 <<tests-doc>>

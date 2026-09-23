@@ -42,7 +42,33 @@ record before calling a sink and keeps deletions pending until every known
 backend acknowledges them. One backend's error leaves the others'
 acknowledgements intact. Each sink owns one worker. The coordinator snapshots
 worker handles under the registry lock, releases it, and submits all ready sinks
-before waiting for a bounded shared completion grace.
+before waiting on a shared completion deadline — or, for a closed collection,
+on quiescence.
+
+## The grace is for a live delivery, and a batch is not one
+
+A delivery grace answers a question a watcher has to answer: a sink that has
+not replied might be slow or might be gone, and a watcher cannot stall its
+loop on the difference. So it waits a bounded time, calls the source pending,
+and replays it next pass.
+
+Ingesting a directory that is sitting still is not that question, and giving
+it that answer does real damage. The grace is a **cap**, not a floor, and once
+a source crosses it the run does not degrade gracefully — it collapses. A
+worker runs one operation at a time, so the abandoned write keeps the slot;
+every later submission then fails at once with `backend still busy; source
+remains pending`, and a fifteen-document ingest ends with all sixteen sources
+pending, `acknowledged_sources: 0`, an empty database and exit 1. Measured
+here: fifteen typed ADRs, 61 seconds, nothing committed. Nor is it a
+threshold a slower machine merely reaches later — the same collection
+committed in 7 seconds on a quiet machine and collapsed under load, so which
+answer you get is a coin toss.
+
+So a `grace` of `None` means *wait for the backend to finish*, and the batch
+verbs take it. Nothing is being raced: the directory is not changing, there is
+no loop to keep moving, and a write that takes a minute is a slow ingest
+rather than a lost one. `Some(duration)` keeps the watcher's bounded wait
+exactly as it was.
 
 The carried example is the ADR itself. When
 `corpora/x0k/decisions/architecture/delivery/folio-backends.md` is saved, the fold
@@ -188,7 +214,10 @@ backends in one list may not share one:
 pub struct Backend {
     pub name: String,
     pub(crate) worker: crate::delivery::Worker,
-    pub(crate) grace: std::time::Duration,
+    /// How long the fan-out waits for this backend, or `None` to wait for it
+    /// to finish. See "The grace is for a live delivery, and a batch is not
+    /// one" above.
+    pub(crate) grace: Option<std::time::Duration>,
     sink: Box<dyn FactSink>,
     pub notifier: Option<Box<dyn Notifier>>,
     pub query: Option<Box<dyn QueryEngine>>,
@@ -198,16 +227,33 @@ impl Backend {
     pub fn new(name: impl Into<String>, sink: impl FactSink + 'static) -> Self {
         let worker = crate::delivery::Worker::new(Box::new(sink));
         Self { name: name.into(), sink: Box::new(worker.clone()), worker,
-            grace: std::time::Duration::from_millis(250), notifier: None, query: None }
+            grace: Some(std::time::Duration::from_millis(250)), notifier: None, query: None }
     }
     /// Access the worker-backed sink without replacing its delivery identity.
     pub fn sink(&self) -> &dyn FactSink { self.sink.as_ref() }
     pub fn sink_mut(&mut self) -> &mut dyn FactSink { self.sink.as_mut() }
     /// Overall completion grace after fan-out admission, capped at 30 seconds.
-    /// Late success remains unacknowledged and is safely replayed.
+    /// Late success remains unacknowledged and is safely replayed. The
+    /// live-delivery answer: a watcher cannot stall its loop on the difference
+    /// between a slow sink and an absent one.
     pub fn with_delivery_grace(mut self, grace: std::time::Duration) -> Self {
-        self.grace = grace.min(std::time::Duration::from_secs(30));
+        self.grace = Some(grace.min(std::time::Duration::from_secs(30)));
         self
+    }
+    /// Wait for this backend to finish rather than for a clock — the answer
+    /// for a closed collection, where nothing is racing the write and
+    /// abandoning one leaves the worker busy and every later source refused.
+    pub fn waiting_for_quiescence(mut self) -> Self {
+        self.grace = None;
+        self
+    }
+    /// Either policy as one option, for a caller whose verb decides which:
+    /// a bounded wait, or `None` for quiescence.
+    pub fn grace_policy(self, grace: Option<std::time::Duration>) -> Self {
+        match grace {
+            Some(grace) => self.with_delivery_grace(grace),
+            None => self.waiting_for_quiescence(),
+        }
     }
     pub fn with_notifier(mut self, notifier: impl Notifier + 'static) -> Self {
         self.notifier = Some(Box::new(notifier));
@@ -714,7 +760,7 @@ readme = "../../README.md"
 keywords = ["literate-programming", "tangle", "markdown", "documentation"]
 
 [dependencies]
-x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.1" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -914,7 +960,16 @@ Delivery retains the same recovery protocol: persist possible writes, deliver in
 <a name="chunk-deliver-source"></a><sub>[`src/lifecycle.rs`](../../crates/x0k-folio-ingest/src/lifecycle.rs) · `#deliver-source` · assembles [recover-source-prior](#chunk-recover-source-prior) · [collect-current-facts](#chunk-collect-current-facts) · [initialize-backend-revisions](#chunk-initialize-backend-revisions) · [select-target-revision](#chunk-select-target-revision) · [remember-possible-effects](#chunk-remember-possible-effects) · [checkpoint-before-effects](#chunk-checkpoint-before-effects) · [apply-pending-backends](#chunk-apply-pending-backends) · [checkpoint-acknowledgements](#chunk-checkpoint-acknowledgements)</sub>
 
 ```rust {#deliver-source file="src/lifecycle.rs"}
-fn probe_incarnations(sinks: &[(String, crate::delivery::Worker)], deadline: std::time::Instant)
+/// The grace the whole fan-out runs under: the longest any backend asks for,
+/// and `None` — wait for quiescence — if any of them asks for that. The
+/// deadline is shared, so one backend that must not be abandoned settles the
+/// question for the pass.
+fn longest_grace(registry: &[Backend]) -> Option<std::time::Duration> {
+    registry.iter().try_fold(std::time::Duration::ZERO, |longest, backend| {
+        backend.grace.map(|grace| longest.max(grace))
+    })
+}
+fn probe_incarnations(sinks: &[(String, crate::delivery::Worker)], deadline: Option<std::time::Instant>)
     -> BTreeMap<String, Result<Option<String>>> {
     let submitted: Vec<_> = sinks.iter().map(|(name,worker)| (name.clone(),worker.start_identity())).collect();
     submitted.into_iter().map(|(name,ticket)| (name,ticket.and_then(|ticket|ticket.identity_until(deadline)))).collect()
@@ -971,10 +1026,10 @@ let (sinks, grace) = {
     let registry = lock_backends(backends);
     validate_backend_names(&registry)?;
     (registry.iter().map(|backend| (backend.name.clone(),backend.worker.clone())).collect::<Vec<_>>(),
-        registry.iter().map(|backend| backend.grace).max().unwrap_or_default())
+        longest_grace(&registry))
 };
 let delivery_started = std::time::Instant::now();
-let identities = probe_incarnations(&sinks, delivery_started + grace / 3);
+let identities = probe_incarnations(&sinks, grace.map(|grace| delivery_started + grace / 3));
 let prior = state.files.get(path_key).cloned();
 if prior.is_none() && desired.is_none() {
     return Ok(0);
@@ -1057,7 +1112,7 @@ for sink in &sinks {
     }
 }
 let read_wait_started = delivery_started;
-let read_deadline = read_wait_started + grace.mul_f32(2.0 / 3.0);
+let read_deadline = grace.map(|grace| read_wait_started + grace.mul_f32(2.0 / 3.0));
 let mut ready = BTreeMap::new();
 for sink in sinks.iter() {
     if !available.contains(&sink.0) { continue; }
@@ -1094,7 +1149,7 @@ The desired metadata and possible writes must reach durable storage before the f
 <a name="chunk-checkpoint-before-effects"></a><sub>[`src/backend.rs`](../../crates/x0k-folio-ingest/src/backend.rs) · `#checkpoint-before-effects`</sub>
 
 ```rust {#checkpoint-before-effects}
-let completion_grace = grace.saturating_sub(read_wait_started.elapsed());
+let completion_grace = grace.map(|grace| grace.saturating_sub(read_wait_started.elapsed()));
 state.files.insert(path_key.to_string(), IngestedFile {
     content_hash: hash.clone(),
     uri: desired.map(|projection| projection.uri.clone()).unwrap_or_else(|| prior.unwrap().uri),
@@ -1107,6 +1162,15 @@ write_source_state(state_path, path_key, state)?;
 
 Only complete backend success narrows its possible facts to the new projection. Its siblings retain independent obligations.
 
+A success is an event too. Until it was one, a run that did everything right
+said nothing at all — only failures were recorded — and the tool that spent
+eighty seconds of a ninety-second ingest inside `fsync` had no way to say so.
+That silence cost a drive its attribution: the 8s and 81s figures reached this
+corpus as an unexplained wait, and finding the mechanism afterwards took
+`strace` rather than `RUST_LOG=info`. `folio.backend.source` carries the
+backend, the source, the fact footprint and how long the acknowledgement took,
+which is the smallest record that would have named the culprit.
+
 <a name="chunk-apply-pending-backends"></a><sub>[`src/backend.rs`](../../crates/x0k-folio-ingest/src/backend.rs) · `#apply-pending-backends`</sub>
 
 ```rust {#apply-pending-backends}
@@ -1115,11 +1179,16 @@ for sink in &sinks {
     let Some(possible) = ready.remove(&sink.0) else { continue };
     submitted.push((sink.0.clone(),sink.1.source(path_key,&batches,possible,&cause)));
 }
-let deadline = std::time::Instant::now() + completion_grace;
+let deadline = completion_grace.map(|grace| std::time::Instant::now() + grace);
 for (name, ticket) in submitted {
+    let delivery = std::time::Instant::now();
     let result = ticket.and_then(|ticket| ticket.count_until(deadline));
-    if let Err(error) = &result {
-        warn!(path = %path_key, backend = %name, error = %error, "folio.backend.source_failed");
+    let elapsed_ms = delivery.elapsed().as_millis() as u64;
+    match &result {
+        Ok(facts) => info!(path = %path_key, backend = %name, facts = *facts,
+            elapsed_ms, "folio.backend.source"),
+        Err(error) => warn!(path = %path_key, backend = %name, error = %error,
+            elapsed_ms, "folio.backend.source_failed"),
     }
     if result.is_ok() {
         acked.insert(name.clone());
@@ -1165,9 +1234,9 @@ pub async fn reconcile(
     let (identity_sinks, identity_grace) = {
         let registry=lock_backends(backends);
         (registry.iter().map(|b|(b.name.clone(),b.worker.clone())).collect::<Vec<_>>(),
-            registry.iter().map(|b|b.grace).max().unwrap_or_default())
+            longest_grace(&registry))
     };
-    let identities=probe_incarnations(&identity_sinks,std::time::Instant::now()+identity_grace);
+    let identities=probe_incarnations(&identity_sinks,identity_grace.map(|grace| std::time::Instant::now()+grace));
     let mut ingested = 0usize;
     let mut total_facts = 0usize;
     let mut seen_paths: HashSet<String> = HashSet::new();
@@ -1581,24 +1650,32 @@ pub(crate) struct Worker {
 }
 pub(crate) struct Ticket(mpsc::Receiver<Result<Reply>>);
 impl Ticket {
-    pub(crate) fn identity_until(self, deadline: Instant) -> Result<Option<String>> {
-        match self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| anyhow!("backend identity pending"))?? {
+    /// One reply, waited for until `deadline` — or until it arrives, when
+    /// there is no deadline. `recv` rather than some very distant instant,
+    /// because "no clock is watching this" is what a batch verb means and a
+    /// far-future `Instant` is arithmetic that can overflow.
+    fn receive(self, deadline: Option<Instant>, pending: &'static str) -> Result<Reply> {
+        match deadline {
+            Some(deadline) => self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|_| anyhow!(pending))?,
+            None => self.0.recv().map_err(|_| anyhow!(pending))?,
+        }
+    }
+    pub(crate) fn identity_until(self, deadline: Option<Instant>) -> Result<Option<String>> {
+        match self.receive(deadline, "backend identity pending")? {
             Reply::Identity(identity) => Ok(identity),
             _ => Err(anyhow!("unexpected backend response")),
         }
     }
 
-    pub(crate) fn facts_until(self, deadline: Instant) -> Result<Option<Vec<FactEntry>>> {
-        match self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| anyhow!("backend read pending"))?? {
+    pub(crate) fn facts_until(self, deadline: Option<Instant>) -> Result<Option<Vec<FactEntry>>> {
+        match self.receive(deadline, "backend read pending")? {
             Reply::Facts(facts) => Ok(facts),
             _ => Err(anyhow!("unexpected backend response")),
         }
     }
-    pub(crate) fn count_until(self, deadline: Instant) -> Result<usize> {
-        match self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| anyhow!("backend completion pending"))?? {
+    pub(crate) fn count_until(self, deadline: Option<Instant>) -> Result<usize> {
+        match self.receive(deadline, "backend completion pending")? {
             Reply::Count(count) => Ok(count),
             _ => Err(anyhow!("unexpected backend response")),
         }
@@ -1651,17 +1728,17 @@ impl Worker {
 }
 impl FactSink for Worker {
     fn incarnation(&mut self) -> Result<Option<String>> {
-        self.start_identity()?.identity_until(Instant::now()+Duration::from_secs(30))
+        self.start_identity()?.identity_until(Some(Instant::now()+Duration::from_secs(30)))
     }
 
     fn replace_source(&mut self,source:&str,batches:&FactBatches,prior:&[FactEntry],cause:&str) -> Result<usize> {
-        self.source(source,batches,prior.to_vec(),cause)?.count_until(Instant::now()+Duration::from_secs(30))
+        self.source(source,batches,prior.to_vec(),cause)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
     fn replace(&mut self,entity:&str,facts:&[FactEntry],cause:&str) -> Result<usize> {
-        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()))?.count_until(Instant::now()+Duration::from_secs(30))
+        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()))?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
     fn retract(&mut self,facts:&[FactEntry],cause:&str) -> Result<usize> {
-        self.submit(Operation::Retract(facts.into(),cause.into()))?.count_until(Instant::now()+Duration::from_secs(30))
+        self.submit(Operation::Retract(facts.into(),cause.into()))?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
     fn facts_caused_by(&self,cause:&str) -> Result<Option<Vec<FactEntry>>> { self.read(cause,Duration::from_secs(30)) }
     fn retains_history(&self) -> bool { self.history }
@@ -1714,6 +1791,71 @@ async fn timed_out_backend_stays_pending_while_next_source_reaches_healthy_sink(
         let caught_up=x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
         assert!(caught_up.files.values().all(|file|file.acked_by.len()==2));
     }
+}
+```
+
+The same sink under the batch policy is the other half of that test, and it
+is the one that pins what a bounded wait costs a closed collection. A sink
+slower than the grace does not simply report one source late: the abandoned
+write keeps the worker, so the *second* source is refused before it starts,
+and a collection of any size lands with nothing acknowledged. Waiting for
+quiescence acknowledges both.
+
+<a name="chunk-quiescent-backend-batch"></a><sub>[`tests/standalone.rs`](../../crates/x0k-folio-ingest/tests/standalone.rs) · `#quiescent-backend-batch`</sub>
+
+```rust {#quiescent-backend-batch file="tests/standalone.rs"}
+#[tokio::test]
+async fn a_backend_slower_than_any_grace_still_acknowledges_every_source_when_waiting() {
+    // The Backstage/jj ingest collapse, 2026-09-22: fifteen typed ADRs
+    // ending with sixteen pending sources, acknowledged_sources 0 and an
+    // empty database, because one source crossed the grace and left the
+    // worker busy for every source after it.
+    struct Slow { view: MemorySink, delay: std::time::Duration }
+    impl FactSink for Slow {
+        fn replace(&mut self, entity:&str,facts:&[FactEntry],cause:&str)->Result<usize> {
+            std::thread::sleep(self.delay);
+            self.view.replace(entity,facts,cause)
+        }
+        fn retract(&mut self,facts:&[FactEntry],cause:&str)->Result<usize> { self.view.retract(facts,cause) }
+        fn retains_history(&self)->bool { false }
+    }
+
+    // Bounded: slower than the grace, so the first source is abandoned and
+    // the busy worker refuses the rest.
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let state_path = scratch.path().join("state");
+    let view = MemorySink::default();
+    let bounded = Mutex::new(vec![
+        Backend::new("slow", Slow { view: view.clone(), delay: std::time::Duration::from_millis(120) })
+            .with_delivery_grace(std::time::Duration::from_millis(20)),
+    ]);
+    for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B"),("c.txt","urn:c=C")] {
+        let path=root.path().join(name); std::fs::write(&path,text).unwrap();
+        lifecycle::apply_path_change(&Lines,&path,&state_path,&bounded).unwrap();
+    }
+    let abandoned = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
+    assert!(abandoned.files.values().all(|file| !file.acked_by.contains("slow")),
+        "a grace shorter than the write acknowledges nothing");
+
+    // Waiting: the same sink, the same delay, every source acknowledged.
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let state_path = scratch.path().join("state");
+    let view = MemorySink::default();
+    let waiting = Mutex::new(vec![
+        Backend::new("slow", Slow { view: view.clone(), delay: std::time::Duration::from_millis(120) })
+            .waiting_for_quiescence(),
+    ]);
+    for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B"),("c.txt","urn:c=C")] {
+        let path=root.path().join(name); std::fs::write(&path,text).unwrap();
+        lifecycle::apply_path_change(&Lines,&path,&state_path,&waiting).unwrap();
+    }
+    let settled = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
+    assert_eq!(settled.files.len(), 3);
+    assert!(settled.files.values().all(|file| file.acked_by.contains("slow")),
+        "waiting for the backend acknowledges every source");
+    assert_eq!(view.facts().len(), 3);
 }
 ```
 

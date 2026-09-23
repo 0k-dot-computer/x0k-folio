@@ -176,6 +176,33 @@ This adds filesystem durability to the upstream storage contract without changin
 upstream code. Work includes the blocks written by Dialog; no history-independent
 I/O bound is claimed for the underlying database.
 
+### Two fsyncs per block, but never one after another
+
+Upstream publishes a revision by flushing its delta through
+`buffer_unordered(16)` and only then minting the revision that references the
+flushed blocks — "a revision must only reference durable blocks", in its own
+words. The fan-out is not decoration: a journalling filesystem answers
+sixteen concurrent `fsync`s with roughly one commit and sixteen sequential
+ones with sixteen, and on a loaded ext4 here that is 0.53 s against 75.1 s for
+the same 211 files.
+
+`set` is the reason we got the second number. Its filesystem work was
+synchronous *inside the async function*, so every future upstream handed to
+`buffer_unordered` blocked the one worker task at its first `sync_all` and
+the fan-out degenerated into a chain. A fresh `--shipped` ingest of a single
+document stores ~214 blocks — almost all of them the bundled vocabulary —
+and paid two serialized journal commits for each: **449 `fsync` calls, 82.7 s
+of a 90.3 s run, against 0.77 s of user CPU** (strace, 2026-09-23). Nothing
+was computing; the process was a queue of one fsync at a time, which is why
+the same ingest was 26 s on an idle disk and 117 s on a busy one. The
+per-fsync cost is the machine's; the *count in series* was ours.
+
+So the body moves to the blocking pool. The durability contract is
+unchanged — every block is still synced before its rename, and the directory
+before success, so a revision still names only durable blocks — and the
+concurrency upstream already asked for is now real. The cost law is the same
+one the fan-out section states: per changed source, not per corpus.
+
 <a name="chunk-durable-storage"></a><sub>[`src/storage.rs`](../../crates/x0k-folio-dialog/src/storage.rs) · `#durable-storage`</sub>
 
 ```rust {#durable-storage file="src/storage.rs"}
@@ -235,21 +262,79 @@ impl StorageBackend for DurableStorage {
             Err(error) => Err(DialogStorageError::Storage(error.to_string())),
         }
     }
+    /// Durable, and off the calling task. Upstream flushes a delta through
+    /// `buffer_unordered(16)` before it mints the revision that names those
+    /// blocks; syncing inline would block that one task at each `sync_all`
+    /// and serialize the fan-out into one journal commit per block. See
+    /// "Two fsyncs per block, but never one after another"; the measurement
+    /// it reports is guarded by `a_batch_of_blocks_syncs_concurrently`.
     async fn set(&mut self, key: Blake3Hash, value: Vec<u8>) -> Result<(), Self::Error> {
-        (|| -> Result<()> {
-            anyhow::ensure!(!self.read_only, "read-only database");
+        let (root, path, read_only) = (self.root.clone(), self.path(&key), self.read_only);
+        #[cfg(test)]
+        let fail_root = self.fail_root.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            anyhow::ensure!(!read_only, "read-only database");
             #[cfg(test)]
             if key == dialog_artifacts::make_reference(b"folio-v1")
-                && self.fail_root.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                && fail_root.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 anyhow::bail!("injected root publication failure");
             }
-            let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
+            let mut file = tempfile::NamedTempFile::new_in(&root)?;
             file.write_all(&value)?;
             file.as_file().sync_all()?;
-            file.persist(self.path(&key))?;
-            File::open(&self.root)?.sync_all()?;
+            file.persist(path)?;
+            File::open(&root)?.sync_all()?;
             Ok(())
-        })().map_err(|error| DialogStorageError::Storage(error.to_string()))
+        }).await
+            .map_err(|error| DialogStorageError::Storage(format!("durable write did not finish: {error}")))?
+            .map_err(|error| DialogStorageError::Storage(error.to_string()))
+    }
+}
+#[cfg(test)]
+mod durability {
+    use super::*;
+    use futures_util::StreamExt;
+
+    fn block(n: u32) -> (Blake3Hash, Vec<u8>) {
+        let value = format!("block-{n}").into_bytes();
+        (*blake3::hash(&value).as_bytes(), value)
+    }
+
+    /// The incident test for "Two fsyncs per block, but never one after
+    /// another". Calibrated against the machine rather than a constant: four
+    /// blocks written one at a time price this disk's journal commit, and
+    /// sixty-four written through the same `buffer_unordered(16)` upstream's
+    /// `publish_root` uses must not cost what sixty-four sequential ones
+    /// would. A current-thread runtime on purpose — that is the runtime the
+    /// worker builds, and it is where an inline `sync_all` did its damage.
+    #[tokio::test]
+    async fn a_batch_of_blocks_syncs_concurrently() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut storage = DurableStorage::open(directory.path(), false)?;
+        let fail = |error: DialogStorageError| anyhow::anyhow!(error.to_string());
+
+        let alone = std::time::Instant::now();
+        for n in 0..4 {
+            let (key, value) = block(n);
+            storage.set(key, value).await.map_err(fail)?;
+        }
+        let alone = alone.elapsed() / 4;
+
+        let batched = std::time::Instant::now();
+        futures_util::stream::iter((4..68).map(|n| {
+            let mut storage = storage.clone();
+            async move { let (key, value) = block(n); storage.set(key, value).await }
+        })).buffer_unordered(16).collect::<Vec<_>>().await
+            .into_iter().collect::<std::result::Result<Vec<_>, _>>().map_err(fail)?;
+        let batched = batched.elapsed();
+
+        assert!(batched < alone * 16,
+            "64 blocks through a 16-way flush took {batched:?} against {alone:?} \
+             for one written alone; a fan-out that costs a multiple of the \
+             block count is syncing on the calling task again");
+        // 68 blocks and the writer lock: every block still reached the disk.
+        assert_eq!(std::fs::read_dir(directory.path())?.count(), 69);
+        Ok(())
     }
 }
 ```
@@ -265,6 +350,9 @@ Publication preserves the repository's existing license metadata.
 [package]
 name = "x0k-folio-dialog"
 version = "0.1.0"
+# Not on crates.io: `dialog-artifacts` is a git dependency, which the
+# registry refuses. This crate ships inside the release binaries.
+publish = false
 edition = { workspace = true }
 license = "MIT"
 description = "Source-owned local Dialog database adapter for Folio"
@@ -274,7 +362,7 @@ readme = "../../README.md"
 keywords = ["literate-programming", "tangle", "markdown", "documentation"]
 [dependencies]
 x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.1.0" }
-x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.1" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

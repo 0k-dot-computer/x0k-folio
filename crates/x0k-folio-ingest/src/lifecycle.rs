@@ -120,7 +120,16 @@ pub struct BackendRevision {
     /// None means a legacy checkpoint still needs its own sink's view.
     pub facts: Option<Vec<Vec<u8>>>,
 }
-fn probe_incarnations(sinks: &[(String, crate::delivery::Worker)], deadline: std::time::Instant)
+/// The grace the whole fan-out runs under: the longest any backend asks for,
+/// and `None` — wait for quiescence — if any of them asks for that. The
+/// deadline is shared, so one backend that must not be abandoned settles the
+/// question for the pass.
+fn longest_grace(registry: &[Backend]) -> Option<std::time::Duration> {
+    registry.iter().try_fold(std::time::Duration::ZERO, |longest, backend| {
+        backend.grace.map(|grace| longest.max(grace))
+    })
+}
+fn probe_incarnations(sinks: &[(String, crate::delivery::Worker)], deadline: Option<std::time::Instant>)
     -> BTreeMap<String, Result<Option<String>>> {
     let submitted: Vec<_> = sinks.iter().map(|(name,worker)| (name.clone(),worker.start_identity())).collect();
     submitted.into_iter().map(|(name,ticket)| (name,ticket.and_then(|ticket|ticket.identity_until(deadline)))).collect()
@@ -161,10 +170,10 @@ pub fn deliver(
         let registry = lock_backends(backends);
         validate_backend_names(&registry)?;
         (registry.iter().map(|backend| (backend.name.clone(),backend.worker.clone())).collect::<Vec<_>>(),
-            registry.iter().map(|backend| backend.grace).max().unwrap_or_default())
+            longest_grace(&registry))
     };
     let delivery_started = std::time::Instant::now();
-    let identities = probe_incarnations(&sinks, delivery_started + grace / 3);
+    let identities = probe_incarnations(&sinks, grace.map(|grace| delivery_started + grace / 3));
     let prior = state.files.get(path_key).cloned();
     if prior.is_none() && desired.is_none() {
         return Ok(0);
@@ -219,7 +228,7 @@ pub fn deliver(
         }
     }
     let read_wait_started = delivery_started;
-    let read_deadline = read_wait_started + grace.mul_f32(2.0 / 3.0);
+    let read_deadline = grace.map(|grace| read_wait_started + grace.mul_f32(2.0 / 3.0));
     let mut ready = BTreeMap::new();
     for sink in sinks.iter() {
         if !available.contains(&sink.0) { continue; }
@@ -249,7 +258,7 @@ pub fn deliver(
         revision.facts = Some(possible.iter().map(|f| FactPayload::from_fact(f).to_bytes()).collect());
         ready.insert(sink.0.clone(), possible);
     }
-    let completion_grace = grace.saturating_sub(read_wait_started.elapsed());
+    let completion_grace = grace.map(|grace| grace.saturating_sub(read_wait_started.elapsed()));
     state.files.insert(path_key.to_string(), IngestedFile {
         content_hash: hash.clone(),
         uri: desired.map(|projection| projection.uri.clone()).unwrap_or_else(|| prior.unwrap().uri),
@@ -263,11 +272,16 @@ pub fn deliver(
         let Some(possible) = ready.remove(&sink.0) else { continue };
         submitted.push((sink.0.clone(),sink.1.source(path_key,&batches,possible,&cause)));
     }
-    let deadline = std::time::Instant::now() + completion_grace;
+    let deadline = completion_grace.map(|grace| std::time::Instant::now() + grace);
     for (name, ticket) in submitted {
+        let delivery = std::time::Instant::now();
         let result = ticket.and_then(|ticket| ticket.count_until(deadline));
-        if let Err(error) = &result {
-            warn!(path = %path_key, backend = %name, error = %error, "folio.backend.source_failed");
+        let elapsed_ms = delivery.elapsed().as_millis() as u64;
+        match &result {
+            Ok(facts) => info!(path = %path_key, backend = %name, facts = *facts,
+                elapsed_ms, "folio.backend.source"),
+            Err(error) => warn!(path = %path_key, backend = %name, error = %error,
+                elapsed_ms, "folio.backend.source_failed"),
         }
         if result.is_ok() {
             acked.insert(name.clone());
@@ -300,9 +314,9 @@ pub async fn reconcile(
     let (identity_sinks, identity_grace) = {
         let registry=lock_backends(backends);
         (registry.iter().map(|b|(b.name.clone(),b.worker.clone())).collect::<Vec<_>>(),
-            registry.iter().map(|b|b.grace).max().unwrap_or_default())
+            longest_grace(&registry))
     };
-    let identities=probe_incarnations(&identity_sinks,std::time::Instant::now()+identity_grace);
+    let identities=probe_incarnations(&identity_sinks,identity_grace.map(|grace| std::time::Instant::now()+grace));
     let mut ingested = 0usize;
     let mut total_facts = 0usize;
     let mut seen_paths: HashSet<String> = HashSet::new();

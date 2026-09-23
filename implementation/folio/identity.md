@@ -438,6 +438,16 @@ Each variant carries the offending input, because these surface in a
 check report over a whole corpus where "invalid id" without the string
 is useless.
 
+`UnknownScheme` also says where a prefix comes from, because the way a
+reader meets it is rarely a typo. A collection whose vocabulary is
+declared in one of its own documents has that prefix for as long as the
+scan reads that document — check the directory and it holds, check one
+file beside it and the prefix is gone, with nothing in the message
+before now connecting the two. The reader who found it had a correct
+document, a correct vocabulary next to it, and a refusal that read like
+a defect in the document (2026-09-22). Naming the scope turns it back
+into what it is: a question about which documents were scanned.
+
 <a name="chunk-error"></a><sub>[`src/entity_id.rs`](../../crates/x0k-folio/src/entity_id.rs) · `#error`</sub>
 
 ```rust {#error}
@@ -476,7 +486,10 @@ impl fmt::Display for EntityIdError {
             Self::UnknownScheme { input, scheme } => write!(
                 f,
                 "id `{input}` uses the namespace prefix `{scheme}`, which no loaded \
-                 vocabulary module declares"
+                 vocabulary module declares — a `turtle folio:ontology` block \
+                 declares its prefix only to a scan that reads the document \
+                 holding it, so scan the directory rather than the one file, or \
+                 load the modules from a directory of `.ttl` files"
             ),
             Self::MissingSeparator(v) => {
                 write!(f, "id `{v}` is missing the `/` separator after the class")

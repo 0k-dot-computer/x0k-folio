@@ -45,9 +45,18 @@ enum Command {
     /// edge whose target names no document under the paths scanned simply
     /// leaves the set — often into a wider corpus this selection was drawn
     /// from, and expected either way: printed as a note, never a failure.
+    /// `--closed` is the reader saying there is no wider corpus: under
+    /// it, an edge that leaves the set is a defect like any other.
+    /// A Markdown file with no envelope at all is skipped, and counted
+    /// on the summary line so that skipping it is not silent;
+    /// `--require-envelope` is the reader saying every file here is
+    /// supposed to be typed, under which such a file is a defect too.
     /// A third thing is checked across the set: an
     /// affordance claimed for a human that no signifier signifies is a
-    /// defect, because the audience has nothing to perceive.
+    /// defect, because the audience has nothing to perceive — unless the
+    /// set declares no signifier anywhere, in which case it is a note,
+    /// because signifiers live beside the faces that present them and a
+    /// set holding none is not the set that could answer.
     ///
     /// Every `from=` chunk is resolved against its source file too —
     /// missing file, missing symbol, ambiguous symbol, a language symbol
@@ -63,11 +72,30 @@ enum Command {
         /// (defaults to current directory)
         #[arg(long)]
         workspace: Option<PathBuf>,
-        /// Directory of ontology module files (*.ttl) to check against.
-        /// Defaults to the modules this projection's PROVENANCE.json names,
-        /// then to the set this build compiled.
+        /// Directory of ontology module files (*.ttl) to check against,
+        /// read in addition to the set this build compiled. Defaults to the
+        /// modules this projection's PROVENANCE.json names, then to the set
+        /// this build compiled.
         #[arg(long)]
         vocabulary: Option<PathBuf>,
+        /// Read --vocabulary alone, without the compiled set. Say this only
+        /// when that directory holds every term the documents use, the
+        /// folio/v1 envelope's own included.
+        #[arg(long, requires = "vocabulary")]
+        only_vocabulary: bool,
+        /// Fail on an edge whose target names no document under the paths
+        /// scanned. Say this when the collection is a closed set: every
+        /// document an edge can name is here, so a target that resolves to
+        /// nothing is a broken link rather than a boundary.
+        #[arg(long)]
+        closed: bool,
+        /// Fail on a Markdown file under the paths scanned that carries no
+        /// folio/v1 envelope. Say this when every file in the set is
+        /// supposed to be typed: a file without one is skipped in silence,
+        /// which is what lets a corpus adopt one directory at a time and
+        /// what leaves a generated board quietly one row short.
+        #[arg(long)]
+        require_envelope: bool,
     },
     /// Print every affordance the folio/v1 documents under the paths
     /// declare, as a JSON array on stdout.
@@ -305,14 +333,23 @@ fn main() -> Result<()> {
             for doc_path in &docs {
                 let declared = declares(doc_path);
                 if !declared.target {
-                    eprintln!("  {}", nothing_to_write(doc_path, declared.chunks));
-                    nowhere_to_write += 1;
+                    if declared.mirrors_only {
+                        eprintln!("  {}", mirror_only(doc_path, declared.chunks));
+                    } else {
+                        eprintln!("  {}", nothing_to_write(doc_path, declared.chunks));
+                        nowhere_to_write += 1;
+                    }
                     continue;
                 }
                 tangled_docs += 1;
                 let result = x0k_tangle::tangle_document_with(doc_path, &ws, &registry, &settings)?;
+                // Both halves of the arrow are written the way the reader named
+                // them. The tangler resolves an output against the workspace
+                // root and holds it absolute, so this line used to pair
+                // `docs/ratelimit.md` with `/tmp/rl/crates/…` — one path a
+                // reader can act on and one they cannot (jj, 2026-09-23).
                 for out in &result.identity_outputs {
-                    eprintln!("  {} → {}", doc_path.display(), out.path.display());
+                    eprintln!("  {} → {}", doc_path.display(), under(&out.path, &ws));
                     total_files += 1;
                 }
                 for out in &result.pipeline_outputs {
@@ -320,7 +357,7 @@ fn main() -> Result<()> {
                         // Already reported via identity_outputs.
                         continue;
                     }
-                    eprintln!("  {} → {}", doc_path.display(), out.path.display());
+                    eprintln!("  {} → {}", doc_path.display(), under(&out.path, &ws));
                     total_files += 1;
                 }
             }
@@ -372,12 +409,22 @@ fn main() -> Result<()> {
             }
         }
 
-        Command::Check { paths, workspace, vocabulary } => {
+        Command::Check {
+            paths,
+            workspace,
+            vocabulary,
+            only_vocabulary,
+            closed,
+            require_envelope,
+        } => {
             let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref())?;
+            let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref(), only_vocabulary)?;
             let mut has_errors = false;
             let mut chunked_documents = 0;
+            let mut splice_failed = 0;
             let mut source_refs = 0;
+            let mut source_ref_failures = 0;
+            let mut envelope_less = Vec::new();
             let mut ids: HashMap<String, PathBuf> = HashMap::new();
 
             for doc_path in markdown_under(&paths) {
@@ -400,14 +447,27 @@ fn main() -> Result<()> {
                     }
                 };
 
+                // A file the vocabulary pass will never see, because it claims
+                // no envelope. Skipping it is what makes adoption incremental;
+                // holding on to its name is what keeps skipping it from being
+                // silent.
+                if !x0k_folio::colophon::is_colophon(&content) {
+                    envelope_less.push(doc_path.clone());
+                }
+
                 if !parsed.chunks.is_empty() {
                     chunked_documents += 1;
-                    for err in &x0k_tangle::resolve::check_all_refs(&parsed)? {
+                    let splices = x0k_tangle::resolve::check_all_refs(&parsed)?;
+                    if !splices.is_empty() {
+                        splice_failed += 1;
+                    }
+                    for err in &splices {
                         eprintln!("{}: {}", doc_path.display(), err);
                         has_errors = true;
                     }
                     let sources = x0k_tangle::source_check::check_source_refs(&parsed, &ws);
                     source_refs += sources.checked;
+                    source_ref_failures += sources.findings.len();
                     for finding in &sources.findings {
                         eprintln!("{}: {}", doc_path.display(), finding);
                         has_errors = true;
@@ -444,23 +504,50 @@ fn main() -> Result<()> {
                 eprintln!("{defect}");
                 has_errors = true;
             }
+            for note in &report.declarations.notes {
+                let standing = if closed { "" } else { "note: " };
+                eprintln!("{standing}{note}");
+                has_errors |= closed;
+            }
             for edge in &report.corpus.dangling {
                 eprintln!(
                     "{}",
-                    dangling_note(&edge.source, &edge.predicate, &edge.target)
+                    dangling_finding(closed, &edge.source, &edge.predicate, &edge.target)
                 );
+                has_errors |= closed;
+            }
+            for edge in &report.declarations.dangling {
+                eprintln!(
+                    "{}",
+                    dangling_declaration_finding(closed, &edge.source, &edge.predicate, &edge.target)
+                );
+                has_errors |= closed;
             }
 
+            if require_envelope {
+                for path in &envelope_less {
+                    eprintln!(
+                        "{}: carries no folio/v1 envelope, so nothing in this set reads it",
+                        path.display()
+                    );
+                }
+                has_errors |= !envelope_less.is_empty();
+            }
+
+            // The counts are the denominator, and a reader wants them most
+            // when something failed: one dangling edge reads differently over
+            // fifteen envelopes than over seven hundred. So the line prints
+            // either way, and the exit code carries the verdict.
+            eprintln!(
+                "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set{}",
+                references_verdict(chunked_documents, splice_failed, source_refs, source_ref_failures),
+                report.corpus.checked,
+                report.declarations.checked,
+                report.corpus.dangling.len() + report.declarations.dangling.len(),
+                untyped_clause(envelope_less.len())
+            );
             if has_errors {
                 std::process::exit(1);
-            } else {
-                eprintln!(
-                    "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set",
-                    references_verdict(chunked_documents, source_refs),
-                    report.corpus.checked,
-                    report.declarations.checked,
-                    report.corpus.dangling.len()
-                );
             }
         }
 
@@ -894,19 +981,45 @@ fn print_workspace_summary(
     }
 }
 
-/// The note `check` prints for an edge that leaves the set.
+/// What `check` says about an edge that leaves the set.
 ///
 /// The set is whatever the paths on the command line contain, and nothing
 /// beyond it is knowable from here: not whether a wider corpus exists, not
-/// whether this tree was projected out of one. So the note names the
-/// situation and stops. A note that instead told the reader their edge
+/// whether this tree was projected out of one. So the line names the
+/// situation and stops. A line that instead told the reader their edge
 /// pointed into "the corpus this was projected from" would be true of one
 /// repository and read as a misconfiguration to everyone else.
-fn dangling_note(source: &str, predicate: &str, target: impl std::fmt::Display) -> String {
-    format!("{source}: note: edge `{predicate}` → `{target}` names no document under the paths scanned")
+///
+/// `closed` is the reader answering the one question the process cannot:
+/// whether anything exists outside these paths. It changes the standing of
+/// the finding and not a word of what it observed — the same sentence,
+/// with `note:` dropped, because under `--closed` there is nothing left
+/// for the reader to go and look at.
+fn dangling_finding(
+    closed: bool,
+    source: &str,
+    predicate: &str,
+    target: impl std::fmt::Display,
+) -> String {
+    let standing = if closed { "" } else { "note: " };
+    format!("{source}: {standing}edge `{predicate}` → `{target}` names no document under the paths scanned")
 }
 
-/// What `check` says about the reference half of a clean run.
+/// The same finding one level down: a declared instance's edge target that
+/// names no declaration in the set. Separate wording because a
+/// declaration lives inside a document, so "names no document" would
+/// send its reader looking for the wrong thing.
+fn dangling_declaration_finding(
+    closed: bool,
+    source: &str,
+    predicate: &str,
+    target: impl std::fmt::Display,
+) -> String {
+    let standing = if closed { "" } else { "note: " };
+    format!("{source}: {standing}declared edge `{predicate}` → `{target}` names no declaration under the paths scanned")
+}
+
+/// What `check` says about the reference half of a run.
 ///
 /// The counts are load-bearing, and they are separate because they are
 /// separate claims. Zero is a real and common answer for either — a
@@ -914,7 +1027,17 @@ fn dangling_note(source: &str, predicate: &str, target: impl std::fmt::Display) 
 /// documents that do declare chunks name no source file — and each has
 /// to read as zero rather than as a pass, because the shape that
 /// produces it is also the shape a broken walk produces.
-fn references_verdict(chunked_documents: usize, source_refs: usize) -> String {
+///
+/// Each kind is reported as resolved-of-read once any of them did not
+/// resolve, because this line prints on a failing run: over one broken
+/// mirror in seven, `7 from= source references resolve` is the last
+/// sentence a reader meets and it says the opposite of the verdict.
+fn references_verdict(
+    chunked_documents: usize,
+    splice_failed: usize,
+    source_refs: usize,
+    source_ref_failures: usize,
+) -> String {
     if chunked_documents == 0 {
         return "no chunk references to check".to_string();
     }
@@ -922,12 +1045,38 @@ fn references_verdict(chunked_documents: usize, source_refs: usize) -> String {
         1 => "1 document with chunks".to_string(),
         n => format!("{n} documents with chunks"),
     };
-    let sources = match source_refs {
-        0 => "no from= source references declared".to_string(),
-        1 => "1 from= source reference resolves".to_string(),
-        n => format!("{n} from= source references resolve"),
+    let splices = match splice_failed {
+        0 => format!("splice references resolve in {docs}"),
+        failed => format!(
+            "splice references resolve in {} of {docs}",
+            chunked_documents - failed
+        ),
     };
-    format!("splice references resolve in {docs}, {sources}")
+    let sources = match (source_refs, source_ref_failures) {
+        (0, _) => "no from= source references declared".to_string(),
+        (1, 0) => "1 from= source reference resolves".to_string(),
+        (n, 0) => format!("{n} from= source references resolve"),
+        (n, failed) => format!("{} of {n} from= source references resolve", n - failed),
+    };
+    format!("{splices}, {sources}")
+}
+
+/// What `check` says about the Markdown it walked past.
+///
+/// A file with no envelope is not a defect — ignoring Markdown it does
+/// not own is why a corpus can adopt this verb one directory at a time
+/// — but it is invisible to every other count on the line, and a board
+/// generated from those counts is quietly one row short (Backstage,
+/// 2026-09-23). Saying how many were skipped costs a clause and is the
+/// only way a reader learns the set is not the set they think it is.
+/// Saying it when there were none would be noise, so the clause is
+/// empty then.
+fn untyped_clause(envelope_less: usize) -> String {
+    match envelope_less {
+        0 => String::new(),
+        1 => ", 1 markdown file carried no envelope".to_string(),
+        n => format!(", {n} markdown files carried no envelope"),
+    }
 }
 
 /// What `tangle` says about a document it was named and cannot write from.
@@ -939,6 +1088,17 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
     )
 }
 
+/// What `tangle` says about a document whose every chunk mirrors code it
+/// does not own. It names nowhere to write because writing is not what
+/// it is for, so the run says what it saw and passes.
+fn mirror_only(path: &Path, chunks: usize) -> String {
+    format!(
+        "{}: mirrors {chunks} chunk(s) from source it does not own; \
+         nothing to tangle (`sync` fills these and `check` catches them going stale)",
+        path.display()
+    )
+}
+
 /// Every `.md` under `paths`, deduplicated and ordered: a file is taken
 /// as given, a directory is walked.
 ///
@@ -946,6 +1106,26 @@ fn nothing_to_write(path: &Path, chunks: usize) -> String {
 /// document is decided from its parse, below, so that the answer cannot
 /// depend on whether the reader named the file or the directory holding
 /// it.
+/// A path as the reader named it: relative to the workspace root when it
+/// is under one, and unchanged when it is not.
+///
+/// The root is tried twice, because the reader writes `--workspace .`
+/// and the tangler resolves outputs against the real directory. A
+/// literal strip against `.` matches nothing, which is how the absolute
+/// destination survived the first attempt at this line.
+fn under<'a>(path: &'a Path, workspace_root: &Path) -> std::path::Display<'a> {
+    path.strip_prefix(workspace_root)
+        .ok()
+        .or_else(|| {
+            workspace_root
+                .canonicalize()
+                .ok()
+                .and_then(|root| path.strip_prefix(root).ok())
+        })
+        .unwrap_or(path)
+        .display()
+}
+
 fn markdown_under(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for path in paths {
@@ -986,28 +1166,41 @@ struct Declares {
     /// It has a chunk to fill from source (`from=`), which is what
     /// `sync` is about.
     fills: bool,
+    /// Every chunk it declares is a `from=` mirror, and there is at
+    /// least one. Such a document owns no code: it shows what other
+    /// files hold, so naming nowhere to write is its shape rather
+    /// than an omission.
+    mirrors_only: bool,
     /// How many chunks it declares — the number that makes "nothing to
     /// write" worth saying out loud instead of reporting as a zero.
     chunks: usize,
 }
 
+impl Declares {
+    /// A file this process cannot read or parse declares nothing it
+    /// can act on, and saying so in one place keeps the three
+    /// answers from drifting apart as the struct grows.
+    fn nothing() -> Self {
+        Self { target: false, fills: false, mirrors_only: false, chunks: 0 }
+    }
+}
+
 fn declares(path: &Path) -> Declares {
     let Ok(content) = std::fs::read_to_string(path) else {
-        return Declares { target: false, fills: false, chunks: 0 };
+        return Declares::nothing();
     };
     let Ok(parsed) = x0k_tangle::parser::parse_document(&content) else {
-        return Declares { target: false, fills: false, chunks: 0 };
+        return Declares::nothing();
     };
+    let bodies: Vec<_> = parsed.chunks.values().flatten().collect();
     Declares {
         target: parsed.tangle_crate.is_some()
             || parsed.tangle_root.is_some()
             || !parsed.tangle_roots.is_empty()
             || !parsed.pipelines.is_empty(),
-        fills: parsed
-            .chunks
-            .values()
-            .flatten()
-            .any(|chunk| chunk.from.is_some()),
+        fills: bodies.iter().any(|chunk| chunk.from.is_some()),
+        mirrors_only: !bodies.is_empty()
+            && bodies.iter().all(|chunk| chunk.from.is_some()),
         chunks: parsed.chunks.len(),
     }
 }

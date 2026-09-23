@@ -13,7 +13,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::region_repo::{project_publication_repo, RepoProjectOptions, RepoProjectReport};
 use x0k_folio::colophon::parse_envelope;
@@ -162,6 +162,27 @@ pub fn publish_repo(
     Ok(report)
 }
 
+/// A vendored crate's manifest under `crates/<name>` (the projector's
+/// layout) or `<name>` (the layout before the relayout), whichever the
+/// tree actually holds.
+fn vendored_manifest(output_dir: &Path, krate: &str) -> Result<PathBuf> {
+    let candidates = [
+        output_dir.join("crates").join(krate).join("Cargo.toml"),
+        output_dir.join(krate).join("Cargo.toml"),
+    ];
+    candidates
+        .iter()
+        .find(|p| p.is_file())
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!(
+                "no vendored manifest for crate {krate}: looked at {} and {}",
+                candidates[0].display(),
+                candidates[1].display()
+            )
+        })
+}
+
 /// Topological publish order (dependencies first) over the projected
 /// crates, from their vendored manifests' path deps.
 fn publish_order(output_dir: &Path, crates: &[String]) -> Result<Vec<String>> {
@@ -169,7 +190,7 @@ fn publish_order(output_dir: &Path, crates: &[String]) -> Result<Vec<String>> {
     // crate → its in-bundle deps.
     let mut deps: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for name in crates {
-        let manifest_path = output_dir.join(name).join("Cargo.toml");
+        let manifest_path = vendored_manifest(output_dir, name)?;
         let text = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("reading {}", manifest_path.display()))?;
         let doc = text
@@ -276,7 +297,12 @@ fn resolve_remote(region_doc: &Path, workspace: &Path) -> Result<(Option<String>
 mod tests {
     use super::*;
 
+    // The projector's layout: every vendored crate under `crates/`.
     fn write_crate(dir: &Path, name: &str, deps: &[&str]) {
+        write_crate_at(&dir.join("crates"), name, deps)
+    }
+
+    fn write_crate_at(dir: &Path, name: &str, deps: &[&str]) {
         let crate_dir = dir.join(name);
         std::fs::create_dir_all(crate_dir.join("src")).unwrap();
         let mut manifest = format!(
@@ -309,6 +335,24 @@ mod tests {
         assert!(pos("leaf-a") < pos("mid"));
         assert!(pos("mid") < pos("top"));
         assert!(pos("leaf-b") < pos("top"));
+    }
+
+    #[test]
+    fn publish_order_reads_the_flat_layout_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_crate_at(tmp.path(), "leaf", &[]);
+        write_crate_at(tmp.path(), "top", &["leaf"]);
+        let order = publish_order(tmp.path(), &["top".to_string(), "leaf".to_string()]).unwrap();
+        assert_eq!(order, vec!["leaf".to_string(), "top".to_string()]);
+    }
+
+    #[test]
+    fn publish_order_names_both_paths_for_a_missing_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = publish_order(tmp.path(), &["ghost".to_string()]).expect_err("missing must refuse");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("crates/ghost/Cargo.toml"), "{msg}");
+        assert!(msg.contains("ghost/Cargo.toml"), "{msg}");
     }
 
     #[test]

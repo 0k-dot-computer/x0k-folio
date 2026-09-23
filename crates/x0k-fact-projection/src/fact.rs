@@ -5,9 +5,9 @@
 //! A fact is `(entity URI, predicate, typed value, optional cause)` — the
 //! shape facts have *between* substrates, before a Dialog-DB cache writer
 //! applies its `string:`/`entity:` text encoding and before the entry spine
-//! wraps them in payloads. [`project_envelope`] turns a document's envelope,
-//! viewed through the neutral [`ColophonView`], into a batch of them, and
-//! [`DocFactSource`] is the seam a tenant extends to add its own.
+//! wraps them in payloads. `project_envelope` turns a document's envelope,
+//! viewed through the neutral `ColophonView`, into a batch of them, and
+//! `DocFactSource` is the seam a tenant extends to add its own.
 
 /// A typed, substrate-neutral fact value.
 ///
@@ -40,11 +40,11 @@ pub enum FactValue {
     /// records "the fact `(entity, predicate, inner value)` no longer
     /// holds". The inner value is the retracted fact's value, carried so
     /// the tombstone reproduces the retracted fact's canonical value
-    /// bytes ([`payload::canonical_value_bytes`] unwraps the marker) —
+    /// bytes ([`crate::payload::canonical_value_bytes`] unwraps the marker) —
     /// which places the tombstone at the SAME spine coordinate and the
     /// SAME relation-graph cell as the assert it retracts, so the two
     /// compete directly under the fold's dominance rule
-    /// ([`relation_graph::fold_relation_graph`]).
+    /// (`crate::relation_graph::fold_relation_graph`).
     Retracted(Box<FactValue>),
 }
 
@@ -91,10 +91,12 @@ impl FactValue {
 ///
 /// `cause` is the provenance slot: a reference to whatever produced or
 /// superseded this fact. The form is producer-defined; the spine write
-/// path pins file-ingested facts to the [`payload::file_content_cause`]
-/// convention (`file-content:<blake3>` of the source file's bytes),
+/// path pins file-ingested facts to the
+/// [`crate::payload::file_content_cause`] convention
+/// (`file-content:<blake3>` of the source file's bytes),
 /// substrate-connected journaled writers stamp the typed
-/// [`FactProvenance`] rendering (`journal:<producer>@<seq>`), and the
+/// `crate::provenance::FactProvenance` rendering
+/// (`journal:<producer>@<seq>`), and the
 /// Dialog-DB write path asserts uncaused (`None`, the cache's
 /// convergence policy) with its read adapter carrying a stored cause
 /// through when one exists.
@@ -102,7 +104,7 @@ impl FactValue {
 pub struct FactEntry {
     /// Subject entity URI (e.g. `x0k:design/foo`, `x0k:intent/<uuid>`).
     pub entity: String,
-    /// Predicate, in its stored spelling (e.g. `x0k:folio/status`,
+    /// Predicate, in its stored spelling (e.g. `x0k:status`,
     /// `vendor:intent/title`, `motivatedBy`). Projection does not
     /// normalize predicate spellings: where a reader and a writer
     /// disagree on a spelling, the skew is preserved verbatim rather
@@ -135,8 +137,8 @@ impl FactEntry {
     /// wrapped in [`FactValue::Retracted`] (idempotent — retracting a
     /// retraction targets the same inner value), with `cause` naming
     /// what motivated the removal (e.g.
-    /// [`payload::file_content_cause`] of the file state that dropped
-    /// the edge, or [`payload::file_deleted_cause`] when the source
+    /// [`crate::payload::file_content_cause`] of the file state that dropped
+    /// the edge, or [`crate::payload::file_deleted_cause`] when the source
     /// file disappeared).
     pub fn to_retraction(&self, cause: Option<String>) -> FactEntry {
         let inner = match &self.value {
@@ -152,17 +154,30 @@ impl FactEntry {
     }
 }
 
-/// Stable predicates for envelope-level scalars asserted on each folio
-/// URI. Moved here from the folio ingester (which re-exports them) so
-/// every substrate that materializes envelope facts shares one spelling.
-/// Kept out of `ontology/vocab.ttl` because these scalars describe the
-/// *envelope* of any folio, not a class-specific property.
+/// The one spelling of every envelope-level scalar a folio document
+/// asserts about itself. Moved here from the folio ingester (which
+/// re-exports them) so every substrate that materializes envelope facts
+/// shares one term per field, and imported by the Dialog-DB ingest in
+/// `x0k:implementation/folio/document-source` for the same reason: a
+/// constant two crates read cannot drift, and two string literals did.
+///
+/// The scalars take the IRI `ontology/modules/document.ttl` declares,
+/// under one rule a reader can check with `grep` — an envelope field's
+/// predicate is `x0k:<field>`. The `folio/` prefix stays for
+/// **provenance**: facts about the projection rather than about the
+/// document. `folio/sourcePath` says which file this was read from;
+/// the three materialization pointers say where the document's
+/// materialized copy lives and what it hashed to. Neither is something
+/// the author asserts, and neither is an envelope field in the sense
+/// the rule is about.
 pub mod envelope_predicates {
-    pub const STATUS: &str = "x0k:folio/status";
-    pub const DOC_TYPE: &str = "x0k:folio/docType";
-    pub const SUBTYPE: &str = "x0k:folio/subtype";
-    pub const BODY_FORMAT: &str = "x0k:folio/bodyFormat";
-    pub const CONCERN: &str = "x0k:folio/concern";
+    pub const STATUS: &str = "x0k:status";
+    pub const DOC_TYPE: &str = "x0k:docType";
+    pub const SUBTYPE: &str = "x0k:subtype";
+    pub const BODY_FORMAT: &str = "x0k:bodyFormat";
+    pub const CONCERNS: &str = "x0k:concerns";
+    pub const SUMMARY: &str = "x0k:summary";
+    pub const ORIGINAL_ID: &str = "x0k:originalId";
     pub const MATERIALIZATION_LORO_DOC: &str = "x0k:folio/materializationLoroDocId";
     pub const MATERIALIZATION_REVISION: &str = "x0k:folio/materializationDocumentRevisionId";
     pub const MATERIALIZATION_CONTENT_HASH: &str = "x0k:folio/materializationContentHash";
@@ -185,7 +200,7 @@ mod envelope {
     /// lookups, and the parsed body) is not wasm-clean, so the ingester builds
     /// this view from it: plain strings, edge predicates already resolved to
     /// their ontology (camelCase) spelling, edges in the parser's iteration
-    /// order. [`project_envelope`] then owns *which facts an envelope yields*
+    /// order. `project_envelope` then owns *which facts an envelope yields*
     /// and their typing — the part that must agree across substrates.
     #[derive(Debug, Clone, Default, PartialEq)]
     pub struct ColophonView {
@@ -226,7 +241,7 @@ mod envelope {
     /// Projection emits uncaused facts (`cause: None`): the cause is
     /// write-site knowledge, not envelope knowledge. The Dialog-DB writer
     /// asserts uncaused (its convergence policy); the spine writer stamps
-    /// [`payload::file_content_cause`] of the source file before appending.
+    /// [`crate::payload::file_content_cause`] of the source file before appending.
     pub fn project_envelope(view: &ColophonView) -> Vec<FactEntry> {
         let mut out: Vec<FactEntry> = Vec::new();
         let uri = view.uri.as_str();
@@ -257,7 +272,7 @@ mod envelope {
         for c in &view.concerns {
             out.push(FactEntry::new(
                 uri,
-                envelope_predicates::CONCERN,
+                envelope_predicates::CONCERNS,
                 FactValue::Text(c.clone()),
             ));
         }
@@ -323,7 +338,7 @@ mod envelope {
     /// claim — every document in the corpus is offered to every registered
     /// source, and a tenant recognizes its own by `view.doc_type`.
     ///
-    /// Facts come back uncaused, exactly like [`project_envelope`]'s: the cause
+    /// Facts come back uncaused, exactly like `project_envelope`'s: the cause
     /// is write-site knowledge. The ingester stamps them and they are then
     /// indistinguishable from envelope facts for diffing and retraction.
     pub trait DocFactSource: Send + Sync {
@@ -384,8 +399,8 @@ mod tests {
             (envelope_predicates::DOC_TYPE, text("design")),
             (envelope_predicates::SUBTYPE, text("ux")),
             (envelope_predicates::BODY_FORMAT, text("markdown")),
-            (envelope_predicates::CONCERN, text("a")),
-            (envelope_predicates::CONCERN, text("b")),
+            (envelope_predicates::CONCERNS, text("a")),
+            (envelope_predicates::CONCERNS, text("b")),
             (envelope_predicates::MATERIALIZATION_LORO_DOC, text("doc-1")),
             (
                 envelope_predicates::MATERIALIZATION_CONTENT_HASH,

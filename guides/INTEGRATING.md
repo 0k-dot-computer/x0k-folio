@@ -15,8 +15,16 @@ Clone it and build the tangler:
 ```sh
 git clone https://github.com/0k-dot-computer/x0k-folio
 cd x0k-folio
-cargo build -p x0k-tangle
+cargo build --release -p x0k-tangle
 ```
+
+**Build it `--release`.** An unoptimized `check` over a real documentation
+tree is 20–46× slower than an optimized one — 37.96s against 0.83s over 754
+files, measured by a maintainer who followed the debug line this page used to
+give and filed the result as a defect. The grammars `x0k-syntax` and
+`tree-sitter-rust` compile are the cost, and they are the whole difference
+between a CI step you can require and one nobody will wait for. `--release`
+costs about a minute more the first time and nothing after.
 
 `rust-toolchain.toml` pins `1.95.0` with `clippy`; a rustup-managed
 toolchain fetches it on the first `cargo` invocation, and that pin is what
@@ -29,11 +37,17 @@ tree-sitter grammars and `x0k-tangle` links `tree-sitter-rust` directly, so
 `cc` builds them. `cargo-deny` is optional — `tools/ci` skips the supply-chain
 policy when it is absent.
 
-**The tangler is on crates.io**, so the shortest path to a working binary is
-`cargo install x0k-tangle` — it needs a Rust toolchain and a C compiler for
-the tree-sitter grammars, but no clone. Building from this checkout, at
-`target/debug/x0k-tangle`, is the other way, and the one to use if you are
-changing the tool rather than using it.
+**The tangler is on crates.io**, and `cargo install x0k-tangle` needs a Rust
+toolchain and a C compiler for the tree-sitter grammars but no clone. Read the
+version before you take that path: **the registry serves 0.1.0, and this page
+describes 0.1.1**, which is cut here and not yet published. 0.1.0 has no
+`--closed`, no `supersedes`/`superseded_by`, and a `check` blind to typed
+declarations in a vocabulary of your own — three of the things most of this
+page is about, so a reader who installs it and then follows these instructions
+finds the page wrong about its own tool. Until 0.1.1 goes out, build from the
+clone above: `target/release/x0k-tangle` is the binary every command here was
+run against, and it is also the one to use if you are changing the tool rather
+than using it.
 
 For a project with no Rust toolchain at all, the path that removes it is the
 release lane in this repository: `.github/workflows/release.yml` builds a
@@ -50,7 +64,7 @@ Five verbs are the ones you will use, and each has a `--help`:
 |---|---|
 | `x0k-tangle tangle <doc…> --workspace <root>` | write a document's chunks to their files, and a sidecar beside the document |
 | `x0k-tangle sync <path…> --workspace <root>` | the other direction: fill each `from=`/`symbol=` chunk's body from the source file it names |
-| `x0k-tangle check <path…>` | verify chunk references, and read every folio/v1 envelope under the paths against the shipped vocabulary |
+| `x0k-tangle check <path…> --workspace <root>` | verify chunk references — including each `from=`/`symbol=` mirror against the source file it names, which is what `--workspace` resolves — and read every folio/v1 envelope under the paths against the vocabulary (`--vocabulary <dir>` selects one of your own) |
 | `x0k-tangle affordances <path…>` | print every affordance the documents declare, as JSON |
 | `x0k-tangle weave <doc> --output-dir <dir>` | render one document as an HTML page |
 
@@ -58,9 +72,30 @@ Five verbs are the ones you will use, and each has a `--help`:
 --help` lists them; `weave-region`, `project-repo`, `publish-repo` and
 `receive-repo` are marked `[corpus-only]` and refuse, because they read the
 private corpus this repository was projected from. In this checkout `cargo
-run -p x0k-tangle -- <verb>` is the same thing as the binary; from your own
-repository, call the binary by path or put `target/debug` on your `PATH`. The
-commands below write `x0k-tangle` for either.
+run --release -p x0k-tangle -- <verb>` is the same thing as the binary; from
+your own repository, call the binary by path or put `target/release` on your
+`PATH`. The commands below write `x0k-tangle` for either.
+
+Those verbs are one binary. The repository ships a second one, and the setup
+above does not build it: `x0k-folio-cli` is the query surface — it ingests a
+folder of typed documents into an embedded datalog store and answers questions
+across the whole set, where `check` reads one document at a time.
+
+```sh
+cargo build --release -p x0k-folio-cli
+```
+
+It is not on crates.io — its Dialog adapter depends on `dialog-db` by git
+revision, which the registry refuses — but `cargo install` takes a git
+source, so from anywhere:
+
+```sh
+cargo install --git https://github.com/0k-dot-computer/x0k-folio x0k-folio-cli
+```
+
+That installs the `x0k-folio-cli` executable. The release binaries and the
+npm wrapper carry the same program. It has a section of its own, below;
+nothing before it needs the store.
 
 ## Typing your documents in place
 
@@ -88,15 +123,34 @@ document, and it is listed under what does not exist yet, below. `type` is
 one of ten names the format knows — `commitment`, `architecture`, `design`
 and `publication` for a decision; `implementation` for a document that
 tangles code; `wiki` and `manuscript` for the rest; `seed`, `intent` and
-`affordance` for a planning graph you probably do not keep — and any other
-name is a defect. `status` is `proposed`, `accepted` or `superseded` for a
+`affordance` for a planning graph you probably do not keep — **or any class a
+loaded vocabulary module declares, spelled as the kebab-case of the class's
+local name**: a `ConceptPage` class in a module of yours is `type:
+concept-page` in the envelope, and neither `ConceptPage` nor `concept_page`
+is that name. Any other name is a defect. `status` is `proposed`, `accepted` or `superseded` for a
 decision (`draft`, `stable` or `stale` for a wiki page) and may be left out.
 `summary` is optional and is the line a reader sees first. `edges` is the
 part that does work: each key is a predicate, each value a list of ids, and
-the predicate must be one the shipped `document` module declares —
-`refined_by`, `supports`, `implements`, `constrained_by`, `informed_by`,
-`motivated_by`, `mentions`, and the rest of that file. Write `refines`
-instead of `refined_by` and the checker refuses it by name.
+the predicate must be one some loaded module declares — `refined_by`,
+`supports`, `implements`, `constrained_by`, `informed_by`, `motivated_by`,
+`mentions` and the rest of the shipped `document` file, **or a predicate of
+your own module, spelled `<prefix>:<snake_case local>`**: a `supersededBy`
+property in a `bs` module of yours is `bs:superseded_by` in the envelope. A
+third rule lives with the declaration blocks below and belongs here, because
+it is the same convention a third time: the info string that opens a
+declaration block — a fence marked `yaml <prefix>:<marker>` — carries the
+class's local name **lower-cased whole**, and it has to agree with the class
+segment of the block's own `id`. The shipped `paper` example marks its fences
+`yaml paper:paper` against a class declared `paper:Paper`, which reads as a
+typo and is the rule.
+
+The three are one convention seen from three sides — a class becomes a `type`
+in kebab-case, a property becomes an `edges:` key in snake_case, a class
+becomes a declaration marker in lower case — and the prefix is always
+whichever one a loaded module declared. A key with no prefix means `x0k:`, as
+it always has. Write `refines` instead of `refined_by`, a prefix no module
+declares, or `yaml paper:Paper` over a `paper:paper/…` id, and the checker
+refuses it by name and names the spelling it wanted.
 
 Then check the folder — any folder. The checker reads every `.md` under the
 path whose frontmatter claims `folio/v1` and ignores the rest:
@@ -114,6 +168,59 @@ note's wording was written for this repository's own edges, which leave for a
 private corpus; on your folder it means a document you have not typed yet,
 and that is the ordinary state of a set of documents, not an error. The last
 line counts what it read and how many edges left the set.
+
+That default is right for a set that is part of something larger and wrong
+for a collection that is the whole world its edges name — an ADR directory,
+a docs tree where every id an edge can carry is in the tree. There an edge
+that resolves to nothing is a rename nobody finished. Say so, and the same
+finding fails the run:
+
+```sh
+x0k-tangle check docs --closed
+```
+
+You get the same sentence with the `note:` dropped and an exit code of 1.
+**That is the line to put in CI for a collection that is a closed set**;
+leave the flag off and nothing changes, which is what a set with edges into a
+wider corpus wants.
+
+**Pass the whole set.** The shape a CI job reaches for first — check only the
+files this pull request touched — is the one shape `--closed` cannot be given,
+because the edges that leave a subset are mostly the ordinary edges into the
+rest of your own tree, and every one of them comes back as a defect:
+
+```sh
+x0k-tangle check docs/concepts/strict_mode.md --closed
+docs/concepts/strict_mode.md: edge `informed_by` → `pyd:policy/version-policy` names no document under the paths scanned
+```
+
+Nothing is wrong with that tree. `--closed` is a claim about a *set*, so the
+set you name has to be the one the claim is about. Scope the job by directory,
+not by diff, and let it read the whole directory every time — it is the read
+that costs a fraction of a second.
+
+**A file with no envelope is skipped, and the last line says how many.** That
+skipping is what lets you adopt this one directory at a time, and it is also
+how a generated index page goes quietly one row short: a contributor copies a
+template, drops the `x0k:` block, and the board built from the fifteen typed
+files in a directory of sixteen is right about the fifteen. So the count is
+always there —
+
+```sh
+x0k-tangle check docs --closed
+no chunk references to check; 15 envelope(s) read against the vocabulary, 0 declaration(s) checked, 0 edge(s) leave the set, 1 markdown file carried no envelope
+```
+
+— and for a set where every file is *supposed* to be typed, `--require-envelope`
+makes it a defect that names the file:
+
+```sh
+x0k-tangle check docs --closed --require-envelope
+docs/architecture-decisions/adr016-untyped.md: carries no folio/v1 envelope, so nothing in this set reads it
+```
+
+Leave the flag off for a directory you are still adopting; it is the same
+kind of claim as `--closed`, and it is yours to make.
 
 The vocabulary is data you can read. `crates/x0k-ontology/ontology/modules/` holds
 three files — `core.ttl`, `document.ttl`, `software.ttl` — in N-Triples, one
@@ -150,13 +257,173 @@ The declaration that makes a prefix yours is one triple of that file:
     vann:preferredNamespaceUri "https://example.org/papers#" .
 ```
 
+A block inside a document reaches exactly as far as the scan does. It is read
+from the documents `check` was pointed at, so `vocabulary.md` declares the
+`paper` prefix to a run over the directory and to no run over one file beside
+it:
+
+```sh
+x0k-tangle check alpha.md
+declaration does not hold: inline `paper:paper` block in section `Alpha` has invalid id `paper:paper/alpha`: id `paper:paper/alpha` uses the namespace prefix `paper`, which no loaded vocabulary module declares — a `turtle folio:ontology` block declares its prefix only to a scan that reads the document holding it, so scan the directory rather than the one file, or load the modules from a directory of `.ttl` files at alpha.md:11
+```
+
+The half after the dash is the useful half, and this page used to cut the
+message short of it: the refusal names both ways out.
+
+Name the directory rather than the file and it passes. This is the other
+reason a changed-files CI job is the wrong shape here, and it has the same
+answer as `--closed` above: scan the set, because the vocabulary is a property
+of the set.
+
 A block inside a document is one way in; `x0k-tangle check --vocabulary <dir>`
 is the other, loading a directory of `.ttl` files at run time so a module of
-your own needs no rebuild of the binary. What such a module can and cannot
+your own needs no rebuild of the binary — and, unlike the block, independent
+of which documents the scan happens to reach. **In that directory a file's
+name is load-bearing: `<prefix>.ttl`, where `<prefix>` is the
+`vann:preferredNamespacePrefix` its own module fact declares.** Put the
+declaration above in a file and the file is `paper.ttl`; call it `papers.ttl`
+and the whole directory is refused —
+
+```text
+ontology module facts ["paper"] do not match the module files ["papers"]
+```
+
+— because a module the set names and a file the directory holds have to be
+the same module. What such a module can and cannot
 reach is under what does not exist yet, below — the honest summary is that a
-class it declares becomes a usable document `type` and a namespace it declares
-becomes an id scheme, while the decision header's `edges:` still admits only
-the shipped predicates.
+class it declares becomes a usable document `type` in kebab-case, a namespace
+it declares becomes an id scheme, and an object property it declares over a
+`Decision` domain becomes an `edges:` key in snake case under the module's
+own prefix. It reaches the index and the query store too: `x0k-tangle index`
+carries the edge spelled the way you spelled it, `x0k-folio-cli ingest`
+projects it under the IRI your module declares, and `query --named edges` and
+`--named superseded` both answer over it.
+
+### The smallest module of all
+
+A module that declares a namespace and **no classes and no predicates** is
+the cheapest way in, and it is the one to start with: it gives your project
+its own id prefix while your documents keep our classes and our predicates.
+Six lines, in `docs/.folio/jj.ttl`:
+
+```turtle
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+
+<https://jj-vcs.github.io/vocabulary> a owl:Ontology ;
+    vann:preferredNamespacePrefix "jj" ;
+    vann:preferredNamespaceUri "https://jj-vcs.github.io/ontology#" .
+```
+
+Now `id: jj:design/secure-config` with `type: design` and a
+`superseded_by:` edge checks clean under `--vocabulary docs/.folio`, ingests,
+and answers `--named status` and `--named superseded` with `jj:`-shaped ids —
+your prefix, our vocabulary. Without the module the same document is refused
+by name, and the alternative people reach for instead is to write their
+documents under *our* prefix, which reads as a mistake to every contributor
+who sees it.
+
+## Asking the collection a question
+
+`check` reads your documents one at a time. To ask about the set — which
+decisions are superseded, what points at this one — load them into a database
+and query it:
+
+```sh
+x0k-folio-cli ingest --root docs/decisions --database .folio/db --shipped
+```
+
+`ingest` reads the directory once and commits each document's facts; it is a
+batch verb and waits for the store rather than for a clock, so a large
+collection takes as long as it takes. `watch` is the one that runs beside you,
+rescanning on an interval and moving on from a slow write. Treat `ingest` as a
+nightly job or a pre-merge step, not a per-keystroke hook: it is seconds per
+hundred documents, not milliseconds.
+
+Four questions need no query language at all:
+
+```sh
+x0k-folio-cli query --database .folio/db --named status
+x0k-folio-cli query --database .folio/db --named superseded
+x0k-folio-cli query --database .folio/db --named edges    --arg x0k:design/retry-budget
+x0k-folio-cli query --database .folio/db --named mentions --arg x0k:design/retry-budget
+```
+
+`status` is the board — every typed document with its type and path, and its
+status where it has one, which is the ADR index page most decision logs
+maintain by hand. `status:` is optional in the envelope, and the board lists
+the documents that have not been triaged yet with that column blank, because
+those are the ones such an index is meant to surface. `superseded` is which
+document was replaced, by what, and where it lives. `edges` lists what leaves
+one document and `mentions` what arrives at it, across every predicate the
+vocabulary declares. Add `--explain` to any of them to print the request it
+would run instead of running it; that JSON is a working query file, and
+editing one is the shortest way into the format.
+
+The `--arg` of the last two is a compact id, and its prefix is yours: it is
+expanded through the same namespaces the ingest resolved your documents with,
+so `retry:design/budget` finds the document your own `retry` module named,
+not one in ours. A prefix no loaded vocabulary declares is refused, and names
+the ones that are declared — an id you mistyped should not look like a
+document that simply has no edges. A full IRI is accepted as it comes. If the
+question runs and answers nothing, the CLI says which it was: no document
+with that id, or a document carrying no such edge.
+
+### What the envelope becomes
+
+Every envelope field is projected as a fact whose predicate is the term the
+vocabulary declares, in the base namespace `https://0k.computer/ontology#`:
+
+| envelope | predicate |
+|---|---|
+| `type` | `#docType` |
+| `status` | `#status` |
+| `summary` | `#summary` |
+| `concerns` (one fact each) | `#concerns` |
+| `body_format` | `#bodyFormat` |
+| `id`, as authored | `#originalId` |
+| each `edges:` predicate | its camelCase term — `refined_by` is `#refinedBy` |
+
+The entity is the document's expanded id, and the `type:` also becomes an
+`rdf:type` when the id's class resolves. One family is spelled differently on
+purpose: `#folio/sourcePath`, `#folio/sourceDocument`, `#folio/sourceStart`
+and `#folio/sourceEnd` are **provenance** — which file a fact was read from,
+and where in it — rather than anything the document says about itself. Both
+families carry `rdfs:comment`, so `grep` over the module files answers for
+them the same way it answers for a predicate.
+
+### What a query file is made of
+
+A query file is one JSON object: `premises`, an optional `rules`, `select`,
+and the `max_rows` / `timeout_ms` budgets. A premise is the only shape to
+learn:
+
+```json
+{ "assert": { "with": { "status": { "the": "https://0k.computer/ontology#status",
+                                    "cardinality": "many" } } },
+  "where":  { "this": { "?": { "name": "doc" } },
+              "status": { "?": { "name": "status" } } } }
+```
+
+`with` names the predicates this premise reads, each under a local field
+name. `where` binds the positions: `this` is the entity the facts are about,
+and each field is that predicate's value. A binding is either a variable,
+`{"?": {"name": "doc"}}`, or a literal — and a bare IRI string is a literal
+entity, which is how you ask about one document:
+`"this": "https://0k.computer/ontology#design/retry-budget"`.
+
+Two consequences account for most first attempts going wrong. Fields within
+one premise are a **conjunction**: a row exists only where the document has
+every predicate named, so adding `summary` to the query above silently drops
+every document that has none. Premises **join on shared variable names**, so
+following an edge means binding one premise's value variable as the next
+premise's `this`.
+
+One thing that is not an error: a predicate no fact uses. To the query engine
+that is a join matching nothing, so you get zero rows and exit 0. Because a
+typo and an honest empty answer look identical, an empty result prints a note
+naming each predicate the database holds no fact for — check that first when
+a query you believe in comes back empty.
 
 ## Adopting the tangle for one crate
 
@@ -195,7 +462,7 @@ impl Bucket {
 }
 ```
 
-```rust {#tests file="proof/tests/bucket.rs"}
+```rust {#tests file="tests/bucket.rs"}
 #[test]
 fn refill_stops_at_capacity() { /* … */ }
 ```
@@ -286,16 +553,50 @@ moves, so read `x0k-tangle sync --help` for the current set rather than
 trusting a list here. A file it cannot parse fails the same
 way — a per-chunk `error:` naming the supported set, and a non-zero run.
 
-**A chunk whose symbol has since been renamed or deleted keeps the body it
-was last given.** The run says so and fails, but the document on disk is
-unchanged, so a re-tangle-and-diff gate sees nothing and `check` does not
-resolve `symbol=` at all. Until it does, a stale `from=` chunk is drift this
-repository cannot catch for you: re-run `sync` and read its exit code.
+**`check` is the gate for a mirror, and it does resolve `symbol=`.** A chunk
+whose symbol has moved out from under it keeps the body it was last given, so
+a re-tangle-and-diff gate sees nothing — but `check` opens the source, finds
+the symbol, and compares the body the document holds against the body the file
+holds now. A symbol that is gone is reported against its chunk (`chunk
+'bucket': symbol 'Buckett' not found`), and a body that no longer matches is
+reported with the line it first differs at:
+
+```text
+docs/ratelimit.md: chunk 'bucket': the mirrored body and src/bucket.rs disagree
+— first difference at body line 1 (document 5 line(s), source 5 line(s));
+nothing records which side moved, and `sync` resolves it the one way it can, by
+rewriting the document from the source
+```
+
+Both exit non-zero, so one command is the whole drift gate:
+
+```sh
+x0k-tangle check docs --workspace .
+```
+
+A change that renames a field fails the docs job instead of quietly making a
+paragraph a lie. `--workspace` is what `from=` paths resolve against, so pass
+`check` the same root you pass `sync`; without it they resolve against the
+working directory and every mirrored chunk reports `source file not found`.
 
 The direction is the point, not the syntax. A `from=` chunk is a reference,
 not an output: `tangle` on that document writes zero files and does not touch
 `src/bucket.rs`, which stays the file you edit and the file your build
-compiles. So you can put explanation around the parts of a system that most
+compiles. A document with nothing but mirrors is therefore **not a tangle
+target**, and both forms of the verb say so the same way. Naming the file
+(`tangle docs/ratelimit.md --workspace .`) reports
+
+```text
+docs/ratelimit.md: mirrors 2 chunk(s) from source it does not own; nothing to
+tangle (`sync` fills these and `check` catches them going stale)
+```
+
+and exits 0, and the directory form (`tangle docs --workspace .`, the one to
+put in CI) passes over it and exits 0 as well. The case that still fails is
+the other one: a document with chunks that are *not* mirrors and no `tangle:`
+block, which reports `declares 1 chunk(s) and no tangle target` and exits
+non-zero, because you named a document meant to write something and it had
+nowhere to write it. So you can put explanation around the parts of a system that most
 need it, in the order that explains them, without moving a line of code or
 generating anything — and where you later decide the document should own the
 code, drop the `from=` and `symbol=`, keep the body that `sync` put there,
@@ -354,13 +655,66 @@ The second prints every declaration as JSON — id, title, description, the
 document it is defined in, its facts by predicate, and the test chunks that
 prove it — for whatever consumes it next.
 
+## Querying what you typed
+
+`check` reads one document at a time. `x0k-folio-cli` reads the set: it
+reconciles every typed document under a root into an embedded Dialog datalog
+store, and answers queries over the graph they form.
+
+```sh
+x0k-folio-cli ingest --root docs --database .folio/docs.db --vocabulary docs/.folio-vocab
+x0k-folio-cli query --database .folio/docs.db --file docs/queries/mentions.json
+```
+
+The vocabulary bundled with the binary is the default, so `--shipped` only
+says out loud what would happen anyway. `--vocabulary <dir>` reads the `*.ttl`
+modules in that directory *as well*, which is what a reader with subjects of
+their own wants: your terms plus the ones folio/v1 is made of. Say
+`--only-vocabulary` when that directory is genuinely the whole vocabulary.
+`x0k-tangle check` takes the same two flags and loads through the same
+function, so a document `check` accepts is a document `ingest` can project.
+`ingest` reports how many Markdown files it read,
+how many claimed `folio/v1`, and how many of those were valid; `status` prints
+the last reconciliation including what it rejected; `watch` re-ingests as the
+documents change; `rebuild` builds a new generation and keeps the old one
+until it succeeds. Ingest waits for the store to confirm delivery before it
+exits — that wait is `--delivery-grace-ms` (1–30000, default 30000), it is
+most of the wall-clock time of a small run, and a run that cannot confirm
+exits non-zero rather than handing you a quietly empty database. This is a
+nightly or a pre-push job, not a pre-commit hook.
+
+A query is a native Dialog query file: JSON datalog, verbose, and with no
+surface syntax yet. The seven under
+`crates/x0k-folio-cli/examples/queries/` are the reference — `citations.json`
+is the smallest one that joins two documents, `design-implementations.json`
+walks an envelope edge, `instances.json` reads declaration blocks — and every
+other question is one of those shapes with different properties and bindings.
+Copy the nearest one and change the IRIs.
+
+**Which IRIs.** An envelope becomes facts about the document's own entity,
+spelled with the terms `document.ttl` declares: `status:` is
+`https://0k.computer/ontology#status`, `type:` is `#docType`, `summary:` is
+`#summary`, `concerns:` is `#concerns` (one fact per entry), the authored `id`
+is `#originalId`, and each `edges:` key is the property the vocabulary declares
+for it (`refined_by` is `#refinedBy`). Only provenance keeps the `folio/`
+prefix — `#folio/sourcePath`, `#folio/sourceDocument`, `#folio/sourceKind`,
+`#folio/sourceOrigin` — and those are declared too. The full table is under
+*Asking the collection a question* above. Asking for a predicate no fact uses
+returns no rows and a note naming the predicate, never a silent empty answer.
+
+The entity those facts are about is the expanded `id`, and a document whose id
+names a class the vocabulary declares also carries an `rdf:type` to that class.
+Typed YAML declaration blocks in the body are separate entities again, spelled
+with the properties their own module declares — `https://example.org/papers#cites`
+for the `paper:cites` of the papers example.
+
 ## Your agent
 
 Point it at `AGENTS.md`; `CLAUDE.md` is a one-line include of the same file,
 for agents that look for that name. It is a decision procedure — change
 code, type a document, add a capability, explain a term, what is refused —
 and every verb it names is one the binary has. The agent works with command-line tools and a directory of files,
-from any editor that can run a shell. The query CLI's `watch` command
+from any editor that can run a shell. `x0k-folio-cli watch`
 updates the database as documents change. Editor extensions and an MCP
 server are not included.
 
@@ -379,17 +733,24 @@ Said here so that nothing above has to imply it.
   is a declaration to copy). A prefix belonging to no module is still not a scheme,
   and whether the format should have one of its own is a decision not yet
   taken.
-- **Custom predicates in the legacy document header.** A module of yours
-  now needs no rebuild: `x0k-tangle check --vocabulary <dir>` loads a
-  directory of `.ttl` files at run time and checks against those, refusing a
-  set whose `owl:imports` do not close. A class the module declares becomes a
-  usable document `type`, and a namespace it declares becomes an id scheme.
-  In that header, `edges:` admits
-  a predicate only if it lives in the `https://0k.computer/ontology#`
-  namespace with a `Decision` domain, so a predicate in a namespace of your
-  own is loaded but not admitted there. Typed YAML instances use the
-  collection vocabulary and support custom predicates; the papers example
-  under `crates/x0k-folio-cli/examples/papers/` demonstrates this.
+- **Custom predicates in the index.** `check` admits a predicate of
+  your own in the document header — `bs:superseded_by` for a `bs` module
+  declaring `supersededBy` over a `Decision` domain — and refuses by name
+  one no loaded module declares. `x0k-folio-cli ingest` projects it too,
+  under the IRI the module declares, and `query --named edges` returns it
+  labelled the way you spelled it. `x0k-tangle index` carries it as well,
+  in its `edges` map, spelled the way your header spells it; so do typed
+  YAML instances inside a document, which the papers example under
+  `crates/x0k-folio-cli/examples/papers/` demonstrates. `index` takes no
+  `--vocabulary` and consults none: it echoes whatever your header says and
+  refuses nothing, including a predicate `check` would refuse by name. That
+  is survivable because `check` runs first, and a pipeline that generates a
+  board from `index` without `check` ahead of it has no one asking whether
+  the header is right. What is *not*
+  range-checked is an `edges:` target, for a shipped predicate or for yours: the
+  checker asks that the predicate is declared and that the target is a
+  well-formed id, and reports a target naming no document here as a note —
+  or, under `--closed`, a defect.
   The header's `type:` is also wider than it should be —
   the vocabulary marks no class as a document genus, so any class the loaded
   modules declare is an accepted `type`, and narrowing that needs a marker
@@ -405,4 +766,3 @@ Said here so that nothing above has to imply it.
   What you can adopt is the format, the tangler and the vocabulary;
   publication as projection stays on our side of the boundary.
   Contributions to this repository go through `guides/CONTRIBUTING.md`.
-- **A crates.io release.** Build from the clone.
