@@ -1155,8 +1155,12 @@ fn temp_sibling(path: &Path) -> PathBuf {
 }
 
 /// Write `content` to `path`, creating parent directories. Readers
-/// observe the old content or the new, never a truncated prefix.
+/// observe the old content or the new, never a truncated prefix, and a file
+/// that already holds `content` keeps its modification time.
 fn write_atomic(path: &Path, content: &[u8]) -> Result<()> {
+    if std::fs::read(path).is_ok_and(|held| held == content) {
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
@@ -2544,6 +2548,22 @@ from b
         done.store(true, Ordering::Relaxed);
         let reads = reader.join().unwrap();
         assert!(reads > 0, "the reader actually read the file");
+    }
+
+    /// Re-writing identical bytes is not a change: the file keeps the
+    /// modification time a build script's `rerun-if-changed` compares.
+    #[test]
+    fn write_atomic_leaves_an_unchanged_file_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("out.rs");
+        write_atomic(&target, b"content").unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options().write(true).open(&target).unwrap().set_modified(old).unwrap();
+        write_atomic(&target, b"content").unwrap();
+        assert_eq!(std::fs::metadata(&target).unwrap().modified().unwrap(), old);
+        write_atomic(&target, b"changed").unwrap();
+        assert_ne!(std::fs::metadata(&target).unwrap().modified().unwrap(), old);
+        assert_eq!(std::fs::read(&target).unwrap(), b"changed");
     }
 
     /// The staging file is transient: once `write_atomic` returns, the

@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/document-source.md",
-  "source_hash": "e23dcc12733d5d9a",
+  "source_hash": "d86c7b224f964e83",
   "pipelines": [
     {
       "kind": "identity-tangle",

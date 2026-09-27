@@ -39,6 +39,7 @@
 pub mod atlas;
 pub mod chunk;
 pub mod chunk_refs;
+pub mod cli;
 pub mod faces;
 pub mod identity_pipeline;
 pub mod index;
@@ -312,7 +313,7 @@ pub mod source_check {
 
 /// Install the process-wide tracing subscriber for an `x0k-tangle` binary.
 ///
-/// Both CLIs call this first. Diagnostics go to **stderr** (stdout carries
+/// [`cli::run`] calls this first. Diagnostics go to **stderr** (stdout carries
 /// data), the default level is `warn` (the CLI's own report is its
 /// summary), and `RUST_LOG` overrides. Idempotent: a host that already
 /// installed a subscriber keeps it.

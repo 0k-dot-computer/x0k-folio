@@ -237,7 +237,7 @@
 <https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#comment> "The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with the document-to-document edges and the folio/v1 envelope properties that stay inside the genus." .
 <https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#label> "document" .
 <https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
-<https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/document/0.1.1> .
+<https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/document/0.2.0> .
 _:b0000n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0000n0001 .
 _:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Manuscript> .
 _:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0000n0002 .

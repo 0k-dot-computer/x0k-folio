@@ -1,0 +1,436 @@
+---
+x0k:
+  format: folio/v1
+  id: x0k:implementation/icon/path
+  type: implementation
+  status: draft
+  summary: 'The path form: an accepted icon as a list of outlines in grid units — every element reduced to absolute moves, lines, curves and arcs, its inherited paints resolved into one fill and one stroke, translations applied — so a native painter adapts it to its own geometry types without re-reading the profile.'
+  concerns:
+  - icons
+  - rendering
+  - shell
+  - profile
+  tangle:
+    crate: crates/x0k-icon
+    root: src/path.rs
+  edges:
+    implements:
+    - x0k:design/icon-profile
+    cites:
+    - x0k:architecture/entity-iconography
+    - x0k:implementation/icon/parse
+    - x0k:implementation/icon/validate
+    - x0k:implementation/icon/paint
+---
+# The path form
+
+Two painters in x0k draw marks without an SVG reader: the native shell,
+through `x0k-ui-draw` and vello's imaging `Painter`, and the entity-graph
+renderer, which draws straight into a vello `Scene` and ships to the
+browser as well as the desktop. They do not share a geometry library —
+the renderer builds for a wasm target the shell's toolkit does not — and
+each could read the profile itself. That is the failure the
+[`entity-iconography` ADR](x0k:architecture/entity-iconography) exists to
+refuse: two readers of one language are two places for it to drift, and
+the first time a painter decided that an absent `fill` was black, or that
+a group's stroke width did not reach its children, the same mark would
+look different on two surfaces.
+
+So the reading happens once, here, and what leaves is the *path form*:
+each element of an accepted icon as an outline in grid units — absolute
+moves, lines, curves and arcs, nothing else — with the paints it
+inherits resolved into one fill and one stroke. A painter's whole job
+after that is to scale by its size, turn segments into its own path type,
+and bind roles to its theme's colours. The ADR's sentence is literal:
+one reader of the profile, two painters.
+
+The carried example is the ring family's `claimed` mark — a dotted ring
+in `line` — because it is small and exercises the three things a painter
+would otherwise get wrong: a circle has to become a path, its paint is
+the absent-`fill`, present-`stroke` case, and its stroke carries the one
+dash.
+
+## What a painter receives
+
+A [`Draw`] is one outline and what paints it. The outline is a list of
+[`Segment`]s in grid units with every translation applied; the fill, when
+there is one, carries its role and fill rule; the stroke carries its
+role, its width in grid units, and the dash — the profile's one pattern,
+`1 2`, or none. Caps and joins are not carried because they are not a
+choice: the profile makes them round, always.
+
+<a name="chunk-module-doc"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#module-doc`</sub>
+
+```rust {#module-doc}
+//! The path form: an accepted icon as outlines in grid units, each with
+//! its resolved fill and stroke, for a native painter to adapt to its
+//! own geometry types (`x0k:architecture/entity-iconography`, amendment:
+//! one reader of the profile, several painters).
+//!
+//! [`draws`] is the whole of it. Every [`Segment`] is absolute; `H` and
+//! `V` are resolved to lines; circles and rects are arcs and lines; a
+//! group's translation is applied to its descendants. Strokes are round
+//! capped and joined, always, which is why [`StrokeSpec`] does not say so.
+```
+
+<a name="chunk-imports"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#imports`</sub>
+
+```rust {#imports}
+use crate::parse::{Element, Paint, PathCommand, Role, Shape, Transform};
+use crate::validate::Accepted;
+```
+
+<a name="chunk-types"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#types`</sub>
+
+```rust {#types}
+/// One segment of an outline, absolute, in grid units.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Segment {
+    MoveTo(f64, f64),
+    LineTo(f64, f64),
+    /// A quadratic curve: control point, then end point.
+    QuadTo([f64; 4]),
+    /// A cubic curve: two control points, then end point.
+    CubicTo([f64; 6]),
+    /// An SVG elliptical arc from the current point, as `A` states it
+    /// (rotation in degrees).
+    ArcTo { rx: f64, ry: f64, rotation: f64, large_arc: bool, sweep: bool, x: f64, y: f64 },
+    Close,
+}
+
+/// How a closed outline is filled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillRule {
+    NonZero,
+    EvenOdd,
+}
+
+/// A stroke as the profile draws it: a role, a width in grid units, and
+/// the one dash (`[1, 2]`) or none. Caps and joins are round.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StrokeSpec {
+    pub role: Role,
+    pub width: f64,
+    pub dash: Option<[f64; 2]>,
+}
+
+/// One outline an icon paints, with what fills and strokes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Draw {
+    pub outline: Vec<Segment>,
+    pub fill: Option<(Role, FillRule)>,
+    pub stroke: Option<StrokeSpec>,
+}
+```
+
+## Elements become outlines
+
+Most of the vocabulary is already an outline. A path's commands map one
+to one, except the two that name a single axis: `H` and `V` keep the
+other coordinate from the current point, so the reader tracks it and
+writes a plain line. A line is a move and a line; a polyline is a move
+and its lines.
+
+The two shapes that are not are the circle and the rect, and both become
+arcs rather than curves. An arc is what a circle *is*, and every painter
+worth the name converts SVG arcs natively and to its own tolerance — the
+path form has no business choosing a flattening. A circle is two half
+arcs, which keeps each within the one-arc-per-half-turn a converter can
+always solve; a rounded rect is four lines and four quarter arcs, its
+radius clamped to half the shorter side as SVG clamps it.
+
+<a name="chunk-outline"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#outline`</sub>
+
+```rust {#outline}
+/// The outline an element draws, in its own grid coordinates; `None` for
+/// a group, which draws nothing of its own.
+fn outline(shape: &Shape) -> Option<Vec<Segment>> {
+    use Segment::*;
+    let quarter = |r: f64, x: f64, y: f64| ArcTo { rx: r, ry: r, rotation: 0.0, large_arc: false, sweep: true, x, y };
+    Some(match *shape {
+        Shape::Group | Shape::Foreign(_) => return None,
+        Shape::Path { ref d, .. } => path_outline(d),
+        Shape::Line { x1, y1, x2, y2 } => vec![MoveTo(x1, y1), LineTo(x2, y2)],
+        Shape::Polyline { ref points } => points
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, y))| if i == 0 { MoveTo(x, y) } else { LineTo(x, y) })
+            .collect(),
+        Shape::Circle { cx, cy, r } => vec![MoveTo(cx - r, cy), quarter(r, cx + r, cy), quarter(r, cx - r, cy), Close],
+        Shape::Rect { x, y, width: w, height: h, rx } => match rx.map(|rx| rx.min(w / 2.0).min(h / 2.0)) {
+            Some(r) if r > 0.0 => vec![
+                MoveTo(x + r, y),
+                LineTo(x + w - r, y),
+                quarter(r, x + w, y + r),
+                LineTo(x + w, y + h - r),
+                quarter(r, x + w - r, y + h),
+                LineTo(x + r, y + h),
+                quarter(r, x, y + h - r),
+                LineTo(x, y + r),
+                quarter(r, x + r, y),
+                Close,
+            ],
+            _ => vec![MoveTo(x, y), LineTo(x + w, y), LineTo(x + w, y + h), LineTo(x, y + h), Close],
+        },
+    })
+}
+```
+
+The circle's two halves are `quarter` arcs only by the helper's name: a
+circular arc with `large_arc` false and a half turn between its endpoints
+is exactly a semicircle, and the sweep flag picks the side.
+
+<a name="chunk-path-outline"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#path-outline`</sub>
+
+```rust {#path-outline}
+/// A path's commands as absolute segments, `H` and `V` resolved.
+fn path_outline(d: &[PathCommand]) -> Vec<Segment> {
+    let mut out = Vec::with_capacity(d.len());
+    let (mut at, mut start) = ((0.0, 0.0), (0.0, 0.0));
+    for command in d {
+        let segment = match *command {
+            PathCommand::MoveTo(x, y) => {
+                start = (x, y);
+                Segment::MoveTo(x, y)
+            }
+            PathCommand::LineTo(x, y) => Segment::LineTo(x, y),
+            PathCommand::Horizontal(x) => Segment::LineTo(x, at.1),
+            PathCommand::Vertical(y) => Segment::LineTo(at.0, y),
+            PathCommand::Quadratic(q) => Segment::QuadTo(q),
+            PathCommand::Cubic(c) => Segment::CubicTo(c),
+            PathCommand::Arc { rx, ry, rotation, large_arc, sweep, x, y } => {
+                Segment::ArcTo { rx, ry, rotation, large_arc, sweep, x, y }
+            }
+            PathCommand::Close => Segment::Close,
+            PathCommand::Unknown(_) => break,
+        };
+        at = match segment {
+            Segment::MoveTo(x, y) | Segment::LineTo(x, y) => (x, y),
+            Segment::QuadTo([_, _, x, y]) | Segment::CubicTo([_, _, _, _, x, y]) => (x, y),
+            Segment::ArcTo { x, y, .. } => (x, y),
+            Segment::Close => start,
+        };
+        out.push(segment);
+    }
+    out
+}
+```
+
+A group's translation moves everything beneath it, and it is applied here
+rather than handed to the painter as a transform, so a painter never has
+to compose one. Translating an arc moves its endpoint and leaves its
+radii alone.
+
+<a name="chunk-translate"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#translate`</sub>
+
+```rust {#translate}
+fn translated(outline: Vec<Segment>, (dx, dy): (f64, f64)) -> Vec<Segment> {
+    if dx == 0.0 && dy == 0.0 {
+        return outline;
+    }
+    let p = |x: f64, y: f64| (x + dx, y + dy);
+    outline
+        .into_iter()
+        .map(|segment| match segment {
+            Segment::MoveTo(x, y) => { let (x, y) = p(x, y); Segment::MoveTo(x, y) }
+            Segment::LineTo(x, y) => { let (x, y) = p(x, y); Segment::LineTo(x, y) }
+            Segment::QuadTo([x1, y1, x, y]) => Segment::QuadTo([x1 + dx, y1 + dy, x + dx, y + dy]),
+            Segment::CubicTo([x1, y1, x2, y2, x, y]) => {
+                Segment::CubicTo([x1 + dx, y1 + dy, x2 + dx, y2 + dy, x + dx, y + dy])
+            }
+            Segment::ArcTo { rx, ry, rotation, large_arc, sweep, x, y } => {
+                Segment::ArcTo { rx, ry, rotation, large_arc, sweep, x: x + dx, y: y + dy }
+            }
+            Segment::Close => Segment::Close,
+        })
+        .collect()
+}
+```
+
+## Paints, resolved
+
+A group passes `fill`, `stroke` and `stroke-width` down, and its
+translation; an element's own attributes win. Then the two paints are
+decided the way the profile reads them. **Absent paint is no paint** —
+the checker counts an element with no `fill` as unfilled, and so does
+every painter, whatever SVG's own default would have said. A fill is
+painted when its paint is a role and the outline has an inside, which a
+line and a polyline do not, with the even-odd rule where the author wrote
+it. A stroke is painted when its paint is a role, at its written width,
+or one unit where the drawing is silent.
+
+<a name="chunk-paints"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#paints`</sub>
+
+```rust {#paints}
+/// What an element inherits from the groups around it.
+#[derive(Clone, Copy)]
+struct Inherited<'a> {
+    fill: Option<&'a Paint>,
+    stroke: Option<&'a Paint>,
+    stroke_width: Option<f64>,
+    offset: (f64, f64),
+}
+
+fn fill_of(shape: &Shape, paint: Option<&Paint>) -> Option<(Role, FillRule)> {
+    let Some(Paint::Role(role)) = paint else { return None };
+    match shape {
+        Shape::Line { .. } | Shape::Polyline { .. } => None,
+        Shape::Path { evenodd: true, .. } => Some((*role, FillRule::EvenOdd)),
+        _ => Some((*role, FillRule::NonZero)),
+    }
+}
+
+fn stroke_of(paint: Option<&Paint>, width: Option<f64>, dash: Option<&[f64]>) -> Option<StrokeSpec> {
+    let Some(Paint::Role(role)) = paint else { return None };
+    let dash = dash.and_then(|dash| <[f64; 2]>::try_from(dash).ok());
+    Some(StrokeSpec { role: *role, width: width.unwrap_or(1.0), dash })
+}
+```
+
+## The walk
+
+And the entry point: elements in document order, depth first, one
+[`Draw`] for each that has an outline — the order a painter fills and
+strokes them in, and the reason `paper` occludes what came before it.
+
+<a name="chunk-draws"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#draws`</sub>
+
+```rust {#draws}
+/// Everything `icon` paints, in the order it is painted, in grid units.
+pub fn draws(icon: &Accepted) -> Vec<Draw> {
+    let root = Inherited { fill: None, stroke: None, stroke_width: None, offset: (0.0, 0.0) };
+    let mut out = Vec::new();
+    for element in &icon.children {
+        walk(element, &root, &mut out);
+    }
+    out
+}
+
+fn walk<'a>(el: &'a Element, inherited: &Inherited<'a>, out: &mut Vec<Draw>) {
+    let (dx, dy) = match el.transform {
+        Some(Transform::Translate(x, y)) => (x, y),
+        _ => (0.0, 0.0),
+    };
+    let here = Inherited {
+        fill: el.fill.as_ref().or(inherited.fill),
+        stroke: el.stroke.as_ref().or(inherited.stroke),
+        stroke_width: el.stroke_width.or(inherited.stroke_width),
+        offset: (inherited.offset.0 + dx, inherited.offset.1 + dy),
+    };
+    if let Some(outline) = outline(&el.shape) {
+        out.push(Draw {
+            outline: translated(outline, here.offset),
+            fill: fill_of(&el.shape, here.fill),
+            stroke: stroke_of(here.stroke, here.stroke_width, el.dasharray.as_deref()),
+        });
+    }
+    for child in &el.children {
+        walk(child, &here, out);
+    }
+}
+```
+
+## What the tests pin
+
+The carried `claimed` ring is one draw: a circle as two arcs, no fill,
+a regular `line` stroke with the dash. Around it, one case per decision:
+the person mark's `V` resolves against the point it leaves; a rounded
+rect is four arcs; a group's paint and translation reach its child; a
+line never fills; an absent stroke width is one unit.
+
+<a name="chunk-tests"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#tests`</sub>
+
+```rust {#tests}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixtures;
+
+    fn accepted(svg: &str) -> Accepted {
+        crate::check(svg).unwrap_or_else(|refusal| panic!("{refusal}"))
+    }
+
+    #[test]
+    fn the_claimed_ring_is_a_dotted_circle_of_two_arcs() {
+        let draws = draws(&accepted(fixtures::CLAIMED));
+        assert_eq!(draws.len(), 1);
+        let ring = &draws[0];
+        assert_eq!(ring.fill, None, "no fill is written, so none is painted");
+        assert_eq!(ring.stroke, Some(StrokeSpec { role: Role::Line, width: 1.0, dash: Some([1.0, 2.0]) }));
+        assert_eq!(ring.outline.first(), Some(&Segment::MoveTo(2.0, 8.0)));
+        assert!(matches!(ring.outline[1], Segment::ArcTo { rx: 6.0, x: 14.0, y: 8.0, .. }));
+        assert!(matches!(ring.outline[2], Segment::ArcTo { x: 2.0, y: 8.0, .. }));
+        assert_eq!(ring.outline.last(), Some(&Segment::Close));
+    }
+
+    #[test]
+    fn a_one_axis_command_keeps_the_other_from_where_it_is() {
+        let person = draws(&accepted(fixtures::PERSON));
+        assert_eq!(person.len(), 2);
+        assert_eq!(&person[1].outline[..2], &[Segment::MoveTo(2.5, 14.5), Segment::LineTo(2.5, 13.0)]);
+        assert_eq!(person[1].outline.last(), Some(&Segment::LineTo(13.5, 14.5)));
+    }
+
+    #[test]
+    fn a_rounded_rect_is_four_lines_and_four_arcs() {
+        let chip = draws(&accepted(fixtures::AGENT));
+        let package = &chip[0].outline;
+        assert_eq!(package.iter().filter(|s| matches!(s, Segment::ArcTo { .. })).count(), 4);
+        assert_eq!(package.first(), Some(&Segment::MoveTo(5.0, 4.0)));
+        assert_eq!(chip[2].fill, Some((Role::Ink, FillRule::NonZero)), "the die is filled");
+    }
+
+    #[test]
+    fn a_group_passes_its_paint_and_translation_down() {
+        let svg = r#"<svg viewBox="0 0 16 16"><g transform="translate(1 2)" stroke="ink" stroke-width="1.5"><line x1="2" y1="2" x2="10" y2="2"/></g></svg>"#;
+        let draws = draws(&accepted(svg));
+        assert_eq!(draws.len(), 1, "the group draws nothing of its own");
+        assert_eq!(draws[0].outline, vec![Segment::MoveTo(3.0, 4.0), Segment::LineTo(11.0, 4.0)]);
+        assert_eq!(draws[0].stroke, Some(StrokeSpec { role: Role::Ink, width: 1.5, dash: None }));
+        assert_eq!(draws[0].fill, None, "a line has no inside");
+    }
+
+    #[test]
+    fn an_unwritten_stroke_width_is_one_unit_and_evenodd_survives() {
+        let svg = r#"<svg viewBox="0 0 16 16"><path d="M2 2 H14 V14 H2 Z M5 5 H11 V11 H5 Z" fill="ink" fill-rule="evenodd" stroke="line"/></svg>"#;
+        let draws = draws(&accepted(svg));
+        assert_eq!(draws[0].fill, Some((Role::Ink, FillRule::EvenOdd)));
+        assert_eq!(draws[0].stroke.map(|s| s.width), Some(1.0));
+        assert_eq!(draws[0].outline.iter().filter(|s| **s == Segment::Close).count(), 2);
+    }
+}
+```
+
+## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [types](#chunk-types) · [outline](#chunk-outline) · [path-outline](#chunk-path-outline) · [translate](#chunk-translate) · [paints](#chunk-paints) · [draws](#chunk-draws) · [tests](#chunk-tests)</sub>
+
+```rust {#root}
+<<module-doc>>
+
+<<imports>>
+
+<<types>>
+
+<<outline>>
+
+<<path-outline>>
+
+<<translate>>
+
+<<paints>>
+
+<<draws>>
+
+<<tests>>
+```
+
+## What stays open
+
+The path form carries arcs because both painters convert them natively,
+and a third painter without an arc converter — a raster backend, a plotter
+— would have to flatten them itself, to a tolerance the form does not
+state. And the form is a snapshot of one icon at one grid; the size floor
+the profile leaves open, where a sixteen-unit mark should give way to a
+simpler one in a twelve-pixel rail, is a choice among icons that happens
+before this function is called, not inside it.

@@ -8,9 +8,30 @@ rather than the sentence before it pretending otherwise.
 
 ## Setup
 
-Run the commands in this guide from the repository root.
+Install the prebuilt binaries — `x0k-tangle` and `x0k-folio-cli` — with no
+Rust toolchain:
 
-Clone it and build the tangler:
+```sh
+curl -fsSL https://0k.computer/folio/install.sh | sh
+```
+
+The script picks the archive for your machine (Linux or macOS, x86_64 or
+arm64) from [the latest release](https://github.com/0k-dot-computer/x0k-folio/releases),
+checks it against that release's `SHA256SUMS`, and **refuses to install on a
+mismatch** — non-zero exit, nothing written. When the GitHub CLI is installed
+and signed in it also runs `gh attestation verify` against the release's SLSA
+build provenance and refuses if that fails; without it, it prints one line
+saying the check was skipped and the command that runs it. It installs to
+`~/.local/bin` with no `sudo` (`FOLIO_INSTALL_DIR` moves it), pins a release
+when told to (`curl -fsSL https://0k.computer/folio/install.sh | FOLIO_VERSION=0.1.1 sh`),
+and its last lines say what it installed, where, and whether that directory
+is on your `PATH`. **Windows is not covered by the script**:
+take the `.zip` from [the release page](https://github.com/0k-dot-computer/x0k-folio/releases),
+or use `cargo install --git`, below.
+
+Run the commands in this guide from the repository root. To build from
+source instead — and to change the tool rather than use it — clone it and
+build the tangler:
 
 ```sh
 git clone https://github.com/0k-dot-computer/x0k-folio
@@ -18,13 +39,16 @@ cd x0k-folio
 cargo build --release -p x0k-tangle
 ```
 
-**Build it `--release`.** An unoptimized `check` over a real documentation
-tree is 20–46× slower than an optimized one — 37.96s against 0.83s over 754
-files, measured by a maintainer who followed the debug line this page used to
-give and filed the result as a defect. The grammars `x0k-syntax` and
-`tree-sitter-rust` compile are the cost, and they are the whole difference
-between a CI step you can require and one nobody will wait for. `--release`
-costs about a minute more the first time and nothing after.
+**Build it `--release` for CI.** A plain `cargo build` is fine to work
+with: the workspace's dev profile compiles every dependency optimized, the
+grammars `x0k-syntax` and `tree-sitter-rust` compile included, and those
+were the whole cost. Over a 754-file documentation tree, `check docs
+--closed` takes about 2.3 s from the dev build and 0.7 s from the release
+one. Before 0.2.0 the dev build optimized nothing and the same check took
+37.96 s against 0.83 s, which a maintainer who followed the debug line this
+page used to give filed as a defect. In a step that runs on every push,
+the remaining 3× is worth having, and `--release` costs about a minute more
+the first time and nothing after.
 
 `rust-toolchain.toml` pins `1.95.0` with `clippy`; a rustup-managed
 toolchain fetches it on the first `cargo` invocation, and that pin is what
@@ -39,26 +63,40 @@ policy when it is absent.
 
 **The tangler is on crates.io**, and `cargo install x0k-tangle` needs a Rust
 toolchain and a C compiler for the tree-sitter grammars but no clone. Read the
-version before you take that path: **the registry serves 0.1.0, and this page
-describes 0.1.1**, which is cut here and not yet published. 0.1.0 has no
-`--closed`, no `supersedes`/`superseded_by`, and a `check` blind to typed
-declarations in a vocabulary of your own — three of the things most of this
-page is about, so a reader who installs it and then follows these instructions
-finds the page wrong about its own tool. Until 0.1.1 goes out, build from the
-clone above: `target/release/x0k-tangle` is the binary every command here was
-run against, and it is also the one to use if you are changing the tool rather
-than using it.
+version before you take that path: the registry serves what has been
+released, and this page describes the tree it was projected with.
+`crates/x0k-tangle/Cargo.toml` names the version this page describes, and
+`x0k-tangle --version` prints the one you installed. **When the two differ,
+the installed tool is older than the page**, and a command here can fail
+against it for no fault of yours — build from the clone above instead:
+`target/release/x0k-tangle` is the binary every command here was run against,
+and it is also the one to use if you are changing the tool rather than using
+it.
 
-For a project with no Rust toolchain at all, the path that removes it is the
-release lane in this repository: `.github/workflows/release.yml` builds a
-static binary per platform on a tag, and `npm/` wraps them as `@0k/folio`,
-verifying each download against a digest pinned inside the package and
-against its SLSA build provenance before it will install, failing closed if
-either check does not hold. [v0.1.1](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.1.1) is that release: a static
-binary for five platforms and one `SHA256SUMS`, attested at build. **The
-wrapper is not on the npm registry yet**, so the way in today is the release
-page or `cargo install`; when `@0k/folio` is published, fetching the verified
-binary becomes the first instruction on this page.
+The binaries the script installs come from the release lane in this
+repository: `.github/workflows/release.yml` builds a static binary per
+platform on a tag, attests each with SLSA build provenance, and attaches
+them — with one `SHA256SUMS` and `install.sh` itself — to the tag's release.
+[v0.2.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.2.0) is such a release: a static binary for five platforms,
+`install.sh`, the source closure below, and one `SHA256SUMS`, attested at
+build.
+
+From v0.2.0 each release also carries its whole source closure,
+`x0k-folio-<tag>-vendor.tar.gz` (about 60 MB), listed in `SHA256SUMS` and
+attested like the binaries: the repository at that tag, every crate its
+`Cargo.lock` resolves — the ten `dialog-db` git crates included — under
+`vendor/`, and a `.cargo/config.toml` that points cargo at them. It rebuilds
+with no network, and no GitHub, at all:
+
+```sh
+tar -xzf x0k-folio-v0.2.0-vendor.tar.gz
+cd x0k-folio-v0.2.0
+cargo build --offline --locked --release -p x0k-tangle -p x0k-folio-cli
+```
+
+It carries no toolchain: bring a Rust and a C compiler, and under rustup
+either have `rust-toolchain.toml`'s pinned version installed or set
+`RUSTUP_TOOLCHAIN` to one you have (1.89 or later).
 
 Five verbs are the ones you will use, and each has a `--help`:
 
@@ -95,8 +133,8 @@ source, so from anywhere:
 cargo install --git https://github.com/0k-dot-computer/x0k-folio x0k-folio-cli
 ```
 
-That installs the `x0k-folio-cli` executable. The release binaries and the
-npm wrapper carry the same program. It has a section of its own, below;
+That installs the `x0k-folio-cli` executable. The release binaries, and so
+`install.sh`, carry the same program. It has a section of its own, below;
 nothing before it needs the store.
 
 ## Typing your documents in place
@@ -131,7 +169,12 @@ local name**: a `ConceptPage` class in a module of yours is `type:
 concept-page` in the envelope, and neither `ConceptPage` nor `concept_page`
 is that name. Any other name is a defect. `status` is `proposed`, `accepted` or `superseded` for a
 decision (`draft`, `stable` or `stale` for a wiki page) and may be left out.
-`summary` is optional and is the line a reader sees first. `edges` is the
+`summary` is optional and is the line a reader sees first.
+A `title:` of your own at the top level of the frontmatter — beside the
+`x0k:` block, where Docusaurus and MkDocs keep a page's name — is the title
+`index` and `weave` report, ahead of the body's first `# ` heading; when the
+two name the page differently, `check` prints a `warning:` naming both and
+exits exactly as it would have. `edges` is the
 part that does work: each key is a predicate, each value a list of ids, and
 the predicate must be one some loaded module declares — `refined_by`,
 `supports`, `implements`, `constrained_by`, `informed_by`, `motivated_by`,
@@ -242,14 +285,22 @@ enforces, not a paraphrase.
 
 Your collection can carry a vocabulary of its own, and one that does ships
 here. `crates/x0k-folio-cli/examples/papers/` is three documents:
-`vocabulary.md` declares a namespace and a `Paper` class in a
-`turtle folio:ontology` block, and `alpha.md` and `beta.md` are papers that
-cite each other through the predicate it declares. It is the smallest
-complete thing to copy:
+`vocabulary.md` declares a namespace, a `Paper` class and three properties
+of a paper in a `turtle folio:ontology` block, and `alpha.md` and `beta.md`
+are papers, one citing the other through the predicate it declares. It is the
+smallest complete thing to copy:
 
 ```sh
 x0k-tangle check crates/x0k-folio-cli/examples/papers
 ```
+
+`check` reads a block's other keys as fields, too: once your module declares
+a datatype property of a class — `paper:reviewed`, an `xsd:boolean` over
+`paper:Paper` —
+a key no loaded module declares is refused, naming the nearest declared property
+(`revieweddd` is told `reviewed`), and on any class a value that contradicts a
+property's declared datatype is refused, naming the property, the value and the
+datatype (`reviewed: "yes"` is a string, not an `xsd:boolean`).
 
 The declaration that makes a prefix yours is one triple of that file:
 

@@ -35,11 +35,13 @@ are prose. Instances retain typed YAML fences, such as `yaml paper:paper`.
 Their class marker is the kebab-case local class name; the namespace
 remains part of the key, so paper:Paper and archive:Paper stay distinct.
 
-This collector validates the named-node class/object-property subset:
-one owning module per term, at most one domain and range per property, and exact
+This collector validates the named-node class/object-property/datatype-property
+subset: one owning module per term, at most one domain and range per property, and exact
 class membership. It refuses blank-node shapes, non-string Turtle
-literals, and ambiguous class markers. It does not perform OWL entailment,
-validate arbitrary scalar YAML fields, or choose a rendered appearance.
+literals, and ambiguous class markers. It does not perform OWL entailment or
+choose a rendered appearance. A block's scalar fields are read against the
+datatype properties it loads by `check`
+([`checking.md`](checking.md), *Literal fields*), not here.
 HTTP(S) and URN references retain their absolute IRI spelling; unknown compact
 prefixes remain errors. Unresolved relationship targets remain explicit relationships; known
 targets must match the declared range.
@@ -72,8 +74,8 @@ use std::path::Path;
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use x0k_ontology::concept_facts::{
     camel_to_kebab, OntologyFact, OntologyModel, OntologyValue, OWL_CLASS,
-    OWL_OBJECT_PROPERTY, OWL_ONTOLOGY, RDF_TYPE, RDFS_DOMAIN, RDFS_RANGE,
-    RDFS_IS_DEFINED_BY, STRUCTURAL_NODE_PREFIX, X0K_NS,
+    OWL_DATATYPE_PROPERTY, OWL_OBJECT_PROPERTY, OWL_ONTOLOGY, RDF_TYPE, RDFS_DOMAIN, RDFS_RANGE,
+    RDFS_IS_DEFINED_BY, RDFS_SUB_PROPERTY_OF, STRUCTURAL_NODE_PREFIX, X0K_NS,
 };
 use x0k_ontology::load::TurtleSource;
 use crate::envelope_check::camel_form;
@@ -428,14 +430,45 @@ Every term names its owning module. Cross-module domain and range
 references require an explicit import path through the selected modules.
 The collector never downloads an import.
 
+A block may declare an `owl:DatatypeProperty` as well as a class or an
+object property, and until 2026-09-25 it could not: the type was refused
+as unsupported, so a collection had no way to say that `reviewed` is a
+boolean, and `check` had nothing to read a field against (the Backstage
+maintainer's `reviewed: "not-a-boolean"`, which passed). A datatype
+property is a term like any other here — one owning module, at most one
+domain and one range, a domain naming a declared class in the import
+closure — with one difference, in its range. The range of a datatype
+property is a datatype, not a class, so it is not looked up among the
+classes: it must be an XSD datatype, an IRI in
+`http://www.w3.org/2001/XMLSchema#`, or absent. A datatype property whose
+range names anything else is refused as unsupported, because a range that
+is a class makes the term an object property wearing the wrong type, and
+reading it either way would be a guess. Which XSD datatypes the checker
+actually interprets, and what contradicts each, is `checking.md`'s to say;
+a block may name any of them, and one the checker does not interpret is
+loaded and simply not judged.
+
 <a name="chunk-validate-definitions"></a><sub>[`src/document_vocabulary.rs`](../../crates/x0k-folio/src/document_vocabulary.rs) · `#validate-definitions`</sub>
 
 ```rust {#validate-definitions}
 fn declared_terms(model: &OntologyModel) -> BTreeSet<String> {
     model.facts().iter().filter(|fact| fact.predicate == RDF_TYPE
-        && matches!(&fact.value, OntologyValue::Entity(kind) if kind == OWL_CLASS || kind == OWL_OBJECT_PROPERTY))
+        && matches!(&fact.value, OntologyValue::Entity(kind)
+            if kind == OWL_CLASS || kind == OWL_OBJECT_PROPERTY || kind == OWL_DATATYPE_PROPERTY))
         .map(|fact| fact.entity.clone()).collect()
 }
+
+/// The terms `model` types `owl:DatatypeProperty`: the ones whose range is
+/// a datatype rather than a class.
+fn datatype_properties(model: &OntologyModel) -> BTreeSet<String> {
+    model.facts().iter().filter(|fact| fact.predicate == RDF_TYPE
+        && fact.value == OntologyValue::Entity(OWL_DATATYPE_PROPERTY.into()))
+        .map(|fact| fact.entity.clone()).collect()
+}
+
+/// The namespace every XSD datatype IRI lives in — the only range a
+/// document-carried datatype property may name.
+const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema#";
 
 fn validate_definition_block(model: &OntologyModel, source: &BlockSource) -> Result<(), VocabularyError> {
     if model.facts().iter().any(|f| f.entity.starts_with(STRUCTURAL_NODE_PREFIX)) {
@@ -443,7 +476,8 @@ fn validate_definition_block(model: &OntologyModel, source: &BlockSource) -> Res
     }
     for fact in model.facts().iter().filter(|fact| fact.predicate == RDF_TYPE) {
         if !matches!(&fact.value, OntologyValue::Entity(kind)
-            if kind == OWL_ONTOLOGY || kind == OWL_CLASS || kind == OWL_OBJECT_PROPERTY) {
+            if kind == OWL_ONTOLOGY || kind == OWL_CLASS || kind == OWL_OBJECT_PROPERTY
+                || kind == OWL_DATATYPE_PROPERTY) {
             return Err(error(VocabularyErrorKind::Unsupported,
                 format!("document definition has unsupported RDF type {:?}", fact.value), std::slice::from_ref(source)));
         }
@@ -455,6 +489,17 @@ fn validate_definition_block(model: &OntologyModel, source: &BlockSource) -> Res
             if values.len() > 1 {
                 return Err(error(VocabularyErrorKind::Unsupported,
                     format!("{iri} has multiple {predicate} values"), std::slice::from_ref(source)));
+            }
+        }
+        if datatype_properties(model).contains(&iri) {
+            let range = model.facts().iter().find(|fact| fact.entity == iri && fact.predicate == RDFS_RANGE);
+            if let Some(fact) = range {
+                if !matches!(&fact.value, OntologyValue::Entity(datatype) if datatype.starts_with(XSD_NS)) {
+                    return Err(error(VocabularyErrorKind::Unsupported,
+                        format!("{iri} is a datatype property whose range {:?} is not an XSD datatype; \
+                                 a property whose range is a class is an owl:ObjectProperty", fact.value),
+                        std::slice::from_ref(source)));
+                }
             }
         }
         let owners: BTreeSet<_> = model.facts().iter().filter(|f| f.entity == iri && f.predicate == RDFS_IS_DEFINED_BY)
@@ -479,6 +524,7 @@ fn validate_term_modules(
 ) -> Result<(), VocabularyError> {
     let modules: BTreeMap<_, _> = model.modules().into_iter().map(|m| (m.iri.clone(), m)).collect();
     let classes: BTreeSet<_> = model.classes().iter().map(|class| model.expand(&class.uri)).collect();
+    let datatype_properties = datatype_properties(model);
     for (iri, (_, sources)) in definitions {
         let owners = model.defining_modules(iri);
         let owner = owners.first().and_then(|owner| modules.get(owner))
@@ -490,7 +536,10 @@ fn validate_term_modules(
             return Err(error(VocabularyErrorKind::UnknownTerm, format!("{iri} has no declared namespace"), sources));
         }
         let closure = model.import_closure(&owner.iri);
-        for predicate in [RDFS_DOMAIN, RDFS_RANGE] {
+        // A datatype property's range is a datatype, already held to the
+        // XSD namespace by `validate_definition_block`; only its domain is a class.
+        let class_constraints: &[&str] = if datatype_properties.contains(iri) { &[RDFS_DOMAIN] } else { &[RDFS_DOMAIN, RDFS_RANGE] };
+        for &predicate in class_constraints {
             for target in model.class_references(iri, predicate) {
                 if !classes.contains(&target) {
                     return Err(error(VocabularyErrorKind::UnknownTerm, format!("{iri} {predicate} names undeclared class {target}"), sources));
@@ -499,6 +548,12 @@ fn validate_term_modules(
                 if !target_owners.iter().any(|owner| closure.contains(owner)) {
                     return Err(error(VocabularyErrorKind::UnknownTerm, format!("{iri} uses {target} without importing its defining module"), sources));
                 }
+            }
+        }
+        for refined in model.class_references(iri, RDFS_SUB_PROPERTY_OF) {
+            let refined_owners = model.defining_modules(&refined);
+            if !refined_owners.iter().any(|owner| closure.contains(owner)) {
+                return Err(error(VocabularyErrorKind::UnknownTerm, format!("{iri} refines {refined} without importing its defining module"), sources));
             }
         }
     }
@@ -851,6 +906,27 @@ not turtle
         assert_eq!(error.kind, VocabularyErrorKind::Unsupported);
         assert!(error.message.contains("non-string literal"));
         assert_eq!(error.sources[0].document, "bad.md");
+    }
+
+    /// Incident: the Backstage maintainer's `reviewed: "not-a-boolean"`
+    /// (2026-09-23) passed because a collection could not declare that
+    /// `reviewed` is a boolean at all — `owl:DatatypeProperty` was refused.
+    #[test]
+    fn a_datatype_property_loads_with_an_xsd_range_or_none_and_is_refused_with_a_class_range() {
+        let vocabulary = definition("paper", "https://example.test/paper#");
+        let with = |terms: &str| vocabulary.replace("p:cites a owl:ObjectProperty", &format!("{terms}\np:cites a owl:ObjectProperty"));
+        let reviewed = "p:reviewed a owl:DatatypeProperty ; rdfs:domain p:Paper ;\n    \
+                        rdfs:range <http://www.w3.org/2001/XMLSchema#boolean> ;\n    \
+                        rdfs:isDefinedBy <https://example.test/module/paper> .";
+        let loaded = load(&[("vocabulary.md", &with(reviewed))]).unwrap();
+        assert!(loaded.definitions.iter().any(|d| d.iri == "https://example.test/paper#reviewed"));
+        let open = "p:note a owl:DatatypeProperty ; rdfs:domain p:Paper ;\n    \
+                    rdfs:isDefinedBy <https://example.test/module/paper> .";
+        assert!(load(&[("vocabulary.md", &with(open))]).is_ok());
+        let classed = reviewed.replace("<http://www.w3.org/2001/XMLSchema#boolean>", "p:Paper");
+        let error = load(&[("vocabulary.md", &with(&classed))]).err().unwrap();
+        assert_eq!(error.kind, VocabularyErrorKind::Unsupported);
+        assert!(error.message.contains("not an XSD datatype"), "{}", error.message);
     }
 
     #[test]

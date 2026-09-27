@@ -173,13 +173,14 @@ A publication names a region of the graph; these chapters turn one into a reader
 
 ### One icon language
 
-The small drawing language every mark on these pages is declared in: a declaration read into a tree, refused by rule or accepted, its four paint roles bound to a palette, and written in the forms a surface consumes.
+The small drawing language every mark on these pages is declared in: a declaration read into a tree, refused by rule or accepted, its four paint roles bound to a palette, written in the forms a surface consumes, and reduced to the outlines a native painter strokes and fills.
 
-- [x0k-icon: the crate](implementation/icon/crate.md) — The crate's contract rather than a mechanism — the four chapters composed, the one face that checks a declaration end to end, the design's worked-example icons carried as fixtures every chapter tests against, and what a consumer may name.
+- [x0k-icon: the crate](implementation/icon/crate.md) — The crate's contract rather than a mechanism — the five chapters composed, the one face that checks a declaration end to end, the design's worked-example icons carried as fixtures every chapter tests against, and what a consumer may name.
 - [Reading a declaration](implementation/icon/parse.md) — Reading an icon-profile declaration into its typed form — the two grids and their numbers, the four roles, the six elements and their geometry — permissive enough to carry what the checker will refuse, so that every refusal can name its rule and its element.
 - [The checker](implementation/icon/validate.md) — The checker: every refusal rule of the icon profile read against a parsed declaration in one pass, each broken rule reported as a typed defect naming the rule and the element, and an accepted icon made a type the rest of the crate can trust.
 - [Binding roles](implementation/icon/bind.md) — Binding an accepted icon's four roles to strings — a publication's palette block read by serde, one colour per role per scheme; the theme's CSS variables; or the role names themselves — so the emitter writes one form of SVG whatever a surface resolves a paint to.
 - [Writing an icon out](implementation/icon/emit.md) — One writer for every textual form of an icon — the normalized declaration, a standalone SVG file per scheme, inline SVG over CSS variables, and a symbol sprite of many — deterministic to the byte, with a fixed attribute order and one way to write a number, so that a declaration round-trips and two builds agree.
+- [The path form](implementation/icon/path.md) — The path form: an accepted icon as a list of outlines in grid units — every element reduced to absolute moves, lines, curves and arcs, its inherited paints resolved into one fill and one stroke, translations applied — so a native painter adapts it to its own geometry types without re-reading the profile.
 
 ### Vocabulary modules
 

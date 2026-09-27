@@ -42,8 +42,9 @@ their named chunks into source files, weaves them into HTML, and — the
 outward-facing half — projects a whole publication region into a reader
 site or a buildable public repository, and receives what comes back.
 This chapter is the crate's contract: the module list and re-exports in
-`src/lib.rs` that say what a consumer may name, and the plugin-less CLI
-in `src/main.rs` that exposes those verbs to a shell. Everything with a
+`src/lib.rs` that say what a consumer may name, and the CLI in
+`src/cli.rs` that exposes those verbs to a shell, which the plugin-less
+`src/main.rs` runs. Everything with a
 mechanism worth deriving lives in a sibling chapter; this one is the
 map and the face.
 
@@ -158,6 +159,7 @@ user needs, and where the document format is specified.
 pub mod atlas;
 pub mod chunk;
 pub mod chunk_refs;
+pub mod cli;
 pub mod faces;
 pub mod identity_pipeline;
 pub mod index;
@@ -245,11 +247,13 @@ is worth having in the mode a reader can run. What comes back is a list of
 sentences and a count of what was resolved, so the CLI can print findings
 under the document that holds them and say how much it read.
 
-The policy lives here rather than in either binary because there are two
-binaries. `main.rs` and the bundle's `bin/x0k-tangle.rs` are copies of each
-other by construction, and a duplicated format string that drifts costs a
-reader a confusing line; a duplicated *resolution rule* that drifts costs
-them a gate that disagrees with itself about whether the tree is sound.
+The policy lives here rather than in the CLI because a gate is not only a
+shell verb: anything that links the library and asks "is this tree sound?"
+has to get the answer `check` gets. It was first put here when there were
+two copies of the CLI — `main.rs` and the bundle's — and a duplicated
+format string that drifts costs a reader a confusing line, while a
+duplicated *resolution rule* that drifts costs them a gate that disagrees
+with itself about whether the tree is sound.
 
 Resolution alone was not enough, and the corpus proved it. Asking whether
 a `from=` still resolves asks whether the mirror still POINTS somewhere;
@@ -511,11 +515,11 @@ absent one, and the guard above it had been working into a closed pipe
 for as long as the crate has had it.
 
 The subscriber is installed here, next to `source_check` and for the
-same reason: there are two binaries, and a diagnostics policy that
-drifts between them is a tool that tells two authors different things
-about the same tree. Both call `init_diagnostics()` as their first
-statement, before `Cli::parse()`, so a clap failure is the only path
-that can precede it.
+same reason: every binary that links the CLI gets it, and a diagnostics
+policy that drifted between binaries would be a tool telling two authors
+different things about the same tree. `cli::run` (below) calls
+`init_diagnostics()` as its first statement, before it parses the
+arguments, so a clap failure is the only path that can precede it.
 
 Three choices in it carry weight. **stderr**, because stdout is
 reserved for data — `index`, `weave` without an output path, `list` and
@@ -533,7 +537,7 @@ not a reason to fail a tangle.
 ```rust {#diagnostics}
 /// Install the process-wide tracing subscriber for an `x0k-tangle` binary.
 ///
-/// Both CLIs call this first. Diagnostics go to **stderr** (stdout carries
+/// [`cli::run`] calls this first. Diagnostics go to **stderr** (stdout carries
 /// data), the default level is `warn` (the CLI's own report is its
 /// summary), and `RUST_LOG` overrides. Idempotent: a host that already
 /// installed a subscriber keeps it.
@@ -557,13 +561,68 @@ pub fn init_diagnostics() {
 
 ## The CLI face
 
-`src/main.rs` is the *protocol* binary: it ships only the built-in
-`PipelineRegistry::default()`, which carries the `identity-tangle`
-plugin and nothing else. A host that registers further plugins builds
-its own binary around the same library (the monorepo does); this one
-exists for callers that want the tangler without plugin dependencies —
-the projected repository among them, where it is the only `x0k-tangle`
-there is.
+**What this package is for.** `x0k-tangle` is the tangler itself — the
+library every other tangle consumer links, and the `x0k-tangle` binary
+that puts it in a shell with the built-in `PipelineRegistry::default()`,
+which carries the `identity-tangle` plugin and nothing else. It is the
+package that publishes: crates.io, the published repository, and every
+install instruction name this binary, and in a projected repository it
+is the only tangler there is. Anything that needs a pipeline beyond
+identity tangling is not this package's job; a host that registers more
+plugins links the same CLI with its own registry and ships it under its
+own binary name (the monorepo's is `x0k-tangle-bundle`,
+[`bundle.md`](bundle.md)).
+
+So the verbs live in the library, in `src/cli.rs`, and `src/main.rs` is
+one call. What a binary decides when it links them is a `Host`: the name
+and version `--help` and `--version` print, the registry `tangle` and
+`workspace` dispatch through, and the two places a monorepo sweep is
+allowed to be more lenient than a published one. Everything else — every
+verb, every sentence it prints, every exit code — is one copy. There used
+to be two: the bundle carried a 730-line second copy of this file, a fix
+landed in one and not the other, and the two binaries shared the output
+path `target/debug/x0k-tangle`, so which copy a caller ran depended on
+which package cargo linked last. The 0.1.1 release projection failed with
+"unrecognized subcommand" that way.
+
+<a name="chunk-cli-host"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-host`</sub>
+
+```rust {#cli-host file="src/cli.rs"}
+/// What a binary decides when it links this CLI. Everything not named
+/// here is the same for every binary.
+pub struct Host {
+    /// The name `--help` and `--version` print. Distinct per binary, so
+    /// `--version` alone says which one ran.
+    pub name: &'static str,
+    /// The version `--version` prints after the name.
+    pub version: &'static str,
+    /// The one-line description at the top of `--help`.
+    pub about: &'static str,
+    /// The registry `tangle` and `workspace` dispatch through.
+    pub registry: fn() -> PipelineRegistry,
+    /// An environment variable `workspace` falls back to before the
+    /// current directory when `--root` is not given.
+    pub root_env: Option<&'static str>,
+    /// Whether a `workspace` sweep whose only errors are output-path
+    /// collisions fails the run. A collision needs a person to pick the
+    /// source of truth; a host whose build pipelines run the sweep may
+    /// report it loudly and pass.
+    pub collisions_fatal: bool,
+}
+
+impl Host {
+    /// The protocol binary: this package's name and version, the built-in
+    /// registry, the current directory, and every errored document fatal.
+    pub const PROTOCOL: Host = Host {
+        name: env!("CARGO_PKG_NAME"),
+        version: env!("CARGO_PKG_VERSION"),
+        about: "Literate programming tangler with bidirectional sync",
+        registry: <PipelineRegistry as Default>::default,
+        root_env: None,
+        collisions_fatal: true,
+    };
+}
+```
 
 Four of the verbs read the publication corpus itself — the
 `decisions/publications/` manifests and the decision documents they
@@ -594,22 +653,46 @@ by.
 //! repository ships and builds.
 ```
 
-<a name="chunk-cli-imports"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#cli-imports`</sub>
+<a name="chunk-bin-main"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-main`</sub>
 
-```rust {#cli-imports file="src/main.rs"}
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+```rust {#bin-main file="src/main.rs"}
+fn main() -> anyhow::Result<()> {
+    x0k_tangle::cli::run(&x0k_tangle::cli::Host::PROTOCOL)
+}
 ```
 
-<a name="chunk-cli-struct"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#cli-struct`</sub>
+<a name="chunk-cli-doc"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-doc`</sub>
 
-```rust {#cli-struct file="src/main.rs"}
+```rust {#cli-doc file="src/cli.rs"}
+//! The tangler's command line as a library: every verb, its dispatch, and
+//! the sentences it prints. A binary calls [`run`] with the [`Host`] it
+//! is — the protocol `x0k-tangle` passes [`Host::PROTOCOL`]; a host that
+//! registers more plugins passes its own registry and its own name.
+```
+
+<a name="chunk-cli-imports"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-imports`</sub>
+
+```rust {#cli-imports file="src/cli.rs"}
+use anyhow::{Context, Result};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use crate::PipelineRegistry;
+```
+
+`--version` prints the host's name and the version cargo stamped into
+its build. It is the one line a CI log needs to say which tangler ran,
+and 0.1.1 shipped without it while `x0k-folio-cli --version` already
+worked. Name, version and description come from the `Host` at run time
+rather than from the derive, because the derive would stamp this
+package's name into every binary that links it.
+
+<a name="chunk-cli-struct"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-struct`</sub>
+
+```rust {#cli-struct file="src/cli.rs"}
 #[derive(Parser)]
 #[command(
-    name = "x0k-tangle",
-    about = "Literate programming tangler with bidirectional sync",
     after_help = "Commands marked [corpus-only] read the publication corpus \
 (decisions/publications/ and the decision documents it names). They are not \
 runnable from a projected repository, which carries only the literate documents \
@@ -630,9 +713,9 @@ and `receive-repo` the inbound door. Each variant's doc comment is its
 `--help` text, so the clap derive below is also the user-facing
 contract.
 
-<a name="chunk-command-enum"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [weave-region-command](#chunk-weave-region-command) · [project-repo-command](#chunk-project-repo-command) · [publish-repo-command](#chunk-publish-repo-command) · [receive-repo-command](#chunk-receive-repo-command) · [list-command](#chunk-list-command) · [workspace-command](#chunk-workspace-command)</sub>
+<a name="chunk-command-enum"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [weave-region-command](#chunk-weave-region-command) · [project-repo-command](#chunk-project-repo-command) · [publish-repo-command](#chunk-publish-repo-command) · [receive-repo-command](#chunk-receive-repo-command) · [list-command](#chunk-list-command) · [workspace-command](#chunk-workspace-command)</sub>
 
-```rust {#command-enum file="src/main.rs"}
+```rust {#command-enum file="src/cli.rs"}
 #[derive(Subcommand)]
 enum Command {
     <<tangle-command>>
@@ -677,9 +760,9 @@ edges:
     - x0k:surface/cli
 ```
 
-<a name="chunk-tangle-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#tangle-command`</sub>
+<a name="chunk-tangle-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#tangle-command`</sub>
 
-```rust {#tangle-command file="src/main.rs"}
+```rust {#tangle-command file="src/cli.rs"}
 /// Tangle .md documents to their source files (writes .tangle-map.json sidecars)
 Tangle {
     /// Paths to scan for documents with tangle: frontmatter
@@ -730,9 +813,9 @@ edges:
     - x0k:surface/cli
 ```
 
-<a name="chunk-check-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#check-command`</sub>
+<a name="chunk-check-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#check-command`</sub>
 
-```rust {#check-command file="src/main.rs"}
+```rust {#check-command file="src/cli.rs"}
 /// Verify chunk references resolve and no cycles exist, and read every
 /// folio/v1 envelope against a vocabulary.
 ///
@@ -819,9 +902,9 @@ edges:
     - x0k:surface/cli
 ```
 
-<a name="chunk-affordances-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#affordances-command`</sub>
+<a name="chunk-affordances-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#affordances-command`</sub>
 
-```rust {#affordances-command file="src/main.rs"}
+```rust {#affordances-command file="src/cli.rs"}
 /// Print every affordance the folio/v1 documents under the paths
 /// declare, as a JSON array on stdout.
 ///
@@ -861,9 +944,9 @@ edges:
     - x0k:surface/cli
 ```
 
-<a name="chunk-icon-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#icon-command`</sub>
+<a name="chunk-icon-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#icon-command`</sub>
 
-```rust {#icon-command file="src/main.rs"}
+```rust {#icon-command file="src/cli.rs"}
 /// Check every `svg x0k:icon` declaration in the folio/v1 documents
 /// under the paths against the icon profile, and with `--out` write
 /// each as its light and dark files bound to a publication's palette.
@@ -886,9 +969,9 @@ Icon {
 
 ### `x0k-tangle sync`
 
-<a name="chunk-sync-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#sync-command`</sub>
+<a name="chunk-sync-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#sync-command`</sub>
 
-```rust {#sync-command file="src/main.rs"}
+```rust {#sync-command file="src/cli.rs"}
 /// Sync from= chunks: populate code blocks from source files.
 /// Symbol extraction reads rust, typescript, javascript, tsx, python, julia
 Sync {
@@ -902,9 +985,9 @@ Sync {
 
 ### `x0k-tangle index`
 
-<a name="chunk-index-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#index-command`</sub>
+<a name="chunk-index-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#index-command`</sub>
 
-```rust {#index-command file="src/main.rs"}
+```rust {#index-command file="src/cli.rs"}
 /// Build a JSON index of all folio/v1 files
 Index {
     /// Paths to scan for folio/v1 documents
@@ -935,9 +1018,9 @@ edges:
     - x0k:surface/cli
 ```
 
-<a name="chunk-weave-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#weave-command`</sub>
+<a name="chunk-weave-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#weave-command`</sub>
 
-```rust {#weave-command file="src/main.rs"}
+```rust {#weave-command file="src/cli.rs"}
 /// Weave a literate document into HTML
 Weave {
     /// Path to a literate document
@@ -950,9 +1033,9 @@ Weave {
 
 ### The publication verbs
 
-<a name="chunk-weave-region-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#weave-region-command`</sub>
+<a name="chunk-weave-region-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#weave-region-command`</sub>
 
-```rust {#weave-region-command file="src/main.rs"}
+```rust {#weave-region-command file="src/cli.rs"}
 /// [corpus-only] Project a publication region into a self-contained,
 /// navigable multi-page web artifact.
 ///
@@ -989,9 +1072,9 @@ projection refuses ([`region-repo.md`](region-repo.md)). `--allow-dirty`
 is the escape hatch past the disclosure and closure guards, for
 inspecting a projection that is not yet clean.
 
-<a name="chunk-project-repo-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#project-repo-command`</sub>
+<a name="chunk-project-repo-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#project-repo-command`</sub>
 
-```rust {#project-repo-command file="src/main.rs"}
+```rust {#project-repo-command file="src/cli.rs"}
 /// [corpus-only] Project a publication region into a standalone,
 /// buildable Cargo repository.
 ///
@@ -1033,15 +1116,16 @@ ProjectRepo {
 `publish-repo` is the one verb with an irreversible half, and it sits
 behind `--really` ([`publishing.md`](publishing.md)).
 
-<a name="chunk-publish-repo-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#publish-repo-command`</sub>
+<a name="chunk-publish-repo-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#publish-repo-command`</sub>
 
-```rust {#publish-repo-command file="src/main.rs"}
+```rust {#publish-repo-command file="src/cli.rs"}
 /// [corpus-only] Publish pipeline for a projected repository: project,
 /// prove, rehearse, and (only under --really) publish.
 ///
 /// Projects with guards on, builds + tests the projection standalone,
-/// rehearses with one `cargo publish --dry-run --workspace` over the
-/// whole bundle, and reports. The real `cargo publish --workspace` and
+/// asks the crates.io index which crate versions it already serves,
+/// rehearses with one `cargo publish --dry-run --workspace` excluding
+/// those, and reports. The real `cargo publish` of the rest and
 /// the `git push` to the publication's configured remote run ONLY under
 /// `--really` (operator-only; refuses unless the rehearsal passed).
 ///
@@ -1071,9 +1155,9 @@ PublishRepo {
 },
 ```
 
-<a name="chunk-receive-repo-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#receive-repo-command`</sub>
+<a name="chunk-receive-repo-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#receive-repo-command`</sub>
 
-```rust {#receive-repo-command file="src/main.rs"}
+```rust {#receive-repo-command file="src/cli.rs"}
 /// [corpus-only] Receive changes made in a projected repository (a
 /// contributor's clone) back into the corpus as a proposed change.
 ///
@@ -1110,9 +1194,9 @@ ReceiveRepo {
 },
 ```
 
-<a name="chunk-list-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#list-command`</sub>
+<a name="chunk-list-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#list-command`</sub>
 
-```rust {#list-command file="src/main.rs"}
+```rust {#list-command file="src/cli.rs"}
 /// List chunks and their targets in a document
 List {
     /// Path to a literate document
@@ -1120,19 +1204,20 @@ List {
 },
 ```
 
-<a name="chunk-workspace-command"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#workspace-command`</sub>
+<a name="chunk-workspace-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#workspace-command`</sub>
 
-```rust {#workspace-command file="src/main.rs"}
+```rust {#workspace-command file="src/cli.rs"}
 /// Tangle every dirty literate document this binary's registry
 /// can handle.
 ///
-/// This binary ships only the built-in `PipelineRegistry::default()`,
-/// which carries only the `identity-tangle` plugin. It walks every
-/// literate root claimed by that plugin (`knowledge/implementation/**`) and
-/// re-tangles dirty docs. Docs that declare additional pipelines
-/// land in the `errored` bucket as "unknown pipeline kind"; a host
-/// that registers more plugins builds its own binary around the
-/// library.
+/// Walks every literate root the registry's plugins claim and
+/// re-tangles docs whose source or outputs drifted from the recorded
+/// sidecar. `x0k-tangle` ships only the built-in
+/// `PipelineRegistry::default()`, which carries only the
+/// `identity-tangle` plugin and its roots (`knowledge/implementation/**`);
+/// a doc that declares another pipeline lands in the `errored` bucket as
+/// "unknown pipeline kind". A host that registers more plugins links
+/// this same CLI with its own registry.
 Workspace {
     /// Workspace root (defaults to the current directory)
     #[arg(long)]
@@ -1153,20 +1238,40 @@ rather than the run.
 
 ## Dispatch
 
-`main` is one `match` over the command; every arm resolves its
+`run` is one `match` over the command; every arm resolves its
 workspace root, calls the library, and prints a report to stderr; stdout
 is reserved for data (`index` and `weave` without an output path,
-`list`, and `affordances`). Exit codes carry the verdicts: `check` and
-`workspace` exit non-zero on any error, `sync` when a chunk it was
-asked to fill stayed empty, `publish-repo` when the projection fails to
-build or test, `receive-repo` when any change was refused.
+`list`, and `affordances`). Exit codes carry the verdicts: `check` exits
+non-zero on any error and `workspace` on any the host counts as fatal,
+`sync` when a chunk it was asked to fill stayed empty, `publish-repo`
+when the projection fails to build or test, `receive-repo` when any
+change was refused.
 
-<a name="chunk-main-fn"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
+The host's name, version and description are stamped onto the parsed
+command before the arguments are read, and the `workspace` root's help
+line says which variable it falls back to when the host names one — a
+help text is part of the contract, and a sentence true of one binary
+must not print in another.
 
-```rust {#main-fn file="src/main.rs"}
-fn main() -> Result<()> {
-    x0k_tangle::init_diagnostics();
-    let cli = Cli::parse();
+<a name="chunk-main-fn"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
+
+```rust {#main-fn file="src/cli.rs"}
+/// Parse the process arguments and run the verb they name, as `host`.
+pub fn run(host: &Host) -> Result<()> {
+    crate::init_diagnostics();
+    let mut command = Cli::command()
+        .name(host.name)
+        .bin_name(host.name)
+        .version(host.version)
+        .about(host.about);
+    if let Some(var) = host.root_env {
+        command = command.mut_subcommand("workspace", |sub| {
+            sub.mut_arg("root", |arg| {
+                arg.help(format!("Workspace root (defaults to ${var}, else the current directory)"))
+            })
+        });
+    }
+    let cli = Cli::from_arg_matches(&command.get_matches()).unwrap_or_else(|e| e.exit());
 
     match cli.command {
         <<dispatch-tangle>>
@@ -1202,8 +1307,8 @@ fn main() -> Result<()> {
 
 `tangle` routes through the unified dispatcher
 ([`dispatcher.md`](dispatcher.md)) rather than the identity plugin
-directly, so a document that declares a pipeline this binary does not
-ship errors loudly instead of tangling half of itself.
+directly, so a document that declares a pipeline the host's registry
+does not carry errors loudly instead of tangling half of itself.
 
 Naming a document is an imperative — *write this one out* — so a named
 document that names nowhere to write is a failed run, not a quiet zero.
@@ -1228,17 +1333,16 @@ the directory form skipped it and exited 0. The two forms now agree,
 and the predicate that separates them is a property of the document
 rather than of how it was reached.
 
-<a name="chunk-dispatch-tangle"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-tangle`</sub>
+<a name="chunk-dispatch-tangle"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-tangle`</sub>
 
-```rust {#dispatch-tangle file="src/main.rs"}
+```rust {#dispatch-tangle file="src/cli.rs"}
 Command::Tangle { paths, workspace, force } => {
-    // Route identity tangling through the unified dispatcher.
-    // The default registry has `IdentityPipeline` registered;
-    // docs that also declare extra pipelines will error here
-    // because this binary doesn't ship those plugins.
+    // Route every document through the unified dispatcher with the
+    // host's registry: a document declaring a pipeline that registry
+    // does not carry errors here rather than tangling half of itself.
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
     let docs = discover_documents(&paths)?;
-    let registry = x0k_tangle::PipelineRegistry::default();
+    let registry = (host.registry)();
     let settings = clobber_settings(force);
     let mut total_files = 0;
     let mut tangled_docs = 0;
@@ -1256,7 +1360,7 @@ Command::Tangle { paths, workspace, force } => {
             continue;
         }
         tangled_docs += 1;
-        let result = x0k_tangle::tangle_document_with(doc_path, &ws, &registry, &settings)?;
+        let result = crate::tangle_document_with(doc_path, &ws, &registry, &settings)?;
         // Both halves of the arrow are written the way the reader named
         // them. The tangler resolves an output against the workspace
         // root and holds it absolute, so this line used to pair
@@ -1267,7 +1371,7 @@ Command::Tangle { paths, workspace, force } => {
             total_files += 1;
         }
         for out in &result.pipeline_outputs {
-            if out.kind == x0k_tangle::IDENTITY_KIND {
+            if out.kind == crate::IDENTITY_KIND {
                 // Already reported via identity_outputs.
                 continue;
             }
@@ -1297,9 +1401,9 @@ with nothing to fill — no `from=` chunks, or chunks that name a file and no
 symbol — raises no error and passes, so "sync is clean" keeps meaning
 something in a tree that mostly does not use the feature.
 
-<a name="chunk-dispatch-sync"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-sync`</sub>
+<a name="chunk-dispatch-sync"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-sync`</sub>
 
-```rust {#dispatch-sync file="src/main.rs"}
+```rust {#dispatch-sync file="src/cli.rs"}
 Command::Sync { paths, workspace } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
     let docs = discover_documents_any(&paths)?;
@@ -1307,7 +1411,7 @@ Command::Sync { paths, workspace } => {
     let mut unfilled = 0;
 
     for doc_path in &docs {
-        let result = x0k_tangle::sync::sync_document(doc_path, &ws)?;
+        let result = crate::sync::sync_document(doc_path, &ws)?;
 
         for err in &result.errors {
             eprintln!("  error: {}: {}", doc_path.display(), err);
@@ -1369,9 +1473,9 @@ run rather than noting it. The message names both files, because the
 answer is always to change one of them and the reader needs to know
 which two are in play.
 
-<a name="chunk-dispatch-check"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-check`</sub>
+<a name="chunk-dispatch-check"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-check`</sub>
 
-```rust {#dispatch-check file="src/main.rs"}
+```rust {#dispatch-check file="src/cli.rs"}
 Command::Check {
     paths,
     workspace,
@@ -1381,7 +1485,7 @@ Command::Check {
     require_envelope,
 } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let model = x0k_tangle::faces::vocabulary(vocabulary.as_deref(), only_vocabulary)?;
+    let model = crate::faces::vocabulary(vocabulary.as_deref(), only_vocabulary)?;
     let mut has_errors = false;
     let mut chunked_documents = 0;
     let mut splice_failed = 0;
@@ -1401,7 +1505,7 @@ Command::Check {
                 continue;
             }
         };
-        let parsed = match x0k_tangle::parser::parse_document(&content) {
+        let parsed = match crate::parser::parse_document(&content) {
             Ok(parsed) => parsed,
             Err(e) => {
                 eprintln!("{}: does not parse: {e}", doc_path.display());
@@ -1416,11 +1520,14 @@ Command::Check {
         // silent.
         if !x0k_folio::colophon::is_colophon(&content) {
             envelope_less.push(doc_path.clone());
+        } else if let Some(names) = crate::index::title_disagreement(&content) {
+            // Two names, and neither is wrong: a warning, never the verdict.
+            eprintln!("{}", title_warning(&doc_path, &names));
         }
 
         if !parsed.chunks.is_empty() {
             chunked_documents += 1;
-            let splices = x0k_tangle::resolve::check_all_refs(&parsed)?;
+            let splices = crate::resolve::check_all_refs(&parsed)?;
             if !splices.is_empty() {
                 splice_failed += 1;
             }
@@ -1428,7 +1535,7 @@ Command::Check {
                 eprintln!("{}: {}", doc_path.display(), err);
                 has_errors = true;
             }
-            let sources = x0k_tangle::source_check::check_source_refs(&parsed, &ws);
+            let sources = crate::source_check::check_source_refs(&parsed, &ws);
             source_refs += sources.checked;
             source_ref_failures += sources.findings.len();
             for finding in &sources.findings {
@@ -1454,7 +1561,7 @@ Command::Check {
         }
     }
 
-    let report = x0k_tangle::faces::check_vocabulary(&model, &paths)?;
+    let report = crate::faces::check_vocabulary(&model, &paths)?;
     for (path, reason) in &report.unparsed {
         eprintln!("{path}: envelope does not parse: {reason}");
         has_errors = true;
@@ -1555,9 +1662,9 @@ directory. `--require-envelope` is the reader saying the set is meant
 to be wholly typed; the count is there either way, because the reader
 who most needs it is the one who did not know to ask.
 
-<a name="chunk-references-verdict"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#references-verdict`</sub>
+<a name="chunk-references-verdict"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#references-verdict`</sub>
 
-```rust {#references-verdict file="src/main.rs"}
+```rust {#references-verdict file="src/cli.rs"}
 /// What `check` says about the reference half of a run.
 ///
 /// The counts are load-bearing, and they are separate because they are
@@ -1623,11 +1730,11 @@ fn untyped_clause(envelope_less: usize) -> String {
 its records go to stdout as pretty JSON and only the extractor's
 refusals go to stderr.
 
-<a name="chunk-dispatch-affordances"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-affordances`</sub>
+<a name="chunk-dispatch-affordances"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-affordances`</sub>
 
-```rust {#dispatch-affordances file="src/main.rs"}
+```rust {#dispatch-affordances file="src/cli.rs"}
 Command::Affordances { paths } => {
-    let report = x0k_tangle::faces::declared_affordances(&paths)?;
+    let report = crate::faces::declared_affordances(&paths)?;
     for (path, reason) in &report.skipped {
         eprintln!("{path}: skipped: {reason}");
     }
@@ -1642,11 +1749,11 @@ the run. Writing is the second half of the same verb rather than a verb
 of its own because a file is only ever written from an accepted
 drawing.
 
-<a name="chunk-dispatch-icon"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-icon`</sub>
+<a name="chunk-dispatch-icon"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-icon`</sub>
 
-```rust {#dispatch-icon file="src/main.rs"}
+```rust {#dispatch-icon file="src/cli.rs"}
 Command::Icon { paths, out, palette } => {
-    let report = x0k_tangle::faces::declared_icons(&paths)?;
+    let report = crate::faces::declared_icons(&paths)?;
     for (path, reason) in &report.skipped {
         eprintln!("{path}: skipped: {reason}");
     }
@@ -1657,10 +1764,10 @@ Command::Icon { paths, out, palette } => {
     if let (Some(out), Some(palette)) = (out, palette) {
         let content = std::fs::read_to_string(&palette)
             .with_context(|| format!("reading {}", palette.display()))?;
-        let palette = x0k_tangle::region_repo::envelope_palette(&content)?.ok_or_else(|| {
+        let palette = crate::region_repo::envelope_palette(&content)?.ok_or_else(|| {
             anyhow::anyhow!("{} carries no `palette:` in its envelope", palette.display())
         })?;
-        written = x0k_tangle::faces::write_icon_files(&report, &palette, &out)?.len();
+        written = crate::faces::write_icon_files(&report, &palette, &out)?.len();
     }
     eprintln!(
         "{} icon(s) checked, {} refused, {written} file(s) written",
@@ -1673,16 +1780,16 @@ Command::Icon { paths, out, palette } => {
 }
 ```
 
-<a name="chunk-dispatch-index"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-index`</sub>
+<a name="chunk-dispatch-index"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-index`</sub>
 
-```rust {#dispatch-index file="src/main.rs"}
+```rust {#dispatch-index file="src/cli.rs"}
 Command::Index {
     paths,
     workspace,
     output,
 } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let index = x0k_tangle::index::build_index(&paths, &ws)?;
+    let index = crate::index::build_index(&paths, &ws)?;
     let json = serde_json::to_string_pretty(&index)?;
 
     if let Some(out_path) = output {
@@ -1698,19 +1805,19 @@ Command::Index {
 }
 ```
 
-<a name="chunk-dispatch-weave"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-weave`</sub>
+<a name="chunk-dispatch-weave"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-weave`</sub>
 
-```rust {#dispatch-weave file="src/main.rs"}
+```rust {#dispatch-weave file="src/cli.rs"}
 Command::Weave { path, output_dir } => {
     let content = std::fs::read_to_string(&path)?;
-    let parsed = x0k_tangle::parser::parse_document(&content)?;
-    let output = x0k_tangle::weave::weave_html(&content, &parsed)?;
+    let parsed = crate::parser::parse_document(&content)?;
+    let output = crate::weave::weave_html(&content, &parsed)?;
 
     if let Some(dir) = output_dir {
         std::fs::create_dir_all(&dir)?;
         // Named after the document, so weaving a second chapter into one
         // directory no longer destroys the first (weave.md § the page's name).
-        let html_path = dir.join(x0k_tangle::weave::page_file_name(&path));
+        let html_path = dir.join(crate::weave::page_file_name(&path));
         std::fs::write(&html_path, &output.html)?;
         eprintln!("wove {} → {}", path.display(), html_path.display());
     } else {
@@ -1722,9 +1829,9 @@ Command::Weave { path, output_dir } => {
 The region arms print the report shapes their chapters define; the
 prose about what each field means lives there, not here.
 
-<a name="chunk-dispatch-weave-region"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-weave-region`</sub>
+<a name="chunk-dispatch-weave-region"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-weave-region`</sub>
 
-```rust {#dispatch-weave-region file="src/main.rs"}
+```rust {#dispatch-weave-region file="src/cli.rs"}
 Command::WeaveRegion {
     region,
     output_dir,
@@ -1732,7 +1839,7 @@ Command::WeaveRegion {
     no_motifs,
 } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let report = x0k_tangle::project_publication(&region, &output_dir, &ws, no_motifs)?;
+    let report = crate::project_publication(&region, &output_dir, &ws, no_motifs)?;
     eprintln!(
         "wove region {} → {} ({} page(s), {} media ref(s), {} unresolved link(s))",
         region.display(),
@@ -1780,9 +1887,9 @@ Command::WeaveRegion {
 }
 ```
 
-<a name="chunk-dispatch-project-repo"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-project-repo`</sub>
+<a name="chunk-dispatch-project-repo"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-project-repo`</sub>
 
-```rust {#dispatch-project-repo file="src/main.rs"}
+```rust {#dispatch-project-repo file="src/cli.rs"}
 Command::ProjectRepo {
     region,
     output_dir,
@@ -1793,13 +1900,13 @@ Command::ProjectRepo {
     allow_dirty,
 } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let opts = x0k_tangle::RepoProjectOptions {
+    let opts = crate::RepoProjectOptions {
         license,
         git_init: !no_git,
         allow_dirty,
         emit_github: !no_github,
     };
-    let report = x0k_tangle::project_publication_repo(&region, &output_dir, &ws, &opts)?;
+    let report = crate::project_publication_repo(&region, &output_dir, &ws, &opts)?;
     eprintln!(
         "projected repo {} → {} ({} crate(s), {} literate doc(s), license {} [{}]{})",
         region.display(),
@@ -1808,8 +1915,8 @@ Command::ProjectRepo {
         report.literate_docs.len(),
         report.license,
         match report.license_source {
-            x0k_tangle::LicenseSource::PublicationDoc => "from publication doc",
-            x0k_tangle::LicenseSource::Override => "explicit override",
+            crate::LicenseSource::PublicationDoc => "from publication doc",
+            crate::LicenseSource::Override => "explicit override",
         },
         if report.committed {
             ", committed"
@@ -1832,9 +1939,9 @@ Command::ProjectRepo {
 }
 ```
 
-<a name="chunk-dispatch-publish-repo"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-publish-repo`</sub>
+<a name="chunk-dispatch-publish-repo"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-publish-repo`</sub>
 
-```rust {#dispatch-publish-repo file="src/main.rs"}
+```rust {#dispatch-publish-repo file="src/cli.rs"}
 Command::PublishRepo {
     region,
     output_dir,
@@ -1844,12 +1951,12 @@ Command::PublishRepo {
     really,
 } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let opts = x0k_tangle::PublishRepoOptions {
+    let opts = crate::PublishRepoOptions {
         license,
         emit_github: !no_github,
         really,
     };
-    let report = x0k_tangle::publish_repo(&region, &output_dir, &ws, &opts)?;
+    let report = crate::publish_repo(&region, &output_dir, &ws, &opts)?;
     eprintln!(
         "publish-repo {} → {} (license {})",
         region.display(),
@@ -1862,9 +1969,33 @@ Command::PublishRepo {
         if report.test_ok { "ok" } else { "FAILED" },
     );
     eprintln!("  publish order: {}", report.publish_order.join(" → "));
+    eprintln!("  registry (crates.io index):");
+    let width = report.plan.iter().map(|c| c.name.len() + c.version.len()).max().unwrap_or(0);
+    for c in &report.plan {
+        use crate::publish_repo::CrateDisposition as D;
+        let said = match c.disposition {
+            D::Unpublishable => "never attempted (publish = false)",
+            D::AlreadyPublished => "already published — skipped",
+            D::Pending => "not on the index — will publish",
+        };
+        let pad = width - c.name.len() - c.version.len();
+        eprintln!("    {} {}{:pad$}  {said}", c.name, c.version, "");
+    }
+    let pending: Vec<&str> = report
+        .plan
+        .iter()
+        .filter(|c| c.disposition == crate::publish_repo::CrateDisposition::Pending)
+        .map(|c| c.name.as_str())
+        .collect();
+    if pending.is_empty() {
+        eprintln!("  to publish: nothing — the index already serves every publishable crate's version");
+    } else {
+        eprintln!("  to publish: {}", pending.join(" → "));
+    }
     if let Some(r) = &report.rehearsal {
         eprintln!(
-            "  dry-run (whole bundle): {}",
+            "  dry-run ({} pending): {}",
+            pending.len(),
             if r.ok { "ok" } else { "FAILED" }
         );
         if !r.ok {
@@ -1895,9 +2026,9 @@ Command::PublishRepo {
 }
 ```
 
-<a name="chunk-dispatch-receive-repo"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-receive-repo`</sub>
+<a name="chunk-dispatch-receive-repo"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-receive-repo`</sub>
 
-```rust {#dispatch-receive-repo file="src/main.rs"}
+```rust {#dispatch-receive-repo file="src/cli.rs"}
 Command::ReceiveRepo {
     clone,
     workspace,
@@ -1907,13 +2038,13 @@ Command::ReceiveRepo {
     scratch,
 } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let opts = x0k_tangle::ReceiveOptions {
+    let opts = crate::ReceiveOptions {
         apply,
         out_dir: out.clone(),
         publication,
         scratch,
     };
-    let report = x0k_tangle::receive_repo(&clone, &ws, &opts)?;
+    let report = crate::receive_repo(&clone, &ws, &opts)?;
     eprintln!(
         "receive-repo {} ({}): clone rev {} vs reference {}{}",
         clone.display(),
@@ -1924,11 +2055,11 @@ Command::ReceiveRepo {
     );
     for c in &report.changes {
         let class = match c.class {
-            x0k_tangle::receive::Class::Literate => "literate (received)",
-            x0k_tangle::receive::Class::Source => "source (received)",
-            x0k_tangle::receive::Class::Generated => "GENERATED (refused)",
-            x0k_tangle::receive::Class::ProjectionLocal => "overlay (projection-local, not received)",
-            x0k_tangle::receive::Class::ProjectionOwned => "projection-owned (not received)",
+            crate::receive::Class::Literate => "literate (received)",
+            crate::receive::Class::Source => "source (received)",
+            crate::receive::Class::Generated => "GENERATED (refused)",
+            crate::receive::Class::ProjectionLocal => "overlay (projection-local, not received)",
+            crate::receive::Class::ProjectionOwned => "projection-owned (not received)",
         };
         let size = c.patch.as_ref().map(|p| p.lines().count()).unwrap_or(0);
         match (&c.target, &c.produced_by) {
@@ -1960,27 +2091,41 @@ Command::ReceiveRepo {
 }
 ```
 
-<a name="chunk-dispatch-workspace"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-workspace`</sub>
+The sweep's exit code is the one verdict a host may soften, and only in
+one way. An output-path collision — two documents claiming one file —
+cannot be fixed by the run: someone has to pick which document is the
+source of truth. A host whose build pipelines run the sweep over a whole
+tree may report such a collision loudly and still pass, so an unrelated
+build is not held hostage by two documents it never touches
+(`collisions_fatal: false`). Everything else stays fatal for every host,
+a clobber refusal included: it says a generated file holds work the
+sweep declined to destroy, and a pipeline that goes green over it has
+thrown away the only notice anyone gets.
 
-```rust {#dispatch-workspace file="src/main.rs"}
+<a name="chunk-dispatch-workspace"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-workspace`</sub>
+
+```rust {#dispatch-workspace file="src/cli.rs"}
 Command::Workspace { root, force } => {
-    let ws = resolve_workspace_root(root)?;
-    let registry = x0k_tangle::PipelineRegistry::default();
+    let ws = resolve_workspace_root(root, host.root_env)?;
+    let registry = (host.registry)();
     let settings = clobber_settings(force);
-    let report = x0k_tangle::tangle_workspace_with(&ws, &registry, &settings)?;
+    let report = crate::tangle_workspace_with(&ws, &registry, &settings)?;
     print_workspace_summary(&ws, &report);
-    if !report.errored.is_empty() {
+    let fatal = report.errored.iter().any(|(_, e)| {
+        host.collisions_fatal || !e.to_string().contains("output path collision")
+    });
+    if fatal {
         std::process::exit(1);
     }
 }
 ```
 
-<a name="chunk-dispatch-list"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dispatch-list`</sub>
+<a name="chunk-dispatch-list"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-list`</sub>
 
-```rust {#dispatch-list file="src/main.rs"}
+```rust {#dispatch-list file="src/cli.rs"}
 Command::List { path } => {
     let content = std::fs::read_to_string(&path)?;
-    let parsed = x0k_tangle::parser::parse_document(&content)?;
+    let parsed = crate::parser::parse_document(&content)?;
 
     if let Some(ref c) = parsed.tangle_crate {
         println!("crate: {}", c);
@@ -2028,20 +2173,26 @@ Command::List { path } => {
 
 ## Helpers
 
-The workspace root — the `--root` flag, else the current directory —
-is canonicalized before anything is written so the tree being tangled
+The workspace root — the `--root` flag, else the host's root variable
+when it names one, else the current directory — is canonicalized before
+anything is written so the tree being tangled
 is named, not implied by the current directory; the library refuses
 writes outside it regardless. Document discovery is a
 content sniff — a `.md` mentioning `tangle:` (or, for `sync`, `from=`) —
 because the parse that would confirm it is what the verb is about to do
 anyway. The rest is report formatting.
 
-<a name="chunk-resolve-workspace-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#resolve-workspace-root`</sub>
+<a name="chunk-resolve-workspace-root"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#resolve-workspace-root`</sub>
 
-```rust {#resolve-workspace-root file="src/main.rs"}
-/// Resolve a workspace root from the CLI flag, else the current directory.
-fn resolve_workspace_root(flag: Option<PathBuf>) -> Result<PathBuf> {
-    let raw = match flag {
+```rust {#resolve-workspace-root file="src/cli.rs"}
+/// Resolve a workspace root from the CLI flag, else the host's root
+/// variable when it names one and it is set, else the current directory.
+fn resolve_workspace_root(flag: Option<PathBuf>, env: Option<&str>) -> Result<PathBuf> {
+    let from_env = env
+        .and_then(|var| std::env::var(var).ok())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let raw = match flag.or(from_env) {
         Some(p) => p,
         None => std::env::current_dir()?,
     };
@@ -2057,29 +2208,36 @@ translation from flag to policy lives in one place. The default is the
 absence of the flag rather than a configured value: a run that did not
 say "overwrite" gets the guard.
 
-<a name="chunk-clobber-settings"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#clobber-settings`</sub>
+<a name="chunk-clobber-settings"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#clobber-settings`</sub>
 
-```rust {#clobber-settings file="src/main.rs"}
+```rust {#clobber-settings file="src/cli.rs"}
 /// The run-scoped settings a `--force` flag decides.
-fn clobber_settings(force: bool) -> x0k_tangle::TangleSettings {
-    x0k_tangle::TangleSettings {
+fn clobber_settings(force: bool) -> crate::TangleSettings {
+    crate::TangleSettings {
         clobber: if force {
-            x0k_tangle::ClobberPolicy::Force
+            crate::ClobberPolicy::Force
         } else {
-            x0k_tangle::ClobberPolicy::Refuse
+            crate::ClobberPolicy::Refuse
         },
         ..Default::default()
     }
 }
 ```
 
-<a name="chunk-print-workspace-summary"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#print-workspace-summary`</sub>
+The sweep's summary counts a document's outputs from `pipeline_outputs`
+alone. `identity_outputs` is a projection of the same list
+([`dispatcher.md`](dispatcher.md)), so adding the two counted every
+identity output twice: a document that wrote one file was reported as
+`→ <file> (+1 more)`. The bundle's copy of this function already counted
+once, and folding the two copies into one kept its count.
 
-```rust {#print-workspace-summary file="src/main.rs"}
+<a name="chunk-print-workspace-summary"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#print-workspace-summary`</sub>
+
+```rust {#print-workspace-summary file="src/cli.rs"}
 /// Pretty-print a `WorkspaceTangleReport` to stderr.
 fn print_workspace_summary(
     workspace_root: &std::path::Path,
-    report: &x0k_tangle::WorkspaceTangleReport,
+    report: &crate::WorkspaceTangleReport,
 ) {
     eprintln!("tangle workspace summary:");
     eprintln!("  tangled:    {}", report.tangled.len());
@@ -2092,12 +2250,8 @@ fn print_workspace_summary(
             .strip_prefix(workspace_root)
             .unwrap_or(&tr.source_path)
             .display();
-        let total_outputs = tr.identity_outputs.len() + tr.pipeline_outputs.len();
-        let first = tr
-            .identity_outputs
-            .first()
-            .map(|o| o.path.clone())
-            .or_else(|| tr.pipeline_outputs.first().map(|o| o.path.clone()));
+        let total_outputs = tr.pipeline_outputs.len();
+        let first = tr.pipeline_outputs.first().map(|o| o.path.clone());
         if let Some(first) = first {
             let rel_first = first
                 .strip_prefix(workspace_root)
@@ -2140,9 +2294,9 @@ stays the other way because this corpus is the opposite case: its edges
 leave for a private corpus all day, and a gate that failed on them would
 be a gate nobody ran.
 
-<a name="chunk-dangling-finding"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#dangling-finding`</sub>
+<a name="chunk-dangling-finding"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dangling-finding`</sub>
 
-```rust {#dangling-finding file="src/main.rs"}
+```rust {#dangling-finding file="src/cli.rs"}
 /// What `check` says about an edge that leaves the set.
 ///
 /// The set is whatever the paths on the command line contain, and nothing
@@ -2182,6 +2336,31 @@ fn dangling_declaration_finding(
 }
 ```
 
+A third kind of finding is neither a defect nor a note. A document whose
+host frontmatter `title:` and first `# ` heading are two different names
+([`doc-index.md`](doc-index.md) § When the two names disagree — the rule
+and its normalisation live with the resolver that picks between them) is
+told so as a `warning:`. `--closed` does not touch it and it never sets
+`has_errors`: the heading is presentation, so a difference is a choice the
+author may have made on purpose, and a gate that failed on it would be
+enforcing a house style. The line names both strings, and which one
+`index` took, so the reader can decide from the line alone.
+
+<a name="chunk-title-warning"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#title-warning`</sub>
+
+```rust {#title-warning file="src/cli.rs"}
+/// What `check` says about a document that names itself twice. Never part
+/// of the verdict.
+fn title_warning(path: &Path, names: &crate::index::TitleDisagreement) -> String {
+    format!(
+        "{}: warning: frontmatter title `{}` and first heading `{}` disagree; `index` takes the frontmatter title",
+        path.display(),
+        names.frontmatter,
+        names.heading
+    )
+}
+```
+
 ## Which documents a verb is about
 
 Every verb here starts by turning paths into documents, and the shape of
@@ -2205,9 +2384,9 @@ chunks, which need no `tangle:` block at all — are exactly the ones the
 directory form dropped, and the directory form is the one every document
 here tells a reader to run.
 
-<a name="chunk-markdown-under"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#markdown-under`</sub>
+<a name="chunk-markdown-under"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#markdown-under`</sub>
 
-```rust {#markdown-under file="src/main.rs"}
+```rust {#markdown-under file="src/cli.rs"}
 /// Every `.md` under `paths`, deduplicated and ordered: a file is taken
 /// as given, a directory is walked.
 ///
@@ -2273,9 +2452,9 @@ precondition, restated here so the CLI can tell "declared nothing" from
 "declared something that produced nothing" and report the first without
 guessing at the second.
 
-<a name="chunk-declares"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#declares`</sub>
+<a name="chunk-declares"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#declares`</sub>
 
-```rust {#declares file="src/main.rs"}
+```rust {#declares file="src/cli.rs"}
 /// What a document declares about itself, read off its parse.
 struct Declares {
     /// It names somewhere to write: a `tangle:` crate or root,
@@ -2308,7 +2487,7 @@ fn declares(path: &Path) -> Declares {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Declares::nothing();
     };
-    let Ok(parsed) = x0k_tangle::parser::parse_document(&content) else {
+    let Ok(parsed) = crate::parser::parse_document(&content) else {
         return Declares::nothing();
     };
     let bodies: Vec<_> = parsed.chunks.values().flatten().collect();
@@ -2335,9 +2514,9 @@ a reader gets told that this document writes nothing —
 `tangle`'s arm says it; a sweep stays quiet about the documents
 that are simply not its business.
 
-<a name="chunk-discover-documents"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#discover-documents`</sub>
+<a name="chunk-discover-documents"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#discover-documents`</sub>
 
-```rust {#discover-documents file="src/main.rs"}
+```rust {#discover-documents file="src/cli.rs"}
 fn discover_documents_any(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let named = named_files(paths);
     Ok(markdown_under(paths)
@@ -2371,9 +2550,9 @@ chunks it does have, and the declaration it does not — because those are
 the two things a reader is deciding between when nothing appeared on
 disk.
 
-<a name="chunk-nothing-to-write"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#nothing-to-write`</sub>
+<a name="chunk-nothing-to-write"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#nothing-to-write`</sub>
 
-```rust {#nothing-to-write file="src/main.rs"}
+```rust {#nothing-to-write file="src/cli.rs"}
 /// What `tangle` says about a document it was named and cannot write from.
 fn nothing_to_write(path: &Path, chunks: usize) -> String {
     format!(
@@ -2411,12 +2590,22 @@ fn mirror_only(path: &Path, chunks: usize) -> String {
 <<diagnostics>>
 ```
 
-<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [cli-imports](#chunk-cli-imports) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [clobber-settings](#chunk-clobber-settings) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-finding](#chunk-dangling-finding) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
+<a name="chunk-bin-root"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-root` · assembles [bin-doc](#chunk-bin-doc) · [bin-main](#chunk-bin-main)</sub>
 
 ```rust {#bin-root file="src/main.rs"}
 <<bin-doc>>
 
+<<bin-main>>
+```
+
+<a name="chunk-cli-root"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-root` · assembles [cli-doc](#chunk-cli-doc) · [cli-imports](#chunk-cli-imports) · [cli-host](#chunk-cli-host) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [clobber-settings](#chunk-clobber-settings) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-finding](#chunk-dangling-finding) · [title-warning](#chunk-title-warning) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
+
+```rust {#cli-root file="src/cli.rs"}
+<<cli-doc>>
+
 <<cli-imports>>
+
+<<cli-host>>
 
 <<cli-struct>>
 
@@ -2431,6 +2620,8 @@ fn mirror_only(path: &Path, chunks: usize) -> String {
 <<print-workspace-summary>>
 
 <<dangling-finding>>
+
+<<title-warning>>
 
 <<references-verdict>>
 
@@ -2449,12 +2640,13 @@ that a consumer could not reach by name. When a verb grows a mechanism,
 it moves to a chapter; when a chapter's type is meant to be named from
 outside, it appears in the export list above.
 
-`source_check` is the one thing this chapter keeps, and it is here for
-a reason the layout cannot express anywhere else: it is a policy two
-binaries have to agree on. Every other duplicated line between
-`main.rs` and the bundle's copy is a sentence; this one is the rule that
-decides whether a tree is sound, and a copy of it would eventually
-disagree with itself.
+`source_check` is the one mechanism this chapter keeps, and it is here
+for a reason the layout cannot express anywhere else: it is the rule that
+decides whether a tree is sound, and anything that links the library —
+not only the CLI — has to reach the same answer. The CLI itself is one
+copy for every binary for the same reason, one step further out: a
+sentence two binaries print differently is a reader told two things
+about one tree.
 
 ## Pinning the verdicts
 
@@ -2494,6 +2686,12 @@ document and survives, `--force` overwrites it, and a document that
 simply moved forward re-tangles with no flag at all. That last one is
 the important one — it is the whole corpus, and a guard that got it
 wrong would refuse everything.
+
+The last two pin what folding the bundle's copy into this one changed or
+must not change: `--version` still names this package and nothing else,
+and the sweep's summary counts each output once. What the bundle adds —
+its registry, its root variable, its tolerance for collisions — is
+pinned in its own suite, against its own binary.
 
 <a name="chunk-cli-verdicts"></a><sub>[`tests/cli_verdicts.rs`](../../crates/x0k-tangle/tests/cli_verdicts.rs) · `#cli-verdicts`</sub>
 
@@ -3215,6 +3413,60 @@ fn check_says_it_checked_nothing_rather_than_asserting_a_pass() {
     );
 }
 
+/// One name typeset twice, and two names: only the second warns, it names
+/// both strings, and the run exits the same for both — plain and under
+/// `--closed`, because a heading is presentation and never the verdict
+/// (`doc-index.md` § When the two names disagree). The disagreeing file is
+/// the Backstage evaluator's `titletest/c.md` (2026-09-23).
+#[test]
+fn check_warns_when_the_frontmatter_title_and_the_h1_disagree_and_exits_the_same() {
+    let agree = TempDir::new().unwrap();
+    write(
+        agree.path(),
+        "docs/a.md",
+        "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\nx0k:\n  format: folio/v1\n  \
+         id: x0k:architecture/adr013\n  type: architecture\n---\n\n\
+         # ADR013: Proper use of *HTTP* fetching libraries.\n",
+    );
+    let disagree = TempDir::new().unwrap();
+    write(
+        disagree.path(),
+        "docs/c.md",
+        "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\nx0k:\n  format: folio/v1\n  \
+         id: x0k:architecture/adrz\n  type: architecture\n---\n\n# Body H1 Different\n\nText.\n",
+    );
+
+    for flags in [&["check"][..], &["check", "--closed"][..]] {
+        let quiet = run(flags, agree.path());
+        let loud = run(flags, disagree.path());
+        let quiet_err = String::from_utf8_lossy(&quiet.stderr);
+        let loud_err = String::from_utf8_lossy(&loud.stderr);
+        assert!(
+            !quiet_err.contains("warning:"),
+            "one name typeset twice was reported as two ({flags:?}): {quiet_err}"
+        );
+        assert_eq!(
+            loud_err.matches("warning:").count(),
+            1,
+            "two names, one warning ({flags:?}): {loud_err}"
+        );
+        assert!(
+            loud_err.contains("frontmatter title `ADRZ: Frontmatter wins?`")
+                && loud_err.contains("first heading `Body H1 Different`"),
+            "the warning names both strings ({flags:?}): {loud_err}"
+        );
+        assert!(
+            quiet.status.success() && loud.status.success(),
+            "a title disagreement failed the run ({flags:?}): {quiet_err} / {loud_err}"
+        );
+        assert_eq!(
+            quiet.status.code(),
+            loud.status.code(),
+            "the warning moved the exit code ({flags:?})"
+        );
+    }
+}
+
 #[test]
 fn check_fails_two_documents_that_declare_one_id() {
     let tmp = TempDir::new().unwrap();
@@ -3590,6 +3842,48 @@ fn check_passes_an_unfilled_mirror() {
         "an unfilled mirror is sync's ordinary first fill, not drift: {stderr}"
     );
 }
+
+/// `--version` is the line a CI log reads to say which tangler ran, and
+/// the name on it is this package's: another binary linking the same CLI
+/// prints its own.
+#[test]
+fn version_names_this_package() {
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("--version")
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "--version failed: {stdout}");
+    assert_eq!(
+        stdout.trim(),
+        format!("x0k-tangle {}", env!("CARGO_PKG_VERSION")),
+        "the version line names the package and its version"
+    );
+}
+
+/// A sweep reports each output once. `identity_outputs` is a projection
+/// of `pipeline_outputs`, and a summary that added the two reported a
+/// one-file document as `→ src/lib.rs (+1 more)`.
+#[test]
+fn workspace_counts_each_output_once() {
+    let tmp = TempDir::new().unwrap();
+    let root = x0k_tangle::identity_pipeline::LITERATE_ROOTS[0];
+    write(tmp.path(), &format!("{root}/d.md"), &tangling_doc("once"));
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("workspace")
+        .arg("--root")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the sweep failed: {stderr}");
+    assert!(stderr.contains("tangled:    1"), "the sweep tangled the doc: {stderr}");
+    assert!(
+        stderr.contains("d.md → src/lib.rs") && !stderr.contains("more)"),
+        "a one-file document is reported as one file: {stderr}"
+    );
+}
 `````
 
 ## The package manifest
@@ -3602,7 +3896,7 @@ The manifest is a complete chunk so repository projection can carry its public f
 ```toml {#package-manifest file="Cargo.toml"}
 [package]
 name = "x0k-tangle"
-version = "0.1.1"
+version = "0.2.0"
 edition = { workspace = true }
 description = "Literate programming tangler/weaver with bidirectional sync. Extracts compilable source from folio/v1 documents and reconciles edits from either side."
 license = "MIT"
@@ -3631,12 +3925,12 @@ default = []
 motifs = [] # severed in this publication: its dependency is not published; enabling it does not build
 
 [dependencies]
-x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.1.1" }
+x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.1.2" }
 # The vocabulary a `check` reads documents against. Default features carry
 # the runtime module loader, which is what `--vocabulary <dir>` and the
 # PROVENANCE-recorded default are: a projected repository checks its own
 # documents against the module files it actually shipped.
-x0k-ontology = { path = "../x0k-ontology" , version = "0.1.0" }
+x0k-ontology = { path = "../x0k-ontology" , version = "0.2.0" }
 # Shared renderer-agnostic syntax tokenizer; weave uses it to emit
 # highlighted <span class="tok-*"> spans in the HTML output.
 x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
@@ -3645,7 +3939,7 @@ x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
 # from its `svg x0k:icon` declaration through this crate's checker, binds
 # it to the publication's palette, and writes the per-scheme files. Nothing
 # in this crate draws a mark.
-x0k-icon = { path = "../x0k-icon" , version = "0.1.0" }
+x0k-icon = { path = "../x0k-icon" , version = "0.2.0" }
 
 pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
 # TeX → MathML at weave time. Browsers (the Chromium-only 0k.computer target)

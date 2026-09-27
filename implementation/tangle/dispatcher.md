@@ -1671,12 +1671,24 @@ flush per generated file, which is the price of the crash story being
 "either the old file or the new one" rather than "a correctly-named
 file full of zeroes."
 
+A projection that already holds exactly these bytes is left alone. Build
+scripts watch the corpus and the generated tree by modification time, so a
+re-tangle that rewrote identical bytes would restart every build that
+depends on them — a Servitor gate re-projects all its documents as its first
+step, and used to recompile its own host each time because of it. Reading
+the old bytes to compare costs one read per file; rewriting them cost a
+rebuild.
+
 <a name="chunk-write-atomic-fn"></a><sub>[`src/pipeline_runner.rs`](../../crates/x0k-tangle/src/pipeline_runner.rs) · `#write-atomic-fn`</sub>
 
 ```rust {#write-atomic-fn}
 /// Write `content` to `path`, creating parent directories. Readers
-/// observe the old content or the new, never a truncated prefix.
+/// observe the old content or the new, never a truncated prefix, and a file
+/// that already holds `content` keeps its modification time.
 fn write_atomic(path: &Path, content: &[u8]) -> Result<()> {
+    if std::fs::read(path).is_ok_and(|held| held == content) {
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
@@ -3117,6 +3129,22 @@ from b
         done.store(true, Ordering::Relaxed);
         let reads = reader.join().unwrap();
         assert!(reads > 0, "the reader actually read the file");
+    }
+
+    /// Re-writing identical bytes is not a change: the file keeps the
+    /// modification time a build script's `rerun-if-changed` compares.
+    #[test]
+    fn write_atomic_leaves_an_unchanged_file_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("out.rs");
+        write_atomic(&target, b"content").unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options().write(true).open(&target).unwrap().set_modified(old).unwrap();
+        write_atomic(&target, b"content").unwrap();
+        assert_eq!(std::fs::metadata(&target).unwrap().modified().unwrap(), old);
+        write_atomic(&target, b"changed").unwrap();
+        assert_ne!(std::fs::metadata(&target).unwrap().modified().unwrap(), old);
+        assert_eq!(std::fs::read(&target).unwrap(), b"changed");
     }
 
     /// The staging file is transient: once `write_atomic` returns, the

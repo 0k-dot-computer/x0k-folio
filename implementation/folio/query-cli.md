@@ -760,7 +760,7 @@ than to none. A caller pinned to 0.1.0 gets none of that, and the CHANGELOG's
 ```toml {#cli-manifest file="Cargo.toml"}
 [package]
 name = "x0k-folio-cli"
-version = "0.1.1"
+version = "0.2.0"
 # Not on crates.io: depends on `x0k-folio-dialog`, which cannot be
 # published. The binary ships in the GitHub release and the npm wrapper.
 publish = false
@@ -783,10 +783,10 @@ serde_norway = "0.9"
 walkdir = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
-x0k-folio = { path = "../x0k-folio", default-features = false, features = ["document-vocabulary"] , version = "0.1.1" }
-x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.1.0" }
+x0k-folio = { path = "../x0k-folio", default-features = false, features = ["document-vocabulary"] , version = "0.1.2" }
+x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.2.0" }
 x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.1" }
-x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.1.0" }
+x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.1.1" }
 x0k-folio-dialog = { path = "../x0k-folio-dialog" , version = "0.1.0" }
 
 [dev-dependencies]

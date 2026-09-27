@@ -147,9 +147,10 @@ edges:
     - x0k:surface/sdk
 ```
 
-The page's name comes from `index::document_title`, the same four-source
-resolution the index uses — body `# `, then the host frontmatter's `title:`,
-then the first heading of any level, all outside fenced regions. Weaving
+The page's name comes from `index::document_title`, the same resolution the
+index uses — the host frontmatter's `title:`, then the body's `# `, then a
+heading the body opens with, then the envelope's `summary`, all outside
+fenced regions. Weaving
 asked its own question before, and asked it badly: it took the first *text*
 event in the body whatever preceded it, so a Docusaurus ADR opening with an
 admonition wove as `<title>:::note</title>`. A woven page and an index row

@@ -9,15 +9,157 @@ upload resolves the ones beneath it against the live index, so the order
 is not a convention — it is the only order that works. Two never reach
 the registry: `x0k-folio-dialog` depends on `dialog-artifacts` by git
 revision, which crates.io refuses, and `x0k-folio-cli` depends on it.
-Both ship as the release binaries the npm wrapper installs, and both
-build from a clone.
+Both ship as the release binaries `install.sh` installs, and both
+build from a clone. `x0k-folio-cli` carries the number of the release its
+binary ships in, so `x0k-folio-cli --version` names the release you
+installed, although no registry ever serves it.
 
 They do not all carry the same number. A crate's version moves when that
-crate's own public surface moves, so a release names a subset of the bundle
-and the rest keep the number they already have; the sections under a release
-below are exactly the crates whose numbers moved in it. Reading a crate's
-version as "how recent is this bundle" will mislead you — read the release
-it is listed under instead.
+crate's own public surface moves, and by how much follows semver: a change
+that can break a caller's code moves the minor number while a crate is
+below 1.0, anything else moves the patch number. So a release names a
+subset of the bundle, each crate in it under its own new number, and the
+rest keep the number they already have; the sections under a release below
+are exactly the crates whose numbers moved in it, and each heading names
+the number. Reading a crate's version as "how recent is this bundle" will
+mislead you — read the release it is listed under instead.
+
+## 0.2.0 — 2026-09-26
+
+On GitHub as
+[v0.2.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.2.0):
+a binary per platform, `install.sh`, the source closure, and one
+`SHA256SUMS`. Three crates move to 0.2.0 because a caller's code can break
+against them — each section says where — and two move a patch.
+`x0k-fact-projection` 0.1.1 and `x0k-syntax` 0.1.0 did not change.
+
+### x0k-icon 0.2.0
+
+- **The path form.** `x0k_icon::path` reads a profile icon into outlines a
+  painter can draw directly: every element as absolute segments in grid
+  units, `H` and `V` resolved, circles and rects as arcs and lines, group
+  translations applied, and each element's inherited paints resolved into
+  one fill and one stroke. A renderer is now an adapter over that data
+  rather than a second reading of the SVG.
+- **An element with no fill is emitted unfilled.** The profile reads a
+  missing `fill` as none, and so does the checker, but SVG's default is
+  black — so a stroked ring written without a fill reached every emitted
+  file, inline SVG and sprite as a black disc. Emitted drawings now write
+  `fill="none"` on the root and on each sprite symbol; an element that
+  names a fill still wins, and the normalized declaration is unchanged.
+- **An icon may select a flair**, the name of a theme treatment drawn
+  around the mark. The checker refuses a value that is not a treatment name
+  and admits any well-formed one; emitted drawings drop it, because a
+  renderer draws flair around a mark, never into it. `Icon` gained the
+  public field `flair`, so a struct literal of `Icon` no longer compiles:
+  that is the break the minor number is for.
+
+### x0k-ontology 0.2.0
+
+- **A module may refine a property of a module it imports** —
+  `rdfs:subPropertyOf`, never a redefinition — and the loader checks the
+  refinement: both ends must be declared properties, the refined property
+  must be defined by some module, and that module must be inside the
+  refiner's import closure. A set that breaks this is refused by `load`
+  with `LoadError::Refinement`, a new variant, so an exhaustive `match` on
+  `LoadError` no longer compiles: that is the break the minor number is
+  for. `OntologyModel::refinements`, `refinement_errors` and
+  `role_expansion` read what the loaded set declares.
+- **The registry catches up with the repository.** crates.io's 0.1.0
+  predates the envelope terms `x0k-folio` and `x0k-fact-projection` 0.1.1
+  name — `x0k:status`, `x0k:docType`, `x0k:subtype`, `x0k:bodyFormat`,
+  `x0k:concerns` — and the `folio/` provenance family beside them; the
+  shipped modules carry them now. `ModuleTables` carries each module's
+  `terms`, and the off-by-default `product` feature no longer pulls in
+  `blake3`, so the `blake3` feature is gone.
+
+### x0k-folio 0.1.2
+
+- **`check` reads a block's other keys as fields, against your
+  vocabulary.** A key no loaded module declares is refused on an instance
+  of a *described* class — one some `owl:DatatypeProperty` names as its
+  exact `rdfs:domain` — and the refusal names the nearest declared
+  property when one is close (`revieweddd` is told `reviewed`). A class
+  nothing describes keeps its field names open, so declaring one property
+  is how a class opts in. On any instance, described or not, a value that
+  contradicts a property's declared `xsd:string`, `xsd:integer` or
+  `xsd:boolean` range is refused, naming the property, the value and the
+  datatype (`reviewed: "yes"` is not a boolean).
+- A document may declare an `owl:DatatypeProperty` in its own vocabulary
+  block, with an XSD range or none, which is what makes the rule above
+  reachable without a module file.
+- A term a document declares may refine only a property inside its
+  imports, by the same rule `x0k-ontology` 0.2.0 applies to modules.
+
+### x0k-folio-ingest 0.1.1
+
+- **A batch waits for the store, not for a clock.** A backend can be told
+  to wait for quiescence (`waiting_for_quiescence`, or `grace_policy(None)`)
+  instead of a grace period, which is the answer for a closed collection:
+  nothing races the write, and abandoning a slow backend left its worker
+  busy and every later source refused. The live-delivery default — a
+  bounded grace — is unchanged. crates.io's 0.1.0 predates this; the
+  repository has carried it since 0.1.1.
+
+### x0k-tangle 0.2.0
+
+- **`x0k-tangle --version`** prints the package version, so a CI log can
+  say which tangler ran.
+- **A host `title:` outranks the body's `# ` heading.** `index` and `weave`
+  take a `title:` at the top level of the frontmatter — where Docusaurus and
+  MkDocs keep a page's name — ahead of the first `# `, and `check` prints a
+  `warning:` naming both when the two disagree (after ignoring emphasis and
+  code delimiters, whitespace, trailing punctuation and case). The warning
+  never changes the exit code, with `--closed` or without it.
+- **One CLI.** Every verb lives in the library as `x0k_tangle::cli`, and a
+  binary passes a `Host` naming itself; there is no second copy of the
+  command line left to drift from the first.
+- `tangle` leaves a file that already holds the bytes it would write
+  untouched, modification time included, so a build script's
+  `rerun-if-changed` no longer fires on an unchanged tree.
+- **The projected workspace builds dev optimized** — its own crates at
+  `opt-level = 1`, every dependency at 3 — so a plain `cargo build` in a
+  clone is a tool you can work with (`check` over a 754-file tree: 2.3 s,
+  against 37.96 s before).
+- **The release lane installs and rebuilds.** A publication that declares
+  `prebuilt.installer` gets an `install.sh` at its root, which the release
+  attaches beside the archives after `SHA256SUMS` is assembled, and every
+  release carries its source closure: the tree at the tag and every crate
+  its `Cargo.lock` resolves, git crates included, packaged by a projected
+  `tools/release-vendor`, listed in the sums and covered by the
+  attestation. The npm wrapper is gone from this repository; its
+  `prebuilt.npm` lane remains for publications that declare it.
+- **`publish-repo` publishes only what the registry does not serve.** It
+  asks the crates.io sparse index which versions exist and runs one
+  `cargo publish --workspace` excluding them, so a release that moves some
+  crates rehearses and publishes with the same invocation; `publish =
+  false` crates are skipped, and the push goes over HTTPS.
+  `PublishRepoReport` gained `plan` and `PrebuiltSummary` gained
+  `installer`, so a struct literal of either no longer compiles: that is
+  the break the minor number is for.
+
+### x0k-folio-cli 0.2.0
+
+- The papers example declares the fields its papers carry —
+  `paper:reviewed` as an `xsd:boolean`, `paper:pages` as an `xsd:integer`
+  — so `x0k-tangle check` over it shows the field rule passing, and a
+  typo in either shows it refusing.
+- One hang budget bounds the acceptance suite, sized for a loaded host,
+  where it used to trip on a busy CI runner.
+
+### Guides
+
+- **Setup leads with `curl -fsSL https://0k.computer/folio/install.sh | sh`**,
+  says what the script checks and refuses (a `SHA256SUMS` mismatch, and the
+  build provenance when `gh` is signed in), how `FOLIO_INSTALL_DIR` and
+  `FOLIO_VERSION` move it, and that Windows is not covered.
+- It gives the offline rebuild from the release's source closure — three
+  commands and no network.
+- The `--release` paragraph states the numbers the optimized dev profile
+  gives, and the registry paragraph tells you how to see whether the tool
+  you installed is older than the page.
+- `check`'s field rule and the frontmatter title are described where a
+  reader first meets the envelope and the papers example.
 
 ## 0.1.1 — 2026-09-23
 

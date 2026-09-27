@@ -381,6 +381,182 @@ impl OntologyModel {
         self.facts.iter().filter(|fact| owners.contains(&fact.entity)).collect()
     }
 }
+pub const RDFS_SUB_PROPERTY_OF: &str = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
+
+/// Why a refinement (`rdfs:subPropertyOf`) or the role expansion over it is
+/// refused. Each variant names the terms involved, so a reader can find the
+/// declaration to change.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RefinementError {
+    /// One end of the refinement is not a declared property (a class, or an
+    /// IRI no module declares).
+    NotAProperty { term: String, refined: String, which: String },
+    /// The refined property is defined by no module of the region.
+    UndefinedRefined { term: String, refined: String },
+    /// The refined property's module is outside the refiner's imports.
+    OutsideImports { term: String, module: String, refined: String, refined_module: String },
+    /// A predicate reaches more than one role. A relationship refines at
+    /// most one (`x0k:architecture/referent-time-and-listings` §4).
+    SeveralRoles { predicate: String, roles: Vec<String> },
+}
+
+impl std::fmt::Display for RefinementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAProperty { term, refined, which } => write!(
+                f, "{term} rdfs:subPropertyOf {refined}: {which} is not a declared property; only a property refines a property",
+            ),
+            Self::UndefinedRefined { term, refined } => write!(
+                f, "{term} refines {refined}, which no module of the region defines",
+            ),
+            Self::OutsideImports { term, module, refined, refined_module } => write!(
+                f, "{term} (defined by {module}) refines {refined} (defined by {refined_module}), but {module} does not import {refined_module}",
+            ),
+            Self::SeveralRoles { predicate, roles } => write!(
+                f, "{predicate} refines {} roles ({}); a relationship refines at most one",
+                roles.len(), roles.join(", "),
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RefinementError {}
+impl OntologyModel {
+    /// Every `rdfs:subPropertyOf` declaration as (refining, refined), sorted.
+    pub fn refinements(&self) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = self.facts.iter().filter_map(|fact| match &fact.value {
+            OntologyValue::Entity(refined) if fact.predicate == RDFS_SUB_PROPERTY_OF => {
+                Some((fact.entity.clone(), refined.clone()))
+            }
+            _ => None,
+        }).collect();
+        pairs.sort();
+        pairs.dedup();
+        pairs
+    }
+
+    fn is_property(&self, entity: &str) -> bool {
+        [OWL_OBJECT_PROPERTY, OWL_DATATYPE_PROPERTY, OWL_ANNOTATION_PROPERTY].iter().any(|kind| {
+            self.facts.iter().any(|fact| {
+                fact.entity == entity
+                    && fact.predicate == RDF_TYPE
+                    && fact.value == OntologyValue::Entity(kind.to_string())
+            })
+        })
+    }
+
+    /// The refinements the use rule refuses, in declaration order. Empty for
+    /// a well-formed set. A refining term with no defining module is left to
+    /// the checks that already report a term's module count.
+    pub fn refinement_errors(&self) -> Vec<RefinementError> {
+        let mut errors = Vec::new();
+        for (term, refined) in self.refinements() {
+            for (end, which) in [(&term, "the refining term"), (&refined, "the refined term")] {
+                if !self.is_property(end) {
+                    errors.push(RefinementError::NotAProperty {
+                        term: term.clone(), refined: refined.clone(), which: format!("{which} {end}"),
+                    });
+                }
+            }
+            let modules = self.defining_modules(&term);
+            let [module] = modules.as_slice() else { continue };
+            let module = module.clone();
+            let refined_modules = self.defining_modules(&refined);
+            let Some(refined_module) = refined_modules.first() else {
+                errors.push(RefinementError::UndefinedRefined { term, refined });
+                continue;
+            };
+            if !self.import_closure(&module).contains(refined_module) {
+                errors.push(RefinementError::OutsideImports {
+                    term, module, refined, refined_module: refined_module.clone(),
+                });
+            }
+        }
+        errors
+    }
+}
+/// The module whose properties are the roles.
+pub const TIME_MODULE_IRI: &str = "https://0k.computer/ontology/time";
+
+/// For each role, every predicate whose `rdfs:subPropertyOf` chain ends at
+/// it, the role included. Keys and members are full IRIs; ordered, so two
+/// folds of one declaration set compare equal and render identically.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleExpansion {
+    by_role: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl RoleExpansion {
+    /// Each role with the predicates that reach it.
+    pub fn roles(&self) -> impl Iterator<Item = (&str, &BTreeSet<String>)> {
+        self.by_role.iter().map(|(role, predicates)| (role.as_str(), predicates))
+    }
+
+    /// The predicates that reach `role`, or `None` when it is not a role.
+    pub fn predicates(&self, role: &str) -> Option<&BTreeSet<String>> {
+        self.by_role.get(role)
+    }
+
+    /// The one role `predicate` reaches, or `None` for a time with no role,
+    /// which no time view draws.
+    pub fn role_of(&self, predicate: &str) -> Option<&str> {
+        self.by_role.iter()
+            .find(|(_, predicates)| predicates.contains(predicate))
+            .map(|(role, _)| role.as_str())
+    }
+}
+
+/// The expansion fold. `refinements` are (refining, refined) pairs, read as
+/// a set: order and duplicates change nothing. Every predicate that reaches
+/// two or more roles is reported, and then no expansion is returned.
+pub fn expand_refinements(
+    refinements: &[(String, String)],
+    roles: &BTreeSet<String>,
+) -> Result<RoleExpansion, Vec<RefinementError>> {
+    let mut parents: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (refining, refined) in refinements {
+        parents.entry(refining.as_str()).or_default().insert(refined.as_str());
+    }
+    let mut by_role: BTreeMap<String, BTreeSet<String>> =
+        roles.iter().map(|role| (role.clone(), BTreeSet::from([role.clone()]))).collect();
+    let mut errors = Vec::new();
+    let candidates: BTreeSet<&str> = parents.keys().copied().chain(roles.iter().map(String::as_str)).collect();
+    for predicate in candidates {
+        let mut reached = BTreeSet::new();
+        let mut pending = vec![predicate];
+        while let Some(current) = pending.pop() {
+            if !reached.insert(current) { continue; }
+            if let Some(above) = parents.get(current) { pending.extend(above.iter().copied()); }
+        }
+        let hit: Vec<String> = reached.into_iter().filter(|term| roles.contains(*term)).map(str::to_string).collect();
+        match hit.as_slice() {
+            [] => {}
+            [role] => { by_role.entry(role.clone()).or_default().insert(predicate.to_string()); }
+            _ => errors.push(RefinementError::SeveralRoles { predicate: predicate.to_string(), roles: hit }),
+        }
+    }
+    if errors.is_empty() { Ok(RoleExpansion { by_role }) } else { Err(errors) }
+}
+
+impl OntologyModel {
+    /// The roles: every property the `time` module defines.
+    pub fn time_roles(&self) -> BTreeSet<String> {
+        self.defined_in(TIME_MODULE_IRI).into_iter().filter(|term| self.is_property(term)).collect()
+    }
+
+    /// The role expansion of this model's declarations.
+    pub fn role_expansion(&self) -> Result<RoleExpansion, Vec<RefinementError>> {
+        expand_refinements(&self.refinements(), &self.time_roles())
+    }
+
+    /// Every refinement error the set carries: the use rule's, then the
+    /// expansion's. The closure checks refuse on the first.
+    pub fn refinement_closure_errors(&self) -> Vec<RefinementError> {
+        let mut errors = self.refinement_errors();
+        if let Err(expansion) = self.role_expansion() { errors.extend(expansion); }
+        errors
+    }
+}
 impl OntologyModel {
     /// Every class the model declares, named as a document spells it: the
     /// kebab-case of the term's local name. `x0k:LiterateSpec` and
@@ -677,6 +853,163 @@ mod tests {
         for concept in model.concept_entities() {
             let defining = model.defining_modules(&concept);
             assert_eq!(defining.len(), 1, "{concept} must be defined by exactly one module: {defining:?}");
+        }
+    }
+}
+#[cfg(test)]
+mod refinement_tests {
+    use super::*;
+
+    const TIME: &str = "https://0k.computer/ontology/time";
+    const EXAMPLE: &str = "https://0k.computer/ontology/example";
+    const DUE: &str = "https://0k.computer/ontology/time#due";
+    const PLANNED: &str = "https://0k.computer/ontology/time#planned";
+    const NEED_BY: &str = "https://0k.computer/ontology/example#needBy";
+    const RUSH_NEED_BY: &str = "https://0k.computer/ontology/example#rushNeedBy";
+    const TOUCHED_AT: &str = "https://0k.computer/ontology/example#touchedAt";
+    const BOOKKEEPING: &str = "https://0k.computer/ontology/example#bookkeepingTime";
+
+    fn module(iri: &str, imports: &[&str]) -> Vec<OntologyFact> {
+        let mut facts = vec![OntologyFact::entity(iri, RDF_TYPE, OWL_ONTOLOGY)];
+        facts.extend(imports.iter().map(|import| OntologyFact::entity(iri, OWL_IMPORTS, *import)));
+        facts
+    }
+
+    fn property(iri: &str, module: &str) -> Vec<OntologyFact> {
+        vec![
+            OntologyFact::entity(iri, RDF_TYPE, OWL_DATATYPE_PROPERTY),
+            OntologyFact::entity(iri, RDFS_IS_DEFINED_BY, module),
+        ]
+    }
+
+    fn refines(term: &str, refined: &str) -> OntologyFact {
+        OntologyFact::entity(term, RDFS_SUB_PROPERTY_OF, refined)
+    }
+
+    /// `time` with two roles; `example` importing it (or not) with a need-by,
+    /// a rush need-by and two bookkeeping times.
+    fn region(example_imports: &[&str], refinements: Vec<OntologyFact>) -> OntologyModel {
+        let mut facts = module(TIME, &[]);
+        facts.extend(module(EXAMPLE, example_imports));
+        for role in [DUE, PLANNED] { facts.extend(property(role, TIME)); }
+        for term in [NEED_BY, RUSH_NEED_BY, TOUCHED_AT, BOOKKEEPING] { facts.extend(property(term, EXAMPLE)); }
+        facts.extend(refinements);
+        OntologyModel::new(facts)
+    }
+
+    fn set(members: &[&str]) -> BTreeSet<String> {
+        members.iter().map(|member| member.to_string()).collect()
+    }
+
+    #[test]
+    fn a_refinement_inside_the_import_closure_is_accepted() {
+        let model = region(&[TIME], vec![refines(NEED_BY, DUE)]);
+        assert_eq!(model.refinement_closure_errors(), vec![]);
+        assert_eq!(model.time_roles(), set(&[DUE, PLANNED]));
+        let expansion = model.role_expansion().expect("one role per predicate");
+        assert_eq!(expansion.predicates(DUE), Some(&set(&[DUE, NEED_BY])));
+        assert_eq!(expansion.predicates(PLANNED), Some(&set(&[PLANNED])));
+        assert_eq!(expansion.role_of(NEED_BY), Some(DUE));
+    }
+
+    #[test]
+    fn a_refinement_outside_the_import_closure_is_refused() {
+        let model = region(&[], vec![refines(NEED_BY, DUE)]);
+        assert_eq!(
+            model.refinement_errors(),
+            vec![RefinementError::OutsideImports {
+                term: NEED_BY.into(), module: EXAMPLE.into(), refined: DUE.into(), refined_module: TIME.into(),
+            }],
+        );
+        let message = model.refinement_errors()[0].to_string();
+        assert!(message.contains("does not import https://0k.computer/ontology/time"), "{message}");
+    }
+
+    #[test]
+    fn a_refinement_of_a_class_or_an_undeclared_term_is_refused() {
+        let class = "https://0k.computer/ontology/time#Day";
+        let mut model = region(&[TIME], vec![refines(NEED_BY, class), refines(TOUCHED_AT, "https://example.org/nowhere")]);
+        model = OntologyModel::new(model.facts().iter().cloned().chain([
+            OntologyFact::entity(class, RDF_TYPE, OWL_CLASS),
+            OntologyFact::entity(class, RDFS_IS_DEFINED_BY, TIME),
+        ]));
+        let errors = model.refinement_errors();
+        assert!(errors.iter().any(|error| matches!(error,
+            RefinementError::NotAProperty { term, .. } if term == NEED_BY)), "{errors:?}");
+        assert!(errors.contains(&RefinementError::UndefinedRefined {
+            term: TOUCHED_AT.into(), refined: "https://example.org/nowhere".into(),
+        }), "{errors:?}");
+    }
+
+    #[test]
+    fn refinement_is_transitive() {
+        let model = region(&[TIME], vec![refines(RUSH_NEED_BY, NEED_BY), refines(NEED_BY, DUE)]);
+        let expansion = model.role_expansion().expect("expands");
+        assert_eq!(expansion.predicates(DUE), Some(&set(&[DUE, NEED_BY, RUSH_NEED_BY])));
+        assert_eq!(expansion.role_of(RUSH_NEED_BY), Some(DUE));
+    }
+
+    /// A bookkeeping time: a chain between two domain properties that never
+    /// reaches a role puts neither in any expansion, so no view draws it.
+    #[test]
+    fn a_chain_that_reaches_no_role_is_ignored() {
+        let model = region(&[TIME], vec![refines(TOUCHED_AT, BOOKKEEPING), refines(NEED_BY, DUE)]);
+        assert_eq!(model.refinement_closure_errors(), vec![]);
+        let expansion = model.role_expansion().expect("expands");
+        assert_eq!(expansion.role_of(TOUCHED_AT), None);
+        assert_eq!(expansion.role_of(BOOKKEEPING), None);
+        let drawn: BTreeSet<&String> = expansion.roles().flat_map(|(_, predicates)| predicates).collect();
+        assert!(!drawn.contains(&TOUCHED_AT.to_string()) && !drawn.contains(&BOOKKEEPING.to_string()));
+    }
+
+    #[test]
+    fn a_predicate_that_reaches_two_roles_is_a_closure_error() {
+        let model = region(&[TIME], vec![refines(RUSH_NEED_BY, NEED_BY), refines(NEED_BY, DUE), refines(RUSH_NEED_BY, PLANNED)]);
+        assert_eq!(
+            model.role_expansion(),
+            Err(vec![RefinementError::SeveralRoles {
+                predicate: RUSH_NEED_BY.into(), roles: vec![DUE.into(), PLANNED.into()],
+            }]),
+        );
+        assert_eq!(model.refinement_closure_errors().len(), 1);
+    }
+
+    /// The fold reads its declarations as a set: every order, and a
+    /// duplicate, give the same expansion.
+    #[test]
+    fn the_expansion_is_independent_of_declaration_order() {
+        let pairs = [
+            (RUSH_NEED_BY, NEED_BY), (NEED_BY, DUE), (TOUCHED_AT, BOOKKEEPING),
+        ].map(|(term, refined)| (term.to_string(), refined.to_string()));
+        let roles = set(&[DUE, PLANNED]);
+        let expected = expand_refinements(&pairs, &roles).expect("expands");
+        let mut orders = vec![];
+        for rotation in 0..pairs.len() {
+            let mut order = pairs.to_vec();
+            order.rotate_left(rotation);
+            orders.push(order.clone());
+            order.reverse();
+            orders.push(order);
+        }
+        let mut doubled = pairs.to_vec();
+        doubled.extend(pairs.iter().cloned());
+        orders.push(doubled);
+        for order in orders {
+            assert_eq!(expand_refinements(&order, &roles).as_ref(), Ok(&expected), "order {order:?}");
+        }
+    }
+
+    #[test]
+    fn the_shipped_roles_are_the_time_module_properties() {
+        let model = OntologyModel::new(crate::bootstrap_concept_facts());
+        assert_eq!(model.refinement_closure_errors(), vec![], "the shipped vocabulary refines cleanly");
+        if model.modules().iter().any(|module| module.iri == TIME_MODULE_IRI) {
+            assert_eq!(
+                model.time_roles(),
+                set(&[DUE, PLANNED, "https://0k.computer/ontology/time#unavailable"]),
+            );
+        } else {
+            assert!(model.time_roles().is_empty());
         }
     }
 }

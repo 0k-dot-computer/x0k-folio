@@ -302,23 +302,21 @@ fn extract_body_format(content: &str) -> String {
     "markdown".to_string()
 }
 
-/// A document's title, resolved the way a reader would ask for it: the body's
-/// first `# ` heading, then an opening `<h1>` for an HTML body, then the host
-/// frontmatter's `title:`, then a heading the body opens with, then the
-/// envelope's `summary`. Fenced regions are skipped — a `#` comment inside an
-/// example names nothing — and a heading below prose names its section rather
-/// than the page. `None` when the document offers no name at all, leaving the
-/// last fallback (a filename stem, a document id) to the caller that has one.
+/// A document's title, resolved the way a reader would ask for it: the host
+/// frontmatter's `title:` (the record), then the body's first `# ` heading,
+/// then an opening `<h1>` for an HTML body, then a heading the body opens
+/// with, then the envelope's `summary`. Fenced regions are skipped — a `#`
+/// comment inside an example names nothing — and a heading below prose names
+/// its section rather than the page. `None` when the document offers no name
+/// at all, leaving the last fallback (a filename stem, a document id) to the
+/// caller that has one.
 pub fn document_title(content: &str) -> Option<String> {
     let (frontmatter, body) = split_frontmatter(content);
-    if let Some(h1) = first_heading(body, |level| level == 1) {
-        return Some(h1);
-    }
-    if let Some(h1) = first_html_h1(body) {
-        return Some(h1);
-    }
     if let Some(host) = frontmatter.and_then(host_frontmatter_title) {
         return Some(host);
+    }
+    if let Some(h1) = first_level_one_heading(body) {
+        return Some(h1);
     }
     if let Some(opening) = opening_heading(body) {
         return Some(opening);
@@ -327,6 +325,49 @@ pub fn document_title(content: &str) -> Option<String> {
     // three spellings and one of them is a folded block.
     let summary = envelope_fields(content).summary;
     (!summary.is_empty()).then_some(summary)
+}
+
+/// The body's level-one heading: its first `# ` outside every fence, or, for
+/// a body that carries its heading as a tag, the opening `<h1>`.
+fn first_level_one_heading(body: &str) -> Option<String> {
+    first_heading(body, |level| level == 1).or_else(|| first_html_h1(body))
+}
+
+/// The two names a document gives itself, when they are two different names:
+/// the host frontmatter's `title:` and the body's level-one heading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitleDisagreement {
+    /// The host frontmatter's `title:` as written — the name `index` takes.
+    pub frontmatter: String,
+    /// The body's first `# ` (or an HTML body's `<h1>`) as written.
+    pub heading: String,
+}
+
+/// `Some` when a document carries both a host `title:` and a level-one
+/// heading and they still differ once both are reduced by
+/// `comparable_title`; `None` when they agree or either one is absent.
+pub fn title_disagreement(content: &str) -> Option<TitleDisagreement> {
+    let (frontmatter, body) = split_frontmatter(content);
+    let frontmatter = frontmatter.and_then(host_frontmatter_title)?;
+    let heading = first_level_one_heading(body)?;
+    (comparable_title(&frontmatter) != comparable_title(&heading))
+        .then_some(TitleDisagreement { frontmatter, heading })
+}
+
+/// A title reduced to what the disagreement warning compares: emphasis and
+/// code delimiters dropped, whitespace collapsed, trailing punctuation
+/// trimmed, lower-cased.
+fn comparable_title(title: &str) -> String {
+    let unmarked: String = title
+        .chars()
+        .filter(|c| !matches!(c, '*' | '_' | '`'))
+        .collect();
+    let collapsed = unmarked.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+        .trim_end_matches(|c: char| {
+            matches!(c, '.' | ',' | ':' | ';' | '!' | '?') || c.is_whitespace()
+        })
+        .to_lowercase()
 }
 
 /// The first ATX heading in a body whose level satisfies `accept`, skipping
@@ -734,9 +775,49 @@ Body here.
     }
 
     #[test]
-    fn title_prefers_the_body_h1() {
+    fn title_takes_the_body_h1_when_the_host_names_nothing() {
         let content = "---\nx0k:\n  format: folio/v1\n---\n# My Title\n\nBody.";
         assert_eq!(document_title(content).as_deref(), Some("My Title"));
+    }
+
+    #[test]
+    fn the_host_title_outranks_a_body_h1() {
+        // The record over the presentation. Reported with this exact file
+        // (`titletest/c.md`) in two Backstage re-evaluations, 2026-09-23:
+        // `index` named it by the H1.
+        let content = "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\nx0k:\n  format: folio/v1\n  id: x0k:architecture/adrz\n  type: architecture\n---\n\n# Body H1 Different\n\nText.\n";
+        assert_eq!(
+            document_title(content).as_deref(),
+            Some("ADRZ: Frontmatter wins?")
+        );
+    }
+
+    #[test]
+    fn a_host_title_and_an_h1_that_differ_only_in_typesetting_agree() {
+        let content = "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\nx0k:\n  format: folio/v1\n---\n\n#   adr013: Proper use of *HTTP*   fetching `libraries`.  \n\nText.\n";
+        assert_eq!(title_disagreement(content), None);
+    }
+
+    #[test]
+    fn a_host_title_and_an_h1_that_differ_in_words_disagree_by_name() {
+        let content = "---\ntitle: Url Reader Service\nx0k:\n  format: folio/v1\n---\n\n# URL Readers\n\nText.\n";
+        assert_eq!(
+            title_disagreement(content),
+            Some(TitleDisagreement {
+                frontmatter: "Url Reader Service".to_string(),
+                heading: "URL Readers".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_document_with_one_name_has_nothing_to_disagree_with() {
+        // Host title over a body that opens at `##`: the Docusaurus shape.
+        let host_only = "---\ntitle: Some Page\nx0k:\n  format: folio/v1\n---\n\n## Context\n";
+        assert_eq!(title_disagreement(host_only), None);
+        // An H1 and no host title: every x0k document.
+        let h1_only = "---\nx0k:\n  format: folio/v1\n---\n# Some Other Page\n";
+        assert_eq!(title_disagreement(h1_only), None);
     }
 
     #[test]

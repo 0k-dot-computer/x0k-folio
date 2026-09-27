@@ -3,8 +3,7 @@
 //! every folio/v1 envelope under a set of paths read against a named
 //! vocabulary, every inline affordance declaration read out as a record,
 //! and every icon declaration checked against the profile and written
-//! bound. Both `x0k-tangle` binaries call these and do their own
-//! printing.
+//! bound. The CLI (`crate::cli`) calls these and does the printing.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};

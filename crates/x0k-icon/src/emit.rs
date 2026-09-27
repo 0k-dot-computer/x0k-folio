@@ -55,16 +55,18 @@ pub fn stem_of(entity_id: &str) -> String {
 /// write. Re-parsing it yields the same icon.
 pub fn normalized(icon: &Accepted) -> String {
     let bound = bind(icon, &RoleBinding::names());
+    let mut root = vec![("viewBox", icon.grid().view_box().to_string())];
+    push(&mut root, "flair", icon.flair.clone());
     let mut w = Writer::default();
-    w.open("svg", &[("viewBox", icon.grid().view_box().to_string())], false);
+    w.open("svg", &root, false);
     w.children(&bound.elements);
     w.close("svg");
     w.out
 }
 
 /// One icon as a complete `<svg>` document: namespace, `role="img"`,
-/// the label as `aria-label`, and the profile's round caps and joins on
-/// the root. Under a palette binding this is a file; under
+/// the label as `aria-label`, and the profile's round caps and joins and
+/// its unpainted default fill on the root. Under a palette binding this is a file; under
 /// [`RoleBinding::css_variables`] it is inline SVG.
 pub fn svg(bound: &BoundIcon, label: &Label) -> String {
     let mut w = Writer::default();
@@ -75,6 +77,7 @@ pub fn svg(bound: &BoundIcon, label: &Label) -> String {
             ("viewBox", bound.grid.view_box().to_string()),
             ("role", "img".to_string()),
             ("aria-label", label.title.clone()),
+            ("fill", "none".to_string()),
             ("stroke-linecap", "round".to_string()),
             ("stroke-linejoin", "round".to_string()),
         ],
@@ -126,6 +129,7 @@ pub fn sprite(icons: &[(&Label, &Accepted)]) -> String {
             &[
                 ("id", format!("icon-{}", label.stem)),
                 ("viewBox", bound.grid.view_box().to_string()),
+                ("fill", "none".to_string()),
                 ("stroke-linecap", "round".to_string()),
                 ("stroke-linejoin", "round".to_string()),
             ],
@@ -305,6 +309,18 @@ mod tests {
     }
 
     #[test]
+    fn a_flair_selection_survives_normalization_and_leaves_every_drawing() {
+        let selected = fixtures::PERSON.replacen("<svg viewBox=\"0 0 16 16\">", "<svg flair=\"seal\" viewBox=\"0 0 16 16\">", 1);
+        let icon = validate(parse(&selected).unwrap()).unwrap();
+        let text = normalized(&icon);
+        assert!(text.starts_with("<svg viewBox=\"0 0 16 16\" flair=\"seal\">\n"), "{text}");
+        assert_eq!(normalized(&validate(parse(&text).unwrap()).unwrap()), text);
+        let label = Label::for_entity("x0k:class/Human", "A person");
+        assert!(!inline_svg(&icon, &label).contains("flair"));
+        assert!(files(&icon, &folio_palette(), &label).iter().all(|(_, file)| !file.contains("flair")));
+    }
+
+    #[test]
     fn a_terse_declaration_normalizes_to_the_canonical_form() {
         let terse = r#"<svg viewBox="0 0 16 16"><path stroke-width="1.50" stroke="ink" d="M2,2 4,4 6 2Z" fill="none"/></svg>"#;
         let icon = validate(parse(terse).unwrap()).unwrap();
@@ -330,7 +346,7 @@ mod tests {
         assert_eq!(out[0].0, "project-source-code-out-of-a-document-light.svg");
         assert_eq!(out[1].0, "project-source-code-out-of-a-document-dark.svg");
         let light = &out[0].1;
-        assert!(light.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" role=\"img\" aria-label=\"Tangle — project source code out of a document\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n"), "{light}");
+        assert!(light.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" role=\"img\" aria-label=\"Tangle — project source code out of a document\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n"), "{light}");
         assert!(light.contains("stroke=\"#b88e44\""));
         assert!(!light.contains("stroke-linecap=\"round\"/>"), "caps and joins live on the root only");
         let recoloured = light.replace("#b88e44", "#96b4dc").replace("#111111", "#e2e8f0").replace("#fffff8", "#1e293b");
@@ -351,7 +367,7 @@ mod tests {
         let a = Label::for_entity("x0k:affordance/project_source_code_out_of_a_document", "Tangle");
         let b = Label::for_entity("x0k:affordance/read_a_document_as_the_woven_artifact", "Weave");
         let text = sprite(&[(&a, &tangle()), (&b, &weave)]);
-        assert!(text.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" aria-hidden=\"true\">\n  <defs>\n    <symbol id=\"icon-project-source-code-out-of-a-document\" viewBox=\"0 0 16 16\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n      <path d=\"M2.5 1.5 H8.5"), "{text}");
+        assert!(text.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" aria-hidden=\"true\">\n  <defs>\n    <symbol id=\"icon-project-source-code-out-of-a-document\" viewBox=\"0 0 16 16\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n      <path d=\"M2.5 1.5 H8.5"), "{text}");
         assert!(text.contains("<symbol id=\"icon-read-a-document-as-the-woven-artifact\""));
         assert_eq!(text.matches("<symbol ").count(), 2);
         assert!(text.ends_with("    </symbol>\n  </defs>\n</svg>\n"));

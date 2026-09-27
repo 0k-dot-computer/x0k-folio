@@ -78,7 +78,7 @@ saying which corpus it means.
 /// repo root), and it cost three months of a search index that indexed
 /// nothing.
 ///
-/// Construct one from a corpus root — `corpora/x0k`, `corpora/sci` — never
+/// Construct one from a corpus root — `corpora/x0k` or a sibling — never
 /// from the repository root. The genus directories are per-corpus: `decisions`
 /// exists under four corpora in this tree and `wiki` under three.
 #[derive(Debug, Clone, PartialEq, Eq)]

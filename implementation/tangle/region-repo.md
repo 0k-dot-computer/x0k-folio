@@ -151,14 +151,22 @@ the two from drifting apart afterwards.
 //! a declaration naming a module the audience will not have is refused.
 //!
 //! A publication may declare `prebuilt:` — target triples, and optionally an
-//! npm wrapper — and the projection then also carries a release lane: a
+//! npm wrapper or a shell installer — and the projection then also carries a
+//! release lane: a
 //! forge-agnostic `tools/release-artifacts` that packages the entry-point
 //! binaries for one target, a `.github/workflows/release.yml` that runs it per
 //! declared target on a tag under SLSA build provenance, and an `npm/` package
 //! whose `postinstall` fetches the matching asset and refuses to install it
 //! unless it matches a digest pinned into the package at publish time (and,
 //! where `gh` is present, its build attestation) — so `npx` reaches the tool
-//! with no Rust toolchain and nothing unverified is ever executed. The lane is
+//! with no Rust toolchain and nothing unverified is ever executed. The
+//! installer is the same logic in POSIX `sh`: an `install.sh` the release
+//! attaches beside the archives it installs, checked against the release's
+//! `SHA256SUMS`, for a reader with no Node either. Every release also
+//! carries its source closure — `tools/release-vendor` packages the committed
+//! tree with every crate its lockfile resolves, git dependencies included, as
+//! one asset the sums and the attestation cover — so a rebuild needs no
+//! network. The lane is
 //! inert for a publication that declares none, and it never enters `tools/ci`:
 //! it is a distribution lane, not a build dependency.
 //!
@@ -5975,6 +5983,15 @@ The workspace manifest lists the published crates, declares the
 edition and toolchain floor every crate inherits, and resolves the
 inherited dependency keys from the fixed table above.
 
+It also carries the dev profile a clone builds with. Without one, a
+plain `cargo build` in the projected repository is opt-level 0 across
+the whole graph, and an unoptimized `check` over a real documentation
+tree took 37 s where the release build took 0.8 s (the Backstage
+evaluator, 2026-09-23). The profile is the monorepo's own shape, cut
+to the two lines that carry the speed: workspace crates at 1, so
+rebuilds stay quick, and every dependency at 3, compiled once and
+amortized.
+
 <a name="chunk-emit-workspace-manifest"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#emit-workspace-manifest`</sub>
 
 ```rust {#emit-workspace-manifest}
@@ -5992,6 +6009,7 @@ fn emit_workspace_manifest(output_dir: &Path, crates: &[String], edition: &str) 
             s.push_str(&format!("{k} = {v}\n"));
         }
     }
+    s.push_str("\n[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n");
     std::fs::write(output_dir.join("Cargo.toml"), s)?;
     Ok(())
 }
@@ -6621,6 +6639,7 @@ fn emit_provenance(
             "targets": p.targets,
             "commands": p.commands,
             "npm_package": p.npm_package,
+            "installer": p.installer,
         })),
         // The relicense act, recorded: what this projection is released
         // under, where that decision came from, and what each crate declared
@@ -6670,8 +6689,8 @@ Cargo's.
 
 The lane is small and it is **opt-in**. A publication that says nothing
 gets exactly the tree it got before — no workflow, no wrapper, not a
-byte different. A publication that declares `prebuilt:` gets two
-things, in that order of independence:
+byte different. A publication that declares `prebuilt:` gets the first
+of these, and each of the other two when it names it:
 
 1. A **release script and workflow**: `tools/release-artifacts`, which
    builds the publication's entry-point binaries for one target triple
@@ -6680,7 +6699,10 @@ things, in that order of independence:
    target natively, attests the assets with SLSA build provenance, and
    attaches them to the tag's release. This alone is what lets a
    consumer `curl` a binary in their own CI and check it with
-   `gh attestation verify`.
+   `gh attestation verify`. The same release carries [the source
+   closure](#the-source-closure) — the tree and every crate it
+   resolves, in one attested tarball — so it can be rebuilt with no
+   network at all.
 2. An **npm wrapper**, when the declaration names one: a `npm/` package
    whose `postinstall` resolves this machine's platform to one of those
    assets, fetches it, checks it against a digest pinned into the
@@ -6689,8 +6711,17 @@ things, in that order of independence:
    pattern is the one the JavaScript ecosystem already accepts from
    esbuild, swc, biome and `@parcel/watcher`; nothing here is novel
    except that it refuses rather than installs what it cannot verify.
+3. A **shell installer**, when the declaration names one: an
+   `install.sh` at the repository root, which the release workflow
+   attaches to the release beside the archives, so that
+   `releases/latest/download/install.sh` is always the script that
+   belongs to the binaries it installs. It is the postinstall's logic
+   in POSIX `sh` — platform to asset, fetch, `SHA256SUMS`, build
+   provenance where `gh` can check it, refuse on any mismatch — for a
+   reader with neither Rust nor Node. [The installer](#the-installer)
+   below is its whole text and argument.
 
-Neither is a build dependency. `tools/ci` is untouched by this section —
+None is a build dependency. `tools/ci` is untouched by this section —
 a clone with no `node` goes green exactly as before — and the wrapper's
 own checks live in a separate `tools/ci-npm` that skips itself when
 `node` is absent. We are adding a lane, not a rung.
@@ -6759,7 +6790,9 @@ CI can check today.
 
 The declaration is one envelope block. `targets` is the whole of the
 first lane; the nested `npm` block is the second, and its absence is how
-a publication takes the release binaries without the wrapper.
+a publication takes the release binaries without the wrapper. The nested
+`installer` block is the third, independent of the second — a
+publication may declare either, both, or neither.
 
 ```yaml
   prebuilt:
@@ -6770,6 +6803,8 @@ a publication takes the release binaries without the wrapper.
       package: "@0k/folio"
       bin:
         folio: x0k-tangle
+    installer:
+      envPrefix: FOLIO
 ```
 
 Everything else is derived from what the publication already says.
@@ -6866,6 +6901,19 @@ struct PrebuiltDecl {
     tag_prefix: Option<String>,
     #[serde(default)]
     npm: Option<NpmDecl>,
+    #[serde(default)]
+    installer: Option<InstallerDecl>,
+}
+
+/// The `installer:` sub-block: an `install.sh` the release carries. Its one
+/// field names the script's environment variables — `<envPrefix>_VERSION`,
+/// `<envPrefix>_INSTALL_DIR` and the rest — and defaults to the asset name,
+/// upper-cased, because a reader who has two such installers needs two names.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct InstallerDecl {
+    #[serde(default)]
+    env_prefix: Option<String>,
 }
 
 /// The `npm:` sub-block: the wrapper package, and the command names it links.
@@ -6906,6 +6954,8 @@ pub struct PrebuiltSummary {
     pub commands: BTreeMap<String, String>,
     /// The npm package the wrapper publishes as, when one is declared.
     pub npm_package: Option<String>,
+    /// The installer's asset name (`install.sh`), when one is declared.
+    pub installer: Option<String>,
 }
 ```
 
@@ -6919,7 +6969,9 @@ land on the same Node platform, so no rule could pick between them; no
 `entryPoint`, hence no version to tag; a command naming a binary no
 published crate builds; a wrapper with no `repository:` to build a URL
 from; and a `repository:` that is not a GitHub project, whose release
-URL shape we would be inventing.
+URL shape we would be inventing. The installer adds two of its own: an
+installer over targets that are all Windows, which `sh` cannot reach, and
+an `envPrefix` that is not a portable variable name.
 
 The call sits with the guards, not with the emitters, so a declaration
 that cannot produce an installable release refuses before the output
@@ -6932,7 +6984,7 @@ let prebuilt = resolve_prebuilt(&content, &env, &packages, &versions, &crates_io
 report.prebuilt = prebuilt.as_ref().map(PrebuiltPlan::summary);
 ```
 
-<a name="chunk-resolve-prebuilt-fn"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#resolve-prebuilt-fn` · assembles [resolve-prebuilt-binaries](#chunk-resolve-prebuilt-binaries) · [resolve-prebuilt-npm](#chunk-resolve-prebuilt-npm)</sub>
+<a name="chunk-resolve-prebuilt-fn"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#resolve-prebuilt-fn` · assembles [resolve-prebuilt-binaries](#chunk-resolve-prebuilt-binaries) · [resolve-prebuilt-npm](#chunk-resolve-prebuilt-npm) · [resolve-prebuilt-installer](#chunk-resolve-prebuilt-installer)</sub>
 
 ```rust {#resolve-prebuilt-fn}
 /// Read and check the publication's `prebuilt:` declaration. `Ok(None)` when
@@ -6977,6 +7029,7 @@ fn resolve_prebuilt(
     }
     <<resolve-prebuilt-binaries>>
     <<resolve-prebuilt-npm>>
+    <<resolve-prebuilt-installer>>
     Ok(Some(PrebuiltPlan {
         tag_prefix,
         version,
@@ -6987,6 +7040,7 @@ fn resolve_prebuilt(
         commands,
         binary_crates,
         npm,
+        installer,
     }))
 }
 ```
@@ -7068,24 +7122,12 @@ for (command, bin) in &commands {
 let npm = match decl.npm {
     None => None,
     Some(n) => {
-        let repository = crates_io.repository.clone().ok_or_else(|| {
-            anyhow!(
-                "`prebuilt.npm:` needs the publication's `repository:` — the wrapper's \
-                 postinstall builds its download URL from it"
-            )
-        })?;
-        let project = repository
-            .trim_end_matches('/')
-            .trim_end_matches(".git")
-            .strip_prefix("https://github.com/")
-            .filter(|p| p.split('/').filter(|s| !s.is_empty()).count() == 2)
-            .ok_or_else(|| {
-                anyhow!(
-                    "`repository: {repository}` is not a `https://github.com/<owner>/<repo>` \
-                     project, and the release-asset URL shape this wrapper builds is GitHub's"
-                )
-            })?
-            .to_string();
+        let project = github_project(
+            crates_io,
+            "`prebuilt.npm:` needs the publication's `repository:` — the wrapper's \
+             postinstall builds its download URL from it",
+            "this wrapper",
+        )?;
         Some(NpmPlan {
             env_prefix: env_var_prefix(&n.package),
             package: n.package,
@@ -7096,6 +7138,84 @@ let npm = match decl.npm {
         })
     }
 };
+```
+
+The installer resolves the same URL from the same field, and its own
+two questions besides: which of the declared targets a POSIX shell can
+reach at all, and what its environment variables are called. A Windows
+triple is released and simply not the script's — the script names the
+release page to a Windows reader instead — but an installer over *only*
+Windows targets would be a script that refuses every machine that can
+run it, and that is refused here instead.
+
+<a name="chunk-resolve-prebuilt-installer"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#resolve-prebuilt-installer`</sub>
+
+```rust {#resolve-prebuilt-installer}
+let installer = match decl.installer {
+    None => None,
+    Some(i) => {
+        let project = github_project(
+            crates_io,
+            "`prebuilt.installer:` needs the publication's `repository:` — install.sh \
+             builds its download URL from it",
+            "install.sh",
+        )?;
+        let targets: Vec<&'static str> = targets
+            .iter()
+            .filter(|t| t.archive == ".tar.gz")
+            .map(|t| t.triple)
+            .collect();
+        if targets.is_empty() {
+            bail!(
+                "`prebuilt.installer:` needs a target a POSIX shell runs on — every declared \
+                 target is Windows, and install.sh would refuse every machine that can run it"
+            );
+        }
+        let env_prefix = i.env_prefix.unwrap_or_else(|| env_var_prefix(&asset_prefix));
+        if env_prefix.is_empty()
+            || env_prefix.starts_with(|c: char| c.is_ascii_digit())
+            || !env_prefix.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        {
+            bail!(
+                "`prebuilt.installer:` names envPrefix `{env_prefix}`, which is not a portable \
+                 variable name (upper-case letters, digits and `_`, not starting with a digit)"
+            );
+        }
+        Some(InstallerPlan {
+            env_prefix,
+            release_base: format!("https://github.com/{project}/releases"),
+            project,
+            targets,
+        })
+    }
+};
+```
+
+Both lanes read `repository:` as a GitHub project, so the reading is one
+function; each passes the sentence that says what it needed the field
+for.
+
+<a name="chunk-github-project"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#github-project`</sub>
+
+```rust {#github-project}
+/// The publication's `repository:` as `<owner>/<repo>`, refused with
+/// `missing` when absent and when it is not a GitHub project — the only
+/// release-URL shape the prebuilt lane builds.
+fn github_project(crates_io: &CratesIoMeta, missing: &str, builder: &str) -> Result<String> {
+    let repository = crates_io.repository.clone().ok_or_else(|| anyhow!("{missing}"))?;
+    Ok(repository
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .strip_prefix("https://github.com/")
+        .filter(|p| p.split('/').filter(|s| !s.is_empty()).count() == 2)
+        .ok_or_else(|| {
+            anyhow!(
+                "`repository: {repository}` is not a `https://github.com/<owner>/<repo>` \
+                 project, and the release-asset URL shape {builder} builds is GitHub's"
+            )
+        })?
+        .to_string())
+}
 ```
 
 The plan itself is the resolved answer, carried from the guards to the
@@ -7119,6 +7239,20 @@ struct PrebuiltPlan {
     /// Binary → the crate that builds it.
     binary_crates: BTreeMap<String, String>,
     npm: Option<NpmPlan>,
+    installer: Option<InstallerPlan>,
+}
+
+/// The shell installer's part of a plan.
+struct InstallerPlan {
+    /// `<owner>/<repo>` — what `gh attestation verify --repo` takes.
+    project: String,
+    /// `https://github.com/<owner>/<repo>/releases`: `latest/download/<asset>`
+    /// and `download/<tag>/<asset>` both hang off it.
+    release_base: String,
+    /// The prefix of the script's environment variables.
+    env_prefix: String,
+    /// The declared targets a POSIX shell runs on, in declaration order.
+    targets: Vec<&'static str>,
 }
 
 /// The npm wrapper half of a plan.
@@ -7142,6 +7276,7 @@ impl PrebuiltPlan {
             targets: self.targets.iter().map(|t| t.triple.to_string()).collect(),
             commands: self.commands.clone(),
             npm_package: self.npm.as_ref().map(|n| n.package.clone()),
+            installer: self.installer.as_ref().map(|_| INSTALLER_ASSET.to_string()),
         }
     }
 }
@@ -7205,8 +7340,10 @@ with every link pointed one directory up.
 <a name="chunk-emit-prebuilt"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#emit-prebuilt`</sub>
 
 ```rust {#emit-prebuilt}
-/// Write the prebuilt lane: the release script, the forge wrapper for it, and
-/// — when the publication declares one — the npm package. Everything here is
+/// Write the prebuilt lane: the release script, the source-closure script, the
+/// forge wrapper for both, and
+/// — when the publication declares them — the npm package and the shell
+/// installer. Everything here is
 /// regenerated scaffolding, cleared and rewritten on every projection.
 fn emit_prebuilt(
     output_dir: &Path,
@@ -7230,7 +7367,9 @@ fn emit_prebuilt(
             .replace("{bins}", &bins.join(" "))
             .replace("{asset_prefix}", &plan.asset_prefix),
     )?;
-    let mut executable = vec![script];
+    let vendor = output_dir.join("tools/release-vendor");
+    std::fs::write(&vendor, release_vendor_script(plan))?;
+    let mut executable = vec![script, vendor];
     if let Some(npm) = &plan.npm {
         emit_npm_wrapper(output_dir, plan, npm, license)?;
         let check = output_dir.join("tools/ci-npm");
@@ -7242,6 +7381,11 @@ fn emit_prebuilt(
         let pin = output_dir.join("tools/npm-pin-digests");
         std::fs::write(&pin, NPM_PIN_DIGESTS_JS)?;
         executable.push(pin);
+    }
+    if let Some(installer) = &plan.installer {
+        let path = output_dir.join(INSTALLER_ASSET);
+        std::fs::write(&path, installer_script(plan, installer))?;
+        executable.push(path);
     }
     #[cfg(unix)]
     {
@@ -7438,7 +7582,8 @@ publication.
 
 ```rust {#release-workflow}
 /// `.github/workflows/release.yml`: one job per declared target calling
-/// `tools/release-artifacts`, one job attaching the assets to the tag's
+/// `tools/release-artifacts`, one job packaging the source closure and
+/// attaching every asset to the tag's
 /// release, and — when a wrapper is declared — one publishing it.
 fn release_workflow(plan: &PrebuiltPlan) -> String {
     let mut matrix = String::new();
@@ -7451,9 +7596,14 @@ fn release_workflow(plan: &PrebuiltPlan) -> String {
         None => String::new(),
         Some(npm) => NPM_PUBLISH_JOB.replace("{access}", &npm.access),
     };
+    // Empty when no installer is declared, and then the workflow is
+    // byte-identical to the one a projector without this step wrote.
+    let installer_step = if plan.installer.is_some() { INSTALLER_STEP } else { "" };
     RELEASE_WORKFLOW
         .replace("{tag_prefix}", &plan.tag_prefix)
+        .replace("{asset_prefix}", &plan.asset_prefix)
         .replace("{matrix}", matrix.trim_end_matches('\n'))
+        .replace("{installer_step}", installer_step)
         .replace("{npm_job}", &npm_job)
 }
 ```
@@ -7525,6 +7675,131 @@ rm -rf "$stage"
 )
 echo "$out/$asset"
 "#;
+```
+
+### The source closure
+
+A release binary's inputs are all public and all pinned — the lockfile
+names every crate by version and checksum, and a git dependency by exact
+revision — but a pin is a name, and a name is only as durable as some
+copy of what it names. A crates.io version is as close to permanent as
+a registry gets: a yank hides it from new resolution and deletes
+nothing. A git revision is not: it survives only while some repository
+still reaches it, and a force-push or a deleted repository upstream
+takes it along. This publication pins ten `dialog-db` crates that way.
+So every release carries its own copy of everything it was built from,
+as one more asset beside the archives:
+`<asset-prefix>-<tag>-vendor.tar.gz`.
+
+What that copy holds is the one choice here worth arguing, and the
+answer is **the source too, not only `vendor/`.** The tag's source is
+already on the forge — GitHub serves an archive of every tag — and
+`vendor/` alone would be enough if that archive were a release asset.
+It is not. It is generated on request, no `SHA256SUMS` lists it, no
+attestation covers it, and its bytes are not promised stable (a git
+upgrade on GitHub's side changed them in January 2023 and broke every
+checksum pinned over one). A rebuild recipe that starts from it starts
+from the one input the release does not vouch for, fetched from the
+forge the recipe exists to do without. The source is also the small
+part — about 7 MB of 580 MB unpacked for this publication — and
+carrying it removes the recipe's only merge step: `cargo vendor`'s
+source replacement belongs in `.cargo/config.toml` at the workspace
+root, and a tarball that *is* the workspace root writes it there
+already. So the closure is one directory, and the whole recipe is:
+
+```sh
+tar -xzf <asset-prefix>-<tag>-vendor.tar.gz
+cd <asset-prefix>-<tag>
+cargo build --offline --locked --release
+```
+
+Two details keep that honest. The tree is the one *committed* at `HEAD`
+(`git archive`), not the working one, so a stray local file cannot ride
+into a release; and `cargo vendor` runs `--locked` inside that copy, so
+the vendored set is exactly the lockfile the tag holds. The step runs in
+the release job, before `SHA256SUMS` is assembled and before the
+attestation, so the sums list the tarball and the provenance covers it
+like any archive — and it runs on every release, not only a
+publication's that declares git dependencies, because the registry's
+permanence is a policy rather than a property this repository controls.
+The script is forge-agnostic in the same way `tools/release-artifacts`
+is: a maintainer with no CI runs it from a clean checkout of the tag.
+
+What it does not carry is a toolchain. The recipe needs a Rust at or
+above the workspace's `rust-version` and a C compiler, already on the
+machine; under rustup, the projected `rust-toolchain.toml` asks for its
+pinned version, which must then be installed already, or overridden
+with `RUSTUP_TOOLCHAIN`.
+
+<a name="chunk-release-vendor-script"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#release-vendor-script`</sub>
+
+```rust {#release-vendor-script}
+/// `tools/release-vendor`: the fixed text, with the publication's asset prefix
+/// written in.
+fn release_vendor_script(plan: &PrebuiltPlan) -> String {
+    RELEASE_VENDOR_SCRIPT.replace("{asset_prefix}", &plan.asset_prefix)
+}
+
+/// `tools/release-vendor` — package the committed tree and every crate it
+/// resolves as the one asset an offline rebuild needs.
+const RELEASE_VENDOR_SCRIPT: &str = r##"#!/bin/sh
+# Package this repository's whole source closure for ONE release, as the asset
+# that rebuilds it with no network:
+#
+#   tools/release-vendor <tag> [output-dir]
+#
+# Writes <output-dir>/<asset> and <output-dir>/<asset>.sha256, where <asset> is
+# `{asset_prefix}-<tag>-vendor.tar.gz`: one directory, `{asset_prefix}-<tag>/`,
+# holding the tree committed at HEAD, every crate its Cargo.lock resolves —
+# registry and git dependencies alike — under `vendor/`, and a
+# `.cargo/config.toml` pointing cargo there instead of at any network source.
+# Unpacked anywhere, it builds offline:
+#
+#   tar -xzf {asset_prefix}-<tag>-vendor.tar.gz
+#   cd {asset_prefix}-<tag>
+#   cargo build --offline --locked --release
+#
+# Nothing here talks to a forge — publishing the asset is the caller's act. The
+# release workflow calls this once, beside the per-target archives; so can a
+# maintainer, by hand, from a clean checkout of the tag.
+set -eu
+tag="${1:-}"
+out="${2:-dist}"
+if [ -z "$tag" ]; then
+  echo "usage: tools/release-vendor <tag> [output-dir]" >&2
+  exit 2
+fi
+root="{asset_prefix}-$tag"
+asset="{asset_prefix}-$tag-vendor.tar.gz"
+stage="$out/.stage-vendor"
+rm -rf "$stage"
+mkdir -p "$stage" "$out"
+# The committed tree, not the working one: what is vendored is what the tag
+# holds, and a stray local file cannot ride into a release.
+git archive --format=tar --prefix="$root/" HEAD | tar -xf - -C "$stage"
+(
+  cd "$stage/$root"
+  mkdir -p .cargo
+  # `--locked` for the reason `tools/release-artifacts` uses it: the committed
+  # lockfile is what was audited, and the vendored set must be exactly it.
+  # `cargo vendor` prints the source replacement on stdout (`--quiet` drops
+  # it, so it is not passed). Appending keeps a `.cargo/config.toml` the
+  # repository already carries; one that itself replaces a source would
+  # conflict, and the first offline build says so.
+  cargo vendor --locked vendor >> .cargo/config.toml
+)
+(cd "$stage" && tar -czf "../$asset" "$root")
+rm -rf "$stage"
+(
+  cd "$out"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$asset" > "$asset.sha256"
+  else
+    shasum -a 256 "$asset" > "$asset.sha256"
+  fi
+)
+echo "$out/$asset"
+"##;
 ```
 
 `tools/ci-npm` is short because everything it checks is either a syntax
@@ -8160,13 +8435,24 @@ jobs:
           path: dist
           pattern: artifacts-*
           merge-multiple: true
+      # The release's source closure: the tag's tree and every crate its
+      # lockfile resolves, git dependencies included, so a rebuild needs no
+      # network. Written before SHA256SUMS, which lists it, and before the
+      # attestation, which covers it like the archives.
+      - name: Package the source closure
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          ./tools/release-vendor "$TAG" dist
+          test -s "dist/{asset_prefix}-$TAG-vendor.tar.gz"
       - name: One SHA256SUMS for the whole release
         shell: bash
         run: |
           cd dist
           cat ./*.sha256 > SHA256SUMS
           rm -f ./*.sha256
-      # SLSA build provenance for every asset: which workflow, which commit,
+{installer_step}      # SLSA build provenance for every asset: which workflow, which commit,
       # which runner. Verified by a consumer with
       # `gh attestation verify <file> --repo <owner>/<repo>`, against a public
       # transparency log — no key for this project to hold or lose. The
@@ -8242,6 +8528,308 @@ const NPM_PUBLISH_JOB: &str = r#"  npm:
             exit 0
           fi
           npm publish --provenance --access {access}
+"#;
+```
+
+### The installer
+
+The npm wrapper asks its reader for Node and asks its publisher for a
+registry account, a token, and a second package to version beside the
+crates. The binaries it delivers are already on the release, attested,
+with one `SHA256SUMS` beside them, and all the wrapper adds is a
+decision — which of those archives is this machine's — and a refusal
+when the archive is not the one the sums list. That is a shell script,
+and a shell script is on every machine the Unix targets name. So the
+installer is the postinstall's logic in POSIX `sh`, carried *as a
+release asset* rather than published anywhere: the release workflow
+copies `install.sh` into the release beside the archives, so
+`releases/latest/download/install.sh` is always the script that
+belongs to the latest binaries, and a stable URL elsewhere is a
+redirect to it rather than a copy that has to be kept in step.
+
+Its checks are the wrapper's, in the wrapper's order, with the one
+difference stated rather than hidden. **The digest is the release's
+own `SHA256SUMS`**, fetched from the same release as the archive — the
+claim the wrapper makes only when it has no pinned digest, and says out
+loud is the weaker one. It catches a truncated or corrupted download and
+an archive replaced without its sums; it does not catch a release whose
+sums were replaced with it. **The build provenance** is what does, and
+the script runs `gh attestation verify` when the GitHub CLI is present
+and signed in, and refuses on a failed verification exactly as the
+wrapper does. A `gh` that is installed but signed out is not a failed
+verification — it exits 4 and prints `gh auth login` before asking the
+API anything (measured 2026-09-25) — so the script asks `gh auth status`
+first and treats a signed-out `gh` like an absent one: one line saying
+the provenance was not checked, and the command that checks it. A
+mismatch or a failed verification exits non-zero before the install
+directory is created, so nothing is ever half-installed.
+
+The rest is the ordinary contract of a `curl | sh` script, each piece a
+refusal someone would otherwise meet as a stack of shell errors. The
+machine resolves through `uname` to the first declared triple it can
+run — musl before glibc on Linux, because the static binary runs on
+both, and the native Apple-silicon binary for a shell running under
+Rosetta — and an undeclared machine, Windows included, is refused with
+the two ways that remain: the release page and `cargo install --git`.
+`curl` is preferred and `wget` is the fallback; `sha256sum` and
+`shasum -a 256` are both accepted, and a machine with neither is refused
+rather than installed unchecked. The binaries go to
+`<PREFIX>_INSTALL_DIR`, by default `~/.local/bin`, with no `sudo`, and
+the last lines say what was installed, where, and whether that
+directory is on `PATH`. `<PREFIX>_VERSION` pins a release (the default
+is the latest), and `<PREFIX>_BASE_URL` replaces
+`https://github.com/<owner>/<repo>/releases` with a directory laid out
+the same way — which is how the script is exercised against a local
+copy of a release without the network. The whole script is one
+function called on its last line, so a pipe that is cut halfway runs
+nothing, and nothing it starts can read the rest of the script from
+the pipe as its own input.
+
+<a name="chunk-installer-script"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#installer-script`</sub>
+
+```rust {#installer-script}
+/// The asset name the installer ships under, at the projection root and on
+/// the release. `releases/latest/download/install.sh` resolves to it.
+const INSTALLER_ASSET: &str = "install.sh";
+
+/// `install.sh`: the fixed text, with the plan's facts written in.
+fn installer_script(plan: &PrebuiltPlan, installer: &InstallerPlan) -> String {
+    let bins: Vec<&str> = plan.binary_crates.keys().map(String::as_str).collect();
+    let crates: BTreeSet<&str> = plan.binary_crates.values().map(String::as_str).collect();
+    INSTALL_SH
+        .replace("{env}", &installer.env_prefix)
+        .replace("{project}", &installer.project)
+        .replace("{release_base}", &installer.release_base)
+        .replace("{asset_prefix}", &plan.asset_prefix)
+        .replace("{tag_prefix}", &plan.tag_prefix)
+        .replace("{targets}", &installer.targets.join(" "))
+        .replace("{bins}", &bins.join(" "))
+        .replace("{crates}", &crates.into_iter().collect::<Vec<_>>().join(" "))
+}
+```
+
+The script is the one emitted text a stranger runs without reading, so
+it is written to be read: every refusal is a sentence, and every
+sentence says what was not done.
+
+<a name="chunk-installer-text"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#installer-text`</sub>
+
+```rust {#installer-text}
+/// `install.sh` — fetch, verify and install this machine's release archive.
+const INSTALL_SH: &str = r##"#!/bin/sh
+# Install this repository's prebuilt binaries from its GitHub release:
+#
+#   curl -fsSL {release_base}/latest/download/install.sh | sh
+#
+# Resolves this machine to one of the release's archives, downloads it and
+# the release's SHA256SUMS, and refuses (non-zero exit, nothing installed)
+# unless the archive's SHA-256 is the one SHA256SUMS lists. Where the GitHub
+# CLI is installed and signed in, it also checks the archive's build
+# provenance, and refuses if that does not verify. No sudo: the binaries go to
+# a directory you own.
+#
+#   {env}_VERSION       the release to install, e.g. 0.1.2 (default: latest)
+#   {env}_INSTALL_DIR   where the binaries go (default: $HOME/.local/bin)
+#   {env}_ATTESTATION   check (default) or skip: whether to run
+#                       `gh attestation verify` when gh is available
+#   {env}_BASE_URL      for testing: a URL laid out like, and used in place of,
+#                       {release_base}
+#
+# Generated by the repository projector. POSIX sh: dash, bash, busybox ash and
+# macOS /bin/sh all run it.
+set -eu
+
+# Everything is one function, called on the last line: a download cut off
+# halfway runs nothing, and no command below can read the rest of this script
+# from the pipe as its own input.
+main() {
+  project="{project}"
+  asset_prefix="{asset_prefix}"
+  tag_prefix="{tag_prefix}"
+  targets="{targets}"
+  bins="{bins}"
+  base="${{env}_BASE_URL:-{release_base}}"
+  base="${base%/}"
+  version="${{env}_VERSION:-}"
+  install_dir="${{env}_INSTALL_DIR:-$HOME/.local/bin}"
+  attestation="${{env}_ATTESTATION:-check}"
+  releases_page="https://github.com/$project/releases"
+  from_source="cargo install --git https://github.com/$project {crates}"
+
+  # Read the dial before anything is fetched: a misspelt value refuses at
+  # once, not after a download whose result it would have governed.
+  case "$attestation" in
+    check | skip) ;;
+    *) fail "{env}_ATTESTATION must be check or skip (got '$attestation')" ;;
+  esac
+
+  # --- which archive is this machine's ---
+  os=$(uname -s)
+  arch=$(uname -m)
+  case "$arch" in
+    x86_64 | amd64) arch=x86_64 ;;
+    aarch64 | arm64) arch=aarch64 ;;
+  esac
+  case "$os" in
+    Linux)
+      # musl first: the static binary runs on a glibc system too.
+      candidates="$arch-unknown-linux-musl $arch-unknown-linux-gnu" ;;
+    Darwin)
+      # A shell under Rosetta reports x86_64 on Apple silicon; the native
+      # binary is the one to install when the release carries it.
+      if [ "$arch" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
+        candidates="aarch64-apple-darwin x86_64-apple-darwin"
+      else
+        candidates="$arch-apple-darwin"
+      fi ;;
+    MINGW* | MSYS* | CYGWIN* | Windows_NT)
+      fail "install.sh does not cover Windows. Take the .zip for your machine from $releases_page, or build from source: $from_source" ;;
+    *) candidates="" ;;
+  esac
+  target=""
+  for candidate in $candidates; do
+    case " $targets " in
+      *" $candidate "*) target="$candidate"; break ;;
+    esac
+  done
+  if [ -z "$target" ]; then
+    fail "no prebuilt binary for $os $(uname -m); this release carries $targets. See $releases_page, or build from source: $from_source"
+  fi
+
+  # --- where it lives ---
+  if [ -n "$version" ]; then
+    case "$version" in
+      "$tag_prefix"*) tag="$version" ;;
+      *) tag="$tag_prefix$version" ;;
+    esac
+    url="$base/download/$tag"
+  else
+    tag="latest"
+    url="$base/latest/download"
+  fi
+  asset="$asset_prefix-$target.tar.gz"
+
+  # --- the tools this needs, each with a fallback or a refusal ---
+  if command -v curl >/dev/null 2>&1; then
+    fetcher=curl
+  elif command -v wget >/dev/null 2>&1; then
+    fetcher=wget
+  else
+    fail "neither curl nor wget is installed; one of them is needed to download $asset"
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    hasher=sha256sum
+  elif command -v shasum >/dev/null 2>&1; then
+    hasher=shasum
+  else
+    fail "neither sha256sum nor shasum is installed, so $asset cannot be checked; refusing to install it unchecked"
+  fi
+
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  trap 'exit 1' HUP INT TERM
+
+  say "downloading $asset ($tag) from $url"
+  fetch "$url/$asset" "$tmp/$asset" || fail "could not download $url/$asset"
+  fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" || fail "could not download $url/SHA256SUMS"
+
+  # --- the digest: fail closed ---
+  want=$(awk -v a="$asset" '$2 == a || $2 == "*" a { print $1; exit }' "$tmp/SHA256SUMS")
+  if [ -z "$want" ]; then
+    fail "$asset is not listed in SHA256SUMS; refusing to install. Nothing was written to $install_dir."
+  fi
+  got=$(digest "$tmp/$asset")
+  if [ "$got" != "$want" ]; then
+    fail "SHA-256 mismatch for $asset: SHA256SUMS lists $want, the download is $got. Refusing to install; nothing was written to $install_dir."
+  fi
+  say "SHA-256 matches SHA256SUMS ($got)"
+
+  # --- the build provenance: fail closed where it can be checked ---
+  check="gh attestation verify $asset --repo $project"
+  if [ "$attestation" = skip ]; then
+    say "build provenance NOT checked ({env}_ATTESTATION=skip); to check it, download $asset and run: $check"
+  elif ! command -v gh >/dev/null 2>&1; then
+    say "build provenance not checked (gh is not installed); to check it, download $asset and run: $check"
+  elif ! gh auth status >/dev/null 2>&1 </dev/null; then
+    say "build provenance not checked (gh is not signed in); to check it, run gh auth login, download $asset and run: $check"
+  elif gh attestation verify "$tmp/$asset" --repo "$project" </dev/null >&2; then
+    say "build provenance verified: $asset was built by $project's release workflow"
+  else
+    fail "the build provenance of $asset did not verify; refusing to install, nothing was written to $install_dir. If you believe the release is good, run $check yourself before setting {env}_ATTESTATION=skip."
+  fi
+
+  # --- unpack, then install: nothing is written until every check passed ---
+  mkdir "$tmp/unpacked"
+  tar -xzf "$tmp/$asset" -C "$tmp/unpacked" || fail "could not unpack $asset"
+  for bin in $bins; do
+    [ -f "$tmp/unpacked/$bin" ] || fail "$asset does not contain $bin; refusing to install"
+  done
+  mkdir -p "$install_dir" || fail "cannot create $install_dir; set {env}_INSTALL_DIR to a directory you can write"
+  for bin in $bins; do
+    staged="$install_dir/.$bin.install.$$"
+    cp "$tmp/unpacked/$bin" "$staged" || fail "cannot write to $install_dir"
+    chmod 755 "$staged"
+    mv -f "$staged" "$install_dir/$bin"
+  done
+
+  # --- what happened ---
+  printf 'installed from %s (%s):\n' "$asset" "$tag"
+  for bin in $bins; do
+    reported=$("$install_dir/$bin" --version </dev/null 2>/dev/null | head -n 1 || true)
+    printf '  %s  %s\n' "$install_dir/$bin" "$reported"
+  done
+  case ":${PATH:-}:" in
+    *":$install_dir:"*) printf '%s is on your PATH.\n' "$install_dir" ;;
+    *) printf '%s is NOT on your PATH; add it, e.g.\n  export PATH="%s:%s"\n' "$install_dir" "$install_dir" "\$PATH" ;;
+  esac
+}
+
+say() { printf 'install.sh: %s\n' "$*" >&2; }
+fail() { say "error: $*"; exit 1; }
+fetch() {
+  if [ "$fetcher" = curl ]; then
+    curl -fsSL -o "$2" "$1"
+  else
+    wget -q -O "$2" "$1"
+  fi
+}
+# `sha256sum` on Linux, `shasum -a 256` on macOS; both print the digest first.
+digest() {
+  if [ "$hasher" = sha256sum ]; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
+main "$@"
+"##;
+```
+
+The workflow step is the whole of the installer's place in the release:
+it rides in the job that already holds every archive, after
+`SHA256SUMS` is assembled — the script is not one of the archives the
+sums vouch for — and before the attestation, which covers it like any
+other asset. A runner without `shellcheck` still releases; the check is
+a guard on the text, not a gate on the binaries.
+
+<a name="chunk-installer-step-text"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#installer-step-text`</sub>
+
+```rust {#installer-step-text}
+/// The release job's installer step, spliced in when one is declared.
+const INSTALLER_STEP: &str = r#"      # The installer rides the release whose archives it installs, so
+      # `releases/latest/download/install.sh` is always the latest binaries'
+      # script. Copied in after SHA256SUMS (it is not one of the archives the
+      # sums vouch for) and before the attestation, which covers it too.
+      - name: Attach the installer
+        shell: bash
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -s sh install.sh
+          else
+            echo "note: shellcheck is not on this runner; install.sh is attached unlinted" >&2
+          fi
+          cp install.sh dist/install.sh
 "#;
 ```
 
@@ -11404,8 +11992,10 @@ fn a_publication_declaring_no_prebuilt_carries_no_release_lane() {
     for absent in [
         "npm",
         "tools/release-artifacts",
+        "tools/release-vendor",
         "tools/ci-npm",
         "tools/npm-pin-digests",
+        "install.sh",
         ".github/workflows/release.yml",
     ] {
         assert!(!out.path().join(absent).exists(), "{absent} is not emitted");
@@ -11454,6 +12044,31 @@ fn a_prebuilt_declaration_emits_the_release_lane_and_the_wrapper() {
         script.contains("asset=\"demo-$target$ext\""),
         "the asset is named for the publication:\n{script}"
     );
+    // Its companion packages the source closure under the same prefix, once
+    // per release rather than per target, and is executable like it.
+    let vendor = std::fs::read_to_string(out.path().join("tools/release-vendor")).unwrap();
+    assert!(vendor.contains("asset=\"demo-$tag-vendor.tar.gz\""), "{vendor}");
+    assert!(!vendor.contains("{asset_prefix}"), "{vendor}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(out.path().join("tools/release-vendor"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "tools/release-vendor is executable");
+    }
+    if let Ok(lint) = std::process::Command::new("shellcheck")
+        .args(["-s", "sh", "tools/release-vendor"])
+        .current_dir(out.path())
+        .output()
+    {
+        assert!(
+            lint.status.success(),
+            "shellcheck:\n{}",
+            String::from_utf8_lossy(&lint.stdout)
+        );
+    }
 
     // The manifest npm reads: valid JSON, with `bin`, `postinstall` and the
     // platform table agreeing with each other.
@@ -11511,6 +12126,11 @@ fn a_prebuilt_declaration_emits_the_release_lane_and_the_wrapper() {
     );
     assert!(workflow.contains("./tools/npm-pin-digests dist"), "{workflow}");
     assert!(out.path().join("tools/npm-pin-digests").is_file());
+    assert!(
+        workflow.contains("./tools/release-vendor \"$TAG\" dist")
+            && workflow.contains("dist/demo-$TAG-vendor.tar.gz"),
+        "every release packages its source closure:\n{workflow}"
+    );
 
     // And the promise the repository is now making is in the record.
     let prov: serde_json::Value =
@@ -11637,6 +12257,22 @@ fn a_declaration_that_could_not_produce_an_installable_release_refuses() {
             Some(REPOSITORY),
             "declares no `targets:`",
         ),
+        (
+            "    targets:\n      - x86_64-pc-windows-msvc\n    installer: {}\n".to_string(),
+            Some(REPOSITORY),
+            "needs a target a POSIX shell runs on",
+        ),
+        (
+            "    targets:\n      - x86_64-apple-darwin\n    installer: {}\n".to_string(),
+            None,
+            "`prebuilt.installer:` needs the publication's `repository:`",
+        ),
+        (
+            "    targets:\n      - x86_64-apple-darwin\n    installer:\n      envPrefix: my-tool\n"
+                .to_string(),
+            Some(REPOSITORY),
+            "not a portable variable name",
+        ),
     ] {
         let ws = workspace(&[], true);
         declare_prebuilt(ws.path(), repository, &prebuilt);
@@ -11701,7 +12337,149 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 }
 ```
 
-<a name="chunk-modules-root"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-root` · assembles [modules-doc](#chunk-modules-doc) · [modules-uses](#chunk-modules-uses) · [modules-consts](#chunk-modules-consts) · [modules-publication-fixture](#chunk-modules-publication-fixture) · [modules-write-crate](#chunk-modules-write-crate) · [modules-workspace](#chunk-modules-workspace) · [modules-project-helpers](#chunk-modules-project-helpers) · [modules-closed-selection](#chunk-modules-closed-selection) · [modules-shapes-travel](#chunk-modules-shapes-travel) · [modules-import-outside-selection](#chunk-modules-import-outside-selection) · [modules-import-absent](#chunk-modules-import-absent) · [modules-instance-line](#chunk-modules-instance-line) · [modules-not-in-tree](#chunk-modules-not-in-tree) · [modules-ontology-without-module](#chunk-modules-ontology-without-module) · [modules-stamp-fallback](#chunk-modules-stamp-fallback) · [modules-no-module-still-lists](#chunk-modules-no-module-still-lists) · [modules-layout-published](#chunk-modules-layout-published) · [modules-layout-unpublished](#chunk-modules-layout-unpublished) · [modules-excluded-document](#chunk-modules-excluded-document) · [modules-unrecognised-excludes](#chunk-modules-unrecognised-excludes) · [modules-document-under-publishes](#chunk-modules-document-under-publishes) · [modules-excluded-matches-nothing](#chunk-modules-excluded-matches-nothing) · [modules-named-section](#chunk-modules-named-section) · [modules-named-whole-document](#chunk-modules-named-whole-document) · [modules-unnamed-document](#chunk-modules-unnamed-document) · [modules-anchor-matches-nothing](#chunk-modules-anchor-matches-nothing) · [modules-document-id-matches-nothing](#chunk-modules-document-id-matches-nothing) · [modules-affordance-closure-refused](#chunk-modules-affordance-closure-refused) · [modules-affordance-closure-excluded](#chunk-modules-affordance-closure-excluded) · [modules-reading-order](#chunk-modules-reading-order) · [modules-reading-order-unshipped-doc](#chunk-modules-reading-order-unshipped-doc) · [modules-reading-order-unshipped-area](#chunk-modules-reading-order-unshipped-area) · [modules-concept-groups](#chunk-modules-concept-groups) · [modules-group-unshipped-member](#chunk-modules-group-unshipped-member) · [modules-group-unnamed-document](#chunk-modules-group-unnamed-document) · [modules-group-claimed-twice](#chunk-modules-group-claimed-twice) · [modules-group-mixed-forms](#chunk-modules-group-mixed-forms) · [modules-no-contents-marker](#chunk-modules-no-contents-marker) · [modules-document-without-summary](#chunk-modules-document-without-summary) · [modules-affordance-rows](#chunk-modules-affordance-rows) · [modules-affordance-actor-set](#chunk-modules-affordance-actor-set) · [modules-affordance-none](#chunk-modules-affordance-none) · [modules-affordance-old-marker](#chunk-modules-affordance-old-marker) · [modules-proof-fixture](#chunk-modules-proof-fixture) · [modules-proof-proven](#chunk-modules-proof-proven) · [modules-proof-refused](#chunk-modules-proof-refused) · [modules-proof-skipped](#chunk-modules-proof-skipped) · [modules-proof-cargo](#chunk-modules-proof-cargo) · [modules-proof-unpublished](#chunk-modules-proof-unpublished) · [modules-rests-on](#chunk-modules-rests-on) · [modules-rests-on-unpublished](#chunk-modules-rests-on-unpublished) · [modules-woven-chapter](#chunk-modules-woven-chapter) · [modules-affordance-page](#chunk-modules-affordance-page) · [modules-icon-refusals](#chunk-modules-icon-refusals) · [prebuilt-fixture](#chunk-prebuilt-fixture) · [prebuilt-inert](#chunk-prebuilt-inert) · [prebuilt-emitted](#chunk-prebuilt-emitted) · [prebuilt-registry-page](#chunk-prebuilt-registry-page) · [prebuilt-ci-untouched](#chunk-prebuilt-ci-untouched) · [prebuilt-refusals](#chunk-prebuilt-refusals) · [prebuilt-wrapper-test](#chunk-prebuilt-wrapper-test)</sub>
+The installer is pinned the same two ways: what the projection writes,
+read back as text, and the script itself run offline against the one
+case that needs no network — a machine the release does not carry,
+which must be refused with the two ways that remain and nothing
+installed. The full install, the tampered archive and the other shells
+are proven against a local copy of a real release, outside this test
+(the brief's oracle runs, recorded with the change that added them).
+
+<a name="chunk-prebuilt-installer"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#prebuilt-installer`</sub>
+
+```rust {#prebuilt-installer file="tests/region_repo_modules.rs"}
+/// Three targets, one of them Windows, and an installer with no wrapper:
+/// the third lane on its own.
+const PREBUILT_INSTALLER: &str = "    targets:\n      - x86_64-unknown-linux-musl\n      - aarch64-apple-darwin\n      - x86_64-pc-windows-msvc\n    installer:\n      envPrefix: DEMO_TOOL\n";
+
+#[test]
+fn an_installer_declaration_emits_install_sh_and_the_step_that_attaches_it() {
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT_INSTALLER);
+    let out = tempfile::tempdir().unwrap();
+    let report = project_github(ws.path(), out.path()).expect("projection");
+    let summary = report.prebuilt.clone().expect("the lane is declared");
+    assert_eq!(summary.installer.as_deref(), Some("install.sh"));
+    assert_eq!(summary.npm_package, None);
+    assert!(!out.path().join("npm").exists(), "an installer is not a wrapper");
+
+    let script = std::fs::read_to_string(out.path().join("install.sh")).unwrap();
+    assert!(script.starts_with("#!/bin/sh\n"), "{script}");
+    for fact in [
+        "project=\"demo-org/demo-repo\"",
+        "asset_prefix=\"demo\"",
+        "tag_prefix=\"v\"",
+        // The POSIX targets, and not the Windows one the release also carries.
+        "targets=\"x86_64-unknown-linux-musl aarch64-apple-darwin\"",
+        "bins=\"demo-tool\"",
+        "${DEMO_TOOL_INSTALL_DIR:-$HOME/.local/bin}",
+        "${DEMO_TOOL_BASE_URL:-https://github.com/demo-org/demo-repo/releases}",
+        "cargo install --git https://github.com/$project demo-crate",
+    ] {
+        assert!(script.contains(fact), "`{fact}` in:\n{script}");
+    }
+    for placeholder in [
+        "{env}", "{project}", "{release_base}", "{asset_prefix}", "{tag_prefix}",
+        "{targets}", "{bins}", "{crates}",
+    ] {
+        assert!(!script.contains(placeholder), "{placeholder} left in:\n{script}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(out.path().join("install.sh")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "install.sh is executable");
+    }
+
+    // The release job copies the script in after SHA256SUMS is assembled and
+    // before the attestation, so the attestation covers it and the sums do not
+    // claim it.
+    let workflow =
+        std::fs::read_to_string(out.path().join(".github/workflows/release.yml")).unwrap();
+    let sums = workflow.find("cat ./*.sha256 > SHA256SUMS").expect("sums step");
+    let copy = workflow.find("cp install.sh dist/install.sh").expect("the installer step");
+    let attest = workflow.find("actions/attest-build-provenance@v2").expect("attest step");
+    assert!(sums < copy && copy < attest, "{workflow}");
+    assert!(!workflow.contains("npm publish"), "{workflow}");
+
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    assert_eq!(prov["prebuilt"]["installer"], "install.sh");
+    assert!(prov["prebuilt"]["npm_package"].is_null());
+
+    // shellcheck is the lint the release step runs; where it is installed the
+    // emitted text must pass it, and where it is not this assertion is the
+    // release step's own business.
+    if let Ok(lint) = std::process::Command::new("shellcheck")
+        .args(["-s", "sh", "install.sh"])
+        .current_dir(out.path())
+        .output()
+    {
+        assert!(
+            lint.status.success(),
+            "shellcheck:\n{}",
+            String::from_utf8_lossy(&lint.stdout)
+        );
+    }
+}
+
+/// A `uname` that reports `os` and `arch`, first on a PATH, so the script can
+/// be run as though on another machine — and a `sysctl` that denies Apple
+/// silicon, so the Rosetta probe does not see through the disguise on a Mac.
+#[cfg(unix)]
+fn fake_uname(dir: &Path, os: &str, arch: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    for (name, body) in [
+        ("uname", format!("#!/bin/sh\ncase \"$1\" in -s) echo {os} ;; -m) echo {arch} ;; esac\n")),
+        ("sysctl", "#!/bin/sh\necho 0\n".to_string()),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_sh_refuses_a_machine_the_release_does_not_carry() {
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT_INSTALLER);
+    let out = tempfile::tempdir().unwrap();
+    project_github(ws.path(), out.path()).expect("projection");
+    for (os, arch, needle) in [
+        ("FreeBSD", "amd64", "no prebuilt binary for FreeBSD"),
+        ("MINGW64_NT-10.0-26100", "x86_64", "does not cover Windows"),
+        // Declared for macOS on arm64 only; an Intel Mac is not carried.
+        ("Darwin", "x86_64", "no prebuilt binary for Darwin"),
+    ] {
+        let fake = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        fake_uname(fake.path(), os, arch);
+        let run = std::process::Command::new("sh")
+            .arg(out.path().join("install.sh"))
+            .env("PATH", format!("{}:{}", fake.path().display(), std::env::var("PATH").unwrap_or_default()))
+            .env("HOME", home.path())
+            .output()
+            .expect("sh runs");
+        let stderr = String::from_utf8_lossy(&run.stderr).to_string();
+        assert!(!run.status.success(), "{os} {arch} is refused:\n{stderr}");
+        for said in [
+            needle,
+            "https://github.com/demo-org/demo-repo/releases",
+            "cargo install --git https://github.com/demo-org/demo-repo demo-crate",
+        ] {
+            assert!(stderr.contains(said), "`{said}` for {os} {arch}:\n{stderr}");
+        }
+        assert!(
+            !home.path().join(".local").exists(),
+            "nothing is installed on a refused machine"
+        );
+    }
+}
+```
+
+<a name="chunk-modules-root"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-root` · assembles [modules-doc](#chunk-modules-doc) · [modules-uses](#chunk-modules-uses) · [modules-consts](#chunk-modules-consts) · [modules-publication-fixture](#chunk-modules-publication-fixture) · [modules-write-crate](#chunk-modules-write-crate) · [modules-workspace](#chunk-modules-workspace) · [modules-project-helpers](#chunk-modules-project-helpers) · [modules-closed-selection](#chunk-modules-closed-selection) · [modules-shapes-travel](#chunk-modules-shapes-travel) · [modules-import-outside-selection](#chunk-modules-import-outside-selection) · [modules-import-absent](#chunk-modules-import-absent) · [modules-instance-line](#chunk-modules-instance-line) · [modules-not-in-tree](#chunk-modules-not-in-tree) · [modules-ontology-without-module](#chunk-modules-ontology-without-module) · [modules-stamp-fallback](#chunk-modules-stamp-fallback) · [modules-no-module-still-lists](#chunk-modules-no-module-still-lists) · [modules-layout-published](#chunk-modules-layout-published) · [modules-layout-unpublished](#chunk-modules-layout-unpublished) · [modules-excluded-document](#chunk-modules-excluded-document) · [modules-unrecognised-excludes](#chunk-modules-unrecognised-excludes) · [modules-document-under-publishes](#chunk-modules-document-under-publishes) · [modules-excluded-matches-nothing](#chunk-modules-excluded-matches-nothing) · [modules-named-section](#chunk-modules-named-section) · [modules-named-whole-document](#chunk-modules-named-whole-document) · [modules-unnamed-document](#chunk-modules-unnamed-document) · [modules-anchor-matches-nothing](#chunk-modules-anchor-matches-nothing) · [modules-document-id-matches-nothing](#chunk-modules-document-id-matches-nothing) · [modules-affordance-closure-refused](#chunk-modules-affordance-closure-refused) · [modules-affordance-closure-excluded](#chunk-modules-affordance-closure-excluded) · [modules-reading-order](#chunk-modules-reading-order) · [modules-reading-order-unshipped-doc](#chunk-modules-reading-order-unshipped-doc) · [modules-reading-order-unshipped-area](#chunk-modules-reading-order-unshipped-area) · [modules-concept-groups](#chunk-modules-concept-groups) · [modules-group-unshipped-member](#chunk-modules-group-unshipped-member) · [modules-group-unnamed-document](#chunk-modules-group-unnamed-document) · [modules-group-claimed-twice](#chunk-modules-group-claimed-twice) · [modules-group-mixed-forms](#chunk-modules-group-mixed-forms) · [modules-no-contents-marker](#chunk-modules-no-contents-marker) · [modules-document-without-summary](#chunk-modules-document-without-summary) · [modules-affordance-rows](#chunk-modules-affordance-rows) · [modules-affordance-actor-set](#chunk-modules-affordance-actor-set) · [modules-affordance-none](#chunk-modules-affordance-none) · [modules-affordance-old-marker](#chunk-modules-affordance-old-marker) · [modules-proof-fixture](#chunk-modules-proof-fixture) · [modules-proof-proven](#chunk-modules-proof-proven) · [modules-proof-refused](#chunk-modules-proof-refused) · [modules-proof-skipped](#chunk-modules-proof-skipped) · [modules-proof-cargo](#chunk-modules-proof-cargo) · [modules-proof-unpublished](#chunk-modules-proof-unpublished) · [modules-rests-on](#chunk-modules-rests-on) · [modules-rests-on-unpublished](#chunk-modules-rests-on-unpublished) · [modules-woven-chapter](#chunk-modules-woven-chapter) · [modules-affordance-page](#chunk-modules-affordance-page) · [modules-icon-refusals](#chunk-modules-icon-refusals) · [prebuilt-fixture](#chunk-prebuilt-fixture) · [prebuilt-inert](#chunk-prebuilt-inert) · [prebuilt-emitted](#chunk-prebuilt-emitted) · [prebuilt-registry-page](#chunk-prebuilt-registry-page) · [prebuilt-ci-untouched](#chunk-prebuilt-ci-untouched) · [prebuilt-refusals](#chunk-prebuilt-refusals) · [prebuilt-wrapper-test](#chunk-prebuilt-wrapper-test) · [prebuilt-installer](#chunk-prebuilt-installer)</sub>
 
 ```rust {#modules-root file="tests/region_repo_modules.rs"}
 <<modules-doc>>
@@ -11825,11 +12603,13 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 <<prebuilt-refusals>>
 
 <<prebuilt-wrapper-test>>
+
+<<prebuilt-installer>>
 ```
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [envelope-scalar](#chunk-envelope-scalar) · [envelope-string-list](#chunk-envelope-string-list) · [envelope-block](#chunk-envelope-block) · [envelope-palette](#chunk-envelope-palette) · [manifest-readers](#chunk-manifest-readers) · [path-deps](#chunk-path-deps) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [sever-doc-links](#chunk-sever-doc-links) · [demote-in-chapters](#chunk-demote-in-chapters) · [demote-in-unowned-sources](#chunk-demote-in-unowned-sources) · [severed-items](#chunk-severed-items) · [demote-severed-links](#chunk-demote-severed-links) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [icons](#chunk-icons) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [prebuilt-decl](#chunk-prebuilt-decl) · [prebuilt-table](#chunk-prebuilt-table) · [prebuilt-envelope-types](#chunk-prebuilt-envelope-types) · [prebuilt-summary](#chunk-prebuilt-summary) · [prebuilt-plan](#chunk-prebuilt-plan) · [resolve-prebuilt-fn](#chunk-resolve-prebuilt-fn) · [crate-binaries](#chunk-crate-binaries) · [emit-prebuilt](#chunk-emit-prebuilt) · [emit-npm-wrapper](#chunk-emit-npm-wrapper) · [npm-manifest](#chunk-npm-manifest) · [npm-check-script](#chunk-npm-check-script) · [release-workflow](#chunk-release-workflow) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [release-script](#chunk-release-script) · [npm-check-text](#chunk-npm-check-text) · [npm-resolve-text](#chunk-npm-resolve-text) · [npm-install-text](#chunk-npm-install-text) · [npm-shim-text](#chunk-npm-shim-text) · [npm-pin-text](#chunk-npm-pin-text) · [npm-test-text](#chunk-npm-test-text) · [release-workflow-text](#chunk-release-workflow-text) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [envelope-scalar](#chunk-envelope-scalar) · [envelope-string-list](#chunk-envelope-string-list) · [envelope-block](#chunk-envelope-block) · [envelope-palette](#chunk-envelope-palette) · [manifest-readers](#chunk-manifest-readers) · [path-deps](#chunk-path-deps) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [sever-doc-links](#chunk-sever-doc-links) · [demote-in-chapters](#chunk-demote-in-chapters) · [demote-in-unowned-sources](#chunk-demote-in-unowned-sources) · [severed-items](#chunk-severed-items) · [demote-severed-links](#chunk-demote-severed-links) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [icons](#chunk-icons) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [prebuilt-decl](#chunk-prebuilt-decl) · [prebuilt-table](#chunk-prebuilt-table) · [prebuilt-envelope-types](#chunk-prebuilt-envelope-types) · [prebuilt-summary](#chunk-prebuilt-summary) · [prebuilt-plan](#chunk-prebuilt-plan) · [resolve-prebuilt-fn](#chunk-resolve-prebuilt-fn) · [crate-binaries](#chunk-crate-binaries) · [github-project](#chunk-github-project) · [emit-prebuilt](#chunk-emit-prebuilt) · [emit-npm-wrapper](#chunk-emit-npm-wrapper) · [npm-manifest](#chunk-npm-manifest) · [npm-check-script](#chunk-npm-check-script) · [release-workflow](#chunk-release-workflow) · [installer-script](#chunk-installer-script) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [release-script](#chunk-release-script) · [release-vendor-script](#chunk-release-vendor-script) · [npm-check-text](#chunk-npm-check-text) · [npm-resolve-text](#chunk-npm-resolve-text) · [npm-install-text](#chunk-npm-install-text) · [npm-shim-text](#chunk-npm-shim-text) · [npm-pin-text](#chunk-npm-pin-text) · [npm-test-text](#chunk-npm-test-text) · [release-workflow-text](#chunk-release-workflow-text) · [installer-text](#chunk-installer-text) · [installer-step-text](#chunk-installer-step-text) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -11948,6 +12728,8 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 
 <<crate-binaries>>
 
+<<github-project>>
+
 <<emit-prebuilt>>
 
 <<emit-npm-wrapper>>
@@ -11957,6 +12739,8 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 <<npm-check-script>>
 
 <<release-workflow>>
+
+<<installer-script>>
 
 <<emit-provenance>>
 
@@ -11984,6 +12768,8 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 
 <<release-script>>
 
+<<release-vendor-script>>
+
 <<npm-check-text>>
 
 <<npm-resolve-text>>
@@ -11997,6 +12783,10 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 <<npm-test-text>>
 
 <<release-workflow-text>>
+
+<<installer-text>>
+
+<<installer-step-text>>
 
 <<tests>>
 ```
@@ -12143,6 +12933,19 @@ fn a_diagram_naming_a_role_outside_the_palette_is_refused() {
     let out = tempfile::tempdir().unwrap();
     let err = format!("{:#}", project(ws.path(), out.path()).unwrap_err());
     assert!(err.contains("`{{gold}}` is not one of the palette's roles"), "{err}");
+}
+
+#[test]
+fn the_projected_workspace_builds_dev_with_an_optimized_profile() {
+    let ws = workspace(&[], true);
+    std::fs::write(ws.path().join(PUB_REL), publication_publishing(&["demo-crate"], &[])).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).unwrap();
+    let manifest = std::fs::read_to_string(out.path().join("Cargo.toml")).unwrap();
+    let doc = manifest.parse::<toml_edit::DocumentMut>().expect("the manifest parses");
+    let dev = &doc["profile"]["dev"];
+    assert_eq!(dev["opt-level"].as_integer(), Some(1), "{manifest}");
+    assert_eq!(dev["package"]["*"]["opt-level"].as_integer(), Some(3), "{manifest}");
 }
 
 /// A real Cargo workspace whose package identity differs from its directory.
@@ -12888,6 +13691,7 @@ mod prebuilt_workflow_tests {
                 homepage: "https://github.com/o/r".to_string(),
                 env_prefix: "TOOL".to_string(),
             }),
+            installer: None,
         }
     }
 
@@ -12932,6 +13736,105 @@ mod prebuilt_workflow_tests {
         assert!(!yaml["jobs"]["release"].is_null(), "{text}");
         assert!(yaml["jobs"]["npm"].is_null(), "{text}");
         assert!(!text.contains("npm publish"), "{text}");
+    }
+
+    /// The installer is one step in the release job — the job that holds
+    /// every archive — and it leaves the workflow of a publication that
+    /// declares none exactly as it was.
+    #[test]
+    fn an_installer_is_a_release_step_and_nothing_without_one() {
+        let without = release_workflow(&plan());
+        assert!(!without.contains("install.sh"), "{without}");
+        let mut with = plan();
+        with.installer = Some(InstallerPlan {
+            project: "o/r".to_string(),
+            release_base: "https://github.com/o/r/releases".to_string(),
+            env_prefix: "TOOL".to_string(),
+            targets: vec!["x86_64-unknown-linux-musl"],
+        });
+        let text = release_workflow(&with);
+        assert_eq!(
+            text.replace(INSTALLER_STEP, ""),
+            without,
+            "the step is the whole difference"
+        );
+        let yaml: serde_norway::Value =
+            serde_norway::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        let steps = yaml["jobs"]["release"]["steps"]
+            .as_sequence()
+            .unwrap_or_else(|| panic!("release steps:\n{text}"));
+        let names: Vec<&str> = steps.iter().filter_map(|s| s["name"].as_str()).collect();
+        let at = |n: &str| names.iter().position(|x| *x == n).unwrap_or_else(|| panic!("{n}: {names:?}"));
+        assert!(at("One SHA256SUMS for the whole release") < at("Attach the installer"));
+        assert!(at("Attach the installer") < at("Attach the assets to the release"));
+    }
+
+    /// Every release packages its source closure, in the job that sums and
+    /// attests: before `SHA256SUMS` is assembled (so the sums list it) and
+    /// before the attestation (so the provenance covers it), under the asset
+    /// name the script writes.
+    #[test]
+    fn the_source_closure_is_packaged_before_the_sums_and_the_attestation() {
+        for with_npm in [true, false] {
+            let mut p = plan();
+            if !with_npm {
+                p.npm = None;
+            }
+            let text = release_workflow(&p);
+            let yaml: serde_norway::Value =
+                serde_norway::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+            let steps = yaml["jobs"]["release"]["steps"]
+                .as_sequence()
+                .unwrap_or_else(|| panic!("release steps:\n{text}"));
+            let at = |pred: &dyn Fn(&serde_norway::Value) -> bool, what: &str| {
+                steps
+                    .iter()
+                    .position(pred)
+                    .unwrap_or_else(|| panic!("no step {what}:\n{text}"))
+            };
+            let vendor = at(&|s| s["name"].as_str() == Some("Package the source closure"), "vendoring");
+            let sums = at(
+                &|s| s["name"].as_str() == Some("One SHA256SUMS for the whole release"),
+                "summing",
+            );
+            let attest = at(
+                &|s| {
+                    s["uses"]
+                        .as_str()
+                        .is_some_and(|u| u.starts_with("actions/attest-build-provenance@"))
+                },
+                "attesting",
+            );
+            let fetched = at(
+                &|s| {
+                    s["uses"]
+                        .as_str()
+                        .is_some_and(|u| u.starts_with("actions/download-artifact@"))
+                },
+                "gathering the archives",
+            );
+            assert!(fetched < vendor, "the closure joins the gathered archives:\n{text}");
+            assert!(vendor < sums, "SHA256SUMS must list the closure:\n{text}");
+            assert!(vendor < attest, "the attestation must cover the closure:\n{text}");
+            let run = steps[vendor]["run"].as_str().unwrap_or_default();
+            assert!(run.contains("./tools/release-vendor \"$TAG\" dist"), "{run}");
+            assert!(
+                run.contains("dist/demo-$TAG-vendor.tar.gz"),
+                "the step names the asset it attaches:\n{run}"
+            );
+            assert_eq!(
+                steps[vendor]["env"]["TAG"].as_str(),
+                Some("${{ inputs.tag || github.ref_name }}"),
+                "the tag the release is cut at, on a push and on a dispatch"
+            );
+        }
+        // And the script writes the name the step checks for: one directory
+        // named for the tag, the asset beside its `.sha256`.
+        let script = release_vendor_script(&plan());
+        assert!(script.contains("asset=\"demo-$tag-vendor.tar.gz\""), "{script}");
+        assert!(script.contains("root=\"demo-$tag\""), "{script}");
+        assert!(script.contains("cargo vendor --locked vendor >> .cargo/config.toml"), "{script}");
+        assert!(!script.contains("{asset_prefix}"), "{script}");
     }
 
     /// The two escape-hatch variables are named after the package, so a

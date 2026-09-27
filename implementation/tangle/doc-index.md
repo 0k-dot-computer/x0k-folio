@@ -519,7 +519,7 @@ fn extract_body_format(content: &str) -> String {
 ## What a document is called
 
 A title is the *name* of an entry, and a corpus offers it in more than one
-place. x0k's own documents open with a `# ` heading, so that is the first
+place. x0k's own documents open with a `# ` heading, so that was the first
 thing asked for. But the two conventions a Markdown corpus outside this one
 is most likely to be written in both fail that question: a Docusaurus or
 MkDocs site puts the name in the host frontmatter's `title:` and starts the
@@ -544,15 +544,32 @@ blank was not, because a reader has no reason to doubt it. A heading that
 opens a body is the page starting with its own name. A heading below prose
 is a division of a page that has already started, and it names the division.
 
+A document that carries both a host `title:` and a `# ` heading has given
+itself two names, and they are not the same kind of thing. The host
+frontmatter's `title:` is the record: it is what the site names the page by
+everywhere *outside* the page — Docusaurus uses it for the page metadata and
+the sidebar and adds it as a heading only when the body has none, and MkDocs
+takes the `title` meta-data key ahead of a level-one heading. The body's
+`# ` is presentation: the heading a reader meets on the page itself, free to
+be a section name (`# URL Readers` under `title: Url Reader Service`,
+`# Backstage Search` under `title: Search Documentation`, both from a real
+Backstage docs tree). An index row is a name seen from outside, so it takes
+the record. Asking for the heading first ranked the presentation above it,
+which an evaluator reported in two successive rounds as surprising for
+anyone whose H1 is a section heading (Backstage re-evaluations, 2026-09-23).
+None of x0k's own documents is affected by the change: of
+1,427 folio/v1 envelopes in this corpus, none carries a host `title:`
+(2026-09-25), so every one of them is still named by its `# `.
+
 So the resolution walks five sources in the order a reader would, and the
 document says which one it took by which one is non-empty:
 
-1. the body's first `# ` heading, outside every fence;
-2. an opening `<h1>`, for the documents whose `body_format` is `html` and
+1. the host frontmatter's own top-level `title:`, which is where Docusaurus
+   and MkDocs keep the name — the record, when there is one;
+2. the body's first `# ` heading, outside every fence;
+3. an opening `<h1>`, for the documents whose `body_format` is `html` and
    whose heading is therefore a tag rather than a hash — two of x0k's own
    design documents, which indexed as `""` for the same reason the ADRs did;
-3. the host frontmatter's own top-level `title:`, which is where Docusaurus
-   and MkDocs keep the name;
 4. a heading of *any* level that the body **opens** with — the first
    non-blank line — for a page written under a `##`;
 5. the envelope's own `summary`, which is the document describing itself
@@ -573,23 +590,21 @@ the sentence has the fix in its own hands: give the page an `# ` heading.
 <a name="chunk-document-title"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#document-title`</sub>
 
 ```rust {#document-title}
-/// A document's title, resolved the way a reader would ask for it: the body's
-/// first `# ` heading, then an opening `<h1>` for an HTML body, then the host
-/// frontmatter's `title:`, then a heading the body opens with, then the
-/// envelope's `summary`. Fenced regions are skipped — a `#` comment inside an
-/// example names nothing — and a heading below prose names its section rather
-/// than the page. `None` when the document offers no name at all, leaving the
-/// last fallback (a filename stem, a document id) to the caller that has one.
+/// A document's title, resolved the way a reader would ask for it: the host
+/// frontmatter's `title:` (the record), then the body's first `# ` heading,
+/// then an opening `<h1>` for an HTML body, then a heading the body opens
+/// with, then the envelope's `summary`. Fenced regions are skipped — a `#`
+/// comment inside an example names nothing — and a heading below prose names
+/// its section rather than the page. `None` when the document offers no name
+/// at all, leaving the last fallback (a filename stem, a document id) to the
+/// caller that has one.
 pub fn document_title(content: &str) -> Option<String> {
     let (frontmatter, body) = split_frontmatter(content);
-    if let Some(h1) = first_heading(body, |level| level == 1) {
-        return Some(h1);
-    }
-    if let Some(h1) = first_html_h1(body) {
-        return Some(h1);
-    }
     if let Some(host) = frontmatter.and_then(host_frontmatter_title) {
         return Some(host);
+    }
+    if let Some(h1) = first_level_one_heading(body) {
+        return Some(h1);
     }
     if let Some(opening) = opening_heading(body) {
         return Some(opening);
@@ -598,6 +613,19 @@ pub fn document_title(content: &str) -> Option<String> {
     // three spellings and one of them is a folded block.
     let summary = envelope_fields(content).summary;
     (!summary.is_empty()).then_some(summary)
+}
+```
+
+A level-one heading is asked for in two spellings, and both questions below
+ask it the same way, so it is asked in one place.
+
+<a name="chunk-first-level-one-heading"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#first-level-one-heading`</sub>
+
+```rust {#first-level-one-heading}
+/// The body's level-one heading: its first `# ` outside every fence, or, for
+/// a body that carries its heading as a tag, the opening `<h1>`.
+fn first_level_one_heading(body: &str) -> Option<String> {
+    first_heading(body, |level| level == 1).or_else(|| first_html_h1(body))
 }
 ```
 
@@ -891,6 +919,76 @@ fn scan_envelope_fields(content: &str) -> EnvelopeFields {
 }
 ```
 
+## When the two names disagree
+
+Precedence settles which name `index` and `weave` use. It does not settle
+whether the author meant to give two. A heading that differs from the record
+only in how it is typeset is the same name — `title: 'ADR013: Proper use of
+HTTP fetching libraries'` over `# ADR013: Proper use of *HTTP* fetching
+libraries.` is one title written twice. A heading that differs in its words is
+either a section name standing where a page name usually stands, or a rename
+that reached one of the two places and not the other, and only the author
+knows which. So `check` says so, once per document, as a **warning**: it
+names both strings, and it never changes the run's exit code, with or
+without `--closed`, because neither reading is a defect. The H1 is
+presentation, and presentation is the author's to choose; the warning is
+there so that the choice is made on purpose.
+
+The comparison, stated so an author can predict it — each string is:
+
+1. stripped of Markdown emphasis and code delimiters, `*`, `_` and `` ` ``,
+   wherever they occur;
+2. trimmed of surrounding whitespace, with every inner run of whitespace
+   read as one space;
+3. trimmed of trailing punctuation — `.`, `,`, `:`, `;`, `!`, `?`;
+4. lower-cased;
+
+and the document warns when the two results differ. Only a level-one heading
+takes part. A `##` is never an H1, and a host `title:` over a body that opens
+at `## Context` is the Docusaurus shape itself rather than a disagreement. A
+document with only one of the two names has nothing to disagree with.
+
+<a name="chunk-title-disagreement"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#title-disagreement`</sub>
+
+```rust {#title-disagreement}
+/// The two names a document gives itself, when they are two different names:
+/// the host frontmatter's `title:` and the body's level-one heading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitleDisagreement {
+    /// The host frontmatter's `title:` as written — the name `index` takes.
+    pub frontmatter: String,
+    /// The body's first `# ` (or an HTML body's `<h1>`) as written.
+    pub heading: String,
+}
+
+/// `Some` when a document carries both a host `title:` and a level-one
+/// heading and they still differ once both are reduced by
+/// `comparable_title`; `None` when they agree or either one is absent.
+pub fn title_disagreement(content: &str) -> Option<TitleDisagreement> {
+    let (frontmatter, body) = split_frontmatter(content);
+    let frontmatter = frontmatter.and_then(host_frontmatter_title)?;
+    let heading = first_level_one_heading(body)?;
+    (comparable_title(&frontmatter) != comparable_title(&heading))
+        .then_some(TitleDisagreement { frontmatter, heading })
+}
+
+/// A title reduced to what the disagreement warning compares: emphasis and
+/// code delimiters dropped, whitespace collapsed, trailing punctuation
+/// trimmed, lower-cased.
+fn comparable_title(title: &str) -> String {
+    let unmarked: String = title
+        .chars()
+        .filter(|c| !matches!(c, '*' | '_' | '`'))
+        .collect();
+    let collapsed = unmarked.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+        .trim_end_matches(|c: char| {
+            matches!(c, '.' | ',' | ':' | ';' | '!' | '?') || c.is_whitespace()
+        })
+        .to_lowercase()
+}
+```
+
 ## Tests
 
 The title tests are the sources in order, each written as the corpus that
@@ -902,6 +1000,11 @@ must therefore *not* be named by it, and a generated table with no heading at
 all. All but the first were wrong once — the fenced-comment case presented a
 Python comment as the name of a page, and the prose-then-`##` case presented
 a section as one — so each names the evaluation that found it.
+
+The precedence test is the evaluator's own file, a host `title:` over a
+different `# `, and the three disagreement tests are the rule's three cases:
+two spellings of one name are silent, two names are reported by both
+strings, and one name has nothing to disagree with.
 
 The last three tests each write a source file and a document into a fresh
 temp directory. The first asserts the carried example: source coordinates on
@@ -1041,9 +1144,49 @@ Body here.
     }
 
     #[test]
-    fn title_prefers_the_body_h1() {
+    fn title_takes_the_body_h1_when_the_host_names_nothing() {
         let content = "---\nx0k:\n  format: folio/v1\n---\n# My Title\n\nBody.";
         assert_eq!(document_title(content).as_deref(), Some("My Title"));
+    }
+
+    #[test]
+    fn the_host_title_outranks_a_body_h1() {
+        // The record over the presentation. Reported with this exact file
+        // (`titletest/c.md`) in two Backstage re-evaluations, 2026-09-23:
+        // `index` named it by the H1.
+        let content = "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\nx0k:\n  format: folio/v1\n  id: x0k:architecture/adrz\n  type: architecture\n---\n\n# Body H1 Different\n\nText.\n";
+        assert_eq!(
+            document_title(content).as_deref(),
+            Some("ADRZ: Frontmatter wins?")
+        );
+    }
+
+    #[test]
+    fn a_host_title_and_an_h1_that_differ_only_in_typesetting_agree() {
+        let content = "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\nx0k:\n  format: folio/v1\n---\n\n#   adr013: Proper use of *HTTP*   fetching `libraries`.  \n\nText.\n";
+        assert_eq!(title_disagreement(content), None);
+    }
+
+    #[test]
+    fn a_host_title_and_an_h1_that_differ_in_words_disagree_by_name() {
+        let content = "---\ntitle: Url Reader Service\nx0k:\n  format: folio/v1\n---\n\n# URL Readers\n\nText.\n";
+        assert_eq!(
+            title_disagreement(content),
+            Some(TitleDisagreement {
+                frontmatter: "Url Reader Service".to_string(),
+                heading: "URL Readers".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_document_with_one_name_has_nothing_to_disagree_with() {
+        // Host title over a body that opens at `##`: the Docusaurus shape.
+        let host_only = "---\ntitle: Some Page\nx0k:\n  format: folio/v1\n---\n\n## Context\n";
+        assert_eq!(title_disagreement(host_only), None);
+        // An H1 and no host title: every x0k document.
+        let h1_only = "---\nx0k:\n  format: folio/v1\n---\n# Some Other Page\n";
+        assert_eq!(title_disagreement(h1_only), None);
     }
 
     #[test]
@@ -1319,7 +1462,7 @@ class Widget {
 
 ## The file
 
-<a name="chunk-root"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [doc-index](#chunk-doc-index) · [chunk-summary](#chunk-chunk-summary) · [build-index](#chunk-build-index) · [index-file](#chunk-index-file) · [build-span-map](#chunk-build-span-map) · [extract-body-format](#chunk-extract-body-format) · [document-title](#chunk-document-title) · [first-heading](#chunk-first-heading) · [first-html-h1](#chunk-first-html-h1) · [host-frontmatter-title](#chunk-host-frontmatter-title) · [split-frontmatter](#chunk-split-frontmatter) · [unquote-scalar](#chunk-unquote-scalar) · [envelope-fields](#chunk-envelope-fields) · [scan-envelope-fields](#chunk-scan-envelope-fields) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [doc-index](#chunk-doc-index) · [chunk-summary](#chunk-chunk-summary) · [build-index](#chunk-build-index) · [index-file](#chunk-index-file) · [build-span-map](#chunk-build-span-map) · [extract-body-format](#chunk-extract-body-format) · [document-title](#chunk-document-title) · [first-level-one-heading](#chunk-first-level-one-heading) · [title-disagreement](#chunk-title-disagreement) · [first-heading](#chunk-first-heading) · [first-html-h1](#chunk-first-html-h1) · [host-frontmatter-title](#chunk-host-frontmatter-title) · [split-frontmatter](#chunk-split-frontmatter) · [unquote-scalar](#chunk-unquote-scalar) · [envelope-fields](#chunk-envelope-fields) · [scan-envelope-fields](#chunk-scan-envelope-fields) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -1337,6 +1480,10 @@ class Widget {
 <<extract-body-format>>
 
 <<document-title>>
+
+<<first-level-one-heading>>
+
+<<title-disagreement>>
 
 <<first-heading>>
 

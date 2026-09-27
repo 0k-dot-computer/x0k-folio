@@ -113,6 +113,11 @@ than a term filed in the wrong house.
 //! namespace the collection loads, ours and the reader's alike, and
 //! hands back the extended model so the envelope pass can resolve a
 //! prefix the collection defined for itself.
+//!
+//! The same pass reads a block's other keys — its **fields** — against
+//! that vocabulary: a key naming no declared property, on an instance of
+//! a class the vocabulary describes, and a value contradicting its
+//! property's XSD range, on any instance (`check_literal_fields`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -877,6 +882,12 @@ pub fn check_instances(
     }
     report.checked = instances.len();
 
+    // Every field of every block that parsed, against the vocabulary the
+    // set assembled: a key it does not name, a value its range refuses
+    // ("Literal fields", below). Asked before the whole-set pass, which a
+    // block that failed to parse elsewhere would otherwise cut short.
+    report.defects.extend(check_literal_fields(&vocabulary.model, &instances));
+
     // The questions one document cannot answer: an id declared twice in
     // two files, and a range constraint whose target lives elsewhere.
     let mut first_declared: BTreeMap<&str, &str> = BTreeMap::new();
@@ -916,6 +927,415 @@ pub fn check_instances(
 }
 ```
 
+## Literal fields: a key the vocabulary names, a value its datatype admits
+
+The instance pass read three things of a block — the class on the fence,
+the `id`, and `edges:` — and let every other key through. A Backstage
+maintainer found the hole in their second round against the release
+candidate and found it still open in their third (2026-09-23): both of
+these, dropped into the shipped papers example, passed `check` at exit 0.
+
+```text
+revieweddd: true              # a property no module declares
+reviewed: "not-a-boolean"     # a string where the example means a boolean
+```
+
+Their reading of it is the reason this section exists: a misspelled field
+is the single most common typo in a YAML block, and it was the one shape
+still unchecked. The example did not help. `reviewed: true` and
+`pages: 12` sat in both papers and no module declared either, so there
+was no vocabulary for the check to read them against — and the collector
+refused a document-carried `owl:DatatypeProperty` outright, so a reader
+could not have declared one if they had tried
+([`document-vocabulary.md`](document-vocabulary.md) admits them now).
+
+### The rule
+
+Every key of a typed instance block that is not one of the format's own
+is a **field**, and a field answers to the loaded vocabulary twice.
+
+1. **A field names a declared property — on an instance of a class the
+   vocabulary describes.** A field whose key names no property the
+   loaded modules declare is refused, and the refusal names the key, the
+   term it was read as, and the nearest declared property when one is
+   close. A class is *described* when the vocabulary declares at least
+   one `owl:DatatypeProperty` whose `rdfs:domain` is that class exactly.
+2. **A field's value does not contradict the property's declared
+   datatype.** A field whose key names a property with an XSD datatype in
+   its `rdfs:range`, and whose value is not a value of that datatype, is
+   refused, and the refusal names the property, the value and the
+   datatype it expected. This holds on every instance, described class or
+   not: a range is the vocabulary speaking about one property, and it has
+   spoken.
+
+A property with no declared range is not refused, whatever the value. A
+property whose range names a class — an object property written as a
+field rather than under `edges:` — is not a literal question and this
+rule asks nothing of it. A range naming an XSD datatype outside the three
+below is not interpreted, and not refused.
+
+**The format's own keys** are the ones the format reads before any
+vocabulary does, and they are never fields: `id` (the identity), `edges`
+(the relationships, checked above), `requires_resources` and its camelCase
+twin `requiresResources` (placement demands, a host's to interpret),
+`actors` (the `claimedFor` relation written as a list), and `title`, which
+extraction refuses before this rule is reached, because the heading is the
+title. That is the list
+[`inline-entities.md`](inline-entities.md)'s flattening skips or reads
+specially, and it is the whole list.
+
+**How a key names a property** is the rule `x0k-folio-cli ingest` already
+projects fields by ([`document-source.md`](document-source.md), *Scalar
+fields keep their type*), so the property `check` reads a value against
+is the predicate `ingest` writes it under. An unqualified key is the
+instance's own namespace plus the camelCase of the key — `reviewed` in a
+`paper:paper` block is `paper:reviewed`, `page_count` is
+`paper:pageCount`. A qualified key, `prefix:local`, is that prefix's
+namespace plus the local exactly as written. A property is *declared* when
+the loaded vocabulary types it `owl:DatatypeProperty`, `owl:ObjectProperty`
+or `owl:AnnotationProperty`, in whichever module.
+
+**Why a class has to be described before its field names are judged.**
+Because the shipped vocabulary is silent about most of its own classes'
+fields, and silence is not a claim. `software` declares `Signifier` and no
+literal property of it at all, while every signifier in this bundle
+carries a `cue:` — this chapter's own, above, included. Judging every
+field would have the check refuse the chapter that specifies it, over a
+term only the vocabulary can add. So the rule reads the vocabulary for
+where it has *started* to speak about a class's literals: once one
+datatype property names the class as its domain, the class's fields are
+a closed list and a key outside it is a typo or an omission, and either
+way worth a red line. It is the same judgment the signifier check makes
+about a set with no signifier in it, one level down. The papers example
+declares `reviewed` and `pages` over `paper:Paper`, which is what makes
+`revieweddd` refusable there — and a reader's own class becomes checked
+the moment its module declares its first field. Exact class, as the
+collector reads membership: no subclass entailment.
+
+**The nearest declared property** is chosen by edit distance: the
+Levenshtein distance, in characters, between the key as written and each
+declared property of the namespace the key was read in, spelled the way a
+key would spell it — the snake_case of the local name for an unqualified
+key (`pageCount` is offered as `page_count`), `prefix:local` for a
+qualified one. The nearest candidate is named when it is at most two edits
+away and fewer edits than the key has characters; a tie goes to the
+alphabetically first. Further than that, the refusal names no candidate,
+because a guess that far off reads as an instruction.
+
+### What "contradicts" means, datatype by datatype
+
+The shipped modules name two XSD datatypes in a range, and no other.
+`xsd:string` is the range of eleven properties — `bodyFormat`,
+`concerns`, `docType`, `originalId`, `status`, `summary`,
+`folio/sourceKind`, `folio/sourceOrigin` and `folio/sourcePath` in
+`document`, `specStatus` in `product`, `level` in `work` — and
+`xsd:integer` of two, `folio/sourceStart` and `folio/sourceEnd` in
+`document`. The papers example that ships beside them adds a third,
+`xsd:boolean`, for `reviewed`. Those three are what this check interprets.
+
+The value judged is the value YAML parsed, not a lexical form, and that
+is deliberate. RDF would accept `"1"^^xsd:boolean` and read `"12"` as an
+integer's lexical form; the store does not get a lexical form. `ingest`
+writes what YAML parsed — a quoted `"12"` as text, an unquoted `1` as a
+signed integer, `true` as a boolean — so a value of the wrong YAML type
+becomes a fact of the wrong type, and that is the contradiction worth
+refusing. A sequence is judged element by element, because `ingest`
+writes one fact per element; a null asserts nothing and contradicts
+nothing.
+
+| Range | Conforms | Contradicts |
+|---|---|---|
+| `xsd:string` | a YAML string, plain or quoted | a boolean, a number, a mapping, a tagged value |
+| `xsd:integer` | a YAML integer (`12`, `-3`) | a string — `"12"` quoted included —, a number with a fraction or an exponent (`12.5`, `12.0`), a boolean, a mapping, a tagged value |
+| `xsd:boolean` | `true` or `false`, unquoted | a string — `"true"` quoted, `"not-a-boolean"`, and `yes`, which YAML 1.2 reads as a string —, a number, `0` and `1` included, a mapping, a tagged value |
+
+An integer too large for 64 bits is read by the YAML layer as a float and
+refused as one; no field in either vocabulary is near that.
+
+### What the refusals say
+
+Each is a `DeclarationDefect::Instance`, one per field, at the line of
+the block's opening fence:
+
+```text
+declaration does not hold: `paper:paper/alpha` has a field `revieweddd` that names no property the loaded vocabulary declares (it reads as `paper:revieweddd`); the nearest declared property is `reviewed` (`paper:reviewed`) at alpha.md:11
+declaration does not hold: `paper:paper/alpha` gives `paper:reviewed` the string "not-a-boolean", which contradicts its declared datatype `xsd:boolean`: a boolean is `true` or `false`, unquoted at alpha.md:11
+```
+
+`ingest` does not refuse either. It projects each field as YAML typed
+it, which is what it did before; `check` is the gate a reader puts in CI,
+and a document `check` accepts is still a document `ingest` projects.
+
+### The code
+
+Three things are folded from the model once, as the envelope pass folds
+its tables: which IRIs are declared properties, the ranges each carries,
+and which classes are described. They are read off `facts()` rather than
+asked of an `OntologyModel` method, for the reason `decision_domains`
+gives above — this crate is packaged against the released `x0k-ontology`,
+and a method added there in the same change does not exist for that build.
+
+<a name="chunk-check-literals"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#check-literals`</sub>
+
+```rust {#check-literals}
+/// The keys a typed instance block carries for the format itself, which
+/// no vocabulary is asked about: the identity, the relationships, the
+/// placement demands (both spellings), the `claimedFor` relation written
+/// as a list of actor kinds, and `title`, which extraction refuses first.
+#[cfg(feature = "document-vocabulary")]
+const FORMAT_KEYS: [&str; 6] = ["id", "edges", "title", "requires_resources", "requiresResources", "actors"];
+
+#[cfg(feature = "document-vocabulary")]
+const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema#";
+
+/// The XSD datatypes a range can name that this check interprets: the two
+/// the shipped modules use and the one the shipped papers example adds.
+#[cfg(feature = "document-vocabulary")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Datatype {
+    String,
+    Integer,
+    Boolean,
+}
+
+#[cfg(feature = "document-vocabulary")]
+impl Datatype {
+    /// The datatype a range IRI names, or `None` for one not interpreted.
+    fn named(iri: &str) -> Option<Self> {
+        match iri.strip_prefix(XSD_NS)? {
+            "string" => Some(Self::String),
+            "integer" => Some(Self::Integer),
+            "boolean" => Some(Self::Boolean),
+            _ => None,
+        }
+    }
+
+    fn spelled(self) -> &'static str {
+        match self {
+            Self::String => "xsd:string",
+            Self::Integer => "xsd:integer",
+            Self::Boolean => "xsd:boolean",
+        }
+    }
+
+    /// What a conforming value looks like, said to the person who wrote
+    /// the wrong one.
+    fn hint(self) -> &'static str {
+        match self {
+            Self::String => "text is a YAML string; quote the value to make it one",
+            Self::Integer => "an integer is written unquoted, with no fraction or exponent",
+            Self::Boolean => "a boolean is `true` or `false`, unquoted",
+        }
+    }
+
+    /// Does one scalar YAML value belong to this datatype? The value as
+    /// YAML parsed it, which is the value `ingest` writes.
+    fn admits(self, value: &serde_norway::Value) -> bool {
+        use serde_norway::Value;
+        match (self, value) {
+            (Self::String, Value::String(_)) => true,
+            (Self::Integer, Value::Number(number)) => number.is_i64() || number.is_u64(),
+            (Self::Boolean, Value::Bool(_)) => true,
+            _ => false,
+        }
+    }
+}
+
+/// One scalar YAML value, the way a refusal names it.
+#[cfg(feature = "document-vocabulary")]
+fn describe_value(value: &serde_norway::Value) -> String {
+    use serde_norway::Value;
+    match value {
+        Value::String(text) => format!("the string {text:?}"),
+        Value::Bool(flag) => format!("the boolean `{flag}`"),
+        Value::Number(number) if number.is_f64() => format!("the number `{number}`"),
+        Value::Number(number) => format!("the integer `{number}`"),
+        Value::Mapping(_) => "a mapping".to_string(),
+        Value::Tagged(_) => "a tagged value".to_string(),
+        Value::Null | Value::Sequence(_) => "nothing".to_string(),
+    }
+}
+
+/// The scalars a field asserts: one per element of a sequence, however
+/// deep, and none for a null — one per fact `ingest` would write.
+#[cfg(feature = "document-vocabulary")]
+fn asserted_values<'v>(value: &'v serde_norway::Value, out: &mut Vec<&'v serde_norway::Value>) {
+    match value {
+        serde_norway::Value::Null => {}
+        serde_norway::Value::Sequence(items) => {
+            for item in items {
+                asserted_values(item, out);
+            }
+        }
+        scalar => out.push(scalar),
+    }
+}
+
+/// The folds the literal rule reads, taken once from a model.
+#[cfg(feature = "document-vocabulary")]
+struct FieldVocabulary {
+    /// Every IRI typed as a datatype, object or annotation property.
+    properties: BTreeSet<String>,
+    /// Property IRI → every `rdfs:range` value it declares.
+    ranges: BTreeMap<String, Vec<String>>,
+    /// Classes some datatype property names as its exact domain.
+    described: BTreeSet<String>,
+}
+
+#[cfg(feature = "document-vocabulary")]
+impl FieldVocabulary {
+    fn of(model: &OntologyModel) -> Self {
+        use x0k_ontology::concept_facts::{
+            OWL_ANNOTATION_PROPERTY, OWL_DATATYPE_PROPERTY, OWL_OBJECT_PROPERTY, RDFS_DOMAIN,
+            RDFS_RANGE, RDF_TYPE,
+        };
+        let mut properties = BTreeSet::new();
+        let mut datatype_properties = BTreeSet::new();
+        for fact in model.facts() {
+            if fact.predicate != RDF_TYPE {
+                continue;
+            }
+            if let OntologyValue::Entity(kind) = &fact.value {
+                if [OWL_DATATYPE_PROPERTY, OWL_OBJECT_PROPERTY, OWL_ANNOTATION_PROPERTY].contains(&kind.as_str()) {
+                    properties.insert(fact.entity.clone());
+                }
+                if kind == OWL_DATATYPE_PROPERTY {
+                    datatype_properties.insert(fact.entity.clone());
+                }
+            }
+        }
+        let mut ranges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut described = BTreeSet::new();
+        for fact in model.facts() {
+            let OntologyValue::Entity(value) = &fact.value else { continue };
+            if fact.predicate == RDFS_RANGE && properties.contains(&fact.entity) {
+                ranges.entry(fact.entity.clone()).or_default().push(value.clone());
+            }
+            if fact.predicate == RDFS_DOMAIN && datatype_properties.contains(&fact.entity) {
+                described.insert(value.clone());
+            }
+        }
+        Self { properties, ranges, described }
+    }
+
+    /// The declared property nearest `key` in `namespace`, spelled the way
+    /// a key spells it: snake_case for an unqualified key, `prefix:local`
+    /// for a qualified one. At most two edits, fewer than the key is long,
+    /// ties to the alphabetically first.
+    fn nearest(&self, model: &OntologyModel, key: &str, namespace: &str) -> Option<(String, String)> {
+        let qualified = key.split_once(':').map(|(prefix, _)| prefix);
+        let length = key.chars().count();
+        self.properties
+            .iter()
+            .filter_map(|iri| {
+                let local = iri.strip_prefix(namespace)?;
+                let spelled = match qualified {
+                    Some(prefix) => format!("{prefix}:{local}"),
+                    None => x0k_ontology::concept_facts::camel_to_snake(local),
+                };
+                let distance = edit_distance(key, &spelled);
+                (distance <= 2 && distance < length).then_some((distance, spelled, iri))
+            })
+            .min_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)))
+            .map(|(_, spelled, iri)| (spelled, model.compact(iri).unwrap_or_else(|| iri.clone())))
+    }
+}
+
+/// Levenshtein distance in characters.
+#[cfg(feature = "document-vocabulary")]
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut previous: Vec<usize> = (0..=b.len()).collect();
+    for (i, left) in a.chars().enumerate() {
+        let mut current = vec![i + 1; b.len() + 1];
+        for (j, right) in b.iter().enumerate() {
+            let substitution = previous[j] + usize::from(left != *right);
+            current[j + 1] = substitution.min(previous[j + 1] + 1).min(current[j] + 1);
+        }
+        previous = current;
+    }
+    previous[b.len()]
+}
+
+/// Read every field of every instance against the vocabulary: a key that
+/// names no declared property, on an instance of a described class, and a
+/// value its property's XSD range contradicts, on any instance. One defect
+/// per field, each at its block's line.
+#[cfg(feature = "document-vocabulary")]
+pub fn check_literal_fields(
+    model: &OntologyModel,
+    instances: &[crate::document_vocabulary::DeclaredInstance],
+) -> Vec<DeclarationDefect> {
+    let vocabulary = FieldVocabulary::of(model);
+    let spell = |iri: &str| model.compact(iri).unwrap_or_else(|| iri.to_string());
+    let mut defects = Vec::new();
+    for instance in instances {
+        let namespace = model.expand(&format!("{}:", instance.entity.uri.scheme));
+        let described = vocabulary.described.contains(&instance.concept);
+        let subject = spell(&instance.iri);
+        for (key, value) in &instance.entity.yaml {
+            let Some(key) = key.as_str() else { continue };
+            if FORMAT_KEYS.contains(&key) {
+                continue;
+            }
+            // The predicate `ingest` writes this field under
+            // (document-source.md, "Scalar fields keep their type").
+            let (property, key_namespace) = match key.split_once(':') {
+                Some((prefix, _)) => (model.expand(key), model.expand(&format!("{prefix}:"))),
+                None => (format!("{namespace}{}", camel_form(key)), namespace.clone()),
+            };
+            if !vocabulary.properties.contains(&property) {
+                if described {
+                    let nearest = match vocabulary.nearest(model, key, &key_namespace) {
+                        Some((spelled, term)) => {
+                            format!("; the nearest declared property is `{spelled}` (`{term}`)")
+                        }
+                        None => String::new(),
+                    };
+                    defects.push(DeclarationDefect::Instance {
+                        reason: format!(
+                            "`{subject}` has a field `{key}` that names no property the loaded \
+                             vocabulary declares (it reads as `{}`){nearest} at {}",
+                            spell(&property),
+                            instance.source
+                        ),
+                    });
+                }
+                continue;
+            }
+            let datatypes: Vec<Datatype> = vocabulary
+                .ranges
+                .get(&property)
+                .into_iter()
+                .flatten()
+                .filter_map(|range| Datatype::named(range))
+                .collect();
+            let mut values = Vec::new();
+            asserted_values(value, &mut values);
+            for datatype in datatypes {
+                for value in &values {
+                    if datatype.admits(value) {
+                        continue;
+                    }
+                    defects.push(DeclarationDefect::Instance {
+                        reason: format!(
+                            "`{subject}` gives `{}` {}, which contradicts its declared datatype \
+                             `{}`: {} at {}",
+                            spell(&property),
+                            describe_value(value),
+                            datatype.spelled(),
+                            datatype.hint(),
+                            instance.source
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    defects
+}
+```
+
 ## What this deliberately does not check
 
 The domain and range a shipped module declares are *carried* by
@@ -927,6 +1347,14 @@ a vocabulary job — widen the range, or split the predicate — and until
 it is done, a check that fired would train its readers to ignore it.
 The information is in the report; the judgment is not yet the checker's
 to make.
+
+The same holds one level down. A field's property is read for its range
+and not for its domain: `x0k:status` has an `x0k:Decision` domain, and
+nearly every affordance in the corpus carries a `status:`, so a domain check on
+fields would fire on correct blocks for the reason a range check on
+`mentions` would. The literal rule above asks what the vocabulary has
+said about a *value*, which it has said precisely; what it has said about
+*subjects* is the vocabulary job named here, not yet done.
 
 The document's own genus is not checked here either, and now for a
 better reason than before: it is checked *earlier*, by the same model.
@@ -1345,12 +1773,21 @@ edges:
 
     /// The shipped `crates/x0k-folio-cli/examples/papers` collection,
     /// carried inline: a vocabulary document and two papers, one citing
-    /// the other. The alpha block is the parameter because every one of
-    /// the tests below is that block broken a different way — which is
+    /// the other, each saying whether it was reviewed and how many pages it
+    /// has. The alpha block is the parameter because every one of the
+    /// tests below is that block broken a different way — which is
     /// exactly what three maintainers did to the real directory on
     /// 2026-09-22, each watching `check` pass at exit 0.
     #[cfg(feature = "document-vocabulary")]
     fn papers(alpha_block: &str) -> [(&'static str, String); 3] {
+        papers_with("", alpha_block)
+    }
+
+    /// [`papers`] with `extra` Turtle appended to the vocabulary block —
+    /// more terms in the same module, for the tests that need a datatype
+    /// the example does not declare.
+    #[cfg(feature = "document-vocabulary")]
+    fn papers_with(extra: &str, alpha_block: &str) -> [(&'static str, String); 3] {
         const VOCABULARY: &str = r#"---
 x0k:
   format: folio/v1
@@ -1362,6 +1799,7 @@ x0k:
 ```turtle folio:ontology
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix vann: <http://purl.org/vocab/vann/> .
 @prefix paper: <https://example.org/papers#> .
 
@@ -1374,7 +1812,14 @@ paper:cites a owl:ObjectProperty ;
     rdfs:domain paper:Paper ;
     rdfs:range paper:Paper ;
     rdfs:isDefinedBy <https://example.org/paper-vocabulary> .
-```
+paper:reviewed a owl:DatatypeProperty ;
+    rdfs:domain paper:Paper ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .
+paper:pages a owl:DatatypeProperty ;
+    rdfs:domain paper:Paper ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .
 "#;
         const BETA: &str = r#"---
 x0k:
@@ -1386,31 +1831,47 @@ x0k:
 
 ```yaml paper:paper
 id: paper:paper/beta
+reviewed: true
+pages: 12
 ```
 "#;
+        let vocabulary = format!("{VOCABULARY}{extra}```\n");
         let alpha = format!(
             "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/paper-alpha\n  type: wiki\n---\n\
              # Alpha\n\nA paper about reading a collection as a graph.\n\n{alpha_block}"
         );
         [
-            ("vocabulary.md", VOCABULARY.to_string()),
+            ("vocabulary.md", vocabulary),
             ("alpha.md", alpha),
             ("beta.md", BETA.to_string()),
         ]
     }
 
     #[cfg(feature = "document-vocabulary")]
-    const ALPHA_CITES_BETA: &str =
-        "```yaml paper:paper\nid: paper:paper/alpha\nedges:\n  paper:cites: [paper:paper/beta]\n```\n";
+    const ALPHA_CITES_BETA: &str = "```yaml paper:paper\nid: paper:paper/alpha\nreviewed: true\npages: 12\n\
+                                    edges:\n  paper:cites: [paper:paper/beta]\n```\n";
 
     #[cfg(feature = "document-vocabulary")]
-    fn check_papers(alpha_block: &str) -> InstanceCheck {
-        let documents = papers(alpha_block);
+    fn check_collection(documents: &[(&'static str, String)]) -> InstanceCheck {
         let sources: Vec<_> = documents
             .iter()
             .map(|(id, body)| crate::document_vocabulary::DocumentSource { id, body })
             .collect();
         check_instances(&OntologyModel::new([]), &sources)
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    fn check_papers(alpha_block: &str) -> InstanceCheck {
+        check_collection(&papers(alpha_block))
+    }
+
+    /// The one defect a broken block produced, rendered as `check` prints it.
+    #[cfg(feature = "document-vocabulary")]
+    fn only_defect(report: &DeclarationReport) -> String {
+        match report.defects.as_slice() {
+            [defect] => defect.to_string(),
+            other => panic!("expected one defect, got {other:?}"),
+        }
     }
 
     #[cfg(feature = "document-vocabulary")]
@@ -1476,12 +1937,139 @@ id: paper:paper/beta
         assert!(EntityId::parse_in(&model, "paper:paper/alpha").is_ok());
         assert!(EntityId::parse_in(&OntologyModel::new([]), "paper:paper/alpha").is_err());
     }
+
+    /// Incident: the Backstage maintainer's second and third rounds
+    /// (2026-09-23) — a misspelled field in the shipped papers example
+    /// passed at exit 0.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_misspelled_field_is_refused_naming_the_nearest_declared_property() {
+        let report = check_papers(&ALPHA_CITES_BETA.replace("reviewed: true", "revieweddd: true")).report;
+        let rendered = only_defect(&report);
+        assert!(rendered.contains("field `revieweddd`"), "names the key: {rendered}");
+        assert!(rendered.contains("`reviewed` (`paper:reviewed`)"), "names the nearest: {rendered}");
+        assert!(rendered.contains("alpha.md:11"), "names the block's line: {rendered}");
+    }
+
+    /// Incident: the same rounds — a string where the vocabulary declares a
+    /// boolean passed at exit 0.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_string_where_a_boolean_is_declared_is_refused_naming_property_value_and_datatype() {
+        let report =
+            check_papers(&ALPHA_CITES_BETA.replace("reviewed: true", "reviewed: \"not-a-boolean\"")).report;
+        let rendered = only_defect(&report);
+        for part in ["`paper:reviewed`", "\"not-a-boolean\"", "`xsd:boolean`", "alpha.md:11"] {
+            assert!(rendered.contains(part), "missing {part}: {rendered}");
+        }
+    }
+
+    /// One conforming and one contradicting value — and the edges the
+    /// table in "What contradicts means" names — for each datatype the
+    /// check interprets: the two the shipped modules use and the one the
+    /// papers example adds.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn each_interpreted_datatype_admits_its_values_and_refuses_the_rest() {
+        const VENUE: &str = "paper:venue a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                             rdfs:range xsd:string ;\n    \
+                             rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n";
+        let cases: [(&str, &[&str], &[&str]); 3] = [
+            ("venue", &["\"Proceedings\"", "plain words", "[\"a\", \"b\"]", "~"], &["12", "true", "{at: home}"]),
+            ("pages", &["12", "-3", "[1, 2]"], &["\"12\"", "12.5", "12.0", "true", "[1, \"two\"]"]),
+            ("reviewed", &["true", "false"], &["\"true\"", "yes", "1", "0", "\"not-a-boolean\""]),
+        ];
+        for (field, conforming, contradicting) in cases {
+            let block = |value: &str| {
+                format!("```yaml paper:paper\nid: paper:paper/alpha\n{field}: {value}\n```\n")
+            };
+            for value in conforming {
+                let report = check_collection(&papers_with(VENUE, &block(value))).report;
+                assert!(report.is_clean(), "{field}: {value} conforms: {:?}", report.defects);
+            }
+            for value in contradicting {
+                let report = check_collection(&papers_with(VENUE, &block(value))).report;
+                let rendered = only_defect(&report);
+                assert!(rendered.contains(&format!("`paper:{field}`")), "{field}: {value}: {rendered}");
+                assert!(rendered.contains("contradicts its declared datatype"), "{rendered}");
+            }
+        }
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn no_range_or_an_uninterpreted_datatype_refuses_nothing() {
+        const OPEN: &str = "paper:note a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                            rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+                            paper:published a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                            rdfs:range xsd:date ;\n    \
+                            rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n";
+        let block = "```yaml paper:paper\nid: paper:paper/alpha\nnote: 12\npublished: not a date\n```\n";
+        let report = check_collection(&papers_with(OPEN, block)).report;
+        assert!(report.is_clean(), "{:?}", report.defects);
+    }
+
+    /// A class no datatype property describes keeps its field names open —
+    /// the shape of every `x0k:signifier` and its `cue:` — while a range
+    /// the vocabulary does declare is still read on it.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn an_undescribed_class_keeps_its_field_names_open_and_its_ranges_checked() {
+        const NOTE: &str = "paper:Note a owl:Class ;\n    \
+                            rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+                            paper:count a owl:DatatypeProperty ;\n    rdfs:range xsd:integer ;\n    \
+                            rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n";
+        let note = |extra: &str| format!("```yaml paper:note\nid: paper:note/one\ncue: anything\n{extra}```\n");
+        let report = check_collection(&papers_with(NOTE, &note(""))).report;
+        assert!(report.is_clean(), "an undescribed class is open: {:?}", report.defects);
+        let report = check_collection(&papers_with(NOTE, &note("count: \"three\"\n"))).report;
+        assert!(only_defect(&report).contains("`xsd:integer`"));
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn the_formats_own_keys_are_not_fields_and_a_qualified_key_is_read_as_written() {
+        let block = "```yaml paper:paper\nid: paper:paper/alpha\n\
+                     actors: [ai_agent]\nrequires_resources: [{kind: gpu}]\npaper:reviewed: true\n```\n";
+        let report = check_papers(block).report;
+        assert!(report.is_clean(), "{:?}", report.defects);
+        let report = check_papers(&block.replace("paper:reviewed", "paper:reviewd")).report;
+        let rendered = only_defect(&report);
+        assert!(rendered.contains("`paper:reviewed` (`paper:reviewed`)"), "{rendered}");
+    }
+
+    /// The shipped modules' own ranges, read on the shipped model: an
+    /// affordance's `status` is `x0k:status`, an `xsd:string`, in both the
+    /// monorepo's module set and the published bundle's. A signifier's
+    /// `cue:` names no term and `Signifier` is described by neither, so it
+    /// passes — as this chapter's own signifier must.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn the_shipped_string_range_is_read_and_an_undescribed_signifier_passes() {
+        let body = |status: &str| {
+            format!(
+                "---\nx0k:\n  format: folio/v1\n  id: x0k:design/example\n  type: design\n---\n\
+                 # Example\n\n## Read\n\n```yaml x0k:affordance\nid: x0k:affordance/read\n\
+                 status: {status}\n```\n\n## Face\n\n```yaml x0k:signifier\n\
+                 id: x0k:signifier/read-face\ncue: read\n```\n"
+            )
+        };
+        let check = |status: &str| {
+            let text = body(status);
+            let sources = [crate::document_vocabulary::DocumentSource { id: "example.md", body: &text }];
+            check_instances(&OntologyModel::shipped(), &sources).report
+        };
+        let report = check("designed");
+        assert!(report.is_clean(), "{:?}", report.defects);
+        let rendered = only_defect(&check("3"));
+        assert!(rendered.contains("`x0k:status` the integer `3`") && rendered.contains("`xsd:string`"), "{rendered}");
+    }
 }
 `````
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [standing](#chunk-standing) · [vocabulary](#chunk-vocabulary) · [camel-form](#chunk-camel-form) · [defect](#chunk-defect) · [check-envelope](#chunk-check-envelope) · [check-corpus](#chunk-check-corpus) · [check-declarations](#chunk-check-declarations) · [check-instances](#chunk-check-instances) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [standing](#chunk-standing) · [vocabulary](#chunk-vocabulary) · [camel-form](#chunk-camel-form) · [defect](#chunk-defect) · [check-envelope](#chunk-check-envelope) · [check-corpus](#chunk-check-corpus) · [check-declarations](#chunk-check-declarations) · [check-instances](#chunk-check-instances) · [check-literals](#chunk-check-literals) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -1501,6 +2089,8 @@ id: paper:paper/beta
 <<check-declarations>>
 
 <<check-instances>>
+
+<<check-literals>>
 
 <<tests>>
 ```

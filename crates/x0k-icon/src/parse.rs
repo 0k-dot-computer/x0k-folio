@@ -277,7 +277,10 @@ pub struct Icon {
     pub root_tag: String,
     /// `viewBox` as four numbers, when present and numeric.
     pub view_box: Option<[f64; 4]>,
-    /// Attributes on the root beyond `viewBox`, by name.
+    /// The flair treatment the root selects, as written: a name the
+    /// drawing theme resolves, never a drawing.
+    pub flair: Option<String>,
+    /// Attributes on the root beyond `viewBox` and `flair`, by name.
     pub root_extra: Vec<String>,
     pub children: Vec<Element>,
 }
@@ -369,12 +372,13 @@ pub fn parse(text: &str) -> Result<Icon, ParseError> {
     let doc = Document::parse(text).map_err(|e| ParseError::Xml(e.to_string()))?;
     let root = doc.root_element();
     let mut view_box = None;
+    let mut flair = None;
     let mut root_extra = Vec::new();
     for attr in root.attributes() {
-        if attr.name() == "viewBox" {
-            view_box = Some(read_view_box(attr.value())?);
-        } else {
-            root_extra.push(attr.name().to_string());
+        match attr.name() {
+            "viewBox" => view_box = Some(read_view_box(attr.value())?),
+            "flair" => flair = Some(attr.value().to_string()),
+            name => root_extra.push(name.to_string()),
         }
     }
     let mut ordinal = 0;
@@ -382,6 +386,7 @@ pub fn parse(text: &str) -> Result<Icon, ParseError> {
     Ok(Icon {
         root_tag: root.tag_name().name().to_string(),
         view_box,
+        flair,
         root_extra,
         children,
     })
@@ -723,6 +728,14 @@ mod tests {
         assert_eq!(els[1].shape, Shape::Foreign("text".to_string()));
         assert!(matches!(&els[2].shape, Shape::Path { d, .. } if d == &[PathCommand::Unknown('m')]));
         assert_eq!(els[3].transform, Some(Transform::Other("scale(2)".to_string())));
+    }
+
+    #[test]
+    fn a_flair_selection_is_kept_apart_from_what_the_root_may_not_carry() {
+        let icon = parse(r#"<svg viewBox="0 0 16 16" flair="seal" id="x"><circle cx="8" cy="8" r="6" fill="ink"/></svg>"#).unwrap();
+        assert_eq!(icon.flair.as_deref(), Some("seal"));
+        assert_eq!(icon.root_extra, vec!["id"]);
+        assert_eq!(parse(fixtures::PERSON).unwrap().flair, None);
     }
 
     #[test]

@@ -49,11 +49,11 @@ and [showing it on a surface](../../decisions/design/presentation/icon-profile/s
 which the `icon` verb makes true for the one surface a shell can
 reach, a directory of files.
 
-It holds the mechanism and none of the printing. Both binaries — the
-protocol-only `x0k-tangle/src/main.rs` the repository ships and the
-monorepo's bundle mirror — call the functions here and format the
-reports themselves, so the verbs stay identical across the pair without
-the bundle growing a dependency on `x0k-folio`. The signifiers for the
+It holds the mechanism and none of the printing. The CLI
+([`crate.md`](crate.md) § The CLI face) calls the functions here and
+formats the reports, and every binary that links the CLI — the
+`x0k-tangle` the repository ships, the monorepo's `x0k-tangle-bundle` —
+prints the same sentences because there is one copy of it. The signifiers for the
 verbs live in [`crate.md`](crate.md), under each verb's own heading,
 because a signifier is declared where its face lives.
 
@@ -64,8 +64,7 @@ because a signifier is declared where its face lives.
 //! every folio/v1 envelope under a set of paths read against a named
 //! vocabulary, every inline affordance declaration read out as a record,
 //! and every icon declaration checked against the profile and written
-//! bound. Both `x0k-tangle` binaries call these and do their own
-//! printing.
+//! bound. The CLI (`crate::cli`) calls these and does the printing.
 ```
 
 <a name="chunk-imports"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#imports`</sub>

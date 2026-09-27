@@ -4,7 +4,8 @@
 //!
 //! Wraps [`crate::region_repo`]: projects the publication with guards on,
 //! builds + tests the projection standalone with a private target dir,
-//! runs `cargo publish --dry-run` per crate in dependency order, and —
+//! asks the registry index which crate versions it already serves, runs
+//! one `cargo publish --dry-run --workspace` excluding those, and —
 //! only under `really: true` — runs the real `cargo publish` and pushes
 //! the projected git history to the remote the publication doc's
 //! `publishedOn:` edge names (resolved via `[publish.remotes]` in
@@ -58,8 +59,14 @@ pub struct PublishRepoReport {
     /// before dependents). Reported so the operator can see the order
     /// cargo will publish in; cargo performs the ordering itself.
     pub publish_order: Vec<String>,
-    /// The one dry-run rehearsal over the whole bundle. `None` when the
-    /// projection did not build or test green and the rehearsal never ran.
+    /// Every projected crate in `publish_order`, with its manifest
+    /// version and what the registry index said about it. The pending
+    /// entries are exactly what the rehearsal and the real publish
+    /// hand to cargo.
+    pub plan: Vec<PlannedCrate>,
+    /// The one dry-run rehearsal over the pending crates. `None` when the
+    /// projection did not build or test green and the rehearsal never
+    /// ran, or when nothing is pending and there was nothing to rehearse.
     pub rehearsal: Option<PublishRehearsal>,
     /// The remote URL the `publishedOn:` surface resolved to, when
     /// configured.
@@ -73,12 +80,24 @@ pub struct PublishRepoReport {
 }
 
 /// Run the publish pipeline for the publication doc at `region_doc`,
-/// projecting into `output_dir` against `workspace`.
+/// projecting into `output_dir` against `workspace`, asking crates.io's
+/// sparse index what is already published.
 pub fn publish_repo(
     region_doc: &Path,
     output_dir: &Path,
     workspace: &Path,
     opts: &PublishRepoOptions,
+) -> Result<PublishRepoReport> {
+    publish_repo_with_index(region_doc, output_dir, workspace, opts, &SparseIndex::default())
+}
+
+/// [`publish_repo`] against an explicit registry index.
+pub fn publish_repo_with_index(
+    region_doc: &Path,
+    output_dir: &Path,
+    workspace: &Path,
+    opts: &PublishRepoOptions,
+    index: &dyn RegistryIndex,
 ) -> Result<PublishRepoReport> {
     // `git_init` here means "commit the projection": a fresh output dir
     // gets a root commit, an existing repo gets the run appended.
@@ -90,8 +109,13 @@ pub fn publish_repo(
     };
     let projection = project_publication_repo(region_doc, output_dir, workspace, &proj_opts)?;
 
+    // Ask the index before the minutes-long build: a run that cannot
+    // tell what is already published should say so first.
+    let order = publish_order(output_dir, &projection.crates)?;
+    let plan = plan_publication(output_dir, &order, index)?;
     let mut report = PublishRepoReport {
-        publish_order: publish_order(output_dir, &projection.crates)?,
+        publish_order: order,
+        plan,
         projection,
         build_ok: false,
         test_ok: false,
@@ -114,18 +138,18 @@ pub fn publish_repo(
         return Ok(report);
     }
 
-    // Rehearse: ONE dry run over the whole bundle. Not per crate — see
+    // Rehearse: ONE dry run over the pending crates. Not per crate — see
     // `PublishRehearsal` for why a per-crate gate cannot pass a first
-    // release. This is the same invocation the real publish uses.
-    let (ok, tail) = cargo_in(
-        output_dir,
-        &target_dir,
-        &["publish", "--dry-run", "--allow-dirty", "--workspace"],
-    )?;
-    report.rehearsal = Some(PublishRehearsal {
-        ok,
-        output_tail: tail,
-    });
+    // release. This is the same invocation the real publish uses; with
+    // nothing pending there is no invocation to rehearse.
+    if let Some(args) = publish_args(&report.plan, true) {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (ok, tail) = cargo_in(output_dir, &target_dir, &args)?;
+        report.rehearsal = Some(PublishRehearsal {
+            ok,
+            output_tail: tail,
+        });
+    }
 
     // Resolve the remote the publication names, whether or not we push:
     // the report should show where a real publish would land.
@@ -134,14 +158,17 @@ pub fn publish_repo(
     report.remote = remote;
 
     if opts.really {
-        if !report.rehearsal.as_ref().is_some_and(|r| r.ok) {
-            bail!("refusing --really publish: the dry-run rehearsal did not pass");
+        if let Some(args) = publish_args(&report.plan, false) {
+            if !report.rehearsal.as_ref().is_some_and(|r| r.ok) {
+                bail!("refusing --really publish: the dry-run rehearsal did not pass");
+            }
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (ok, tail) = cargo_in(output_dir, &target_dir, &args)?;
+            if !ok {
+                bail!("cargo {} failed:\n{tail}", args.join(" "));
+            }
+            report.published = true;
         }
-        let (ok, tail) = cargo_in(output_dir, &target_dir, &["publish", "--workspace"])?;
-        if !ok {
-            bail!("cargo publish --workspace failed:\n{tail}");
-        }
-        report.published = true;
         let Some(remote) = report.remote.clone() else {
             bail!(
                 "no remote configured for {} — add it under [publish.remotes] in config/x0k-tangle.toml",
@@ -235,6 +262,193 @@ fn publish_order(output_dir: &Path, crates: &[String]) -> Result<Vec<String>> {
     Ok(order)
 }
 
+/// What a registry index already serves, asked per crate.
+pub trait RegistryIndex {
+    /// Every version the index lists for `name`, yanked included. Empty
+    /// when the index has never seen the crate.
+    fn published_versions(&self, name: &str) -> Result<BTreeSet<String>>;
+}
+
+/// A cargo sparse index over HTTPS (crates.io's by default), fetched
+/// with `curl`.
+#[derive(Debug, Clone)]
+pub struct SparseIndex {
+    pub base: String,
+}
+
+impl Default for SparseIndex {
+    fn default() -> Self {
+        Self {
+            base: "https://index.crates.io".to_string(),
+        }
+    }
+}
+
+/// A crate's path in a cargo index: `1/a`, `2/ab`, `3/a/abc`,
+/// `ab/cd/abcd…`, lowercased.
+fn sparse_index_path(name: &str) -> String {
+    let name = name.to_ascii_lowercase();
+    match name.len() {
+        1 => format!("1/{name}"),
+        2 => format!("2/{name}"),
+        3 => format!("3/{}/{name}", &name[..1]),
+        _ => format!("{}/{}/{name}", &name[..2], &name[2..4]),
+    }
+}
+
+/// The `vers` of every line of a sparse-index file.
+fn parse_index_versions(body: &str) -> Result<BTreeSet<String>> {
+    let mut versions = BTreeSet::new();
+    for line in body.lines().filter(|l| !l.trim().is_empty()) {
+        let entry: serde_json::Value =
+            serde_json::from_str(line).context("parsing a sparse-index line")?;
+        let vers = entry
+            .get("vers")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("sparse-index line without `vers`: {line}"))?;
+        versions.insert(vers.to_string());
+    }
+    Ok(versions)
+}
+
+impl RegistryIndex for SparseIndex {
+    fn published_versions(&self, name: &str) -> Result<BTreeSet<String>> {
+        let url = format!("{}/{}", self.base.trim_end_matches('/'), sparse_index_path(name));
+        let out = std::process::Command::new("curl")
+            .args(["-sS", "--location", "--write-out", "\n%{http_code}", &url])
+            .output()
+            .with_context(|| format!("running curl {url}"))?;
+        if !out.status.success() {
+            bail!(
+                "fetching {url}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let (body, code) = text.rsplit_once('\n').unwrap_or(("", text.as_ref()));
+        tracing::debug!(url = %url, status = code, "publish.index.fetched");
+        // Cargo reads 404, 410 and 451 as "no such crate"; anything else
+        // but 200 means the index could not be asked, and a publish plan
+        // is not guessed around that.
+        match code.trim() {
+            "200" => parse_index_versions(body),
+            "404" | "410" | "451" => Ok(BTreeSet::new()),
+            other => bail!("index {url} answered HTTP {other}"),
+        }
+    }
+}
+
+/// What the registry index said about one projected crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrateDisposition {
+    /// `publish = false` (or no version): cargo's workspace mode skips
+    /// it, and the index is never asked.
+    Unpublishable,
+    /// The index already serves this manifest version.
+    AlreadyPublished,
+    /// The index does not serve this version; the run publishes it.
+    Pending,
+}
+
+/// One projected crate in publish order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedCrate {
+    pub name: String,
+    /// The manifest version; empty for a crate with none.
+    pub version: String,
+    pub disposition: CrateDisposition,
+}
+
+/// A `[package]` field, following `field.workspace = true` to the
+/// projection root's `[workspace.package]`.
+fn package_field(
+    doc: &toml_edit::DocumentMut,
+    root: Option<&toml_edit::DocumentMut>,
+    key: &str,
+) -> Option<toml_edit::Item> {
+    let item = doc.get("package")?.get(key)?;
+    let inherited = item
+        .as_table_like()
+        .and_then(|t| t.get("workspace"))
+        .and_then(|w| w.as_bool())
+        == Some(true);
+    if inherited {
+        root?.get("workspace")?.get("package")?.get(key).cloned()
+    } else {
+        Some(item.clone())
+    }
+}
+
+/// Classify every crate in `order` against `index`, keeping the order.
+fn plan_publication(
+    output_dir: &Path,
+    order: &[String],
+    index: &dyn RegistryIndex,
+) -> Result<Vec<PlannedCrate>> {
+    let root = std::fs::read_to_string(output_dir.join("Cargo.toml"))
+        .ok()
+        .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok());
+    let mut plan = Vec::with_capacity(order.len());
+    for name in order {
+        let manifest_path = vendored_manifest(output_dir, name)?;
+        let doc = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("reading {}", manifest_path.display()))?
+            .parse::<toml_edit::DocumentMut>()
+            .with_context(|| format!("parsing {}", manifest_path.display()))?;
+        let version = package_field(&doc, root.as_ref(), "version")
+            .and_then(|v| v.as_str().map(str::to_string));
+        let publish = package_field(&doc, root.as_ref(), "publish");
+        let refuses = publish.as_ref().is_some_and(|p| {
+            p.as_bool() == Some(false) || p.as_array().is_some_and(|a| a.is_empty())
+        });
+        let disposition = match &version {
+            None => CrateDisposition::Unpublishable,
+            Some(_) if refuses => CrateDisposition::Unpublishable,
+            Some(v) if index.published_versions(name)?.contains(v) => {
+                CrateDisposition::AlreadyPublished
+            }
+            Some(_) => CrateDisposition::Pending,
+        };
+        tracing::info!(
+            krate = %name,
+            version = version.as_deref().unwrap_or(""),
+            disposition = ?disposition,
+            "publish.plan.crate"
+        );
+        plan.push(PlannedCrate {
+            name: name.clone(),
+            version: version.unwrap_or_default(),
+            disposition,
+        });
+    }
+    Ok(plan)
+}
+
+/// The one `cargo publish` invocation for `plan` — `--workspace` minus
+/// every already-published crate — or `None` when nothing is pending.
+fn publish_args(plan: &[PlannedCrate], dry_run: bool) -> Option<Vec<String>> {
+    if !plan
+        .iter()
+        .any(|c| c.disposition == CrateDisposition::Pending)
+    {
+        return None;
+    }
+    let mut args = vec!["publish".to_string()];
+    if dry_run {
+        args.push("--dry-run".to_string());
+        args.push("--allow-dirty".to_string());
+    }
+    args.push("--workspace".to_string());
+    for c in plan
+        .iter()
+        .filter(|c| c.disposition == CrateDisposition::AlreadyPublished)
+    {
+        args.push("--exclude".to_string());
+        args.push(c.name.clone());
+    }
+    Some(args)
+}
+
 /// Run `cargo <args>` in `dir` with a private CARGO_TARGET_DIR. Returns
 /// `(success, tail-of-combined-output)`.
 fn cargo_in(dir: &Path, target_dir: &Path, args: &[&str]) -> Result<(bool, String)> {
@@ -303,15 +517,184 @@ mod tests {
     }
 
     fn write_crate_at(dir: &Path, name: &str, deps: &[&str]) {
+        write_manifest(dir, name, "version = \"0.1.0\"\n", deps)
+    }
+
+    /// A vendored crate under `crates/` whose `[package]` carries
+    /// `package` (version, publish, …) verbatim.
+    fn write_manifest(dir: &Path, name: &str, package: &str, deps: &[&str]) {
         let crate_dir = dir.join(name);
         std::fs::create_dir_all(crate_dir.join("src")).unwrap();
         let mut manifest = format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n"
+            "[package]\nname = \"{name}\"\n{package}edition = \"2021\"\n\n[dependencies]\n"
         );
         for d in deps {
             manifest.push_str(&format!("{d} = {{ path = \"../{d}\" }}\n"));
         }
         std::fs::write(crate_dir.join("Cargo.toml"), manifest).unwrap();
+    }
+
+    /// An index that serves a fixed table and records every crate it
+    /// was asked about.
+    struct StubIndex {
+        served: BTreeMap<String, BTreeSet<String>>,
+        asked: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl StubIndex {
+        fn serving(served: &[(&str, &[&str])]) -> Self {
+            Self {
+                served: served
+                    .iter()
+                    .map(|(n, vs)| (n.to_string(), vs.iter().map(|v| v.to_string()).collect()))
+                    .collect(),
+                asked: Default::default(),
+            }
+        }
+    }
+
+    impl RegistryIndex for StubIndex {
+        fn published_versions(&self, name: &str) -> Result<BTreeSet<String>> {
+            self.asked.borrow_mut().push(name.to_string());
+            Ok(self.served.get(name).cloned().unwrap_or_default())
+        }
+    }
+
+    #[test]
+    fn plan_skips_the_published_orders_the_rest_and_never_attempts_unpublishable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let crates = tmp.path().join("crates");
+        // `base` is on the index at its version; `core` only at an older
+        // one; `app` and `extra` not at all; `cli` refuses publication.
+        write_manifest(&crates, "base", "version = \"0.1.0\"\n", &[]);
+        write_manifest(&crates, "core", "version = \"0.2.0\"\n", &["base"]);
+        write_manifest(&crates, "extra", "version = \"0.3.0\"\n", &["base"]);
+        write_manifest(&crates, "app", "version = \"0.1.0\"\n", &["core"]);
+        write_manifest(
+            &crates,
+            "cli",
+            "version = \"0.1.0\"\npublish = false\n",
+            &["app"],
+        );
+        let index = StubIndex::serving(&[("base", &["0.1.0"]), ("core", &["0.1.0"])]);
+        let names: Vec<String> = ["cli", "app", "extra", "core", "base"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let order = publish_order(tmp.path(), &names).unwrap();
+        let plan = plan_publication(tmp.path(), &order, &index).unwrap();
+
+        let of = |n: &str| plan.iter().find(|c| c.name == n).unwrap().disposition;
+        assert_eq!(
+            of("base"),
+            CrateDisposition::AlreadyPublished,
+            "`base` 0.1.0 is on the index and must be skipped"
+        );
+        assert_eq!(of("core"), CrateDisposition::Pending, "an older version on the index is not this one");
+        assert_eq!(
+            of("cli"),
+            CrateDisposition::Unpublishable,
+            "publish = false crate `cli` was planned for publication"
+        );
+
+        let pending: Vec<&str> = plan
+            .iter()
+            .filter(|c| c.disposition == CrateDisposition::Pending)
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(pending, ["core", "extra", "app"], "pending crates, in dependency order");
+
+        let asked = index.asked.borrow();
+        assert!(
+            !asked.iter().any(|n| n == "cli"),
+            "the index was asked about publish = false crate `cli`: {asked:?}"
+        );
+
+        for dry_run in [true, false] {
+            let args = publish_args(&plan, dry_run).expect("three crates are pending");
+            assert!(
+                !args.iter().any(|a| a == "cli"),
+                "publish = false crate `cli` was named to cargo: {args:?}"
+            );
+            assert!(args.iter().any(|a| a == "--workspace"), "{args:?}");
+            let excluded: Vec<&str> = args
+                .windows(2)
+                .filter(|w| w[0] == "--exclude")
+                .map(|w| w[1].as_str())
+                .collect();
+            assert_eq!(excluded, ["base"], "only the already-published crate is excluded: {args:?}");
+            assert_eq!(args.iter().any(|a| a == "--dry-run"), dry_run, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn nothing_pending_means_no_cargo_invocation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let crates = tmp.path().join("crates");
+        write_manifest(&crates, "base", "version = \"0.1.0\"\n", &[]);
+        write_manifest(&crates, "top", "version = \"0.1.1\"\n", &["base"]);
+        write_manifest(&crates, "cli", "version = \"0.1.1\"\npublish = false\n", &["top"]);
+        let index = StubIndex::serving(&[("base", &["0.1.0"]), ("top", &["0.1.0", "0.1.1"])]);
+        let order = publish_order(
+            tmp.path(),
+            &["base".to_string(), "top".to_string(), "cli".to_string()],
+        )
+        .unwrap();
+        let plan = plan_publication(tmp.path(), &order, &index).unwrap();
+        assert!(plan
+            .iter()
+            .all(|c| c.disposition != CrateDisposition::Pending), "{plan:?}");
+        assert_eq!(publish_args(&plan, true), None);
+        assert_eq!(publish_args(&plan, false), None);
+    }
+
+    #[test]
+    fn plan_follows_workspace_inherited_version_and_publish() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"1.2.3\"\npublish = false\n",
+        )
+        .unwrap();
+        let crates = tmp.path().join("crates");
+        write_manifest(&crates, "inherits", "version.workspace = true\n", &[]);
+        write_manifest(
+            &crates,
+            "private",
+            "version.workspace = true\npublish.workspace = true\n",
+            &[],
+        );
+        let index = StubIndex::serving(&[("inherits", &["1.2.3"])]);
+        let plan = plan_publication(
+            tmp.path(),
+            &["inherits".to_string(), "private".to_string()],
+            &index,
+        )
+        .unwrap();
+        assert_eq!(plan[0].version, "1.2.3");
+        assert_eq!(plan[0].disposition, CrateDisposition::AlreadyPublished);
+        assert_eq!(plan[1].disposition, CrateDisposition::Unpublishable);
+    }
+
+    #[test]
+    fn sparse_index_paths_follow_the_cargo_layout() {
+        assert_eq!(sparse_index_path("a"), "1/a");
+        assert_eq!(sparse_index_path("ab"), "2/ab");
+        assert_eq!(sparse_index_path("abc"), "3/a/abc");
+        assert_eq!(sparse_index_path("x0k-folio"), "x0/k-/x0k-folio");
+        assert_eq!(sparse_index_path("Serde"), "se/rd/serde");
+    }
+
+    #[test]
+    fn sparse_index_lines_yield_every_version_yanked_included() {
+        let body = "{\"name\":\"x\",\"vers\":\"0.1.0\",\"yanked\":false}\n\
+                    {\"name\":\"x\",\"vers\":\"0.1.1\",\"yanked\":true}\n";
+        let versions = parse_index_versions(body).unwrap();
+        assert_eq!(
+            versions.into_iter().collect::<Vec<_>>(),
+            ["0.1.0".to_string(), "0.1.1".to_string()]
+        );
+        assert!(parse_index_versions("{\"name\":\"x\"}").is_err());
     }
 
     #[test]

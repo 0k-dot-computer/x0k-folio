@@ -716,6 +716,60 @@ fn check_says_it_checked_nothing_rather_than_asserting_a_pass() {
     );
 }
 
+/// One name typeset twice, and two names: only the second warns, it names
+/// both strings, and the run exits the same for both — plain and under
+/// `--closed`, because a heading is presentation and never the verdict
+/// (`doc-index.md` § When the two names disagree). The disagreeing file is
+/// the Backstage evaluator's `titletest/c.md` (2026-09-23).
+#[test]
+fn check_warns_when_the_frontmatter_title_and_the_h1_disagree_and_exits_the_same() {
+    let agree = TempDir::new().unwrap();
+    write(
+        agree.path(),
+        "docs/a.md",
+        "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\nx0k:\n  format: folio/v1\n  \
+         id: x0k:architecture/adr013\n  type: architecture\n---\n\n\
+         # ADR013: Proper use of *HTTP* fetching libraries.\n",
+    );
+    let disagree = TempDir::new().unwrap();
+    write(
+        disagree.path(),
+        "docs/c.md",
+        "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\nx0k:\n  format: folio/v1\n  \
+         id: x0k:architecture/adrz\n  type: architecture\n---\n\n# Body H1 Different\n\nText.\n",
+    );
+
+    for flags in [&["check"][..], &["check", "--closed"][..]] {
+        let quiet = run(flags, agree.path());
+        let loud = run(flags, disagree.path());
+        let quiet_err = String::from_utf8_lossy(&quiet.stderr);
+        let loud_err = String::from_utf8_lossy(&loud.stderr);
+        assert!(
+            !quiet_err.contains("warning:"),
+            "one name typeset twice was reported as two ({flags:?}): {quiet_err}"
+        );
+        assert_eq!(
+            loud_err.matches("warning:").count(),
+            1,
+            "two names, one warning ({flags:?}): {loud_err}"
+        );
+        assert!(
+            loud_err.contains("frontmatter title `ADRZ: Frontmatter wins?`")
+                && loud_err.contains("first heading `Body H1 Different`"),
+            "the warning names both strings ({flags:?}): {loud_err}"
+        );
+        assert!(
+            quiet.status.success() && loud.status.success(),
+            "a title disagreement failed the run ({flags:?}): {quiet_err} / {loud_err}"
+        );
+        assert_eq!(
+            quiet.status.code(),
+            loud.status.code(),
+            "the warning moved the exit code ({flags:?})"
+        );
+    }
+}
+
 #[test]
 fn check_fails_two_documents_that_declare_one_id() {
     let tmp = TempDir::new().unwrap();
@@ -1089,5 +1143,47 @@ fn check_passes_an_unfilled_mirror() {
     assert!(
         out.status.success(),
         "an unfilled mirror is sync's ordinary first fill, not drift: {stderr}"
+    );
+}
+
+/// `--version` is the line a CI log reads to say which tangler ran, and
+/// the name on it is this package's: another binary linking the same CLI
+/// prints its own.
+#[test]
+fn version_names_this_package() {
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("--version")
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "--version failed: {stdout}");
+    assert_eq!(
+        stdout.trim(),
+        format!("x0k-tangle {}", env!("CARGO_PKG_VERSION")),
+        "the version line names the package and its version"
+    );
+}
+
+/// A sweep reports each output once. `identity_outputs` is a projection
+/// of `pipeline_outputs`, and a summary that added the two reported a
+/// one-file document as `→ src/lib.rs (+1 more)`.
+#[test]
+fn workspace_counts_each_output_once() {
+    let tmp = TempDir::new().unwrap();
+    let root = x0k_tangle::identity_pipeline::LITERATE_ROOTS[0];
+    write(tmp.path(), &format!("{root}/d.md"), &tangling_doc("once"));
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("workspace")
+        .arg("--root")
+        .arg(tmp.path())
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the sweep failed: {stderr}");
+    assert!(stderr.contains("tangled:    1"), "the sweep tangled the doc: {stderr}");
+    assert!(
+        stderr.contains("d.md → src/lib.rs") && !stderr.contains("more)"),
+        "a one-file document is reported as one file: {stderr}"
     );
 }

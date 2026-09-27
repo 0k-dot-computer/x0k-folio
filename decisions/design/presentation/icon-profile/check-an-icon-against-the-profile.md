@@ -3,7 +3,7 @@ x0k:
   format: folio/v1
   id: x0k:design/icon-profile#check-an-icon-against-the-profile
   type: design
-  status: proposed
+  status: accepted
   edges:
     transcludes:
       - x0k:design/icon-profile
@@ -129,6 +129,7 @@ fn each_rule_has_a_drawing_that_breaks_only_it() {
     let cases: Vec<(String, Rule)> = vec![
         (format!("<g viewBox=\"0 0 16 16\">{RING}</g>"), Rule::NotOneRoot),
         (format!("<svg viewBox=\"0 0 16 16\" width=\"16\">{RING}</svg>"), Rule::NotOneRoot),
+        (format!("<svg viewBox=\"0 0 16 16\" flair=\"Seal Glow\">{RING}</svg>"), Rule::NotOneRoot),
         (format!("<svg viewBox=\"0 0 20 20\">{RING}</svg>"), Rule::OffGridViewBox),
         (wrap(&format!("{RING}<text x=\"2\" y=\"2\">a</text>")), Rule::UnknownElement),
         (wrap(&format!("{RING}<!-- a comment -->")), Rule::UnknownElement),
@@ -147,6 +148,22 @@ fn each_rule_has_a_drawing_that_breaks_only_it() {
     ];
     for (svg, rule) in cases {
         assert_eq!(refusals(&svg), vec![rule], "{svg}");
+    }
+}
+```
+
+</details>
+
+<details><summary><code>a_flair_name_is_accepted_whatever_theme_it_names</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/icon/validate.md#chunk-tests">#tests</a> in The checker</summary>
+
+```rust
+#[test]
+fn a_flair_name_is_accepted_whatever_theme_it_names() {
+    for name in ["seal", "ember-2", "a"] {
+        assert_eq!(refusals(&format!("<svg viewBox=\"0 0 16 16\" flair=\"{name}\">{RING}</svg>")), vec![], "{name}");
+    }
+    for name in ["", "-seal", "seal-", "se--al", "2seal", "url(#x)"] {
+        assert_eq!(refusals(&format!("<svg viewBox=\"0 0 16 16\" flair=\"{name}\">{RING}</svg>")), vec![Rule::NotOneRoot], "{name:?}");
     }
 }
 ```

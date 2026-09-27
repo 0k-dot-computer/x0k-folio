@@ -1,6 +1,6 @@
 {
-  "corpus_commit": "3e60c6a125e548c03d734d198a486719b7dadf98",
-  "corpus_rev": "vzsyxrpozqvxtonkuouvpzxxmszxwqwk",
+  "corpus_commit": "b92aa1e0179c739ea83ef7d25b8796cd26d61374",
+  "corpus_rev": "xqkprzxppnvonorvzswolrrumonwxrpr",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
@@ -25,6 +25,10 @@
     "x0k:wiki/loro": "background/loro.md"
   },
   "dropped_generated": [
+    "crates/x0k-ontology/tests/label_vocabulary.rs",
+    "crates/x0k-ontology/tests/time_vocabulary.rs",
+    "crates/x0k-ontology/tests/calendar_vocabulary.rs",
+    "crates/x0k-ontology/tests/aec_vocabulary.rs",
     "crates/x0k-ontology/src/entry_shape.rs",
     "crates/x0k-ontology/src/settlement_fold.rs",
     "crates/x0k-tangle/tests/gls_fold_demo.rs",
@@ -46,17 +50,21 @@
     "x0k:implementation/fact-projection/summary",
     "x0k:implementation/ontology/admission-grant",
     "x0k:implementation/ontology/admission-receipt",
+    "x0k:implementation/ontology/aec",
     "x0k:implementation/ontology/calendar",
     "x0k:implementation/ontology/claim-inference",
     "x0k:implementation/ontology/declaration",
     "x0k:implementation/ontology/entry-vocab",
-    "x0k:implementation/ontology/finding",
+    "x0k:implementation/ontology/house-rules",
+    "x0k:implementation/ontology/judgment",
+    "x0k:implementation/ontology/label",
+    "x0k:implementation/ontology/listing",
     "x0k:implementation/ontology/ordering",
-    "x0k:implementation/ontology/proposal",
     "x0k:implementation/ontology/roster",
     "x0k:implementation/ontology/session-arrival",
     "x0k:implementation/ontology/settlement",
     "x0k:implementation/ontology/thoughthook",
+    "x0k:implementation/ontology/time",
     "x0k:implementation/ontology/usage"
   ],
   "license_applied": "MIT",
@@ -90,6 +98,7 @@
     "implementation/icon/crate.md",
     "implementation/icon/emit.md",
     "implementation/icon/parse.md",
+    "implementation/icon/path.md",
     "implementation/icon/validate.md",
     "implementation/ontology/concept-facts.md",
     "implementation/ontology/load.md",
@@ -122,7 +131,7 @@
     "implementation/tangle/source-sync.md",
     "implementation/tangle/weave.md"
   ],
-  "module_version": "0.1.1",
+  "module_version": "0.2.0",
   "module_version_source": "entry-point-crate",
   "modules": [
     "core",
@@ -171,6 +180,7 @@
     "implementation/icon/crate.md": "corpora/x0k/implementation/icon/crate.md",
     "implementation/icon/emit.md": "corpora/x0k/implementation/icon/emit.md",
     "implementation/icon/parse.md": "corpora/x0k/implementation/icon/parse.md",
+    "implementation/icon/path.md": "corpora/x0k/implementation/icon/path.md",
     "implementation/icon/validate.md": "corpora/x0k/implementation/icon/validate.md",
     "implementation/ontology/concept-facts.md": "corpora/x0k/implementation/ontology/concept-facts.md",
     "implementation/ontology/load.md": "corpora/x0k/implementation/ontology/load.md",
@@ -205,12 +215,12 @@
   },
   "prebuilt": {
     "commands": {
-      "folio": "x0k-tangle",
-      "x0k-folio": "x0k-folio-cli",
+      "x0k-folio-cli": "x0k-folio-cli",
       "x0k-tangle": "x0k-tangle"
     },
-    "npm_package": "@0k/folio",
-    "tag": "v0.1.1",
+    "installer": "install.sh",
+    "npm_package": null,
+    "tag": "v0.2.0",
     "targets": [
       "x86_64-unknown-linux-musl",
       "aarch64-unknown-linux-musl",
@@ -218,13 +228,14 @@
       "aarch64-apple-darwin",
       "x86_64-pc-windows-msvc"
     ],
-    "version": "0.1.1"
+    "version": "0.2.0"
   },
   "proofs": {
     "x0k:test/x0k-icon/src/bind.rs::a_fifth_role_or_a_missing_scheme_does_not_read": "passed",
     "x0k:test/x0k-icon/src/bind.rs::the_css_binding_writes_variables_and_the_name_binding_writes_roles": "passed",
     "x0k:test/x0k-icon/src/bind.rs::the_publications_palette_block_reads_as_written": "passed",
     "x0k:test/x0k-icon/src/bind.rs::the_tangle_icon_binds_to_the_folio_palette": "passed",
+    "x0k:test/x0k-icon/src/emit.rs::a_flair_selection_survives_normalization_and_leaves_every_drawing": "passed",
     "x0k:test/x0k-icon/src/emit.rs::a_label_is_escaped_where_xml_needs_it": "passed",
     "x0k:test/x0k-icon/src/emit.rs::a_terse_declaration_normalizes_to_the_canonical_form": "passed",
     "x0k:test/x0k-icon/src/emit.rs::inline_svg_writes_the_roles_as_variables": "passed",
@@ -233,6 +244,7 @@
     "x0k:test/x0k-icon/src/emit.rs::the_stem_is_the_entity_ids_last_segment_in_file_form": "passed",
     "x0k:test/x0k-icon/src/emit.rs::the_tangle_icon_normalizes_to_the_designs_bytes": "passed",
     "x0k:test/x0k-icon/src/validate.rs::a_corner_past_the_safe_area_is_refused_by_rule_11": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::a_flair_name_is_accepted_whatever_theme_it_names": "passed",
     "x0k:test/x0k-icon/src/validate.rs::a_literal_colour_is_refused_by_rule_5": "passed",
     "x0k:test/x0k-icon/src/validate.rs::a_page_over_budget_is_refused_by_rule_12": "passed",
     "x0k:test/x0k-icon/src/validate.rs::a_paint_inherited_from_a_group_counts_as_painted": "passed",

@@ -170,7 +170,14 @@ fn check_root(icon: &Icon, defects: &mut Vec<Defect>) {
         defects.push(Defect {
             rule: Rule::NotOneRoot,
             element: root.clone(),
-            detail: format!("the root carries `{name}`; only `viewBox` and `xmlns` are admitted"),
+            detail: format!("the root carries `{name}`; only `viewBox`, `xmlns` and `flair` are admitted"),
+        });
+    }
+    if let Some(flair) = icon.flair.as_deref().filter(|name| !is_treatment_name(name)) {
+        defects.push(Defect {
+            rule: Rule::NotOneRoot,
+            element: root.clone(),
+            detail: format!("flair=\"{flair}\" is not a treatment name (a-z, then a-z, 0-9 and single hyphens)"),
         });
     }
     if icon.grid().is_none() {
@@ -184,6 +191,14 @@ fn check_root(icon: &Icon, defects: &mut Vec<Defect>) {
             detail: format!("{written}; the grids are `0 0 16 16` and `0 0 24 24`"),
         });
     }
+}
+
+/// A flair treatment's name: a lowercase letter, then lowercase letters,
+/// digits and single hyphens, never ending in one.
+fn is_treatment_name(name: &str) -> bool {
+    let starts = name.starts_with(|c: char| c.is_ascii_lowercase());
+    let chars_ok = name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    starts && chars_ok && !name.ends_with('-') && !name.contains("--")
 }
 
 struct Walk {
@@ -550,6 +565,7 @@ mod tests {
         let cases: Vec<(String, Rule)> = vec![
             (format!("<g viewBox=\"0 0 16 16\">{RING}</g>"), Rule::NotOneRoot),
             (format!("<svg viewBox=\"0 0 16 16\" width=\"16\">{RING}</svg>"), Rule::NotOneRoot),
+            (format!("<svg viewBox=\"0 0 16 16\" flair=\"Seal Glow\">{RING}</svg>"), Rule::NotOneRoot),
             (format!("<svg viewBox=\"0 0 20 20\">{RING}</svg>"), Rule::OffGridViewBox),
             (wrap(&format!("{RING}<text x=\"2\" y=\"2\">a</text>")), Rule::UnknownElement),
             (wrap(&format!("{RING}<!-- a comment -->")), Rule::UnknownElement),
@@ -568,6 +584,16 @@ mod tests {
         ];
         for (svg, rule) in cases {
             assert_eq!(refusals(&svg), vec![rule], "{svg}");
+        }
+    }
+
+    #[test]
+    fn a_flair_name_is_accepted_whatever_theme_it_names() {
+        for name in ["seal", "ember-2", "a"] {
+            assert_eq!(refusals(&format!("<svg viewBox=\"0 0 16 16\" flair=\"{name}\">{RING}</svg>")), vec![], "{name}");
+        }
+        for name in ["", "-seal", "seal-", "se--al", "2seal", "url(#x)"] {
+            assert_eq!(refusals(&format!("<svg viewBox=\"0 0 16 16\" flair=\"{name}\">{RING}</svg>")), vec![Rule::NotOneRoot], "{name:?}");
         }
     }
 

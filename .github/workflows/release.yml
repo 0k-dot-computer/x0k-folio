@@ -67,12 +67,36 @@ jobs:
           path: dist
           pattern: artifacts-*
           merge-multiple: true
+      # The release's source closure: the tag's tree and every crate its
+      # lockfile resolves, git dependencies included, so a rebuild needs no
+      # network. Written before SHA256SUMS, which lists it, and before the
+      # attestation, which covers it like the archives.
+      - name: Package the source closure
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          ./tools/release-vendor "$TAG" dist
+          test -s "dist/x0k-folio-$TAG-vendor.tar.gz"
       - name: One SHA256SUMS for the whole release
         shell: bash
         run: |
           cd dist
           cat ./*.sha256 > SHA256SUMS
           rm -f ./*.sha256
+      # The installer rides the release whose archives it installs, so
+      # `releases/latest/download/install.sh` is always the latest binaries'
+      # script. Copied in after SHA256SUMS (it is not one of the archives the
+      # sums vouch for) and before the attestation, which covers it too.
+      - name: Attach the installer
+        shell: bash
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -s sh install.sh
+          else
+            echo "note: shellcheck is not on this runner; install.sh is attached unlinted" >&2
+          fi
+          cp install.sh dist/install.sh
       # SLSA build provenance for every asset: which workflow, which commit,
       # which runner. Verified by a consumer with
       # `gh attestation verify <file> --repo <owner>/<repo>`, against a public
@@ -90,58 +114,3 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" --title "$TAG" --generate-notes
           gh release upload "$TAG" dist/* --clobber
-  npm:
-    needs: release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # `npm publish --provenance` attests the tarball the same way the release
-      # job attests the binaries, so the pinned digests inside it are covered.
-      id-token: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.tag || github.ref_name }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: artifacts-*
-          merge-multiple: true
-      - name: Pin the release's digests into the wrapper
-        # The whole point of the wrapper's fail-closed install: after this the
-        # digest a consumer checks against ships inside the npm tarball, rather
-        # than being fetched from the host serving the bytes it vouches for.
-        shell: bash
-        run: |
-          cd dist && cat ./*.sha256 > SHA256SUMS && cd ..
-          ./tools/npm-pin-digests dist
-      - shell: bash
-        run: ./tools/ci-npm
-      - name: The wrapper's version is the tag
-        shell: bash
-        env:
-          TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          version=$(node -p 'require("./npm/package.json").version')
-          expected="$(node -p 'require("./npm/package.json").x0k.tagPrefix')$version"
-          if [ "$TAG" != "$expected" ]; then
-            echo "error: tag $TAG does not name the wrapper's version ($expected)" >&2
-            exit 1
-          fi
-      - name: Publish the wrapper
-        # The token is the one secret this lane needs. Without it the binary
-        # release still happened; only the wrapper is skipped, and loudly.
-        shell: bash
-        working-directory: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "note: NPM_TOKEN is not set — skipping the npm publish" >&2
-            exit 0
-          fi
-          npm publish --provenance --access public

@@ -18,6 +18,11 @@ static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 /// under `tools/ci` load the concurrent form failed one run in two.
 static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The one wait every command and the watcher get. It is a hang detector,
+/// sized for the slowest honest run on a shared build host, never for the
+/// typical one: a hang waits forever, a busy disk waits tens of seconds.
+const HANG_BUDGET: Duration = Duration::from_secs(300);
+
 struct Fixture {
     _temporary: tempfile::TempDir,
     home: PathBuf,
@@ -53,7 +58,7 @@ impl Drop for Running {
 }
 
 impl Running {
-    /// Thirty seconds is the budget for every command these tests run, the
+    /// `HANG_BUDGET` is the budget for every command these tests run, the
     /// shipped-vocabulary ingest included. It used to need its own minutes:
     /// `set` synced each block inline on the async task, so upstream's
     /// sixteen-way flush ran one journal commit at a time and a fresh
@@ -64,9 +69,10 @@ impl Running {
     /// command needs a budget of its own.
     /// It is a hang detector and nothing finer: a deadline measures wall
     /// clock, so it means even this much only while `ONE_AT_A_TIME` keeps a
-    /// second test off the disk.
+    /// second test off the disk, and the rest of the host's work is outside
+    /// any lock this suite can hold.
     fn finish(&mut self) -> Output {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + HANG_BUDGET;
         let status = loop {
             if let Some(status) = self.child.try_wait().unwrap() { break status; }
             assert!(Instant::now() < deadline, "command timed out; stderr: {}",
@@ -351,7 +357,7 @@ fn watcher_allows_concurrent_queries_and_rejects_another_writer() {
     fixture.corpus_command("ingest").success();
     let mut watcher = fixture.spawn(&["watch", "--root", fixture.corpus.to_str().unwrap(),
         "--database", fixture.database.to_str().unwrap(), "--interval-ms", "100"]);
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + HANG_BUDGET;
     while fs::metadata(&watcher.stdout).unwrap().len() == 0 {
         assert!(watcher.child.try_wait().unwrap().is_none(), "watcher exited");
         assert!(Instant::now() < deadline, "watcher produced no report");

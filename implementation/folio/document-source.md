@@ -503,8 +503,9 @@ fn prepare_document(
 A boolean stays a boolean and an integer stays an integer. Lists contribute
 multiple values. Nested mappings use JSON record bytes; null has no asserted
 value. Scalar strings stay text unless authored as graph-edge references. Scalar
-fields are preserved rather than checked against a datatype schema; the
-shared document vocabulary does not admit datatype-property definitions.
+fields are preserved as YAML typed them and not refused here; `check` reads each
+one against the datatype property it names, under the same predicate this
+projection writes it with ([`checking.md`](checking.md), *Literal fields*).
 Unqualified field keys use their instance namespace and the existing camelCase
 spelling convention; qualified keys keep the author's namespace.
 

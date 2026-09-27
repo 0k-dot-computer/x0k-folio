@@ -81,6 +81,33 @@ pub fn predicate_domain_range(uri: &str) -> Option<(Option<&'static str>, Option
         .map(|p| (p.domain, p.range))
 }
 
+/// The per-predicate default audiences a module states on its own
+/// predicates (`https://0k.computer/ontology/label#defaultAudience`), as `(compact predicate, audience spec JSON)`, sorted. This is what a host
+/// hands `Lib.Audience` as a context's `defaults`, keyed there by local name
+/// (`x0k:implementation/gallowglass/audience`). Empty for a module this build
+/// did not ship, or one that states none.
+pub fn default_audiences(module: &str) -> Vec<(String, String)> {
+    const DEFAULT_AUDIENCE: &str = "https://0k.computer/ontology/label#defaultAudience";
+    let Some(table) = MODULE_TABLES.iter().find(|t| t.name == module) else {
+        return Vec::new();
+    };
+    let namespace = format!("{}#", table.iri);
+    let model = concept_facts::OntologyModel::shipped();
+    let mut out: Vec<(String, String)> = model
+        .facts()
+        .iter()
+        .filter(|fact| fact.predicate == DEFAULT_AUDIENCE && fact.entity.starts_with(&namespace))
+        .filter_map(|fact| match &fact.value {
+            concept_facts::OntologyValue::Text(spec) => {
+                Some((model.compact(&fact.entity).unwrap_or_else(|| fact.entity.clone()), spec.clone()))
+            }
+            concept_facts::OntologyValue::Entity(_) => None,
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 /// The checked `ontology/modules/<name>.ttl` this crate was built from, so
 /// round-trip tests compare against the bytes the compiler saw.
 pub fn checked_module_file(name: &str) -> Option<&'static str> {
@@ -357,7 +384,7 @@ mod tests {
         // predicates are a wire contract exactly as a receipt's are
         // (`x0k:implementation/ontology/admission-grant`). Read off `TERMS`,
         // not `admission_grant::terms::*`, so a publication compiling a
-        // subset still builds. Eight of the thirteen are datatype properties
+        // subset still builds. Nine of the fourteen are datatype properties
         // and reach neither `CLASSES` nor `OBJECT_PROPERTIES`; this slice is
         // the only view that sees the whole vocabulary.
         let Some(grant) = MODULE_TABLES.iter().find(|t| t.name == "admission-grant") else {
@@ -378,6 +405,7 @@ mod tests {
                 "x0kgrant:retired-at",
                 "x0kgrant:retired-by",
                 "x0kgrant:side-effect-ceiling",
+                "x0kgrant:source",
                 "x0kgrant:verb",
             ],
         );
@@ -411,33 +439,6 @@ mod tests {
             ],
         );
         assert_eq!(finding.imports, ["https://0k.computer/ontology/core"]);
-    }
-
-    #[test]
-    fn calendar_spellings_are_pinned() {
-        // These seven ARE the calendar cell's coupling surface: a producer
-        // and the cell agree on nothing else, and two Gallowglass folds
-        // spell them as literals rather than reaching a table
-        // (`x0k:implementation/ontology/calendar`). Read off `TERMS`, not
-        // `calendar::terms::*`, so a publication compiling a subset still
-        // builds; six of the seven are datatype properties and reach
-        // neither `CLASSES` nor `OBJECT_PROPERTIES`.
-        let Some(calendar) = MODULE_TABLES.iter().find(|t| t.name == "calendar") else {
-            return;
-        };
-        assert_eq!(
-            calendar.terms,
-            [
-                "x0kcal:date",
-                "x0kcal:DesiredEvent",
-                "x0kcal:end",
-                "x0kcal:origin",
-                "x0kcal:start",
-                "x0kcal:status",
-                "x0kcal:title",
-            ],
-        );
-        assert_eq!(calendar.imports, ["https://0k.computer/ontology/core"]);
     }
 
     #[test]
@@ -547,11 +548,11 @@ mod tests {
 
     #[test]
     fn proposal_spellings_are_pinned() {
-        // Three subsystems' producers write these twenty-three and one fold
+        // Three subsystems' producers write these twenty-four and one fold
         // reads them (`x0k:implementation/ontology/proposal`), so a renamed
         // field is a wire change even when every caller still compiles. Read
         // off `TERMS`, not `proposal::terms::*`, so a publication compiling a
-        // subset still builds; seventeen are datatype properties and reach
+        // subset still builds; eighteen are datatype properties and reach
         // neither `CLASSES` nor `OBJECT_PROPERTIES`. `SETTLER` and
         // `AUTHORITY` are deliberately absent: a disposition borrows them
         // from `settlement` rather than declaring its own.
@@ -580,6 +581,7 @@ mod tests {
                 "x0kproposal:provenance-seq",
                 "x0kproposal:provenance-session",
                 "x0kproposal:reported-by",
+                "x0kproposal:source",
                 "x0kproposal:statement",
                 "x0kproposal:what-becomes-possible",
                 "x0kproposal:why-it-matters",
@@ -593,7 +595,7 @@ mod tests {
     fn entry_spellings_are_pinned() {
         // Capture is the one place a producer touches the fact plane without
         // saying anything about meaning, and these six are the whole shape
-        // (`x0k:implementation/ontology/entry-vocab`). sci's Gallowglass fold
+        // (`x0k:implementation/ontology/entry-vocab`). A cell's Gallowglass fold
         // spells four of them as literals, so a rename here is a wire change
         // that no Rust build would catch. Read off `TERMS`, not
         // `entry::terms::*`, so a publication compiling a subset still
@@ -650,11 +652,15 @@ mod tests {
     fn routing_record_spellings_are_pinned() {
         // The record is the address feedback aims at, so a renamed predicate
         // does not break a build, it detaches every correction from what it
-        // corrects (`x0k:implementation/ontology/entry-vocab`). Nine terms
-        // here; `x0krecord:settlement` is the tenth in this namespace and
-        // belongs to `settlement`, which declares it and imports this module
-        // for its domain. Read off `TERMS`, not `routing_record::terms::*`,
-        // so a publication compiling a subset still builds.
+        // corrects (`x0k:implementation/ontology/entry-vocab`). Eleven terms
+        // here: nine from that chapter, and `product` and `product-members`,
+        // registered into the region by
+        // `x0k:implementation/ontology/register-settled-product` (the settled
+        // product and its exact member set). `x0krecord:settlement` is the
+        // twelfth in this namespace and belongs to `settlement`, which
+        // declares it and imports this module for its domain. Read off
+        // `TERMS`, not `routing_record::terms::*`, so a publication compiling
+        // a subset still builds.
         let Some(record) = MODULE_TABLES.iter().find(|t| t.name == "routing-record") else {
             return;
         };
@@ -666,6 +672,8 @@ mod tests {
                 "x0krecord:cut",
                 "x0krecord:entry",
                 "x0krecord:policy",
+                "x0krecord:product",
+                "x0krecord:product-members",
                 "x0krecord:reason",
                 "x0krecord:RoutingRecord",
                 "x0krecord:rule-version",
@@ -836,6 +844,64 @@ mod tests {
             ],
         );
         assert_eq!(arrival.imports, ["https://0k.computer/ontology/core"]);
+    }
+
+    #[test]
+    fn role_expansion_table_is_the_fold() {
+        // `ROLE_EXPANSION` is what a host hands a Gallowglass view; it must
+        // be the concept-fact fold's answer, compacted, and nothing else.
+        let model = crate::concept_facts::OntologyModel::shipped();
+        let folded = model.role_expansion().expect("the shipped vocabulary expands");
+        let compact = |iri: &str| model.compact(iri).unwrap_or_else(|| iri.to_string());
+        let expected: Vec<(String, Vec<String>)> = folded.roles().map(|(role, predicates)| {
+            let mut members: Vec<String> = predicates.iter().map(|predicate| compact(predicate)).collect();
+            members.sort();
+            (compact(role), members)
+        }).collect();
+        let emitted: Vec<(String, Vec<String>)> = ROLE_EXPANSION.iter()
+            .map(|(role, members)| (role.to_string(), members.iter().map(|member| member.to_string()).collect()))
+            .collect();
+        assert_eq!(emitted, expected);
+    }
+
+    #[test]
+    fn house_rules_spellings_are_pinned() {
+        // The house-rules vocabulary (`x0k:implementation/ontology/house-rules`):
+        // a rules document scoped to a context or a person, and its
+        // versions, each stated once. A judgment's question set names a
+        // version by these words and a fold reads `current` to find the one
+        // in force, so a rename is a wire change. `current` is the only
+        // term that folds last-writer-wins — that fold on the declaring
+        // writer's chain order is what "the latest version" means — and
+        // every word of a version is first-writer-wins, because a version
+        // is never edited, only followed.
+        let Some(rules) = MODULE_TABLES.iter().find(|t| t.name == "house-rules") else {
+            return;
+        };
+        assert_eq!(
+            rules.terms,
+            [
+                "x0khouse:current",
+                "x0khouse:of",
+                "x0khouse:Rules",
+                "x0khouse:RulesVersion",
+                "x0khouse:scope",
+                "x0khouse:text",
+                "x0khouse:version",
+            ],
+        );
+        assert_eq!(rules.imports, ["https://0k.computer/ontology/core"]);
+        let rule_of = |name: &str| {
+            bootstrap_concept_facts().into_iter().find(|fact| {
+                fact.entity == format!("https://0k.computer/ontology/house-rules#{name}")
+                    && fact.predicate == "https://0k.computer/ontology#fact/fold-rule"
+            }).map(|fact| fact.value)
+        };
+        let text = |rule: &str| Some(concept_facts::OntologyValue::Text(rule.into()));
+        assert_eq!(rule_of("current"), text("last-writer-wins"));
+        for name in ["scope", "of", "version", "text"] {
+            assert_eq!(rule_of(name), text("first-writer-wins"), "{name}");
+        }
     }
 
     #[test]

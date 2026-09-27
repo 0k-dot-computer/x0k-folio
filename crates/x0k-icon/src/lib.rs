@@ -22,13 +22,17 @@
 //!   [`emit::normalized`]: per-scheme files, inline SVG, a symbol sprite,
 //!   and the declaration's canonical text.
 //!
-//! [`check`] runs the first two as one call. The path form the native
-//! shell paints is `x0k-ui-draw`'s adapter over [`Accepted`]; the raster
-//! a favicon needs is not this crate's.
+//! - **path** — [`path::draws`]: the path form, every element as an
+//!   outline in grid units with its fill and stroke resolved, for a
+//!   native painter to adapt to its own geometry types.
+//!
+//! [`check`] runs the first two as one call. The raster a favicon needs
+//! is not this crate's.
 
 pub mod bind;
 pub mod emit;
 pub mod parse;
+pub mod path;
 pub mod validate;
 
 #[cfg(test)]
@@ -37,6 +41,7 @@ pub(crate) mod fixtures;
 pub use bind::{bind, BoundElement, BoundIcon, Palette, RoleBinding, Scheme};
 pub use emit::{files, inline_svg, normalized, sprite, stem_of, svg, Label, SVG_NAMESPACE};
 pub use parse::{parse, Element, Grid, Icon, Paint, ParseError, PathCommand, Role, Shape, Transform};
+pub use path::{draws, Draw, FillRule, Segment, StrokeSpec};
 pub use validate::{one_per_grid, validate, Accepted, Defect, ElementRef, Rule};
 
 /// Why [`check`] refused a text: it was not a declaration, or it was one

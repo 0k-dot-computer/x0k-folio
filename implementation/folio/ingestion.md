@@ -750,7 +750,7 @@ not a claim of fresh results or a complete freshness/status interface.
 ```toml {#ingest-manifest file="Cargo.toml"}
 [package]
 name = "x0k-folio-ingest"
-version = "0.1.0"
+version = "0.1.1"
 edition = { workspace = true }
 license = "MIT"
 description = "Standalone document ingestion and independent backend recovery"

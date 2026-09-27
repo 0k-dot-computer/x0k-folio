@@ -403,7 +403,7 @@ repository = "https://github.com/0k-dot-computer/x0k-folio"
 readme = "../../README.md"
 keywords = ["literate-programming", "tangle", "markdown", "documentation"]
 [dependencies]
-x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.1.0" }
+x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.1.1" }
 x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.1" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

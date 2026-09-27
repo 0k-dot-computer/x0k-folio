@@ -55,14 +55,22 @@
 //! a declaration naming a module the audience will not have is refused.
 //!
 //! A publication may declare `prebuilt:` — target triples, and optionally an
-//! npm wrapper — and the projection then also carries a release lane: a
+//! npm wrapper or a shell installer — and the projection then also carries a
+//! release lane: a
 //! forge-agnostic `tools/release-artifacts` that packages the entry-point
 //! binaries for one target, a `.github/workflows/release.yml` that runs it per
 //! declared target on a tag under SLSA build provenance, and an `npm/` package
 //! whose `postinstall` fetches the matching asset and refuses to install it
 //! unless it matches a digest pinned into the package at publish time (and,
 //! where `gh` is present, its build attestation) — so `npx` reaches the tool
-//! with no Rust toolchain and nothing unverified is ever executed. The lane is
+//! with no Rust toolchain and nothing unverified is ever executed. The
+//! installer is the same logic in POSIX `sh`: an `install.sh` the release
+//! attaches beside the archives it installs, checked against the release's
+//! `SHA256SUMS`, for a reader with no Node either. Every release also
+//! carries its source closure — `tools/release-vendor` packages the committed
+//! tree with every crate its lockfile resolves, git dependencies included, as
+//! one asset the sums and the attestation cover — so a rebuild needs no
+//! network. The lane is
 //! inert for a publication that declares none, and it never enters `tools/ci`:
 //! it is a distribution lane, not a build dependency.
 //!
@@ -4092,6 +4100,7 @@ fn emit_workspace_manifest(output_dir: &Path, crates: &[String], edition: &str) 
             s.push_str(&format!("{k} = {v}\n"));
         }
     }
+    s.push_str("\n[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n");
     std::fs::write(output_dir.join("Cargo.toml"), s)?;
     Ok(())
 }
@@ -5055,6 +5064,19 @@ struct PrebuiltDecl {
     tag_prefix: Option<String>,
     #[serde(default)]
     npm: Option<NpmDecl>,
+    #[serde(default)]
+    installer: Option<InstallerDecl>,
+}
+
+/// The `installer:` sub-block: an `install.sh` the release carries. Its one
+/// field names the script's environment variables — `<envPrefix>_VERSION`,
+/// `<envPrefix>_INSTALL_DIR` and the rest — and defaults to the asset name,
+/// upper-cased, because a reader who has two such installers needs two names.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct InstallerDecl {
+    #[serde(default)]
+    env_prefix: Option<String>,
 }
 
 /// The `npm:` sub-block: the wrapper package, and the command names it links.
@@ -5087,6 +5109,8 @@ pub struct PrebuiltSummary {
     pub commands: BTreeMap<String, String>,
     /// The npm package the wrapper publishes as, when one is declared.
     pub npm_package: Option<String>,
+    /// The installer's asset name (`install.sh`), when one is declared.
+    pub installer: Option<String>,
 }
 
 /// Everything the emitters need, resolved and checked.
@@ -5104,6 +5128,20 @@ struct PrebuiltPlan {
     /// Binary → the crate that builds it.
     binary_crates: BTreeMap<String, String>,
     npm: Option<NpmPlan>,
+    installer: Option<InstallerPlan>,
+}
+
+/// The shell installer's part of a plan.
+struct InstallerPlan {
+    /// `<owner>/<repo>` — what `gh attestation verify --repo` takes.
+    project: String,
+    /// `https://github.com/<owner>/<repo>/releases`: `latest/download/<asset>`
+    /// and `download/<tag>/<asset>` both hang off it.
+    release_base: String,
+    /// The prefix of the script's environment variables.
+    env_prefix: String,
+    /// The declared targets a POSIX shell runs on, in declaration order.
+    targets: Vec<&'static str>,
 }
 
 /// The npm wrapper half of a plan.
@@ -5127,6 +5165,7 @@ impl PrebuiltPlan {
             targets: self.targets.iter().map(|t| t.triple.to_string()).collect(),
             commands: self.commands.clone(),
             npm_package: self.npm.as_ref().map(|n| n.package.clone()),
+            installer: self.installer.as_ref().map(|_| INSTALLER_ASSET.to_string()),
         }
     }
 }
@@ -5228,24 +5267,12 @@ fn resolve_prebuilt(
     let npm = match decl.npm {
         None => None,
         Some(n) => {
-            let repository = crates_io.repository.clone().ok_or_else(|| {
-                anyhow!(
-                    "`prebuilt.npm:` needs the publication's `repository:` — the wrapper's \
-                     postinstall builds its download URL from it"
-                )
-            })?;
-            let project = repository
-                .trim_end_matches('/')
-                .trim_end_matches(".git")
-                .strip_prefix("https://github.com/")
-                .filter(|p| p.split('/').filter(|s| !s.is_empty()).count() == 2)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "`repository: {repository}` is not a `https://github.com/<owner>/<repo>` \
-                         project, and the release-asset URL shape this wrapper builds is GitHub's"
-                    )
-                })?
-                .to_string();
+            let project = github_project(
+                crates_io,
+                "`prebuilt.npm:` needs the publication's `repository:` — the wrapper's \
+                 postinstall builds its download URL from it",
+                "this wrapper",
+            )?;
             Some(NpmPlan {
                 env_prefix: env_var_prefix(&n.package),
                 package: n.package,
@@ -5253,6 +5280,44 @@ fn resolve_prebuilt(
                 release_base: format!("https://github.com/{project}/releases/download"),
                 homepage: format!("https://github.com/{project}"),
                 project,
+            })
+        }
+    };
+    let installer = match decl.installer {
+        None => None,
+        Some(i) => {
+            let project = github_project(
+                crates_io,
+                "`prebuilt.installer:` needs the publication's `repository:` — install.sh \
+                 builds its download URL from it",
+                "install.sh",
+            )?;
+            let targets: Vec<&'static str> = targets
+                .iter()
+                .filter(|t| t.archive == ".tar.gz")
+                .map(|t| t.triple)
+                .collect();
+            if targets.is_empty() {
+                bail!(
+                    "`prebuilt.installer:` needs a target a POSIX shell runs on — every declared \
+                     target is Windows, and install.sh would refuse every machine that can run it"
+                );
+            }
+            let env_prefix = i.env_prefix.unwrap_or_else(|| env_var_prefix(&asset_prefix));
+            if env_prefix.is_empty()
+                || env_prefix.starts_with(|c: char| c.is_ascii_digit())
+                || !env_prefix.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            {
+                bail!(
+                    "`prebuilt.installer:` names envPrefix `{env_prefix}`, which is not a portable \
+                     variable name (upper-case letters, digits and `_`, not starting with a digit)"
+                );
+            }
+            Some(InstallerPlan {
+                env_prefix,
+                release_base: format!("https://github.com/{project}/releases"),
+                project,
+                targets,
             })
         }
     };
@@ -5266,6 +5331,7 @@ fn resolve_prebuilt(
         commands,
         binary_crates,
         npm,
+        installer,
     }))
 }
 
@@ -5303,8 +5369,29 @@ fn env_var_prefix(package: &str) -> String {
     out
 }
 
-/// Write the prebuilt lane: the release script, the forge wrapper for it, and
-/// — when the publication declares one — the npm package. Everything here is
+/// The publication's `repository:` as `<owner>/<repo>`, refused with
+/// `missing` when absent and when it is not a GitHub project — the only
+/// release-URL shape the prebuilt lane builds.
+fn github_project(crates_io: &CratesIoMeta, missing: &str, builder: &str) -> Result<String> {
+    let repository = crates_io.repository.clone().ok_or_else(|| anyhow!("{missing}"))?;
+    Ok(repository
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .strip_prefix("https://github.com/")
+        .filter(|p| p.split('/').filter(|s| !s.is_empty()).count() == 2)
+        .ok_or_else(|| {
+            anyhow!(
+                "`repository: {repository}` is not a `https://github.com/<owner>/<repo>` \
+                 project, and the release-asset URL shape {builder} builds is GitHub's"
+            )
+        })?
+        .to_string())
+}
+
+/// Write the prebuilt lane: the release script, the source-closure script, the
+/// forge wrapper for both, and
+/// — when the publication declares them — the npm package and the shell
+/// installer. Everything here is
 /// regenerated scaffolding, cleared and rewritten on every projection.
 fn emit_prebuilt(
     output_dir: &Path,
@@ -5328,7 +5415,9 @@ fn emit_prebuilt(
             .replace("{bins}", &bins.join(" "))
             .replace("{asset_prefix}", &plan.asset_prefix),
     )?;
-    let mut executable = vec![script];
+    let vendor = output_dir.join("tools/release-vendor");
+    std::fs::write(&vendor, release_vendor_script(plan))?;
+    let mut executable = vec![script, vendor];
     if let Some(npm) = &plan.npm {
         emit_npm_wrapper(output_dir, plan, npm, license)?;
         let check = output_dir.join("tools/ci-npm");
@@ -5340,6 +5429,11 @@ fn emit_prebuilt(
         let pin = output_dir.join("tools/npm-pin-digests");
         std::fs::write(&pin, NPM_PIN_DIGESTS_JS)?;
         executable.push(pin);
+    }
+    if let Some(installer) = &plan.installer {
+        let path = output_dir.join(INSTALLER_ASSET);
+        std::fs::write(&path, installer_script(plan, installer))?;
+        executable.push(path);
     }
     #[cfg(unix)]
     {
@@ -5489,7 +5583,8 @@ fn npm_check_script(output_dir: &Path, plan: &PrebuiltPlan) -> String {
 }
 
 /// `.github/workflows/release.yml`: one job per declared target calling
-/// `tools/release-artifacts`, one job attaching the assets to the tag's
+/// `tools/release-artifacts`, one job packaging the source closure and
+/// attaching every asset to the tag's
 /// release, and — when a wrapper is declared — one publishing it.
 fn release_workflow(plan: &PrebuiltPlan) -> String {
     let mut matrix = String::new();
@@ -5502,10 +5597,34 @@ fn release_workflow(plan: &PrebuiltPlan) -> String {
         None => String::new(),
         Some(npm) => NPM_PUBLISH_JOB.replace("{access}", &npm.access),
     };
+    // Empty when no installer is declared, and then the workflow is
+    // byte-identical to the one a projector without this step wrote.
+    let installer_step = if plan.installer.is_some() { INSTALLER_STEP } else { "" };
     RELEASE_WORKFLOW
         .replace("{tag_prefix}", &plan.tag_prefix)
+        .replace("{asset_prefix}", &plan.asset_prefix)
         .replace("{matrix}", matrix.trim_end_matches('\n'))
+        .replace("{installer_step}", installer_step)
         .replace("{npm_job}", &npm_job)
+}
+
+/// The asset name the installer ships under, at the projection root and on
+/// the release. `releases/latest/download/install.sh` resolves to it.
+const INSTALLER_ASSET: &str = "install.sh";
+
+/// `install.sh`: the fixed text, with the plan's facts written in.
+fn installer_script(plan: &PrebuiltPlan, installer: &InstallerPlan) -> String {
+    let bins: Vec<&str> = plan.binary_crates.keys().map(String::as_str).collect();
+    let crates: BTreeSet<&str> = plan.binary_crates.values().map(String::as_str).collect();
+    INSTALL_SH
+        .replace("{env}", &installer.env_prefix)
+        .replace("{project}", &installer.project)
+        .replace("{release_base}", &installer.release_base)
+        .replace("{asset_prefix}", &plan.asset_prefix)
+        .replace("{tag_prefix}", &plan.tag_prefix)
+        .replace("{targets}", &installer.targets.join(" "))
+        .replace("{bins}", &bins.join(" "))
+        .replace("{crates}", &crates.into_iter().collect::<Vec<_>>().join(" "))
 }
 
 fn emit_provenance(
@@ -5583,6 +5702,7 @@ fn emit_provenance(
             "targets": p.targets,
             "commands": p.commands,
             "npm_package": p.npm_package,
+            "installer": p.installer,
         })),
         // The relicense act, recorded: what this projection is released
         // under, where that decision came from, and what each crate declared
@@ -6077,6 +6197,73 @@ rm -rf "$stage"
 )
 echo "$out/$asset"
 "#;
+
+/// `tools/release-vendor`: the fixed text, with the publication's asset prefix
+/// written in.
+fn release_vendor_script(plan: &PrebuiltPlan) -> String {
+    RELEASE_VENDOR_SCRIPT.replace("{asset_prefix}", &plan.asset_prefix)
+}
+
+/// `tools/release-vendor` — package the committed tree and every crate it
+/// resolves as the one asset an offline rebuild needs.
+const RELEASE_VENDOR_SCRIPT: &str = r##"#!/bin/sh
+# Package this repository's whole source closure for ONE release, as the asset
+# that rebuilds it with no network:
+#
+#   tools/release-vendor <tag> [output-dir]
+#
+# Writes <output-dir>/<asset> and <output-dir>/<asset>.sha256, where <asset> is
+# `{asset_prefix}-<tag>-vendor.tar.gz`: one directory, `{asset_prefix}-<tag>/`,
+# holding the tree committed at HEAD, every crate its Cargo.lock resolves —
+# registry and git dependencies alike — under `vendor/`, and a
+# `.cargo/config.toml` pointing cargo there instead of at any network source.
+# Unpacked anywhere, it builds offline:
+#
+#   tar -xzf {asset_prefix}-<tag>-vendor.tar.gz
+#   cd {asset_prefix}-<tag>
+#   cargo build --offline --locked --release
+#
+# Nothing here talks to a forge — publishing the asset is the caller's act. The
+# release workflow calls this once, beside the per-target archives; so can a
+# maintainer, by hand, from a clean checkout of the tag.
+set -eu
+tag="${1:-}"
+out="${2:-dist}"
+if [ -z "$tag" ]; then
+  echo "usage: tools/release-vendor <tag> [output-dir]" >&2
+  exit 2
+fi
+root="{asset_prefix}-$tag"
+asset="{asset_prefix}-$tag-vendor.tar.gz"
+stage="$out/.stage-vendor"
+rm -rf "$stage"
+mkdir -p "$stage" "$out"
+# The committed tree, not the working one: what is vendored is what the tag
+# holds, and a stray local file cannot ride into a release.
+git archive --format=tar --prefix="$root/" HEAD | tar -xf - -C "$stage"
+(
+  cd "$stage/$root"
+  mkdir -p .cargo
+  # `--locked` for the reason `tools/release-artifacts` uses it: the committed
+  # lockfile is what was audited, and the vendored set must be exactly it.
+  # `cargo vendor` prints the source replacement on stdout (`--quiet` drops
+  # it, so it is not passed). Appending keeps a `.cargo/config.toml` the
+  # repository already carries; one that itself replaces a source would
+  # conflict, and the first offline build says so.
+  cargo vendor --locked vendor >> .cargo/config.toml
+)
+(cd "$stage" && tar -czf "../$asset" "$root")
+rm -rf "$stage"
+(
+  cd "$out"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$asset" > "$asset.sha256"
+  else
+    shasum -a 256 "$asset" > "$asset.sha256"
+  fi
+)
+echo "$out/$asset"
+"##;
 
 /// `tools/ci-npm` — the wrapper's checks, skipped where node is absent.
 const NPM_CHECK_SCRIPT: &str = r#"#!/bin/sh
@@ -6649,13 +6836,24 @@ jobs:
           path: dist
           pattern: artifacts-*
           merge-multiple: true
+      # The release's source closure: the tag's tree and every crate its
+      # lockfile resolves, git dependencies included, so a rebuild needs no
+      # network. Written before SHA256SUMS, which lists it, and before the
+      # attestation, which covers it like the archives.
+      - name: Package the source closure
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          ./tools/release-vendor "$TAG" dist
+          test -s "dist/{asset_prefix}-$TAG-vendor.tar.gz"
       - name: One SHA256SUMS for the whole release
         shell: bash
         run: |
           cd dist
           cat ./*.sha256 > SHA256SUMS
           rm -f ./*.sha256
-      # SLSA build provenance for every asset: which workflow, which commit,
+{installer_step}      # SLSA build provenance for every asset: which workflow, which commit,
       # which runner. Verified by a consumer with
       # `gh attestation verify <file> --repo <owner>/<repo>`, against a public
       # transparency log — no key for this project to hold or lose. The
@@ -6731,6 +6929,212 @@ const NPM_PUBLISH_JOB: &str = r#"  npm:
             exit 0
           fi
           npm publish --provenance --access {access}
+"#;
+
+/// `install.sh` — fetch, verify and install this machine's release archive.
+const INSTALL_SH: &str = r##"#!/bin/sh
+# Install this repository's prebuilt binaries from its GitHub release:
+#
+#   curl -fsSL {release_base}/latest/download/install.sh | sh
+#
+# Resolves this machine to one of the release's archives, downloads it and
+# the release's SHA256SUMS, and refuses (non-zero exit, nothing installed)
+# unless the archive's SHA-256 is the one SHA256SUMS lists. Where the GitHub
+# CLI is installed and signed in, it also checks the archive's build
+# provenance, and refuses if that does not verify. No sudo: the binaries go to
+# a directory you own.
+#
+#   {env}_VERSION       the release to install, e.g. 0.1.2 (default: latest)
+#   {env}_INSTALL_DIR   where the binaries go (default: $HOME/.local/bin)
+#   {env}_ATTESTATION   check (default) or skip: whether to run
+#                       `gh attestation verify` when gh is available
+#   {env}_BASE_URL      for testing: a URL laid out like, and used in place of,
+#                       {release_base}
+#
+# Generated by the repository projector. POSIX sh: dash, bash, busybox ash and
+# macOS /bin/sh all run it.
+set -eu
+
+# Everything is one function, called on the last line: a download cut off
+# halfway runs nothing, and no command below can read the rest of this script
+# from the pipe as its own input.
+main() {
+  project="{project}"
+  asset_prefix="{asset_prefix}"
+  tag_prefix="{tag_prefix}"
+  targets="{targets}"
+  bins="{bins}"
+  base="${{env}_BASE_URL:-{release_base}}"
+  base="${base%/}"
+  version="${{env}_VERSION:-}"
+  install_dir="${{env}_INSTALL_DIR:-$HOME/.local/bin}"
+  attestation="${{env}_ATTESTATION:-check}"
+  releases_page="https://github.com/$project/releases"
+  from_source="cargo install --git https://github.com/$project {crates}"
+
+  # Read the dial before anything is fetched: a misspelt value refuses at
+  # once, not after a download whose result it would have governed.
+  case "$attestation" in
+    check | skip) ;;
+    *) fail "{env}_ATTESTATION must be check or skip (got '$attestation')" ;;
+  esac
+
+  # --- which archive is this machine's ---
+  os=$(uname -s)
+  arch=$(uname -m)
+  case "$arch" in
+    x86_64 | amd64) arch=x86_64 ;;
+    aarch64 | arm64) arch=aarch64 ;;
+  esac
+  case "$os" in
+    Linux)
+      # musl first: the static binary runs on a glibc system too.
+      candidates="$arch-unknown-linux-musl $arch-unknown-linux-gnu" ;;
+    Darwin)
+      # A shell under Rosetta reports x86_64 on Apple silicon; the native
+      # binary is the one to install when the release carries it.
+      if [ "$arch" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
+        candidates="aarch64-apple-darwin x86_64-apple-darwin"
+      else
+        candidates="$arch-apple-darwin"
+      fi ;;
+    MINGW* | MSYS* | CYGWIN* | Windows_NT)
+      fail "install.sh does not cover Windows. Take the .zip for your machine from $releases_page, or build from source: $from_source" ;;
+    *) candidates="" ;;
+  esac
+  target=""
+  for candidate in $candidates; do
+    case " $targets " in
+      *" $candidate "*) target="$candidate"; break ;;
+    esac
+  done
+  if [ -z "$target" ]; then
+    fail "no prebuilt binary for $os $(uname -m); this release carries $targets. See $releases_page, or build from source: $from_source"
+  fi
+
+  # --- where it lives ---
+  if [ -n "$version" ]; then
+    case "$version" in
+      "$tag_prefix"*) tag="$version" ;;
+      *) tag="$tag_prefix$version" ;;
+    esac
+    url="$base/download/$tag"
+  else
+    tag="latest"
+    url="$base/latest/download"
+  fi
+  asset="$asset_prefix-$target.tar.gz"
+
+  # --- the tools this needs, each with a fallback or a refusal ---
+  if command -v curl >/dev/null 2>&1; then
+    fetcher=curl
+  elif command -v wget >/dev/null 2>&1; then
+    fetcher=wget
+  else
+    fail "neither curl nor wget is installed; one of them is needed to download $asset"
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    hasher=sha256sum
+  elif command -v shasum >/dev/null 2>&1; then
+    hasher=shasum
+  else
+    fail "neither sha256sum nor shasum is installed, so $asset cannot be checked; refusing to install it unchecked"
+  fi
+
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  trap 'exit 1' HUP INT TERM
+
+  say "downloading $asset ($tag) from $url"
+  fetch "$url/$asset" "$tmp/$asset" || fail "could not download $url/$asset"
+  fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" || fail "could not download $url/SHA256SUMS"
+
+  # --- the digest: fail closed ---
+  want=$(awk -v a="$asset" '$2 == a || $2 == "*" a { print $1; exit }' "$tmp/SHA256SUMS")
+  if [ -z "$want" ]; then
+    fail "$asset is not listed in SHA256SUMS; refusing to install. Nothing was written to $install_dir."
+  fi
+  got=$(digest "$tmp/$asset")
+  if [ "$got" != "$want" ]; then
+    fail "SHA-256 mismatch for $asset: SHA256SUMS lists $want, the download is $got. Refusing to install; nothing was written to $install_dir."
+  fi
+  say "SHA-256 matches SHA256SUMS ($got)"
+
+  # --- the build provenance: fail closed where it can be checked ---
+  check="gh attestation verify $asset --repo $project"
+  if [ "$attestation" = skip ]; then
+    say "build provenance NOT checked ({env}_ATTESTATION=skip); to check it, download $asset and run: $check"
+  elif ! command -v gh >/dev/null 2>&1; then
+    say "build provenance not checked (gh is not installed); to check it, download $asset and run: $check"
+  elif ! gh auth status >/dev/null 2>&1 </dev/null; then
+    say "build provenance not checked (gh is not signed in); to check it, run gh auth login, download $asset and run: $check"
+  elif gh attestation verify "$tmp/$asset" --repo "$project" </dev/null >&2; then
+    say "build provenance verified: $asset was built by $project's release workflow"
+  else
+    fail "the build provenance of $asset did not verify; refusing to install, nothing was written to $install_dir. If you believe the release is good, run $check yourself before setting {env}_ATTESTATION=skip."
+  fi
+
+  # --- unpack, then install: nothing is written until every check passed ---
+  mkdir "$tmp/unpacked"
+  tar -xzf "$tmp/$asset" -C "$tmp/unpacked" || fail "could not unpack $asset"
+  for bin in $bins; do
+    [ -f "$tmp/unpacked/$bin" ] || fail "$asset does not contain $bin; refusing to install"
+  done
+  mkdir -p "$install_dir" || fail "cannot create $install_dir; set {env}_INSTALL_DIR to a directory you can write"
+  for bin in $bins; do
+    staged="$install_dir/.$bin.install.$$"
+    cp "$tmp/unpacked/$bin" "$staged" || fail "cannot write to $install_dir"
+    chmod 755 "$staged"
+    mv -f "$staged" "$install_dir/$bin"
+  done
+
+  # --- what happened ---
+  printf 'installed from %s (%s):\n' "$asset" "$tag"
+  for bin in $bins; do
+    reported=$("$install_dir/$bin" --version </dev/null 2>/dev/null | head -n 1 || true)
+    printf '  %s  %s\n' "$install_dir/$bin" "$reported"
+  done
+  case ":${PATH:-}:" in
+    *":$install_dir:"*) printf '%s is on your PATH.\n' "$install_dir" ;;
+    *) printf '%s is NOT on your PATH; add it, e.g.\n  export PATH="%s:%s"\n' "$install_dir" "$install_dir" "\$PATH" ;;
+  esac
+}
+
+say() { printf 'install.sh: %s\n' "$*" >&2; }
+fail() { say "error: $*"; exit 1; }
+fetch() {
+  if [ "$fetcher" = curl ]; then
+    curl -fsSL -o "$2" "$1"
+  else
+    wget -q -O "$2" "$1"
+  fi
+}
+# `sha256sum` on Linux, `shasum -a 256` on macOS; both print the digest first.
+digest() {
+  if [ "$hasher" = sha256sum ]; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
+main "$@"
+"##;
+
+/// The release job's installer step, spliced in when one is declared.
+const INSTALLER_STEP: &str = r#"      # The installer rides the release whose archives it installs, so
+      # `releases/latest/download/install.sh` is always the latest binaries'
+      # script. Copied in after SHA256SUMS (it is not one of the archives the
+      # sums vouch for) and before the attestation, which covers it too.
+      - name: Attach the installer
+        shell: bash
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -s sh install.sh
+          else
+            echo "note: shellcheck is not on this runner; install.sh is attached unlinted" >&2
+          fi
+          cp install.sh dist/install.sh
 "#;
 
 #[cfg(test)]
@@ -7689,6 +8093,7 @@ mod prebuilt_workflow_tests {
                 homepage: "https://github.com/o/r".to_string(),
                 env_prefix: "TOOL".to_string(),
             }),
+            installer: None,
         }
     }
 
@@ -7733,6 +8138,105 @@ mod prebuilt_workflow_tests {
         assert!(!yaml["jobs"]["release"].is_null(), "{text}");
         assert!(yaml["jobs"]["npm"].is_null(), "{text}");
         assert!(!text.contains("npm publish"), "{text}");
+    }
+
+    /// The installer is one step in the release job — the job that holds
+    /// every archive — and it leaves the workflow of a publication that
+    /// declares none exactly as it was.
+    #[test]
+    fn an_installer_is_a_release_step_and_nothing_without_one() {
+        let without = release_workflow(&plan());
+        assert!(!without.contains("install.sh"), "{without}");
+        let mut with = plan();
+        with.installer = Some(InstallerPlan {
+            project: "o/r".to_string(),
+            release_base: "https://github.com/o/r/releases".to_string(),
+            env_prefix: "TOOL".to_string(),
+            targets: vec!["x86_64-unknown-linux-musl"],
+        });
+        let text = release_workflow(&with);
+        assert_eq!(
+            text.replace(INSTALLER_STEP, ""),
+            without,
+            "the step is the whole difference"
+        );
+        let yaml: serde_norway::Value =
+            serde_norway::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        let steps = yaml["jobs"]["release"]["steps"]
+            .as_sequence()
+            .unwrap_or_else(|| panic!("release steps:\n{text}"));
+        let names: Vec<&str> = steps.iter().filter_map(|s| s["name"].as_str()).collect();
+        let at = |n: &str| names.iter().position(|x| *x == n).unwrap_or_else(|| panic!("{n}: {names:?}"));
+        assert!(at("One SHA256SUMS for the whole release") < at("Attach the installer"));
+        assert!(at("Attach the installer") < at("Attach the assets to the release"));
+    }
+
+    /// Every release packages its source closure, in the job that sums and
+    /// attests: before `SHA256SUMS` is assembled (so the sums list it) and
+    /// before the attestation (so the provenance covers it), under the asset
+    /// name the script writes.
+    #[test]
+    fn the_source_closure_is_packaged_before_the_sums_and_the_attestation() {
+        for with_npm in [true, false] {
+            let mut p = plan();
+            if !with_npm {
+                p.npm = None;
+            }
+            let text = release_workflow(&p);
+            let yaml: serde_norway::Value =
+                serde_norway::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+            let steps = yaml["jobs"]["release"]["steps"]
+                .as_sequence()
+                .unwrap_or_else(|| panic!("release steps:\n{text}"));
+            let at = |pred: &dyn Fn(&serde_norway::Value) -> bool, what: &str| {
+                steps
+                    .iter()
+                    .position(pred)
+                    .unwrap_or_else(|| panic!("no step {what}:\n{text}"))
+            };
+            let vendor = at(&|s| s["name"].as_str() == Some("Package the source closure"), "vendoring");
+            let sums = at(
+                &|s| s["name"].as_str() == Some("One SHA256SUMS for the whole release"),
+                "summing",
+            );
+            let attest = at(
+                &|s| {
+                    s["uses"]
+                        .as_str()
+                        .is_some_and(|u| u.starts_with("actions/attest-build-provenance@"))
+                },
+                "attesting",
+            );
+            let fetched = at(
+                &|s| {
+                    s["uses"]
+                        .as_str()
+                        .is_some_and(|u| u.starts_with("actions/download-artifact@"))
+                },
+                "gathering the archives",
+            );
+            assert!(fetched < vendor, "the closure joins the gathered archives:\n{text}");
+            assert!(vendor < sums, "SHA256SUMS must list the closure:\n{text}");
+            assert!(vendor < attest, "the attestation must cover the closure:\n{text}");
+            let run = steps[vendor]["run"].as_str().unwrap_or_default();
+            assert!(run.contains("./tools/release-vendor \"$TAG\" dist"), "{run}");
+            assert!(
+                run.contains("dist/demo-$TAG-vendor.tar.gz"),
+                "the step names the asset it attaches:\n{run}"
+            );
+            assert_eq!(
+                steps[vendor]["env"]["TAG"].as_str(),
+                Some("${{ inputs.tag || github.ref_name }}"),
+                "the tag the release is cut at, on a push and on a dispatch"
+            );
+        }
+        // And the script writes the name the step checks for: one directory
+        // named for the tag, the asset beside its `.sha256`.
+        let script = release_vendor_script(&plan());
+        assert!(script.contains("asset=\"demo-$tag-vendor.tar.gz\""), "{script}");
+        assert!(script.contains("root=\"demo-$tag\""), "{script}");
+        assert!(script.contains("cargo vendor --locked vendor >> .cargo/config.toml"), "{script}");
+        assert!(!script.contains("{asset_prefix}"), "{script}");
     }
 
     /// The two escape-hatch variables are named after the package, so a

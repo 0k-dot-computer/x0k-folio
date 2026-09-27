@@ -265,10 +265,20 @@ pub fn validate(icon: Icon) -> Result<Accepted, Vec<Defect>> {
 }
 ```
 
-The root is one `<svg>` carrying `viewBox` and nothing else, and that
-view box is one of the two grids. A root that is some other element, or
-that carries a `width`, an `id`, a hand-written `aria-label`, breaks the
-first rule; a view box that is missing or not a grid breaks the second.
+The root is one `<svg>` carrying `viewBox` and nothing else of its own,
+and that view box is one of the two grids. A root that is some other
+element, or that carries a `width`, an `id`, a hand-written `aria-label`,
+breaks the first rule; a view box that is missing or not a grid breaks
+the second.
+
+The root's one permitted extra, `flair`, is checked for shape and nothing
+more. Whether a theme defines the treatment it names is a question only
+the drawing theme can answer, and its answer to an unknown name is its
+default rather than a refusal — so the checker asks only that the value
+*is* a name: a lowercase letter, then lowercase letters, digits and
+single hyphens. A value with a space, a capital, or a `url(` in it is a
+drawing trying to smuggle something through a reference, and it breaks
+the first rule like any other thing the root may not carry.
 
 <a name="chunk-check-root"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#check-root`</sub>
 
@@ -286,7 +296,14 @@ fn check_root(icon: &Icon, defects: &mut Vec<Defect>) {
         defects.push(Defect {
             rule: Rule::NotOneRoot,
             element: root.clone(),
-            detail: format!("the root carries `{name}`; only `viewBox` and `xmlns` are admitted"),
+            detail: format!("the root carries `{name}`; only `viewBox`, `xmlns` and `flair` are admitted"),
+        });
+    }
+    if let Some(flair) = icon.flair.as_deref().filter(|name| !is_treatment_name(name)) {
+        defects.push(Defect {
+            rule: Rule::NotOneRoot,
+            element: root.clone(),
+            detail: format!("flair=\"{flair}\" is not a treatment name (a-z, then a-z, 0-9 and single hyphens)"),
         });
     }
     if icon.grid().is_none() {
@@ -300,6 +317,20 @@ fn check_root(icon: &Icon, defects: &mut Vec<Defect>) {
             detail: format!("{written}; the grids are `0 0 16 16` and `0 0 24 24`"),
         });
     }
+}
+```
+
+The name's grammar is small enough to state as a scan:
+
+<a name="chunk-treatment-name"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#treatment-name`</sub>
+
+```rust {#treatment-name}
+/// A flair treatment's name: a lowercase letter, then lowercase letters,
+/// digits and single hyphens, never ending in one.
+fn is_treatment_name(name: &str) -> bool {
+    let starts = name.starts_with(|c: char| c.is_ascii_lowercase());
+    let chars_ok = name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    starts && chars_ok && !name.ends_with('-') && !name.contains("--")
 }
 ```
 
@@ -809,6 +840,7 @@ mod tests {
         let cases: Vec<(String, Rule)> = vec![
             (format!("<g viewBox=\"0 0 16 16\">{RING}</g>"), Rule::NotOneRoot),
             (format!("<svg viewBox=\"0 0 16 16\" width=\"16\">{RING}</svg>"), Rule::NotOneRoot),
+            (format!("<svg viewBox=\"0 0 16 16\" flair=\"Seal Glow\">{RING}</svg>"), Rule::NotOneRoot),
             (format!("<svg viewBox=\"0 0 20 20\">{RING}</svg>"), Rule::OffGridViewBox),
             (wrap(&format!("{RING}<text x=\"2\" y=\"2\">a</text>")), Rule::UnknownElement),
             (wrap(&format!("{RING}<!-- a comment -->")), Rule::UnknownElement),
@@ -827,6 +859,16 @@ mod tests {
         ];
         for (svg, rule) in cases {
             assert_eq!(refusals(&svg), vec![rule], "{svg}");
+        }
+    }
+
+    #[test]
+    fn a_flair_name_is_accepted_whatever_theme_it_names() {
+        for name in ["seal", "ember-2", "a"] {
+            assert_eq!(refusals(&format!("<svg viewBox=\"0 0 16 16\" flair=\"{name}\">{RING}</svg>")), vec![], "{name}");
+        }
+        for name in ["", "-seal", "seal-", "se--al", "2seal", "url(#x)"] {
+            assert_eq!(refusals(&format!("<svg viewBox=\"0 0 16 16\" flair=\"{name}\">{RING}</svg>")), vec![Rule::NotOneRoot], "{name:?}");
         }
     }
 
@@ -858,7 +900,7 @@ mod tests {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [num](#chunk-num) · [rule](#chunk-rule) · [defect](#chunk-defect) · [accepted](#chunk-accepted) · [validate](#chunk-validate) · [check-root](#chunk-check-root) · [walk-state](#chunk-walk-state) · [walk-element](#chunk-walk-element) · [check-attributes](#chunk-check-attributes) · [check-paints](#chunk-check-paints) · [check-stroke](#chunk-check-stroke) · [check-path-commands](#chunk-check-path-commands) · [check-transform](#chunk-check-transform) · [check-geometry](#chunk-check-geometry) · [geometry-of](#chunk-geometry-of) · [path-geometry](#chunk-path-geometry) · [check-budget](#chunk-check-budget) · [one-per-grid](#chunk-one-per-grid) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [num](#chunk-num) · [rule](#chunk-rule) · [defect](#chunk-defect) · [accepted](#chunk-accepted) · [validate](#chunk-validate) · [check-root](#chunk-check-root) · [treatment-name](#chunk-treatment-name) · [walk-state](#chunk-walk-state) · [walk-element](#chunk-walk-element) · [check-attributes](#chunk-check-attributes) · [check-paints](#chunk-check-paints) · [check-stroke](#chunk-check-stroke) · [check-path-commands](#chunk-check-path-commands) · [check-transform](#chunk-check-transform) · [check-geometry](#chunk-check-geometry) · [geometry-of](#chunk-geometry-of) · [path-geometry](#chunk-path-geometry) · [check-budget](#chunk-check-budget) · [one-per-grid](#chunk-one-per-grid) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -876,6 +918,8 @@ mod tests {
 <<validate>>
 
 <<check-root>>
+
+<<treatment-name>>
 
 <<walk-state>>
 

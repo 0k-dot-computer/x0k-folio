@@ -1552,8 +1552,10 @@ fn a_publication_declaring_no_prebuilt_carries_no_release_lane() {
     for absent in [
         "npm",
         "tools/release-artifacts",
+        "tools/release-vendor",
         "tools/ci-npm",
         "tools/npm-pin-digests",
+        "install.sh",
         ".github/workflows/release.yml",
     ] {
         assert!(!out.path().join(absent).exists(), "{absent} is not emitted");
@@ -1594,6 +1596,31 @@ fn a_prebuilt_declaration_emits_the_release_lane_and_the_wrapper() {
         script.contains("asset=\"demo-$target$ext\""),
         "the asset is named for the publication:\n{script}"
     );
+    // Its companion packages the source closure under the same prefix, once
+    // per release rather than per target, and is executable like it.
+    let vendor = std::fs::read_to_string(out.path().join("tools/release-vendor")).unwrap();
+    assert!(vendor.contains("asset=\"demo-$tag-vendor.tar.gz\""), "{vendor}");
+    assert!(!vendor.contains("{asset_prefix}"), "{vendor}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(out.path().join("tools/release-vendor"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "tools/release-vendor is executable");
+    }
+    if let Ok(lint) = std::process::Command::new("shellcheck")
+        .args(["-s", "sh", "tools/release-vendor"])
+        .current_dir(out.path())
+        .output()
+    {
+        assert!(
+            lint.status.success(),
+            "shellcheck:\n{}",
+            String::from_utf8_lossy(&lint.stdout)
+        );
+    }
 
     // The manifest npm reads: valid JSON, with `bin`, `postinstall` and the
     // platform table agreeing with each other.
@@ -1651,6 +1678,11 @@ fn a_prebuilt_declaration_emits_the_release_lane_and_the_wrapper() {
     );
     assert!(workflow.contains("./tools/npm-pin-digests dist"), "{workflow}");
     assert!(out.path().join("tools/npm-pin-digests").is_file());
+    assert!(
+        workflow.contains("./tools/release-vendor \"$TAG\" dist")
+            && workflow.contains("dist/demo-$TAG-vendor.tar.gz"),
+        "every release packages its source closure:\n{workflow}"
+    );
 
     // And the promise the repository is now making is in the record.
     let prov: serde_json::Value =
@@ -1750,6 +1782,22 @@ fn a_declaration_that_could_not_produce_an_installable_release_refuses() {
             Some(REPOSITORY),
             "declares no `targets:`",
         ),
+        (
+            "    targets:\n      - x86_64-pc-windows-msvc\n    installer: {}\n".to_string(),
+            Some(REPOSITORY),
+            "needs a target a POSIX shell runs on",
+        ),
+        (
+            "    targets:\n      - x86_64-apple-darwin\n    installer: {}\n".to_string(),
+            None,
+            "`prebuilt.installer:` needs the publication's `repository:`",
+        ),
+        (
+            "    targets:\n      - x86_64-apple-darwin\n    installer:\n      envPrefix: my-tool\n"
+                .to_string(),
+            Some(REPOSITORY),
+            "not a portable variable name",
+        ),
     ] {
         let ws = workspace(&[], true);
         declare_prebuilt(ws.path(), repository, &prebuilt);
@@ -1800,6 +1848,136 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
             checked.status.success(),
             "{file}: {}",
             String::from_utf8_lossy(&checked.stderr)
+        );
+    }
+}
+
+/// Three targets, one of them Windows, and an installer with no wrapper:
+/// the third lane on its own.
+const PREBUILT_INSTALLER: &str = "    targets:\n      - x86_64-unknown-linux-musl\n      - aarch64-apple-darwin\n      - x86_64-pc-windows-msvc\n    installer:\n      envPrefix: DEMO_TOOL\n";
+
+#[test]
+fn an_installer_declaration_emits_install_sh_and_the_step_that_attaches_it() {
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT_INSTALLER);
+    let out = tempfile::tempdir().unwrap();
+    let report = project_github(ws.path(), out.path()).expect("projection");
+    let summary = report.prebuilt.clone().expect("the lane is declared");
+    assert_eq!(summary.installer.as_deref(), Some("install.sh"));
+    assert_eq!(summary.npm_package, None);
+    assert!(!out.path().join("npm").exists(), "an installer is not a wrapper");
+
+    let script = std::fs::read_to_string(out.path().join("install.sh")).unwrap();
+    assert!(script.starts_with("#!/bin/sh\n"), "{script}");
+    for fact in [
+        "project=\"demo-org/demo-repo\"",
+        "asset_prefix=\"demo\"",
+        "tag_prefix=\"v\"",
+        // The POSIX targets, and not the Windows one the release also carries.
+        "targets=\"x86_64-unknown-linux-musl aarch64-apple-darwin\"",
+        "bins=\"demo-tool\"",
+        "${DEMO_TOOL_INSTALL_DIR:-$HOME/.local/bin}",
+        "${DEMO_TOOL_BASE_URL:-https://github.com/demo-org/demo-repo/releases}",
+        "cargo install --git https://github.com/$project demo-crate",
+    ] {
+        assert!(script.contains(fact), "`{fact}` in:\n{script}");
+    }
+    for placeholder in [
+        "{env}", "{project}", "{release_base}", "{asset_prefix}", "{tag_prefix}",
+        "{targets}", "{bins}", "{crates}",
+    ] {
+        assert!(!script.contains(placeholder), "{placeholder} left in:\n{script}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(out.path().join("install.sh")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "install.sh is executable");
+    }
+
+    // The release job copies the script in after SHA256SUMS is assembled and
+    // before the attestation, so the attestation covers it and the sums do not
+    // claim it.
+    let workflow =
+        std::fs::read_to_string(out.path().join(".github/workflows/release.yml")).unwrap();
+    let sums = workflow.find("cat ./*.sha256 > SHA256SUMS").expect("sums step");
+    let copy = workflow.find("cp install.sh dist/install.sh").expect("the installer step");
+    let attest = workflow.find("actions/attest-build-provenance@v2").expect("attest step");
+    assert!(sums < copy && copy < attest, "{workflow}");
+    assert!(!workflow.contains("npm publish"), "{workflow}");
+
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    assert_eq!(prov["prebuilt"]["installer"], "install.sh");
+    assert!(prov["prebuilt"]["npm_package"].is_null());
+
+    // shellcheck is the lint the release step runs; where it is installed the
+    // emitted text must pass it, and where it is not this assertion is the
+    // release step's own business.
+    if let Ok(lint) = std::process::Command::new("shellcheck")
+        .args(["-s", "sh", "install.sh"])
+        .current_dir(out.path())
+        .output()
+    {
+        assert!(
+            lint.status.success(),
+            "shellcheck:\n{}",
+            String::from_utf8_lossy(&lint.stdout)
+        );
+    }
+}
+
+/// A `uname` that reports `os` and `arch`, first on a PATH, so the script can
+/// be run as though on another machine — and a `sysctl` that denies Apple
+/// silicon, so the Rosetta probe does not see through the disguise on a Mac.
+#[cfg(unix)]
+fn fake_uname(dir: &Path, os: &str, arch: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    for (name, body) in [
+        ("uname", format!("#!/bin/sh\ncase \"$1\" in -s) echo {os} ;; -m) echo {arch} ;; esac\n")),
+        ("sysctl", "#!/bin/sh\necho 0\n".to_string()),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_sh_refuses_a_machine_the_release_does_not_carry() {
+    let ws = workspace(&[], true);
+    declare_prebuilt(ws.path(), Some(REPOSITORY), PREBUILT_INSTALLER);
+    let out = tempfile::tempdir().unwrap();
+    project_github(ws.path(), out.path()).expect("projection");
+    for (os, arch, needle) in [
+        ("FreeBSD", "amd64", "no prebuilt binary for FreeBSD"),
+        ("MINGW64_NT-10.0-26100", "x86_64", "does not cover Windows"),
+        // Declared for macOS on arm64 only; an Intel Mac is not carried.
+        ("Darwin", "x86_64", "no prebuilt binary for Darwin"),
+    ] {
+        let fake = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        fake_uname(fake.path(), os, arch);
+        let run = std::process::Command::new("sh")
+            .arg(out.path().join("install.sh"))
+            .env("PATH", format!("{}:{}", fake.path().display(), std::env::var("PATH").unwrap_or_default()))
+            .env("HOME", home.path())
+            .output()
+            .expect("sh runs");
+        let stderr = String::from_utf8_lossy(&run.stderr).to_string();
+        assert!(!run.status.success(), "{os} {arch} is refused:\n{stderr}");
+        for said in [
+            needle,
+            "https://github.com/demo-org/demo-repo/releases",
+            "cargo install --git https://github.com/demo-org/demo-repo demo-crate",
+        ] {
+            assert!(stderr.contains(said), "`{said}` for {os} {arch}:\n{stderr}");
+        }
+        assert!(
+            !home.path().join(".local").exists(),
+            "nothing is installed on a refused machine"
         );
     }
 }
@@ -1889,6 +2067,19 @@ fn a_diagram_naming_a_role_outside_the_palette_is_refused() {
     let out = tempfile::tempdir().unwrap();
     let err = format!("{:#}", project(ws.path(), out.path()).unwrap_err());
     assert!(err.contains("`{{gold}}` is not one of the palette's roles"), "{err}");
+}
+
+#[test]
+fn the_projected_workspace_builds_dev_with_an_optimized_profile() {
+    let ws = workspace(&[], true);
+    std::fs::write(ws.path().join(PUB_REL), publication_publishing(&["demo-crate"], &[])).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).unwrap();
+    let manifest = std::fs::read_to_string(out.path().join("Cargo.toml")).unwrap();
+    let doc = manifest.parse::<toml_edit::DocumentMut>().expect("the manifest parses");
+    let dev = &doc["profile"]["dev"];
+    assert_eq!(dev["opt-level"].as_integer(), Some(1), "{manifest}");
+    assert_eq!(dev["package"]["*"]["opt-level"].as_integer(), Some(3), "{manifest}");
 }
 
 /// A real Cargo workspace whose package identity differs from its directory.

@@ -217,6 +217,7 @@ fn emit_generated(model: &OntologyModel, module_paths: &[PathBuf], shape_paths: 
     emit_decision_predicates(&mut out, &decision_predicates);
     emit_classes(&mut out, &classes);
     emit_properties(&mut out, &properties);
+    emit_role_expansion(&mut out, model);
     for module in &modules {
         emit_module(&mut out, model, module);
     }
@@ -568,9 +569,45 @@ fn option_literal(value: Option<&str>) -> String {
 }
 ```
 
+The role expansion is the one table a Gallowglass view needs from the
+vocabulary (`x0k:architecture/referent-time-and-listings` §4): for each
+role, every predicate whose `rdfs:subPropertyOf` chain ends at it. It is
+emitted in the spelling a fact carries, compact CURIEs
+(`<prefix>:<local name>`), because a view matches predicates on facts
+and not on IRIs. A host hands the table to a view as input and the view
+looks predicates up in it; the fold itself stays in
+[concept-facts.md](concept-facts.md). `load_files` has already refused a
+set whose expansion fails, so the panic below cannot fire on a set that
+loaded.
+
+<a name="chunk-emit-role-expansion"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#emit-role-expansion`</sub>
+
+```rust {#emit-role-expansion}
+fn emit_role_expansion(out: &mut String, model: &OntologyModel) {
+    let expansion = model.role_expansion().unwrap_or_else(|errors| {
+        let reasons: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        panic!("role expansion: {}", reasons.join("; "))
+    });
+    let compact = |iri: &str| model.compact(iri).unwrap_or_else(|| iri.to_string());
+    out.push_str(
+        "/// Each role of the `time` module with every predicate that reaches it\n\
+         /// through `rdfs:subPropertyOf`, the role included, as compact CURIEs.\n\
+         /// Empty when the build ships no `time` module.\n\
+         pub const ROLE_EXPANSION: &[(&str, &[&str])] = &[\n",
+    );
+    for (role, predicates) in expansion.roles() {
+        let mut members: Vec<String> = predicates.iter().map(|predicate| compact(predicate)).collect();
+        members.sort();
+        let members: Vec<String> = members.iter().map(|member| format!("{member:?}")).collect();
+        out.push_str(&format!("    ({:?}, &[{}]),\n", compact(role), members.join(", ")));
+    }
+    out.push_str("];\n\n");
+}
+```
+
 ## Composing the file
 
-<a name="chunk-root"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [main](#chunk-main) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [emit-module](#chunk-emit-module) · [emit-module-terms](#chunk-emit-module-terms) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes)</sub>
+<a name="chunk-root"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [main](#chunk-main) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [emit-module](#chunk-emit-module) · [emit-module-terms](#chunk-emit-module-terms) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes) · [emit-role-expansion](#chunk-emit-role-expansion)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -592,6 +629,8 @@ fn option_literal(value: Option<&str>) -> String {
 <<emit-bootstrap-facts>>
 
 <<emit-classes>>
+
+<<emit-role-expansion>>
 ```
 
 The file this script writes is a *view*, and saying so is not a hedge. The

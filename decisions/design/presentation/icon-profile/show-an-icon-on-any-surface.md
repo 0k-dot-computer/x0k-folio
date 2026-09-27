@@ -3,7 +3,7 @@ x0k:
   format: folio/v1
   id: x0k:design/icon-profile#show-an-icon-on-any-surface
   type: design
-  status: proposed
+  status: accepted
   edges:
     transcludes:
       - x0k:design/icon-profile
@@ -114,6 +114,24 @@ fn the_tangle_icon_normalizes_to_the_designs_bytes() {
 
 </details>
 
+<details><summary><code>a_flair_selection_survives_normalization_and_leaves_every_drawing</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/icon/emit.md#chunk-tests">#tests</a> in Writing an icon out</summary>
+
+```rust
+#[test]
+fn a_flair_selection_survives_normalization_and_leaves_every_drawing() {
+    let selected = fixtures::PERSON.replacen("<svg viewBox=\"0 0 16 16\">", "<svg flair=\"seal\" viewBox=\"0 0 16 16\">", 1);
+    let icon = validate(parse(&selected).unwrap()).unwrap();
+    let text = normalized(&icon);
+    assert!(text.starts_with("<svg viewBox=\"0 0 16 16\" flair=\"seal\">\n"), "{text}");
+    assert_eq!(normalized(&validate(parse(&text).unwrap()).unwrap()), text);
+    let label = Label::for_entity("x0k:class/Human", "A person");
+    assert!(!inline_svg(&icon, &label).contains("flair"));
+    assert!(files(&icon, &folio_palette(), &label).iter().all(|(_, file)| !file.contains("flair")));
+}
+```
+
+</details>
+
 <details><summary><code>a_terse_declaration_normalizes_to_the_canonical_form</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/icon/emit.md#chunk-tests">#tests</a> in Writing an icon out</summary>
 
 ```rust
@@ -155,7 +173,7 @@ fn the_per_scheme_files_differ_only_in_their_colours() {
     assert_eq!(out[0].0, "project-source-code-out-of-a-document-light.svg");
     assert_eq!(out[1].0, "project-source-code-out-of-a-document-dark.svg");
     let light = &out[0].1;
-    assert!(light.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" role=\"img\" aria-label=\"Tangle — project source code out of a document\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n"), "{light}");
+    assert!(light.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" role=\"img\" aria-label=\"Tangle — project source code out of a document\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n"), "{light}");
     assert!(light.contains("stroke=\"#b88e44\""));
     assert!(!light.contains("stroke-linecap=\"round\"/>"), "caps and joins live on the root only");
     let recoloured = light.replace("#b88e44", "#96b4dc").replace("#111111", "#e2e8f0").replace("#fffff8", "#1e293b");
@@ -188,7 +206,7 @@ fn the_sprite_holds_one_symbol_per_icon_under_its_stem() {
     let a = Label::for_entity("x0k:affordance/project_source_code_out_of_a_document", "Tangle");
     let b = Label::for_entity("x0k:affordance/read_a_document_as_the_woven_artifact", "Weave");
     let text = sprite(&[(&a, &tangle()), (&b, &weave)]);
-    assert!(text.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" aria-hidden=\"true\">\n  <defs>\n    <symbol id=\"icon-project-source-code-out-of-a-document\" viewBox=\"0 0 16 16\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n      <path d=\"M2.5 1.5 H8.5"), "{text}");
+    assert!(text.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" aria-hidden=\"true\">\n  <defs>\n    <symbol id=\"icon-project-source-code-out-of-a-document\" viewBox=\"0 0 16 16\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n      <path d=\"M2.5 1.5 H8.5"), "{text}");
     assert!(text.contains("<symbol id=\"icon-read-a-document-as-the-woven-artifact\""));
     assert_eq!(text.matches("<symbol ").count(), 2);
     assert!(text.ends_with("    </symbol>\n  </defs>\n</svg>\n"));

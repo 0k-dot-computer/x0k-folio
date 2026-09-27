@@ -1,6 +1,6 @@
 {
   "source": "implementation/tangle/doc-index.md",
-  "source_hash": "df7428cfd658acc4",
+  "source_hash": "6f3fe95943afdabd",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-tangle/src/index.rs",
-          "hash": "c8da6a34bbb37fbb"
+          "hash": "14c68d94a5949d8c"
         }
       ]
     }

@@ -4,7 +4,7 @@ x0k:
   id: x0k:implementation/icon/crate
   type: implementation
   status: draft
-  summary: The crate's contract rather than a mechanism — the four chapters composed, the one face that checks a declaration end to end, the design's worked-example icons carried as fixtures every chapter tests against, and what a consumer may name.
+  summary: The crate's contract rather than a mechanism — the five chapters composed, the one face that checks a declaration end to end, the design's worked-example icons carried as fixtures every chapter tests against, and what a consumer may name.
   concerns:
   - icons
   - svg
@@ -41,11 +41,12 @@ fold would guard. It ships as a module of
 [`x0k-folio`](x0k:publication/x0k-folio), because the projector shipped
 there cannot draw without it.
 
-This chapter is the crate's contract. The mechanism is four chapters,
+This chapter is the crate's contract. The mechanism is five chapters,
 read in the order a declaration travels: [parse](parse.md) reads the
 block into a typed tree, [validate](validate.md) refuses it by rule or
 accepts it, [bind](bind.md) says what each of its four roles is on a
-surface, and [emit](emit.md) writes the forms a build needs. Here is what
+surface, [emit](emit.md) writes the textual forms a build needs, and
+[path](path.md) hands a native painter the outlines it strokes and fills. Here is what
 composes them: the module list, the one face that runs the first two
 together, and the fixtures — the design's own worked-example icons,
 carried verbatim so every chapter tests against the marks the design
@@ -77,9 +78,12 @@ drew rather than marks of its own.
 //!   [`emit::normalized`]: per-scheme files, inline SVG, a symbol sprite,
 //!   and the declaration's canonical text.
 //!
-//! [`check`] runs the first two as one call. The path form the native
-//! shell paints is `x0k-ui-draw`'s adapter over [`Accepted`]; the raster
-//! a favicon needs is not this crate's.
+//! - **path** — [`path::draws`]: the path form, every element as an
+//!   outline in grid units with its fill and stroke resolved, for a
+//!   native painter to adapt to its own geometry types.
+//!
+//! [`check`] runs the first two as one call. The raster a favicon needs
+//! is not this crate's.
 ```
 
 ## The modules and what a consumer may name
@@ -95,6 +99,7 @@ design's icons, and a consumer wanting them reads the design.
 pub mod bind;
 pub mod emit;
 pub mod parse;
+pub mod path;
 pub mod validate;
 
 #[cfg(test)]
@@ -107,6 +112,7 @@ pub(crate) mod fixtures;
 pub use bind::{bind, BoundElement, BoundIcon, Palette, RoleBinding, Scheme};
 pub use emit::{files, inline_svg, normalized, sprite, stem_of, svg, Label, SVG_NAMESPACE};
 pub use parse::{parse, Element, Grid, Icon, Paint, ParseError, PathCommand, Role, Shape, Transform};
+pub use path::{draws, Draw, FillRule, Segment, StrokeSpec};
 pub use validate::{one_per_grid, validate, Accepted, Defect, ElementRef, Rule};
 ```
 

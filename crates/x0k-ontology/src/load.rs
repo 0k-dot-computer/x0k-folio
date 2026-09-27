@@ -20,7 +20,8 @@ use std::path::{Path, PathBuf};
 use oxttl::TurtleParser;
 
 use crate::concept_facts::{
-    ModuleRecord, OntologyFact, OntologyModel, MODULE_IRI_PREFIX, STRUCTURAL_NODE_PREFIX,
+    ModuleRecord, OntologyFact, OntologyModel, RefinementError, MODULE_IRI_PREFIX,
+    STRUCTURAL_NODE_PREFIX,
 };
 
 const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
@@ -55,6 +56,9 @@ pub enum LoadError {
     /// A blank node reached by no root. Structural, and a bug here rather
     /// than in the files.
     UnassignedBlankNode(String),
+    /// A refinement (`rdfs:subPropertyOf`) the use rule refuses, or a
+    /// predicate that reaches two roles. The set does not close.
+    Refinement(RefinementError),
 }
 
 impl fmt::Display for LoadError {
@@ -106,6 +110,7 @@ impl fmt::Display for LoadError {
             Self::UnassignedBlankNode(blank) => {
                 write!(f, "unassigned ontology blank node {blank}")
             }
+            Self::Refinement(error) => write!(f, "ontology module set: {error}"),
         }
     }
 }
@@ -125,7 +130,7 @@ impl OntologyModel {
         Self::load_files(&module_paths, &shape_paths)
     }
 
-    /// Load an explicit set of module and shape files. The three refusals
+    /// Load an explicit set of module and shape files. The set refusals
     /// are here rather than in [`load`](Self::load) because they are about
     /// the *set*, and a caller that assembled its own file list is making
     /// the same claim about it that a directory does.
@@ -137,6 +142,9 @@ impl OntologyModel {
         let modules = model.import_order().map_err(LoadError::Imports)?;
         check_module_files(&modules, module_paths)?;
         check_shape_files(&modules, shape_paths)?;
+        if let Some(error) = model.refinement_closure_errors().into_iter().next() {
+            return Err(LoadError::Refinement(error));
+        }
         Ok(model)
     }
 }
@@ -598,6 +606,37 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("rename `pydantic.ttl` to `pyd.ttl`"), "{message}");
         assert!(message.contains("`vann:preferredNamespacePrefix`"), "{message}");
+    }
+
+    /// `ontology-modules` §1 as amended: a refinement points into its
+    /// module's imports. The same two modules load when `example` imports
+    /// `time` and are refused, naming both, when it does not.
+    #[test]
+    fn a_refinement_outside_the_import_closure_refuses_the_set() {
+        let example = |imports: &str| format!(
+            "<https://0k.computer/ontology/example> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n\
+             {imports}\
+             <https://0k.computer/ontology/example#needBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .\n\
+             <https://0k.computer/ontology/example#needBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/example> .\n\
+             <https://0k.computer/ontology/example#needBy> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <https://0k.computer/ontology/time#due> .\n",
+        );
+        let time = "<https://0k.computer/ontology/time> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n\
+             <https://0k.computer/ontology/time#due> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .\n\
+             <https://0k.computer/ontology/time#due> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/time> .\n";
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let licensed = tmp.path().join("licensed");
+        let imports = "<https://0k.computer/ontology/example> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/time> .\n";
+        scratch_modules(&licensed, &[("example", &example(imports)), ("time", time)]);
+        let model = OntologyModel::load(&licensed).expect("a refinement into an import loads");
+        let expansion = model.role_expansion().expect("expands");
+        assert_eq!(expansion.role_of("https://0k.computer/ontology/example#needBy"), Some("https://0k.computer/ontology/time#due"));
+
+        let unlicensed = tmp.path().join("unlicensed");
+        scratch_modules(&unlicensed, &[("example", &example("")), ("time", time)]);
+        let error = OntologyModel::load(&unlicensed).expect_err("a refinement outside the imports is refused");
+        assert!(matches!(&error, LoadError::Refinement(RefinementError::OutsideImports { .. })), "wrong error: {error}");
+        assert!(error.to_string().contains("but https://0k.computer/ontology/example does not import https://0k.computer/ontology/time"), "{error}");
     }
 
     #[test]

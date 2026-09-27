@@ -1,0 +1,57 @@
+#!/bin/sh
+# Package this repository's whole source closure for ONE release, as the asset
+# that rebuilds it with no network:
+#
+#   tools/release-vendor <tag> [output-dir]
+#
+# Writes <output-dir>/<asset> and <output-dir>/<asset>.sha256, where <asset> is
+# `x0k-folio-<tag>-vendor.tar.gz`: one directory, `x0k-folio-<tag>/`,
+# holding the tree committed at HEAD, every crate its Cargo.lock resolves —
+# registry and git dependencies alike — under `vendor/`, and a
+# `.cargo/config.toml` pointing cargo there instead of at any network source.
+# Unpacked anywhere, it builds offline:
+#
+#   tar -xzf x0k-folio-<tag>-vendor.tar.gz
+#   cd x0k-folio-<tag>
+#   cargo build --offline --locked --release
+#
+# Nothing here talks to a forge — publishing the asset is the caller's act. The
+# release workflow calls this once, beside the per-target archives; so can a
+# maintainer, by hand, from a clean checkout of the tag.
+set -eu
+tag="${1:-}"
+out="${2:-dist}"
+if [ -z "$tag" ]; then
+  echo "usage: tools/release-vendor <tag> [output-dir]" >&2
+  exit 2
+fi
+root="x0k-folio-$tag"
+asset="x0k-folio-$tag-vendor.tar.gz"
+stage="$out/.stage-vendor"
+rm -rf "$stage"
+mkdir -p "$stage" "$out"
+# The committed tree, not the working one: what is vendored is what the tag
+# holds, and a stray local file cannot ride into a release.
+git archive --format=tar --prefix="$root/" HEAD | tar -xf - -C "$stage"
+(
+  cd "$stage/$root"
+  mkdir -p .cargo
+  # `--locked` for the reason `tools/release-artifacts` uses it: the committed
+  # lockfile is what was audited, and the vendored set must be exactly it.
+  # `cargo vendor` prints the source replacement on stdout (`--quiet` drops
+  # it, so it is not passed). Appending keeps a `.cargo/config.toml` the
+  # repository already carries; one that itself replaces a source would
+  # conflict, and the first offline build says so.
+  cargo vendor --locked vendor >> .cargo/config.toml
+)
+(cd "$stage" && tar -czf "../$asset" "$root")
+rm -rf "$stage"
+(
+  cd "$out"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$asset" > "$asset.sha256"
+  else
+    shasum -a 256 "$asset" > "$asset.sha256"
+  fi
+)
+echo "$out/$asset"

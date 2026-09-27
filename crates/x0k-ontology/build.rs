@@ -68,6 +68,7 @@ fn emit_generated(model: &OntologyModel, module_paths: &[PathBuf], shape_paths: 
     emit_decision_predicates(&mut out, &decision_predicates);
     emit_classes(&mut out, &classes);
     emit_properties(&mut out, &properties);
+    emit_role_expansion(&mut out, model);
     for module in &modules {
         emit_module(&mut out, model, module);
     }
@@ -352,4 +353,25 @@ fn option_literal(value: Option<&str>) -> String {
     value
         .map(|value| format!("Some({value:?})"))
         .unwrap_or_else(|| "None".to_string())
+}
+
+fn emit_role_expansion(out: &mut String, model: &OntologyModel) {
+    let expansion = model.role_expansion().unwrap_or_else(|errors| {
+        let reasons: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        panic!("role expansion: {}", reasons.join("; "))
+    });
+    let compact = |iri: &str| model.compact(iri).unwrap_or_else(|| iri.to_string());
+    out.push_str(
+        "/// Each role of the `time` module with every predicate that reaches it\n\
+         /// through `rdfs:subPropertyOf`, the role included, as compact CURIEs.\n\
+         /// Empty when the build ships no `time` module.\n\
+         pub const ROLE_EXPANSION: &[(&str, &[&str])] = &[\n",
+    );
+    for (role, predicates) in expansion.roles() {
+        let mut members: Vec<String> = predicates.iter().map(|predicate| compact(predicate)).collect();
+        members.sort();
+        let members: Vec<String> = members.iter().map(|member| format!("{member:?}")).collect();
+        out.push_str(&format!("    ({:?}, &[{}]),\n", compact(role), members.join(", ")));
+    }
+    out.push_str("];\n\n");
 }
