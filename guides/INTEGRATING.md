@@ -29,9 +29,9 @@ is on your `PATH`. **Windows is not covered by the script**:
 take the `.zip` from [the release page](https://github.com/0k-dot-computer/x0k-folio/releases),
 or use `cargo install --git`, below.
 
-Run the commands in this guide from the repository root. To build from
-source instead — and to change the tool rather than use it — clone it and
-build the tangler:
+Run the commands in this guide from the root of your own project. To build
+from source instead — and to change the tool rather than use it — clone it
+and build the tangler:
 
 ```sh
 git clone https://github.com/0k-dot-computer/x0k-folio
@@ -45,8 +45,8 @@ grammars `x0k-syntax` and `tree-sitter-rust` compile included, and those
 were the whole cost. Over a 754-file documentation tree, `check docs
 --closed` takes about 2.3 s from the dev build and 0.7 s from the release
 one. Before 0.2.0 the dev build optimized nothing and the same check took
-37.96 s against 0.83 s, which a maintainer who followed the debug line this
-page used to give filed as a defect. In a step that runs on every push,
+37.96 s against 0.83 s, which an evaluation of this page's old debug build
+line reported as a defect. In a step that runs on every push,
 the remaining 3× is worth having, and `--release` costs about a minute more
 the first time and nothing after.
 
@@ -116,26 +116,20 @@ run --release -p x0k-tangle -- <verb>` is the same thing as the binary; from
 your own repository, call the binary by path or put `target/release` on your
 `PATH`. The commands below write `x0k-tangle` for either.
 
-Those verbs are one binary. The repository ships a second one, and the setup
-above does not build it: `x0k-folio-cli` is the query surface — it ingests a
-folder of typed documents into an embedded datalog store and answers questions
-across the whole set, where `check` reads one document at a time.
-
-```sh
-cargo build --release -p x0k-folio-cli
-```
-
-It is not on crates.io — its Dialog adapter depends on `dialog-db` by git
-revision, which the registry refuses — but `cargo install` takes a git
-source, so from anywhere:
+Those verbs are one binary. The repository ships a second one, and
+`install.sh` installs it too: `x0k-folio-cli` is the query surface — it
+ingests a folder of typed documents into an embedded datalog store and answers
+questions across the whole set, where `check` reads one document at a time.
+From a source checkout it is `cargo build --release -p x0k-folio-cli`. It is
+not on crates.io — its Dialog adapter depends on `dialog-db` by git revision,
+which the registry refuses — but `cargo install` takes a git source, so
+without the script and without a clone:
 
 ```sh
 cargo install --git https://github.com/0k-dot-computer/x0k-folio x0k-folio-cli
 ```
 
-That installs the `x0k-folio-cli` executable. The release binaries, and so
-`install.sh`, carry the same program. It has a section of its own, below;
-nothing before it needs the store.
+It has a section of its own, below; nothing before it needs the store.
 
 ## Typing your documents in place
 
@@ -156,10 +150,10 @@ x0k:
 ---
 ```
 
-`format` is always `folio/v1`. `id` is `x0k:<type>/<slug>`, and the `x0k:`
-scheme is the one limit worth knowing before you start: the parser admits no
-other scheme yet. That is where the format was born, not a claim on your
-document, and it is listed under what does not exist yet, below. `type` is
+`format` is always `folio/v1`. `id` is `<prefix>:<type>/<slug>`: `x0k:`
+works with nothing else loaded, and a prefix of your own takes one six-line
+module ([the smallest module of all](#the-smallest-module-of-all), below), so
+your documents need not carry ours. `type` is
 one of ten names the format knows — `commitment`, `architecture`, `design`
 and `publication` for a decision; `implementation` for a document that
 tangles code; `wiki` and `manuscript` for the rest; `seed`, `intent` and
@@ -167,7 +161,9 @@ tangles code; `wiki` and `manuscript` for the rest; `seed`, `intent` and
 loaded vocabulary module declares, spelled as the kebab-case of the class's
 local name**: a `ConceptPage` class in a module of yours is `type:
 concept-page` in the envelope, and neither `ConceptPage` nor `concept_page`
-is that name. Any other name is a defect. `status` is `proposed`, `accepted` or `superseded` for a
+is that name — which is also why `type: decision` works for a decision
+record: the shipped `document` module declares `Decision`. Any other name is
+a defect. `status` is `proposed`, `accepted` or `superseded` for a
 decision (`draft`, `stable` or `stale` for a wiki page) and may be left out.
 `summary` is optional and is the line a reader sees first.
 A `title:` of your own at the top level of the frontmatter — beside the
@@ -235,8 +231,8 @@ because the edges that leave a subset are mostly the ordinary edges into the
 rest of your own tree, and every one of them comes back as a defect:
 
 ```sh
-x0k-tangle check docs/concepts/strict_mode.md --closed
-docs/concepts/strict_mode.md: edge `informed_by` → `pyd:policy/version-policy` names no document under the paths scanned
+x0k-tangle check docs/concepts/retries.md --closed
+docs/concepts/retries.md: edge `informed_by` → `acme:policy/versioning` names no document under the paths scanned
 ```
 
 Nothing is wrong with that tree. `--closed` is a claim about a *set*, so the
@@ -261,7 +257,7 @@ makes it a defect that names the file:
 
 ```sh
 x0k-tangle check docs --closed --require-envelope
-docs/architecture-decisions/adr016-untyped.md: carries no folio/v1 envelope, so nothing in this set reads it
+docs/decisions/0016-untyped.md: carries no folio/v1 envelope, so nothing in this set reads it
 ```
 
 Leave the flag off for a directory you are still adopting; it is the same
@@ -357,20 +353,20 @@ projects it under the IRI your module declares, and `query --named edges` and
 A module that declares a namespace and **no classes and no predicates** is
 the cheapest way in, and it is the one to start with: it gives your project
 its own id prefix while your documents keep our classes and our predicates.
-Six lines, in `docs/.folio/jj.ttl`:
+Six lines, in `docs/.folio/acme.ttl`:
 
 ```turtle
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix vann: <http://purl.org/vocab/vann/> .
 
-<https://jj-vcs.github.io/vocabulary> a owl:Ontology ;
-    vann:preferredNamespacePrefix "jj" ;
-    vann:preferredNamespaceUri "https://jj-vcs.github.io/ontology#" .
+<https://example.com/acme/vocabulary> a owl:Ontology ;
+    vann:preferredNamespacePrefix "acme" ;
+    vann:preferredNamespaceUri "https://example.com/acme/ontology#" .
 ```
 
-Now `id: jj:design/secure-config` with `type: design` and a
+Now `id: acme:design/retry-budget` with `type: design` and a
 `superseded_by:` edge checks clean under `--vocabulary docs/.folio`, ingests,
-and answers `--named status` and `--named superseded` with `jj:`-shaped ids —
+and answers `--named status` and `--named superseded` with `acme:`-shaped ids —
 your prefix, our vocabulary. Without the module the same document is refused
 by name, and the alternative people reach for instead is to write their
 documents under *our* prefix, which reads as a mistake to every contributor

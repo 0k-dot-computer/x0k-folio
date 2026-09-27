@@ -4,9 +4,24 @@
   <img alt="folio" src="assets/diagrams/plate-light.svg">
 </picture>
 
-Folio is a Markdown format and a set of tools for writing a program inside the
-document that explains it. The code blocks in the document are where the code
-lives; the source files are generated from them.
+Folio turns a folder of Markdown into a typed, checked graph: documents
+declare what they are and how they relate, own or quote code, and can be
+queried and published as a set.
+
+Where to start depends on what your documents already are:
+
+- **Decision records, design docs, an ADR directory.** Give each one a header
+  and let [`check`](#typed-documents) fail CI when a header names a document
+  that is not there, such as after an unfinished rename; `query` lists what is
+  current and what replaced what.
+- **Docs that quote code.** [Mirror](#quote-code-you-already-have) the quoted
+  symbols, so a page that quotes a function fails CI when the function
+  changes. Your code stays where it is.
+- **Code whose explanation matters as much as the code.** Let the document
+  [own it](#a-document-that-owns-its-code): its code blocks are the source, and
+  the files are generated from them.
+
+## A document that owns its code
 
 Here is a whole document, `docs/occlusion.md`:
 
@@ -38,10 +53,10 @@ export declare function occlusion(samples: number[]): number;
 ```
 ````
 
-Then:
+Then, with the tools [installed](#install):
 
 ```sh
-cargo run -p x0k-tangle -- tangle docs/occlusion.md --workspace .
+x0k-tangle tangle docs/occlusion.md --workspace .
 ```
 
 **Tangling** is that step — collecting a document's code blocks into source
@@ -52,17 +67,18 @@ file.
 
 One document, two files, two languages. The declarations and the code they
 declare cannot fall out of step, because there is one place to edit them and
-the other file is output. If you keep hand-written `.d.ts` files beside your
-`.js` and watch them drift, that is what this is for; nothing about it is
-specific to TypeScript, and nothing about it is specific to Rust either — the
-tools are Rust, the documents are whatever you write.
+the other file is output. Nothing about it is specific to TypeScript, and
+nothing about it is specific to Rust either — the tools are Rust, the
+documents are whatever you write.
 
 Chunks also splice: a line reading `<<average>>` inside another block pastes
 the `average` block in there, at the reference's own indentation. So you choose
 the order that explains the program, and the compiler still receives the order
 it needs.
+
 **Weaving** is the other direction — the same document rendered as a page to
-read.
+read, each chunk reference a link to its definition:
+`x0k-tangle weave docs/occlusion.md --output-dir site`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/derive-dark.svg">
@@ -73,130 +89,133 @@ Commit the document, the sidecar and the generated files together, and have CI
 re-tangle and fail if the tree changes. That check is the whole reason the
 prose stays true to the code; without it you have comments again.
 
-[guides/INTEGRATING.md](guides/INTEGRATING.md) is the longer route: the same
-example for a Rust crate, how to point a document at code you have already
-written instead of rewriting it, and — in a section of its own — what these
-tools do not do yet.
+## Quote code you already have
+
+A document can quote code it does not own. Name the file and the symbol, and
+leave the block empty:
+
+````markdown
+The budget refills on every successful call:
+
+```rust {#refill from="src/budget.rs" symbol="Budget::refill"}
+```
+````
+
+From the project root, `x0k-tangle sync docs` fills the block from the source,
+and `x0k-tangle check docs` fails once the two differ, so a page cannot go on
+showing code the tree no longer has. A mirror needs no header: it works in any
+Markdown file. Symbols resolve in
+Rust, TypeScript, JavaScript and TSX, Python, and Julia, and a mirror copies
+the whole item it names. [Starting from code you already have](guides/INTEGRATING.md#starting-from-code-you-already-have)
+covers methods, decorated items and the other path forms.
+
+## Install
+
+```sh
+curl -fsSL https://0k.computer/folio/install.sh | sh
+```
+
+This installs `x0k-tangle` and `x0k-folio-cli` for Linux or macOS (x86_64 or
+arm64) from [the latest release](https://github.com/0k-dot-computer/x0k-folio/releases),
+checking each archive against the release's `SHA256SUMS` before anything is
+written. The address is this project's own domain and redirects to the
+release's `install.sh`; to do the same by hand, download your platform's
+archive and `SHA256SUMS` from the release page and run `shasum -a 256 -c`.
+On Windows, take the `.zip` from the release page. With a Rust toolchain,
+`cargo install x0k-tangle` builds the tangler from crates.io instead.
+[Setup](guides/INTEGRATING.md#setup) covers pinning a version, verifying build
+provenance, and building from source.
 
 ## Typed documents
 
-Each document has a small YAML header that gives it an identity, a kind,
-and named relationships to other documents. An implementation can name the
-design it follows; a design can name the decision that supports it. The
-checker validates this metadata against the vocabulary you select.
+Each document has a small YAML header that gives it an identity, a kind, and
+named relationships to other documents. An implementation can name the design
+it follows; a design can name the decision that supports it; a decision can
+name the one that replaced it:
 
-An edge whose target is not among the documents scanned is a note, not a
-failure, because a collection is usually part of something larger. When it
-is not — a docs tree where every id an edge can name is in the tree —
-`x0k-tangle check <dir> --closed` makes the same finding fail, which is
-what turns the checker into a CI gate against renames nobody finished.
+```yaml
+---
+x0k:
+  format: folio/v1
+  id: acme:decision/retry-budget
+  type: decision
+  status: superseded
+  edges:
+    superseded_by:
+      - acme:decision/retry-budget-v2
+---
+```
 
-Once a set is typed, `x0k-folio-cli` answers questions across all of it:
-`query --named status` lists every document with its status, and
-`query --named superseded` names each dead decision and what replaced it,
-neither of them needing a query written by hand.
+`check` validates headers against the shipped vocabulary, or yours:
+`--vocabulary <dir>` adds your own modules, and
+[a six-line module](guides/INTEGRATING.md#the-smallest-module-of-all) gives
+your documents their own id prefix, like `acme:` here. What a typed
+collection gives you, and the command behind each:
 
-A document can also quote code it does not own. A block that names a source
-file and a symbol is a **mirror**: `x0k-tangle sync` fills it from the source,
-and `check` fails when the two have parted, so a page that shows a signature
-cannot go on showing the old one. Mirroring is safe for a symbol whose own
-documentation contains a fenced example — a Python docstring, most often —
-which it was not before 0.1.1: the fence the writer emitted could be closed by
-the body it was quoting, and each `sync` re-read a little more of the document
-into the chunk and wrote it back, growing the file every run.
+| What | Command | Fails when |
+|---|---|---|
+| Check headers and links against the vocabulary | `x0k-tangle check <dir>` | a type or edge the vocabulary does not declare; in a class it describes, an undeclared field or a literal its datatype contradicts |
+| Gate CI on a closed set | `x0k-tangle check <dir> --closed` | an edge names a document that is not in the set, such as a rename nobody finished |
+| Keep generated code in step | `x0k-tangle tangle <doc>`, then `git diff --exit-code` | a generated file no longer matches its document |
+| Keep quoted code current | `x0k-tangle sync <path…>`, then `check` | a mirror no longer matches the source it quotes |
+| Ask across the set | `x0k-folio-cli ingest`, then `query --named status` or `--named superseded` | — (lists every document's status, or each replaced decision and what replaced it, read from `superseded_by` edges) |
 
-The supplied vocabulary describes documents, software, and their
-relationships. You can extend it, replace it, or define a vocabulary
-inside your documents.
-
-For example, an **affordance** is one concept in the supplied vocabulary:
-it describes something a person or tool can do.
+Out of the box an edge to a document outside the scanned folder is a note,
+not a failure, because a collection is usually part of something larger;
+`--closed` is for the tree that is the whole set. The guide covers each row:
+[typing documents](guides/INTEGRATING.md#typing-your-documents-in-place),
+[quoting code you already have](guides/INTEGRATING.md#starting-from-code-you-already-have),
+[asking questions](guides/INTEGRATING.md#asking-the-collection-a-question).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/triangle-dark.svg">
   <img alt="an implementation is constrained by an architecture and implements a design; architecture supports design; the design document declares an affordance" src="assets/diagrams/triangle-light.svg">
 </picture>
 
-## Concepts and instances
+## Try it
 
-A concept names a kind of thing; an instance is a particular thing of that
-kind. The supplied vocabulary’s [Affordance definition](crates/x0k-ontology/ontology/modules/software.ttl)
-includes this Turtle declaration:
+With the tools installed, write the document above and run the tangle
+command under it, or [add a header to one document you already have](guides/INTEGRATING.md#typing-your-documents-in-place)
+and check the folder it is in:
 
-```turtle
-@prefix x0k: <https://0k.computer/ontology#> .
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-
-x0k:Affordance a owl:Class ;
-    rdfs:label "Affordance" ;
-    rdfs:isDefinedBy <https://0k.computer/ontology/software> .
+```sh
+x0k-tangle check docs
 ```
 
-A document can carry definitions in a `turtle folio:ontology` block.
-Folio does not require every collection to use the Affordance concept:
-you can define the concepts your collection needs.
+A file with no header is left out of the header checks and counted — its
+mirrors and chunks are still checked — so a folder can adopt one document at
+a time.
 
-“Query the documents” is one instance of Affordance. Its design document
-declares it in a `yaml x0k:affordance` block:
+If you evaluate tools with an agent, this prompt starts it in the right
+places:
 
-```yaml
-id: x0k:affordance/query_the_documents
-actors: [human, ai_agent]
-edges:
-  enabledBy:
-    - x0k:software-module/x0k-folio-cli
-    - x0k:software-module/x0k-folio-dialog
+```
+Read https://github.com/0k-dot-computer/x0k-folio, starting with README.md and
+guides/INTEGRATING.md. Look at my project. Where would typed documents or code
+generated from documents be useful? Name a specific place to start, show
+a small example, and explain the cost of keeping it up to date.
 ```
 
-The heading names the affordance; the surrounding prose describes it.
-Definitions and instances can share a document or live in separate
-documents in the collection.
+## Status
 
-The **Query the documents** entry under [What you can do with this](#what-you-can-do-with-this)
-is a rendered view of that instance. The repository renderer turns its
-heading, description, declaration, and icon into a linked entry. Its
-affordance page adds the available software and interface information.
-The surface and theme determine the presentation; custom concepts without
-a dedicated renderer receive a readable default.
-
-A collection with a vocabulary of its own ships here:
-[`crates/x0k-folio-cli/examples/papers/`](crates/x0k-folio-cli/examples/papers)
-is three documents, one of which declares a `paper:` namespace and a `Paper`
-class in a `turtle folio:ontology` block while the other two are papers citing
-each other. Copy it to start your own.
-
-[Explore the supplied vocabulary](assets/diagrams/vocabulary.svg).
-The diagram is generated from the modules shipped here.
-
-## Publications
-
-A **publication** selects documents and code from a larger collection and
-produces a standalone repository. It records their origins in
-`PROVENANCE.json` and refuses dependencies on crates outside the selection.
-
-This repository was produced that way. It includes the tool that produced it,
-together with that tool's source documents. The generated Rust is committed,
-so you can build a fresh clone with `cargo`. The documents in
-`implementation/` generate the code in `crates/`. Setup and integration
-guides live in `guides/`.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/circle-dark.svg">
-  <img alt="the private corpus publishes this repository, which ships the tangler that projected it" src="assets/diagrams/circle-light.svg">
-</picture>
-
-## Why now
-
-An agent can read the explanation while changing the code it describes,
-and help maintain both. The document gives the next person or agent a place
-to recover the reasoning behind the program.
-
-CI checks that generated files match the document's code blocks. The
-explanation still needs a reader's judgment.
-
-Folio builds on literate programming, typed document graphs, and tools for
-publishing part of a repository. [Background and prior work](IMPLEMENTATION.md#lineage).
+- **Releases:** [GitHub releases](https://github.com/0k-dot-computer/x0k-folio/releases),
+  each with platform binaries, `SHA256SUMS`, build provenance and a source
+  tarball that rebuilds offline; what changed is in [`CHANGELOG.md`](CHANGELOG.md).
+- **crates.io:** `x0k-tangle` and the library crates it builds on.
+  `x0k-folio-cli` is not on crates.io, because its storage adapter depends on
+  [Dialog](https://github.com/dialog-db/dialog-db) by git revision; it ships
+  in the release binaries and installs with `cargo install --git`.
+- **Platforms:** the install script covers Linux and macOS on x86_64 and arm64;
+  Windows has a release `.zip`. Building from source needs Rust 1.89 or later
+  and a C compiler, for the tree-sitter grammars.
+- **Stability:** before 1.0, a minor version may change the library crates'
+  APIs; the changelog names each such change.
+- **Contributing:** issues and pull requests go to this repository. Most files
+  here are generated from Markdown sources that are edited upstream, so a
+  change to one of them is applied there and returns with the next release;
+  [`guides/CONTRIBUTING.md`](guides/CONTRIBUTING.md) says which files are
+  edited here directly.
+- **Not done yet:** [what these tools do not do yet](guides/INTEGRATING.md#what-does-not-exist-yet).
 
 ## What you can do with this
 
@@ -228,49 +247,32 @@ publishing part of a repository. [Background and prior work](IMPLEMENTATION.md#l
 
   <p>Check an icon's geometry and strokes against the shared drawing rules.</p>
 
-## Try it
+## Vocabularies and publications
 
-Ask an agent to assess where Folio would help in your project:
+The vocabulary is RDF. Its concepts are OWL classes, and a document can define
+concepts of its own in a `turtle folio:ontology` block and describe particular
+things with them in typed blocks.
+[`crates/x0k-folio-cli/examples/papers/`](crates/x0k-folio-cli/examples/papers)
+is a small collection that does both — a `paper:` namespace and a `Paper`
+class, and two papers citing each other — to copy as a start.
+[Explore the supplied vocabulary](assets/diagrams/vocabulary.svg).
 
-```
-Read https://github.com/0k-dot-computer/x0k-folio, including AGENTS.md and
-guides/INTEGRATING.md. Look at my project. Where would typed documents or code
-generated from documents be useful? Name a specific place to start, show
-a small example, and explain the cost of keeping it up to date.
-```
+A **publication** selects documents and code from a larger collection and
+produces a standalone repository, recording their origins in
+`PROVENANCE.json`. This repository is one: it carries the tool that produced
+it, with that tool's source documents in `implementation/` generating the
+code in `crates/`.
 
-To try it yourself, write the document above and run the tangle command under
-it, or [add a header to one document you already have](guides/INTEGRATING.md)
-and run `cargo run -p x0k-tangle -- check <your folder>` from this checkout.
-
-## What is in this repository
-
-Both the literate sources and their tangled `@generated` outputs are
-committed, and that is a bootstrap requirement rather than redundancy: the
-tangler that regenerates the code is itself a crate here, so a fresh clone has
-no `x0k-tangle` until it builds one. The committed projections are what break
-that circle. An integration test pins the pairing — a projected `.md` source
-with no committed output is a projection failure.
-
-Everything outside `overlay:` is regenerated wholesale from the corpus this
-repository is projected from, so a hand edit to any other file is overwritten
-on the next publish. The overlay is the declared exception: paths this public
-side owns — currently `CONTRIBUTING.md`, under `guides/` — which re-projection preserves
-exactly as found and which never flow back. The resolved list is recorded in
-`PROVENANCE.json`, so both directions read the same policy.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/circle-dark.svg">
+  <img alt="the private corpus publishes this repository, which ships the tangler that projected it" src="assets/diagrams/circle-light.svg">
+</picture>
 
 ## License
 
-MIT — [`LICENSE-MIT`](LICENSE-MIT), Copyright (c) 2026 0k.computer. Single-license
-on purpose, where most Rust crates carry the `MIT OR Apache-2.0` dual license:
-this repository is a projection, and the license it is released under is
-declared once, in the publication document it is projected from.
-
-Dependencies keep their own terms — most are `MIT OR Apache-2.0`, `similar` is
-Apache-2.0 only, and Dialog is MPL-2.0 from a pinned revision. MIT covers this
-repository's code and does not replace them; keep their notices when you
-distribute binaries. [The dependency licenses](IMPLEMENTATION.md#license), and
-`cargo tree --format '{p} {l}'` for the resolved set.
+MIT ([`LICENSE-MIT`](LICENSE-MIT)). Dependencies keep their own terms,
+listed with the [implementation map](IMPLEMENTATION.md#license).
 
 [Implementation](IMPLEMENTATION.md) · [Integration](guides/INTEGRATING.md) ·
-[Contributing](guides/CONTRIBUTING.md) · [MIT license](LICENSE-MIT)
+[Contributing](guides/CONTRIBUTING.md) · [Background and prior work](IMPLEMENTATION.md#lineage) ·
+[MIT license](LICENSE-MIT)

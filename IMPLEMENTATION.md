@@ -220,6 +220,13 @@ against the `.md` document, and it is received into the corpus and returns here
 on the next projection. An edit to a generated file is refused, naming the
 document and chunk that produce it.
 
+Both the literate sources and their generated outputs are committed, and that
+is a bootstrap requirement rather than redundancy: the tangler that
+regenerates the code is itself a crate here, so a fresh clone has no
+`x0k-tangle` until it builds one, and the committed outputs are what break
+that circle. An integration test pins the pairing: a projected `.md` source
+with no committed output is a projection failure.
+
 The exceptions are **overlay** paths — owned on this side and preserved exactly
 across projections: the contributing guide and eight seeded diagrams.
 `PROVENANCE.json` lists the

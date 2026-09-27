@@ -7,9 +7,13 @@ Files marked `@generated` are derived from Markdown documents under
 `implementation/`; edit those documents. Files without that
 header are edited directly. This file is a decision procedure. Find the
 branch for what you were asked to do, read what it names, run what it names.
-Every verb below is in this checkout as `cargo run -p x0k-tangle -- <verb>`
-(`tangle`, `check`, `affordances`, `weave`, `sync`), and `x0k-tangle --help`
-wins where this file and the binary disagree.
+Every verb below (`tangle`, `check`, `affordances`, `weave`, `sync`) is
+`x0k-tangle <verb>` where the tools are installed, and
+`cargo run -p x0k-tangle -- <verb>` in this checkout without them;
+`x0k-tangle --help` wins where this file and the binary disagree. To
+re-tangle this repository's own documents, always use the checkout's build:
+it is the tangler this source describes, and an installed release may be
+older.
 
 ## If you are asked to change code
 
@@ -56,7 +60,7 @@ one `rdfs:comment` per predicate). The integration guide's example envelope is t
 shape.
 
 ```sh
-cargo run -p x0k-tangle -- check <dir>
+x0k-tangle check <dir>
 ```
 
 Read the result in its two categories and report both. A **defect** exits
@@ -89,7 +93,7 @@ that `check` connects:
    edge.
 
 Then `check <dir>` over the documents involved, and
-`cargo run -p x0k-tangle -- affordances <dir>` prints every declaration as
+`x0k-tangle affordances <dir>` prints every declaration as
 JSON — id, title, description, the document it is defined in, its facts by
 predicate — for whatever consumes it next.
 
@@ -103,7 +107,7 @@ than a term: each chapter group in IMPLEMENTATION.md carries a *rests on*
 line naming the concept pages its chapters presuppose. The ones that ship are
 under `background/`; a bare name with no link is a page the corpus has not
 published yet — say that, rather than supplying its content. To read a
-chapter as a page: `cargo run -p x0k-tangle -- weave <doc> --output-dir <dir>`.
+chapter as a page: `x0k-tangle weave <doc> --output-dir <dir>`.
 
 ## What is refused
 

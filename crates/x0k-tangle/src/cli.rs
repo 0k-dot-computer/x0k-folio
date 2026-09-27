@@ -39,7 +39,7 @@ impl Host {
     pub const PROTOCOL: Host = Host {
         name: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
-        about: "Literate programming tangler with bidirectional sync",
+        about: "Literate programming tangler: documents to code, and code quoted back into documents",
         registry: <PipelineRegistry as Default>::default,
         root_env: None,
         collisions_fatal: true,

@@ -3,7 +3,7 @@
 name = "x0k-tangle"
 version = "0.2.0"
 edition = { workspace = true }
-description = "Literate programming tangler/weaver with bidirectional sync. Extracts compilable source from folio/v1 documents and reconciles edits from either side."
+description = "Literate programming tangler and weaver for folio/v1 Markdown: generates source from a document's code blocks, fills quoted-code blocks from existing source, and checks both, and the documents' typed headers, against the tree."
 license = "MIT"
 keywords = ["literate-programming", "tangle", "markdown", "codegen", "documentation"]
 categories = ["development-tools", "development-tools::build-utils", "command-line-utilities", "text-processing"]

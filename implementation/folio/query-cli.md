@@ -762,7 +762,7 @@ than to none. A caller pinned to 0.1.0 gets none of that, and the CHANGELOG's
 name = "x0k-folio-cli"
 version = "0.2.0"
 # Not on crates.io: depends on `x0k-folio-dialog`, which cannot be
-# published. The binary ships in the GitHub release and the npm wrapper.
+# published. The binary ships in the GitHub release, which the install script installs.
 publish = false
 edition = { workspace = true }
 license = "MIT"

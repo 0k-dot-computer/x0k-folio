@@ -548,14 +548,16 @@ mod tests {
 
     #[test]
     fn proposal_spellings_are_pinned() {
-        // Three subsystems' producers write these twenty-four and one fold
+        // Three subsystems' producers write these thirty-three and one fold
         // reads them (`x0k:implementation/ontology/proposal`), so a renamed
         // field is a wire change even when every caller still compiles. Read
         // off `TERMS`, not `proposal::terms::*`, so a publication compiling a
-        // subset still builds; eighteen are datatype properties and reach
+        // subset still builds; twenty-five are datatype properties and reach
         // neither `CLASSES` nor `OBJECT_PROPERTIES`. `SETTLER` and
         // `AUTHORITY` are deliberately absent: a disposition borrows them
-        // from `settlement` rather than declaring its own.
+        // from `settlement` rather than declaring its own. The `outcome-*`
+        // terms are an execution outcome's, the host's advisory report of
+        // how an admitted call ended, which only triage's claims set reads.
         let Some(proposal) = MODULE_TABLES.iter().find(|t| t.name == "proposal") else {
             return;
         };
@@ -574,7 +576,16 @@ mod tests {
                 "x0kproposal:disposition-seq",
                 "x0kproposal:disposition-until",
                 "x0kproposal:evidence",
+                "x0kproposal:ExecutionOutcome",
                 "x0kproposal:kind",
+                "x0kproposal:outcome-at",
+                "x0kproposal:outcome-authority",
+                "x0kproposal:outcome-detail",
+                "x0kproposal:outcome-kind",
+                "x0kproposal:outcome-lane",
+                "x0kproposal:outcome-proposal",
+                "x0kproposal:outcome-receipt",
+                "x0kproposal:outcome-seq",
                 "x0kproposal:Proposal",
                 "x0kproposal:proposed-at",
                 "x0kproposal:proposer",

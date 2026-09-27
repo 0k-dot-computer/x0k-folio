@@ -616,7 +616,7 @@ impl Host {
     pub const PROTOCOL: Host = Host {
         name: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
-        about: "Literate programming tangler with bidirectional sync",
+        about: "Literate programming tangler: documents to code, and code quoted back into documents",
         registry: <PipelineRegistry as Default>::default,
         root_env: None,
         collisions_fatal: true,
@@ -3898,7 +3898,7 @@ The manifest is a complete chunk so repository projection can carry its public f
 name = "x0k-tangle"
 version = "0.2.0"
 edition = { workspace = true }
-description = "Literate programming tangler/weaver with bidirectional sync. Extracts compilable source from folio/v1 documents and reconciles edits from either side."
+description = "Literate programming tangler and weaver for folio/v1 Markdown: generates source from a document's code blocks, fills quoted-code blocks from existing source, and checks both, and the documents' typed headers, against the tree."
 license = "MIT"
 keywords = ["literate-programming", "tangle", "markdown", "codegen", "documentation"]
 categories = ["development-tools", "development-tools::build-utils", "command-line-utilities", "text-processing"]
