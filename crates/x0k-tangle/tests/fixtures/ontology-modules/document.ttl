@@ -3,7 +3,7 @@
 # Module: document
 
 <https://0k.computer/ontology#Document> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
-<https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#comment> "A folio/v1 document: an envelope, a body, and typed edges to other documents." .
+<https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#comment> "A folio document: a header, a body, and typed edges to other documents." .
 <https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#label> "Document" .
 <https://0k.computer/ontology#Document> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Concept> .

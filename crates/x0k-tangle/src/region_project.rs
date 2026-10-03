@@ -7,8 +7,8 @@
 //! `tangle_weave_region` MCP tool so the two surfaces behave identically:
 //!
 //! 1. Parse the publication decision doc into a [`RegionInput`]
-//!    ([`parse_publication_region`]) — resolving its `publishes:` edge to
-//!    member files with the shared envelope parser from `x0k-folio`.
+//!    ([`parse_publication_region`]) — resolving its `x0k:publishes` edge
+//!    to member files with the shared header parser from `x0k-folio`.
 //! 2. Call [`weave_region`].
 //! 3. Write each [`ArtifactFile`](crate::ArtifactFile).
 //! 4. (Unless `no_motifs`, and only with the `motifs` feature) content-address
@@ -333,8 +333,9 @@ impl CorpusLayout {
     }
 }
 
-/// Resolve a publication doc into a [`RegionInput`]: read its `publishes:`
-/// edge with the shared envelope parser and map each member URI to its
+/// Resolve a publication doc into a [`RegionInput`]: read its
+/// `x0k:publishes` edge with the shared header parser and map each member
+/// URI to its
 /// file. Member sources are read here (the pure weaver takes pre-read
 /// content).
 pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<RegionInput> {
@@ -343,7 +344,7 @@ pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<Regio
     let layout = CorpusLayout::read(workspace);
 
     let (env, _body) =
-        parse_envelope(content).map_err(|e| anyhow!("not a folio/v1 document: {e:?}"))?;
+        parse_envelope(content).map_err(|e| anyhow!("the publication's header does not read: {e}"))?;
     if env.doc_type != DocType::Publication {
         return Err(anyhow!(
             "document is not a publication (type is `{}`)",
@@ -351,15 +352,14 @@ pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<Regio
         ));
     }
 
-    let member_uris: Vec<String> = env.edges.get("publishes").cloned().unwrap_or_default();
+    let member_uris: Vec<String> = env.edges.get("x0k:publishes").cloned().unwrap_or_default();
     if member_uris.is_empty() {
-        return Err(anyhow!("publication has an empty `publishes` membership"));
+        return Err(anyhow!("publication has an empty `x0k:publishes` membership"));
     }
 
     let entry_point_uri = env
         .edges
-        .get("entryPoint")
-        .or_else(|| env.edges.get("entry_point"))
+        .get("x0k:entryPoint")
         .and_then(|v| v.first().cloned())
         .or_else(|| {
             if member_uris.len() == 1 {
@@ -370,7 +370,7 @@ pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<Regio
         })
         .ok_or_else(|| {
             anyhow!(
-                "publication has no `entryPoint` and {} members; entry point is ambiguous",
+                "publication has no `x0k:entryPoint` and {} members; entry point is ambiguous",
                 member_uris.len()
             )
         })?;

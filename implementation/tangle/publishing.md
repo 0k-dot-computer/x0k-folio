@@ -1,26 +1,15 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/publishing
-  type: implementation
-  status: draft
-  summary: The stages between a repository-shaped artifact and a public one, arranged so everything reversible runs by default and the irreversible acts — `cargo publish`, a push to a public remote — sit behind one explicit flag.
-  concerns:
-  - tangle
-  - publication
-  - publishing
-  - crates-io
-  - git
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/publish_repo.rs
-  edges:
-    implements:
-    - x0k:design/publish-a-region-as-a-repository
-    cites:
-    - x0k:implementation/folio/colophon
----
 # Publishing a projected repository
+
+```turtle folio:document
+implementation:tangle\/publishing a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The stages between a repository-shaped artifact and a public one, arranged so everything reversible runs by default and the irreversible acts — `cargo publish`, a push to a public remote — sit behind one explicit flag." ;
+    x0k:concerns "tangle", "publication", "publishing", "crates-io", "git" ;
+    x0k:cites implementation:folio\/colophon ;
+    x0k:implements design:publish-a-region-as-a-repository ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/publish_repo.rs" .
+```
 
 Projection (`region_repo`) makes a repository-shaped *artifact*;
 publishing makes it *public*. The two are different acts with different
@@ -64,7 +53,7 @@ four stages:
    `git push` to the remote the publication doc
    names. **Operator-only:** both run solely under `really: true`; the
    default invocation reports what *would* happen and stops. The remote comes from the doc's
-   `publishedOn:` edge (`x0k:surface/<name>`) resolved through
+   `x0k:publishedOn` edge (`x0k:surface/<name>`) resolved through
    `config/x0k-tangle.toml`'s `[publish.remotes]` table — the doc names
    the surface, the config owns the URL, and a missing entry is a
    reported gap, not an error.
@@ -87,7 +76,7 @@ projector it drives) is the right home.
 //! one `cargo publish --dry-run --workspace` excluding those, and —
 //! only under `really: true` — runs the real `cargo publish` and pushes
 //! the projected git history to the remote the publication doc's
-//! `publishedOn:` edge names (resolved via `[publish.remotes]` in
+//! `x0k:publishedOn` edge names (resolved via `[publish.remotes]` in
 //! `config/x0k-tangle.toml`). The default run stops after the rehearsal
 //! and reports; nothing outward-facing happens without the flag.
 
@@ -108,7 +97,7 @@ use x0k_folio::colophon::parse_envelope;
 #[derive(Debug, Clone, Default)]
 pub struct PublishRepoOptions {
     /// Explicit SPDX license override, passed through to the projection.
-    /// `None` keeps the publication doc's `license:` authoritative.
+    /// `None` keeps the publication doc's `x0k:license` authoritative.
     pub license: Option<String>,
     /// Emit the `.github/workflows/` thin wrappers in the projection.
     pub emit_github: bool,
@@ -153,7 +142,7 @@ pub struct PublishRepoReport {
     /// projection did not build or test green and the rehearsal never
     /// ran, or when nothing is pending and there was nothing to rehearse.
     pub rehearsal: Option<PublishRehearsal>,
-    /// The remote URL the `publishedOn:` surface resolved to, when
+    /// The remote URL the `x0k:publishedOn` surface resolved to, when
     /// configured.
     pub remote: Option<String>,
     /// The surface URI the publication doc names (e.g.
@@ -694,7 +683,7 @@ fn cargo_in(dir: &Path, target_dir: &Path, args: &[&str]) -> Result<(bool, Strin
 }
 ```
 
-The remote resolution reads the publication doc's `publishedOn:` edge —
+The remote resolution reads the publication doc's `x0k:publishedOn` edge —
 a surface URI like `x0k:surface/github` — and looks its short name up in
 `config/x0k-tangle.toml`:
 
@@ -717,7 +706,7 @@ not hold.
 <a name="chunk-resolve-remote"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#resolve-remote`</sub>
 
 ```rust {#resolve-remote}
-/// Resolve the publication's `publishedOn:` surface to a configured git
+/// Resolve the publication's `x0k:publishedOn` surface to a configured git
 /// remote URL. Returns `(surface_uri, url)` — either may be `None` (no
 /// edge; no config entry). Missing config is a reported gap, not an
 /// error: the dry-run stages are useful without a remote.
@@ -727,7 +716,7 @@ fn resolve_remote(region_doc: &Path, workspace: &Path) -> Result<(Option<String>
     let (env, _) = parse_envelope(&content).map_err(|e| anyhow!("parsing publication: {e}"))?;
     let Some(surface) = env
         .edges
-        .get("publishedOn")
+        .get("x0k:publishedOn")
         .and_then(|v| v.first())
         .cloned()
     else {
@@ -1014,7 +1003,7 @@ mod tests {
         let doc_path = tmp.path().join("pub.md");
         std::fs::write(
             &doc_path,
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:publication/x\n  type: publication\n  edges:\n    publishedOn:\n      - x0k:surface/github\n---\nbody\n",
+            "# X\n\n```turtle folio:document\npublication:x a x0k:Publication ;\n    x0k:publishedOn surface:github .\n```\n\nbody\n",
         )
         .unwrap();
         // No config: surface resolves, remote does not.

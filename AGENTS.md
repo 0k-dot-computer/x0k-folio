@@ -51,12 +51,16 @@ licence to skip the document. The syntax and its limits are under
 This applies to the person's own documents, in their own repository, not only
 to this one: `check` reads any directory of Markdown. It needs a built
 `x0k-tangle` — `guides/INTEGRATING.md` § "Setup" is the build, and its § "Typing
-your documents in place" says what each envelope line means and which
-predicates `edges` admits. Write the envelope by hand — no verb writes it for
-you: `format: folio/v1`, an `id` using a namespace declared by the selected
-vocabulary, a declared `type`, a `status`, and `edges` whose predicates
-the `document` module declares (`crates/x0k-ontology/ontology/modules/document.ttl`,
-one `rdfs:comment` per predicate). The integration guide's example envelope is the
+your documents in place" says what each header line means and which
+predicates an edge may use. Write the header by hand — no verb writes it for
+you: one fenced block marked `turtle folio:document`, directly under the
+document's `# ` title, whose one subject is the document's id
+(`design:retry-budget`, or a prefix the selected vocabulary declares), then
+`a` and a class that vocabulary declares (`x0k:Design`), an `x0k:status`,
+and edges whose predicates the `document` module declares, spelled as it
+spells them (`x0k:refinedBy`; `crates/x0k-ontology/ontology/modules/document.ttl`,
+one `rdfs:comment` per predicate). The prefixes are predeclared, so the block
+needs no `@prefix` line. The integration guide's example header is the
 shape.
 
 ```sh
@@ -64,9 +68,9 @@ x0k-tangle check <dir>
 ```
 
 Read the result in its two categories and report both. A **defect** exits
-non-zero: an envelope that does not parse, an id without its scheme, a
-predicate no shipped module declares. A **note** does not: an edge whose
-target names no document under the path. Tell the person which edges dangle
+non-zero: a header that does not parse, a class or a prefix the vocabulary
+does not declare, a predicate no shipped module declares. A **note** does
+not: an edge whose target names no document under the path. Tell the person which edges dangle
 and which document each names — a dangling edge is the next document to type,
 not a line to delete. Nothing about their project moves.
 
@@ -76,14 +80,17 @@ With the supplied software vocabulary, a capability uses three declarations
 that `check` connects:
 
 1. **The affordance**, in the design document that owns the experience: a
-   fenced block whose info string is `yaml x0k:affordance`, under a heading
-   that is its title, after prose that says what someone can now do — `id:
-   x0k:affordance/<snake_case>`, `actors: [human, ai_agent]`, and
-   `edges.enabledBy` naming the modules that make it possible.
-2. **The signifier**, where the face lives — not beside the claim: a fenced
-   block whose info string is `yaml x0k:signifier`, in the chapter that holds
-   the CLI verb or the library function, with `signifies:` the affordance and
-   `presentedOn:` the surface (`x0k:surface/cli`). The `### x0k-tangle check`
+   `turtle folio:graph` block under a heading that is its title, after prose
+   that says what someone can now do, stating one subject —
+   `affordance:<snake_case> a x0k:Affordance`, `x0k:claimedFor
+   x0k:actor\/human, x0k:actor\/ai_agent`, and `x0k:enabledBy` naming the
+   modules that make it possible. The block states no title; the heading is
+   the title and the prose the description.
+2. **The signifier**, where the face lives — not beside the claim: a
+   `turtle folio:graph` block under a heading of its own, in the chapter that
+   holds the CLI verb or the library function, stating
+   `signifier:<name> a x0k:Signifier`, `x0k:signifies` the affordance and
+   `x0k:presentedOn` the surface (`surface:cli`). The `### x0k-tangle check`
    section of `implementation/tangle/crate.md` is the pattern. An
    affordance claimed for a human with no signifier is a defect in `check`:
    the audience has been promised something with nothing to perceive.

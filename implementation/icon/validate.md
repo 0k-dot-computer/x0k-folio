@@ -1,27 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/icon/validate
-  type: implementation
-  status: draft
-  summary: 'The checker: every refusal rule of the icon profile read against a parsed declaration in one pass, each broken rule reported as a typed defect naming the rule and the element, and an accepted icon made a type the rest of the crate can trust.'
-  concerns:
-  - icons
-  - svg
-  - validation
-  - profile
-  tangle:
-    crate: crates/x0k-icon
-    root: src/validate.rs
-  edges:
-    implements:
-    - x0k:design/icon-profile
-    cites:
-    - x0k:architecture/entity-iconography
-    - x0k:implementation/icon/parse
-    - x0k:implementation/icon/crate
----
 # The checker
+
+```turtle folio:document
+implementation:icon\/validate a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The checker: every refusal rule of the icon profile read against a parsed declaration in one pass, each broken rule reported as a typed defect naming the rule and the element, and an accepted icon made a type the rest of the crate can trust." ;
+    x0k:concerns "icons", "svg", "validation", "profile" ;
+    x0k:cites architecture:entity-iconography,
+        implementation:icon\/parse,
+        implementation:icon\/crate ;
+    x0k:implements design:icon-profile ;
+    folio:tangleCrate "crates/x0k-icon" ;
+    folio:tangleRoot "src/validate.rs" .
+```
 
 The [profile](x0k:design/icon-profile) promises an author two things
 about a drawing that breaks a rule: they are told *which rule* and

@@ -75,6 +75,16 @@ pub trait QueryEngine: Send {
     fn language(&self) -> &str;
     fn query(&self, text: &str) -> Result<Vec<QueryRow>>;
 }
+/// Explicit async source sink; synchronous callers never drive its effects.
+pub type SinkFuture<'a,T> = std::pin::Pin<Box<dyn std::future::Future<Output=Result<T>>+Send+'a>>;
+pub trait AsyncFactSink: Send {
+    fn incarnation(&mut self)->SinkFuture<'_,Option<String>>;
+    fn replace_source<'a>(&'a mut self,source:&'a str,batches:&'a FactBatches,
+        prior:&'a [FactEntry],cause:&'a str)->SinkFuture<'a,usize>;
+    fn facts_caused_by<'a>(&'a mut self,cause:&'a str)->SinkFuture<'a,Option<Vec<FactEntry>>>;
+    fn retains_history(&self)->bool;
+}
+
 /// A named backend: a required sink and its optional listener and engine.
 pub struct Backend {
     pub name: String,
@@ -93,6 +103,11 @@ impl Backend {
         let worker = crate::delivery::Worker::new(Box::new(sink));
         Self { name: name.into(), sink: Box::new(worker.clone()), worker,
             grace: Some(std::time::Duration::from_millis(250)), notifier: None, query: None }
+    }
+    pub fn new_async(name:impl Into<String>,sink:impl AsyncFactSink+'static)->Self {
+        let worker=crate::delivery::Worker::new_async(Box::new(sink));
+        Self {name:name.into(),sink:Box::new(worker.clone()),worker,
+            grace:Some(std::time::Duration::from_millis(250)),notifier:None,query:None}
     }
     /// Access the worker-backed sink without replacing its delivery identity.
     pub fn sink(&self) -> &dyn FactSink { self.sink.as_ref() }

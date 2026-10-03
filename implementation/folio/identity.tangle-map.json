@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/identity.md",
-  "source_hash": "e4ea2839cda28760",
+  "source_hash": "07f0d7680d09b696",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-folio/src/entity_id.rs",
-          "hash": "10af711d0e5f8392"
+          "hash": "fefbe368a79a53c8"
         }
       ]
     }

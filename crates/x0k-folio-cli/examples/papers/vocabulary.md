@@ -1,16 +1,14 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:wiki/paper-vocabulary
-  type: wiki
-  summary: A small vocabulary for papers and their citations.
----
 # Papers and citations
+
+```turtle folio:document
+wiki:paper-vocabulary a x0k:Wiki ;
+    x0k:summary "A small vocabulary for papers and their citations." .
+```
 
 A paper can cite another paper, and says whether it was reviewed and how many
 pages it has. The vocabulary belongs to this collection.
 
-```turtle folio:ontology
+```turtle folio:graph
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .

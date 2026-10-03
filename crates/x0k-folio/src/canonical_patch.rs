@@ -13,7 +13,7 @@ use std::ops::Range;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag};
 use serde::{Deserialize, Serialize};
 
-use crate::colophon::{parse_envelope, BODY_FORMAT_HTML, BODY_FORMAT_MARKDOWN};
+use crate::colophon::{parse_envelope, replace_body, BODY_FORMAT_HTML, BODY_FORMAT_MARKDOWN};
 use crate::html_canonical::{apply_canonical_patches, normalize_html};
 use crate::FenceInfo;
 
@@ -119,7 +119,7 @@ impl fmt::Display for CanonicalPatchError {
             Self::InvalidMarkdownReplacement(message) => {
                 write!(f, "invalid markdown visible-text replacement: {message}")
             }
-            Self::InvalidFolio(message) => write!(f, "invalid folio/v1 document: {message}"),
+            Self::InvalidFolio(message) => write!(f, "invalid folio document: {message}"),
         }
     }
 }
@@ -141,24 +141,18 @@ pub fn apply_body_patches(
     }
 }
 
-/// Apply canonical body patches to a complete folio/v1 document.
+/// Apply canonical body patches to a complete folio document.
 ///
-/// The envelope is preserved byte-for-byte. Patch coordinates start at the
-/// body root, so envelope formatting never becomes part of the edit grammar.
+/// The header is preserved byte-for-byte. Patch coordinates start at the
+/// body root, so header formatting never becomes part of the edit grammar.
 pub fn apply_folio_patches(
     content: &str,
     patches: &[CanonicalPatch],
 ) -> Result<String, CanonicalPatchError> {
     let (envelope, body) = parse_envelope(content)
         .map_err(|error| CanonicalPatchError::InvalidFolio(error.to_string()))?;
-    let body_start = content.len().checked_sub(body.len()).ok_or_else(|| {
-        CanonicalPatchError::InvalidFolio("body is not a file suffix".to_string())
-    })?;
     let patched = apply_body_patches(&body, &envelope.body_format, patches)?;
-    let mut output = String::with_capacity(body_start + patched.len());
-    output.push_str(&content[..body_start]);
-    output.push_str(&patched);
-    Ok(output)
+    Ok(replace_body(content, &patched))
 }
 
 /// Canonicalize a bridge-produced document value without making the merge
@@ -175,20 +169,13 @@ pub fn canonicalize_folio_content(content: &str) -> String {
     if envelope.body_format != BODY_FORMAT_HTML {
         return content.to_string();
     }
-    let Some(body_start) = content.len().checked_sub(body.len()) else {
-        return content.to_string();
-    };
-    let normalized = normalize_html(&body);
-    let mut output = String::with_capacity(body_start + normalized.len());
-    output.push_str(&content[..body_start]);
-    output.push_str(&normalized);
-    output
+    replace_body(content, &normalize_html(&body))
 }
 
 /// Canonicalize the result of a source-level compatibility edit.
 ///
-/// A value that was folio/v1 before the edit may not escape canonicalization
-/// by corrupting its envelope. Generic non-folio documents retain the bridge's
+/// A value that was a folio document before the edit may not escape
+/// canonicalization by corrupting its header. Generic non-folio documents retain the bridge's
 /// existing pass-through behavior, including when an edit first turns one into
 /// a valid folio document.
 pub fn canonicalize_edited_folio_content(
@@ -199,7 +186,7 @@ pub fn canonicalize_edited_folio_content(
     match parse_envelope(edited) {
         Ok(_) => Ok(canonicalize_folio_content(edited)),
         Err(error) if previous_was_folio => Err(CanonicalPatchError::InvalidFolio(format!(
-            "source edit broke the envelope: {error}"
+            "source edit broke the header: {error}"
         ))),
         Err(_) => Ok(edited.to_string()),
     }

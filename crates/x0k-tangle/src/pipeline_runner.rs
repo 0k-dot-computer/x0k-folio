@@ -5,12 +5,13 @@
 //! [`PipelineRegistry`] into the user-facing entry points:
 //!
 //! - [`tangle_document`] — process one `.md` doc by running every
-//!   declared pipeline. A `tangle:` frontmatter block is synthesized
+//!   declared pipeline. The header's `folio:tangleCrate` /
+//!   `folio:tangleRoot` / `folio:tangleRoots` are synthesized
 //!   into a virtual [`PipelineDecl`] with kind
 //!   [`crate::IDENTITY_KIND`] before dispatch, so identity tangling
 //!   rides the same code path as every other plugin.
 //! - [`tangle_directory`] — walk a directory, run [`tangle_document`] on
-//!   each folio/v1 file.
+//!   each document whose header declares tangling or pipelines.
 //! - [`tangle_workspace`] — walk every literate root contributed by the
 //!   registry's plugins (via [`crate::TanglePipeline::literate_roots`])
 //!   and re-tangle dirty docs.
@@ -19,7 +20,7 @@
 //!
 //! One sidecar per source `.md` document, always written next to the
 //! source as `<stem>.tangle-map.json`. The sidecar carries one
-//! `pipelines: []` array with one entry per pipeline run (including
+//! `"pipelines": []` array with one entry per pipeline run (including
 //! the synthetic identity-tangle one). Each entry records the
 //! pipeline `kind`, its `input_hashes` (per declared input chunk),
 //! the `config_hash`, and the produced `outputs` (path + hash).
@@ -317,7 +318,7 @@ impl DocSite {
         }
     }
 
-    /// The derivation from a publication's `repository:` scalar: the
+    /// The derivation from a publication's `x0k:repository` literal: the
     /// `<repo>/blob/<branch>` form GitHub, Gitea and Forgejo all serve. A
     /// forge that spells its blob route differently (GitLab's `/-/blob/`)
     /// is one `new` call away; this is the common case, not the only one.
@@ -441,7 +442,7 @@ pub fn tangle_document_with(
     let parsed = parse_document(&content)
         .with_context(|| format!("parsing {}", doc_path.display()))?;
 
-    // A publication's `tangle:` block targets a projection root (its
+    // A publication's `folio:tangleRoot` targets a projection root (its
     // README), never the corpus root it lives in. Only a root that
     // already carries `PROVENANCE.json` — a projection — may receive it.
     let is_publication = parse_envelope(&content)
@@ -674,9 +675,9 @@ pub fn tangle_document_with(
     Ok(result)
 }
 
-/// Walk `dir` and run [`tangle_document`] on each `.md` folio/v1
-/// file that declares `tangle:` or `pipelines:`. Skipped files (no
-/// frontmatter, no relevant blocks) yield no result entry.
+/// Walk `dir` and run [`tangle_document`] on each `.md` file whose
+/// header states a `folio:tangle*` term or `folio:pipelines`. Skipped
+/// files (no header, no tool configuration) yield no result entry.
 ///
 /// Runs with default [`TangleSettings`]; [`tangle_directory_with`] takes
 /// a caller's.
@@ -707,9 +708,9 @@ pub fn tangle_directory_with(
             Ok(c) => c,
             Err(_) => continue,
         };
-        // Cheap gate: skip files with neither block. Otherwise we'd
+        // Cheap gate: skip files that name neither term. Otherwise we'd
         // parse every AGENTS.md in the tree.
-        if !content.contains("tangle:") && !content.contains("pipelines:") {
+        if !content.contains("folio:tangle") && !content.contains("folio:pipelines") {
             continue;
         }
         let result = tangle_document_with(p, workspace_root, registry, settings)?;
@@ -724,7 +725,8 @@ pub fn tangle_directory_with(
 /// and by the `tangle check` CLI subcommand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocFreshness {
-    /// Doc has no `tangle:` and no `pipelines:` — skip.
+    /// The header states no `folio:tangle*` term and no
+    /// `folio:pipelines` — skip.
     Skip,
     /// Source hash matches sidecar AND every declared output still
     /// exists on disk with the recorded hash.
@@ -753,7 +755,7 @@ pub enum DirtyReason {
 /// Determine whether a doc is up to date with respect to its sidecar.
 ///
 /// The sidecar lives next to the source as `<stem>.tangle-map.json`.
-/// Returns [`DocFreshness::Skip`] if the doc has neither block,
+/// Returns [`DocFreshness::Skip`] if the header declares neither,
 /// [`DocFreshness::UpToDate`] if everything matches, or
 /// [`DocFreshness::Dirty`] with a reason otherwise.
 pub fn doc_freshness(doc_path: &Path, workspace_root: &Path) -> Result<DocFreshness> {
@@ -919,7 +921,7 @@ pub fn tangle_workspace_with(
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            if !content.contains("tangle:") && !content.contains("pipelines:") {
+            if !content.contains("folio:tangle") && !content.contains("folio:pipelines") {
                 continue;
             }
 
@@ -1269,20 +1271,13 @@ mod tests {
     fn tangle_document_runs_registered_pipeline() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/test
-  type: design
-  status: proposed
-  pipelines:
-    - kind: echo
-      input: tokens
-      config:
-        suffix: hello
----
+        let doc = r#"# Test
 
-# Test
+```turtle folio:document
+design:test a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{"kind":"echo","input":"tokens","config":{"suffix":"hello"}}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 foo = "bar"
@@ -1318,16 +1313,11 @@ foo = "bar"
     fn tangle_document_errors_on_unknown_kind() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/test
-  type: design
-  status: proposed
-  pipelines:
-    - kind: nope
-      input: tokens
----
+        let doc = r#"```turtle folio:document
+design:test a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{"kind":"nope","input":"tokens"}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 x = 1
@@ -1340,17 +1330,29 @@ x = 1
         assert!(err.to_string().contains("unknown pipeline kind"));
     }
 
+    /// Chunks alone do not tangle: a document whose header states no
+    /// `folio:tangle*` term and no `folio:pipelines` — or that has no
+    /// header at all — writes nothing.
     #[test]
-    fn tangle_document_passes_through_when_no_blocks() {
+    fn tangle_document_passes_through_when_the_header_declares_nothing() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let doc_path = workspace.join("plain.md");
-        std::fs::write(&doc_path, "---\nc0k:\n  format: folio/v1\n  id: x0k:design/x\n  type: design\n  status: proposed\n---\nbody\n").unwrap();
         let registry = PipelineRegistry::default();
-        let result = tangle_document(&doc_path, &workspace, &registry).unwrap();
-        assert!(result.identity_outputs.is_empty());
-        assert!(result.pipeline_outputs.is_empty());
-        assert!(result.sidecars_written.is_empty());
+        for (name, doc) in [
+            (
+                "typed.md",
+                "# Plain\n\n```turtle folio:document\ndesign:x a x0k:Design ;\n    \
+                 x0k:status \"proposed\" .\n```\n\n```text {#body}\nbody\n```\n",
+            ),
+            ("headerless.md", "# Plain\n\n```text {#body}\nbody\n```\n"),
+        ] {
+            let doc_path = workspace.join(name);
+            std::fs::write(&doc_path, doc).unwrap();
+            let result = tangle_document(&doc_path, &workspace, &registry).unwrap();
+            assert!(result.identity_outputs.is_empty(), "{name}");
+            assert!(result.pipeline_outputs.is_empty(), "{name}");
+            assert!(result.sidecars_written.is_empty(), "{name}");
+        }
     }
 
     /// Identity-tangle is itself a plugin; the default registry has
@@ -1364,24 +1366,21 @@ x = 1
         );
     }
 
-    /// When a doc has only `tangle:` (no `pipelines:`), the
+    /// When a doc's header states only `folio:tangleRoot` (no
+    /// `folio:pipelines`), the
     /// dispatcher synthesizes an identity-tangle pipeline run and
     /// emits the result through the same code path.
     #[test]
     fn tangle_document_routes_tangle_block_through_identity_plugin() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/sample
-  type: wiki
-  status: proposed
-  tangle:
-    root: out/sample.txt
----
+        let doc = r#"# Sample
 
-# Sample
+```turtle folio:document
+wiki:code\/sample a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoot "out/sample.txt" .
+```
 
 ```text {#body}
 hello world
@@ -1432,19 +1431,13 @@ hello world
     fn tangle_document_routes_per_language_roots() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/bilingual
-  type: wiki
-  status: proposed
-  tangle:
-    roots:
-      rust: out/demo.rs
-      gallowglass: out/demo.gls
----
+        let doc = r#"# Bilingual
 
-# Bilingual
+```turtle folio:document
+wiki:code\/bilingual a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoots '{"rust":"out/demo.rs","gallowglass":"out/demo.gls"}'^^rdf:JSON .
+```
 
 ```rust {#body}
 fn body() {}
@@ -1485,16 +1478,19 @@ let main = body
 
     /// `absolutize` collapses `.` and `..` and lands on an absolute
     /// path whether or not the target exists yet.
-    /// A publication document's `tangle:` block names its projected
+    /// A publication document's `folio:tangleRoot` names its projected
     /// repository's README, so it tangles only into a projection root
     /// (one carrying `PROVENANCE.json`). From any other root — the
-    /// corpus, where `root: README.md` would clobber the monorepo's
+    /// corpus, where `folio:tangleRoot "README.md"` would clobber the monorepo's
     /// own README — it is refused, naming `project-repo`.
     #[test]
     fn publication_document_tangles_only_into_a_projection_root() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let doc = "---\nx0k:\n  format: folio/v1\n  id: x0k:publication/demo\n  type: publication\n  status: proposed\n  tangle:\n    root: README.md\n  edges:\n    publishes:\n      - x0k:software-module/demo\n---\n\n# Demo\n\n```markdown {#readme}\n# Demo\n\nA readme.\n```\n";
+        let doc = "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    \
+                   x0k:status \"proposed\" ;\n    folio:tangleRoot \"README.md\" ;\n    \
+                   x0k:publishes x0k:software-module\\/demo .\n```\n\n\
+                   ```markdown {#readme}\n# Demo\n\nA readme.\n```\n";
         let doc_path = workspace.join("decisions/publications/example.md");
         std::fs::create_dir_all(doc_path.parent().unwrap()).unwrap();
         std::fs::write(&doc_path, doc).unwrap();
@@ -1597,20 +1593,13 @@ let main = body
             neighbour.join("stolen.txt").display().to_string(),
         ] {
             let doc = format!(
-                r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/escape
-  type: design
-  status: proposed
-  pipelines:
-    - kind: escape
-      input: tokens
-      config:
-        target: "{target}"
----
+                r#"# Escape
 
-# Escape
+```turtle folio:document
+design:escape a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{{"kind":"escape","input":"tokens","config":{{"target":"{target}"}}}}]'^^rdf:JSON .
+```
 
 ```toml {{#tokens}}
 foo = "bar"
@@ -1647,15 +1636,11 @@ foo = "bar"
         std::fs::create_dir_all(other.join("out")).unwrap();
         std::fs::create_dir_all(&ws).unwrap();
 
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/seeded
-  type: wiki
-  status: proposed
-  tangle:
-    root: out/seeded.txt
----
+        let doc = r#"```turtle folio:document
+wiki:code\/seeded a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoot "out/seeded.txt" .
+```
 
 ```text {#body}
 hi
@@ -1716,15 +1701,11 @@ hi
         let workspace = std::fs::canonicalize(tmp.path()).unwrap();
         let docs = workspace.join("docs");
         std::fs::create_dir_all(&docs).unwrap();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/rel
-  type: wiki
-  status: proposed
-  tangle:
-    root: out/rel.txt
----
+        let doc = r#"```turtle folio:document
+wiki:code\/rel a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoot "out/rel.txt" .
+```
 
 ```text {#body}
 hi
@@ -1770,16 +1751,12 @@ hi
     /// as two workspaces rewriting each other's files forever.
     #[test]
     fn two_checkouts_tangle_byte_identically() {
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/portable
-  type: wiki
-  status: proposed
-  tangle:
-    crate: demo
-    root: src/lib.rs
----
+        let doc = r#"```turtle folio:document
+wiki:code\/portable a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleCrate "demo" ;
+    folio:tangleRoot "src/lib.rs" .
+```
 
 ```rust {#body}
 pub fn hello() {}
@@ -1834,15 +1811,11 @@ pub fn hello() {}
         let workspace = tmp.path().to_path_buf();
         let src_dir = workspace.join("docs");
         std::fs::create_dir_all(&src_dir).unwrap();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/foo
-  type: wiki
-  status: proposed
-  tangle:
-    root: sub/foo.txt
----
+        let doc = r#"```turtle folio:document
+wiki:code\/foo a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoot "sub/foo.txt" .
+```
 
 ```text {#body}
 hi
@@ -1873,8 +1846,9 @@ hi
         );
     }
 
-    /// Wave-2 verification: when a doc declares both `tangle:` and
-    /// `pipelines:`, the unified sidecar carries entries for both —
+    /// Wave-2 verification: when a doc's header states both
+    /// `folio:tangleRoot` and `folio:pipelines`, the unified sidecar
+    /// carries entries for both —
     /// the synthetic identity-tangle run plus each declared pipeline.
     #[test]
     fn unified_sidecar_carries_identity_and_pipeline_entries() {
@@ -1882,21 +1856,14 @@ hi
         let workspace = tmp.path().to_path_buf();
         let src_dir = workspace.join("docs");
         std::fs::create_dir_all(&src_dir).unwrap();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/mixed
-  type: wiki
-  status: proposed
-  tangle:
-    root: out/mixed.txt
-  pipelines:
-    - kind: echo
-      input: tokens
-      config: { suffix: extra }
----
+        let doc = r#"# Mixed
 
-# Mixed
+```turtle folio:document
+wiki:code\/mixed a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoot "out/mixed.txt" ;
+    folio:pipelines '[{"kind":"echo","input":"tokens","config":{"suffix":"extra"}}]'^^rdf:JSON .
+```
 
 ```text {#body}
 identity content
@@ -1952,17 +1919,11 @@ foo = "bar"
         std::fs::create_dir_all(workspace.join("knowledge/implementation/x")).unwrap();
         std::fs::create_dir_all(workspace.join("decisions/design/themes")).unwrap();
 
-        let doc1 = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/test1
-  type: design
-  status: proposed
-  pipelines:
-    - kind: echo
-      input: tokens
-      config: { suffix: one }
----
+        let doc1 = r#"```turtle folio:document
+design:test1 a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{"kind":"echo","input":"tokens","config":{"suffix":"one"}}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 one = 1
@@ -1995,16 +1956,11 @@ one = 1
                 }])
             }
         }
-        let doc2 = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/test2
-  type: design
-  status: proposed
-  pipelines:
-    - kind: themes-echo
-      input: tokens
----
+        let doc2 = r#"```turtle folio:document
+design:test2 a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{"kind":"themes-echo","input":"tokens"}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 two = 2
@@ -2193,17 +2149,13 @@ esac
     fn tangle_document_with_a_site_writes_the_url_into_the_file() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/sited
-  type: wiki
-  status: proposed
-  tangle:
-    root: out/sited.txt
----
+        let doc = r#"# Sited
 
-# Sited
+```turtle folio:document
+wiki:code\/sited a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoot "out/sited.txt" .
+```
 
 ```text {#body}
 hello world
@@ -2254,18 +2206,11 @@ hello world
         }
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path().to_path_buf();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/test
-  type: design
-  status: proposed
-  pipelines:
-    - kind: multi
-      inputs:
-        a: chunk-a
-        b: chunk-b
----
+        let doc = r#"```turtle folio:document
+design:test a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{"kind":"multi","inputs":{"a":"chunk-a","b":"chunk-b"}}]'^^rdf:JSON .
+```
 
 ```toml {#chunk-a}
 a = 1
@@ -2292,20 +2237,13 @@ b = 2
         let workspace = tmp.path().to_path_buf();
         let dir = workspace.join("knowledge/implementation/x");
         std::fs::create_dir_all(&dir).unwrap();
-        let doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/test
-  type: design
-  status: proposed
-  pipelines:
-    - kind: echo
-      input: tokens
-      config:
-        suffix: ws
----
+        let doc = r#"# Test
 
-# Test
+```turtle folio:document
+design:test a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{"kind":"echo","input":"tokens","config":{"suffix":"ws"}}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 foo = "bar"
@@ -2363,18 +2301,11 @@ foo = "bar"
         std::fs::create_dir_all(&dir).unwrap();
 
         // Doc 1: valid pipeline doc.
-        let good_doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/good
-  type: design
-  status: proposed
-  pipelines:
-    - kind: echo
-      input: tokens
-      config:
-        suffix: ok
----
+        let good_doc = r#"```turtle folio:document
+design:good a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{"kind":"echo","input":"tokens","config":{"suffix":"ok"}}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 ok = true
@@ -2383,16 +2314,11 @@ ok = true
         std::fs::write(dir.join("good.md"), good_doc).unwrap();
 
         // Doc 2: references an unknown pipeline kind ⇒ errors.
-        let bad_doc = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/bad
-  type: design
-  status: proposed
-  pipelines:
-    - kind: does-not-exist
-      input: tokens
----
+        let bad_doc = r#"```turtle folio:document
+design:bad a x0k:Design ;
+    x0k:status "proposed" ;
+    folio:pipelines '[{"kind":"does-not-exist","input":"tokens"}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 broken = true
@@ -2424,15 +2350,11 @@ broken = true
         std::fs::create_dir_all(&dir).unwrap();
 
         // Two identity-tangle docs declaring the same `root:` output.
-        let doc_a = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/a
-  type: wiki
-  status: proposed
-  tangle:
-    root: shared/output.txt
----
+        let doc_a = r#"```turtle folio:document
+wiki:code\/a a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoot "shared/output.txt" .
+```
 
 ```text {#body}
 from a
@@ -2443,15 +2365,11 @@ from a
         // but the test doesn't assume which one wins.
         std::fs::write(dir.join("a.md"), doc_a).unwrap();
 
-        let doc_b = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/code/b
-  type: wiki
-  status: proposed
-  tangle:
-    root: shared/output.txt
----
+        let doc_b = r#"```turtle folio:document
+wiki:code\/b a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoot "shared/output.txt" .
+```
 
 ```text {#body}
 from b
@@ -2566,6 +2484,66 @@ from b
         assert_eq!(std::fs::read(&target).unwrap(), b"changed");
     }
 
+    /// Re-tangling a document whose text did not change rewrites nothing:
+    /// every output and the sidecar keep their modification times, so a
+    /// build or a stale-program check that reads mtimes sees no change. An
+    /// edit to the document still reaches its output.
+    #[test]
+    fn retangling_an_unchanged_document_leaves_every_output_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().to_path_buf();
+        let doc = |body: &str| format!(r#"# Sample
+
+```turtle folio:document
+wiki:code\/sample a x0k:Wiki ;
+    x0k:status "proposed" ;
+    folio:tangleRoots '{{"rust":"out/sample.rs","gallowglass":"out/sample.gls"}}'^^rdf:JSON .
+```
+
+```rust {{#body}}
+fn {body}() {{}}
+```
+
+```gallowglass {{#body}}
+let {body} = 0
+```
+
+```rust {{#main}}
+<<body>>
+fn main() {{}}
+```
+
+```gallowglass {{#main}}
+<<body>>
+let main = {body}
+```
+"#);
+        let doc_path = workspace.join("sample.md");
+        std::fs::write(&doc_path, doc("hello")).unwrap();
+        let registry = PipelineRegistry::default();
+        tangle_document(&doc_path, &workspace, &registry).unwrap();
+
+        let outputs = [
+            workspace.join("out/sample.rs"),
+            workspace.join("out/sample.gls"),
+            doc_path.with_extension("tangle-map.json"),
+        ];
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        for out in &outputs {
+            std::fs::File::options().write(true).open(out).unwrap().set_modified(old).unwrap();
+        }
+        tangle_document(&doc_path, &workspace, &registry).unwrap();
+        for out in &outputs {
+            assert_eq!(std::fs::metadata(out).unwrap().modified().unwrap(), old,
+                "{} was rewritten by a re-tangle that changed nothing", out.display());
+        }
+
+        std::fs::write(&doc_path, doc("changed")).unwrap();
+        tangle_document(&doc_path, &workspace, &registry).unwrap();
+        assert_ne!(std::fs::metadata(&outputs[0]).unwrap().modified().unwrap(), old);
+        assert!(std::fs::read_to_string(&outputs[0]).unwrap().contains("fn changed()"));
+    }
+
     /// The staging file is transient: once `write_atomic` returns, the
     /// output directory holds the target and nothing else.
     #[test]
@@ -2614,8 +2592,8 @@ from b
     /// document a second output so the all-or-nothing claim is testable.
     fn guard_doc(root: &str, body: &str, second: Option<(&str, &str)>) -> String {
         let mut doc = format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/code/guard\n  \
-             type: wiki\n  status: proposed\n  tangle:\n    root: {root}\n---\n\n\
+            "# Guard\n\n```turtle folio:document\nwiki:code\\/guard a x0k:Wiki ;\n    \
+             x0k:status \"proposed\" ;\n    folio:tangleRoot \"{root}\" .\n```\n\n\
              ```text {{#body}}\n{body}\n```\n"
         );
         if let Some((path, content)) = second {

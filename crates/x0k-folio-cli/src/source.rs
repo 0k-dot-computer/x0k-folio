@@ -3,14 +3,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::io::Read;
 use anyhow::{anyhow, bail, Context, Result};
-use serde_norway::Value;
 use x0k_fact_projection::{envelope_predicates, FactEntry, FactValue};
-use x0k_folio::colophon::{is_colophon, parse_envelope_in};
+use x0k_folio::colophon::{
+    find_header, parse_envelope_in, parse_turtle, predeclared_prefixes, FolioError, Literal, RDF_JSON,
+    XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_INTEGER,
+};
+use x0k_folio::inline_entity::Object;
 use x0k_folio::document_vocabulary::{
     self as vocabulary, DeclaredInstance, DocumentSource as VocabularySource,
 };
 use x0k_folio_ingest::lifecycle::{DocumentProjection, DocumentSource};
-use x0k_ontology::concept_facts::{camel_to_kebab, OntologyModel, OntologyValue, RDF_TYPE, X0K_NS};
+use x0k_ontology::concept_facts::{OntologyModel, OntologyValue, RDF_TYPE, X0K_NS};
 
 pub const MAX_FILES: usize = 100_000;
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
@@ -173,14 +176,11 @@ fn namespace_table(model: &OntologyModel) -> BTreeMap<String, String> {
     table
 }
 /// Every object property this collection's vocabulary declares, keyed by its
-/// `edges:` spelling. The value is the expanded IRI a fact is stored under.
+/// compact term. The value is the expanded IRI a fact is stored under.
 fn edge_predicate_table(model: &OntologyModel) -> BTreeMap<String, String> {
-    model.object_properties().into_iter().filter_map(|property| {
-        let (prefix, camel) = property.uri.split_once(':')?;
-        let snake = x0k_ontology::concept_facts::camel_to_snake(camel);
-        let spelled = if prefix == "x0k" { snake } else { format!("{prefix}:{snake}") };
-        Some((spelled, model.expand(&property.uri)))
-    }).collect()
+    model.object_properties().into_iter()
+        .map(|property| (property.uri.clone(), model.expand(&property.uri)))
+        .collect()
 }
 fn vocabulary_fingerprint(model: &OntologyModel) -> String {
     let mut hash = blake3::Hasher::new();
@@ -200,15 +200,10 @@ fn vocabulary_fingerprint(model: &OntologyModel) -> String {
     hash.finalize().to_hex().to_string()
 }
 
+/// A document whose first fenced block is a header: its graph blocks are
+/// read for vocabulary, and its header for the document.
 fn claims_folio(content: &str) -> bool {
-    if is_colophon(content) { return true; }
-    let normalized = content.replace("\r\n", "\n");
-    let Some(front) = normalized.strip_prefix("---\n") else { return false; };
-    let front = front.split("\n---").next().unwrap_or(front);
-    front.lines().any(|line| line.trim() == "x0k:")
-        && front.lines().any(|line| {
-            line.trim().strip_prefix("format:").is_some_and(|value| value.contains("folio/v1"))
-        })
+    find_header(content).is_some()
 }
 
 fn read_markdown(path: &Path) -> Result<Vec<u8>> {
@@ -254,44 +249,48 @@ fn prepare_document(
     all_instances: &mut Vec<DeclaredInstance>,
 ) -> Result<Option<DocumentProjection>> {
     let content = std::str::from_utf8(bytes).context("Markdown is not UTF-8")?;
-    if !claims_folio(content) { return Ok(None); }
     let model = &vocabulary.model;
-    let (envelope, _) = parse_envelope_in(model, content)?;
+    let envelope = match parse_envelope_in(model, content) {
+        Ok((envelope, _)) => envelope,
+        Err(FolioError::NoHeader | FolioError::Untyped) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
     let identity = x0k_folio::entity_id::EntityId::parse_in(model, &envelope.id)?;
     let uri = model.expand(&identity.to_string());
     let path_id = path.to_string_lossy();
     let documents = [VocabularySource { id: &path_id, body: content }];
     let instances = vocabulary::collect_instances(&documents, model)?;
+    let header = find_header(content).ok_or_else(|| anyhow!("header vanished between reads"))?;
+    let prefixes = predeclared_prefixes(model);
+    let properties: std::collections::BTreeSet<String> =
+        model.object_properties().iter().map(|property| model.expand(&property.uri)).collect();
     let mut facts = Vec::new();
-    let mut add = |key: &str, value: FactValue| {
-        facts.push(FactEntry::new(&uri, model.expand(key), value));
-    };
-    // Envelope fields take the IRI the vocabulary declares, read from the
-    // one place that spells them — `x0k_fact_projection::envelope_predicates`,
-    // which the spine-side projector reads too. Only provenance — where this
-    // document was read from — wears the `folio/` prefix.
-    add(envelope_predicates::DOC_TYPE, FactValue::Text(envelope.doc_type.as_str().into()));
-    add(envelope_predicates::BODY_FORMAT, FactValue::Text(envelope.body_format.clone()));
-    if let Some(status) = envelope.status { add(envelope_predicates::STATUS, FactValue::Text(status.as_str().into())); }
-    if let Some(summary) = envelope.summary { add(envelope_predicates::SUMMARY, FactValue::Text(summary)); }
-    for concern in envelope.concerns { add(envelope_predicates::CONCERNS, FactValue::Text(concern)); }
-    add(envelope_predicates::ORIGINAL_ID, FactValue::Text(envelope.id.clone()));
-    add("x0k:folio/sourcePath", FactValue::Text(path_id.to_string()));
-    for (key, targets) in &envelope.edges {
-        let predicate = vocabulary::resolve_property(model, key)
-            .ok_or_else(|| anyhow!("unknown envelope object property {key}"))?;
-        for target in targets {
-            let target = vocabulary::resolve_reference(model, target).map_err(|error| anyhow!(error))?;
-            facts.push(FactEntry::new(&uri, &predicate, FactValue::EntityRef(target)));
-        }
+    // Every statement the header makes is a fact, as written: the class as
+    // `rdf:type`, an edge as an entity value, a literal by its datatype.
+    let mut body_format_stated = false;
+    for triple in parse_turtle(&header.text, &prefixes, header.line + 1)? {
+        let predicate = triple.predicate.as_str().to_string();
+        let value = match triple.object {
+            oxrdf::Term::NamedNode(node) => {
+                if predicate != RDF_TYPE && !properties.contains(&predicate) {
+                    bail!("unknown header object property {}", model.compact(&predicate).unwrap_or(predicate));
+                }
+                FactValue::EntityRef(node.into_string())
+            }
+            oxrdf::Term::Literal(literal) => literal_value(&Literal {
+                value: literal.value().to_string(),
+                datatype: literal.datatype().as_str().to_string(),
+            })?,
+            oxrdf::Term::BlankNode(_) => bail!("a header holds no blank nodes"),
+        };
+        body_format_stated |= predicate == model.expand(envelope_predicates::BODY_FORMAT);
+        facts.push(FactEntry::new(&uri, predicate, value));
     }
-    if let Some(class) = model.classes().into_iter().find(|class| {
-        class.uri.split_once(':').is_some_and(|(prefix, local)|
-            model.expand(&format!("{prefix}:")) == model.expand(&format!("{}:", identity.scheme))
-                && camel_to_kebab(local) == identity.class)
-    }) {
-        facts.push(FactEntry::new(&uri, RDF_TYPE, FactValue::EntityRef(model.expand(&class.uri))));
+    if !body_format_stated {
+        facts.push(FactEntry::new(&uri, model.expand(envelope_predicates::BODY_FORMAT),
+            FactValue::Text(envelope.body_format.clone())));
     }
+    facts.push(FactEntry::new(&uri, model.expand("x0k:folio/sourcePath"), FactValue::Text(path_id.to_string())));
     for block in vocabulary.definition_blocks.iter().filter(|block| block.source.document == path_id) {
         let mut entities = std::collections::BTreeSet::new();
         for fact in &block.facts {
@@ -311,15 +310,14 @@ fn prepare_document(
 fn project_instance(instance: &DeclaredInstance, document: &str, model: &OntologyModel, facts: &mut Vec<FactEntry>) -> Result<()> {
     facts.push(FactEntry::new(&instance.iri, RDF_TYPE, FactValue::EntityRef(instance.concept.clone())));
     let namespace = model.expand(&format!("{}:", instance.entity.uri.scheme));
-    for (key, value) in &instance.entity.yaml {
-        let key = key.as_str().ok_or_else(|| anyhow!("instance field key must be a string"))?;
-        if matches!(key, "id" | "edges") { continue; }
-        let predicate = if key.contains(':') { model.expand(key) } else { format!("{namespace}{}", camel_key(key)) };
-        for value in values(value)? { facts.push(FactEntry::new(&instance.iri, &predicate, value)); }
+    for (predicate, object) in &instance.entity.statements {
+        let Object::Literal(literal) = object else { continue };
+        facts.push(FactEntry::new(&instance.iri, predicate, literal_value(literal)?));
     }
     for (key, value) in [("title", &instance.entity.title), ("description", &instance.entity.description)] {
-        if !value.is_empty() && !instance.entity.yaml.contains_key(Value::String(key.into())) {
-            facts.push(FactEntry::new(&instance.iri, format!("{namespace}{key}"), FactValue::Text(value.clone())));
+        let predicate = format!("{namespace}{key}");
+        if !value.is_empty() && !instance.entity.statements.iter().any(|(p, _)| *p == predicate) {
+            facts.push(FactEntry::new(&instance.iri, predicate, FactValue::Text(value.clone())));
         }
     }
     for relation in vocabulary::validate_relationships(model, std::slice::from_ref(instance))? {
@@ -329,27 +327,21 @@ fn project_instance(instance: &DeclaredInstance, document: &str, model: &Ontolog
     Ok(())
 }
 
-fn camel_key(key: &str) -> String {
-    let mut parts = key.split('_');
-    let mut result = parts.next().unwrap_or_default().to_string();
-    for part in parts {
-        let mut chars = part.chars();
-        if let Some(first) = chars.next() { result.extend(first.to_uppercase()); result.extend(chars); }
-    }
-    result
-}
-
-fn values(value: &Value) -> Result<Vec<FactValue>> {
-    Ok(match value {
-        Value::Null => vec![],
-        Value::Bool(value) => vec![FactValue::Boolean(*value)],
-        Value::Number(value) => vec![if let Some(n) = value.as_i64() { FactValue::SignedInt(n.into()) }
-            else if let Some(n) = value.as_u64() { FactValue::UnsignedInt(n.into()) }
-            else { FactValue::Float(value.as_f64().ok_or_else(|| anyhow!("unsupported YAML number"))?) }],
-        Value::String(value) => vec![FactValue::Text(value.clone())],
-        Value::Sequence(sequence) => sequence.iter().map(values).collect::<Result<Vec<_>>>()?.into_iter().flatten().collect(),
-        Value::Mapping(_) => vec![FactValue::Record(serde_json::to_vec(value)?)],
-        Value::Tagged(_) => bail!("tagged YAML field values are not supported"),
+/// A literal as the fact it is stored as, by its datatype.
+fn literal_value(literal: &Literal) -> Result<FactValue> {
+    let lexical = literal.value.as_str();
+    Ok(match literal.datatype.as_str() {
+        XSD_BOOLEAN => FactValue::Boolean(match lexical { "true" | "1" => true, "false" | "0" => false,
+            other => bail!("{other:?} is not a boolean") }),
+        XSD_INTEGER => match lexical.trim_start_matches('+').parse::<i64>() {
+            Ok(n) => FactValue::SignedInt(n.into()),
+            Err(_) => FactValue::UnsignedInt(lexical.trim_start_matches('+').parse::<u64>()
+                .map_err(|_| anyhow!("{lexical:?} is not an integer this store holds"))?.into()),
+        },
+        XSD_DECIMAL | XSD_DOUBLE => FactValue::Float(lexical.parse::<f64>()
+            .map_err(|_| anyhow!("{lexical:?} is not a number"))?),
+        RDF_JSON => FactValue::Record(lexical.as_bytes().to_vec()),
+        _ => FactValue::Text(lexical.to_string()),
     })
 }
 
@@ -372,12 +364,13 @@ mod tests {
     /// it observes. Capped by the ingester at thirty seconds.
     const GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 
+    /// A wiki document: `id` is its subject as Turtle (`wiki:instance`).
     fn envelope(id: &str, body: &str) -> String {
-        format!("---\nx0k:\n  format: folio/v1\n  id: {id}\n  type: wiki\n---\n{body}")
+        format!("```turtle folio:document\n{id} a x0k:Wiki .\n```\n{body}")
     }
 
     fn definitions() -> &'static str {
-        r#"```turtle folio:ontology
+        r#"```turtle folio:graph
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix vann: <http://purl.org/vocab/vann/> .
@@ -392,9 +385,10 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
 "#
     }
 
+    /// A paper instance; `target` is written as Turtle (`paper:paper\/beta`).
     fn paper(name: &str, target: Option<&str>) -> String {
-        let edges = target.map(|target| format!("edges:\n  paper:cites: [{target}]\n")).unwrap_or_default();
-        format!("## {name}\nA paper.\n\n```yaml paper:paper\nid: paper:paper/{name}\nreviewed: true\npages: 12\nscore: 1.5\n{edges}```\n")
+        let edge = target.map(|target| format!(" ;\n    paper:cites {target}")).unwrap_or_default();
+        format!("## {name}\nA paper.\n\n```turtle folio:graph\npaper:paper\\/{name} a paper:Paper ;\n    paper:reviewed true ;\n    paper:pages 12 ;\n    paper:score 1.5{edge} .\n```\n")
     }
 
     fn project(source: &FolioSource, path: &Path) -> DocumentProjection {
@@ -504,7 +498,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let root = temporary.path().join("corpus");
         std::fs::create_dir(&root).unwrap();
         let path = root.join("instance.md");
-        std::fs::write(&path, envelope("x0k:wiki/instance", &paper("one", None))).unwrap();
+        std::fs::write(&path, envelope("wiki:instance", &paper("one", None))).unwrap();
         let backend = x0k_folio_dialog::DialogBackend::open(temporary.path().join("database")).unwrap();
         let sinks = std::sync::Mutex::new(vec![backend.backend("dialog").with_delivery_grace(GRACE)]);
         let checkpoint = temporary.path().join("checkpoint");
@@ -520,7 +514,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         ];
         reconcile_until_acknowledged(&mut first, &root, &checkpoint, &sinks, &expected).await;
         assert_eq!(x0k_folio_ingest::lifecycle::apply_path_change(
-            &first, &virtual_path, &checkpoint, &sinks).unwrap(), 0);
+            &first, &virtual_path, &checkpoint, &sinks).await.unwrap(), 0);
         let label = "http://www.w3.org/2000/01/rdf-schema#label";
         assert_eq!(query_values(&backend, label).await, vec![FactValue::Text("Old".into())]);
         let origin = selected_base("Old").expand("x0k:folio/sourceOrigin");
@@ -556,7 +550,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         std::fs::create_dir(&root).unwrap();
         let paths: Vec<_> = ["one", "two", "healthy"].iter().map(|name| {
             let path = root.join(format!("{name}.md"));
-            std::fs::write(&path, envelope(&format!("x0k:wiki/{name}"), &paper(name, None))).unwrap();
+            std::fs::write(&path, envelope(&format!("wiki:{name}"), &paper(name, None))).unwrap();
             path
         }).collect();
         let backend = x0k_folio_dialog::DialogBackend::open(temporary.path().join("database")).unwrap();
@@ -567,8 +561,8 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let prior = x0k_folio_ingest::checkpoint::load_state(&checkpoint).unwrap();
         for (index, name) in ["one", "two", "healthy"].iter().enumerate() {
             let body = paper(if index < 2 { "shared" } else { name }, None)
-                .replace("pages: 12", if index < 2 { "pages: 99" } else { "pages: 13" });
-            std::fs::write(&paths[index], envelope(&format!("x0k:wiki/{name}"), &body)).unwrap();
+                .replace("paper:pages 12", if index < 2 { "paper:pages 99" } else { "paper:pages 13" });
+            std::fs::write(&paths[index], envelope(&format!("wiki:{name}"), &body)).unwrap();
         }
         let mut changed = FolioSource::prepare(&root, selected_base("Paper")).unwrap();
         assert_eq!(changed.diagnostics().iter().filter(|d| d.error.is_some()).count(), 2);
@@ -633,8 +627,8 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let root = tempfile::tempdir().unwrap();
         let alpha = root.path().join("a.md");
         let beta = root.path().join("b.md");
-        std::fs::write(&alpha, envelope("x0k:wiki/a", &paper("alpha", Some("paper:paper/beta")))).unwrap();
-        std::fs::write(&beta, envelope("x0k:wiki/b", &format!("{}{}", definitions(), paper("beta", None)))).unwrap();
+        std::fs::write(&alpha, envelope("wiki:a", &paper("alpha", Some("paper:paper\\/beta")))).unwrap();
+        std::fs::write(&beta, envelope("wiki:b", &format!("{}{}", definitions(), paper("beta", None)))).unwrap();
         let source = FolioSource::prepare(root.path(), OntologyModel::new([])).unwrap();
         assert!(source.diagnostics().iter().all(|d| d.error.is_none() && !d.non_folio));
         let projection = project(&source, &alpha);
@@ -650,10 +644,10 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
     }
 
     #[test]
-    fn external_envelope_citations_remain_entity_values() {
+    fn external_header_citations_remain_entity_values() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("citation.md");
-        std::fs::write(&path, "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/citation\n  type: wiki\n  edges:\n    cites: [https://example.org/paper]\n---\n# Citation\n").unwrap();
+        std::fs::write(&path, "# Citation\n\n```turtle folio:document\nwiki:citation a x0k:Wiki ;\n    x0k:cites <https://example.org/paper> .\n```\n").unwrap();
         let source = FolioSource::prepare(root.path(), OntologyModel::shipped()).unwrap();
         let projection = project(&source, &path);
         assert!(projection.batches.iter().flat_map(|(_, facts)| facts).any(|fact|
@@ -666,11 +660,11 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("README.md"), definitions()).unwrap();
         let invalid = root.path().join("invalid.md");
-        std::fs::write(&invalid, "---\nx0k:\n  format: folio/v1\n---\n").unwrap();
+        std::fs::write(&invalid, "```turtle folio:document\nnot turtle\n```\n").unwrap();
         let unclosed = root.path().join("unclosed.md");
-        std::fs::write(&unclosed, "---\nx0k:\n  format: folio/v1\n").unwrap();
+        std::fs::write(&unclosed, "```turtle folio:document\n").unwrap();
         let unknown = root.path().join("unknown.md");
-        std::fs::write(&unknown, envelope("x0k:wiki/unknown", &paper("one", None))).unwrap();
+        std::fs::write(&unknown, envelope("wiki:unknown", &paper("one", None))).unwrap();
         let source = FolioSource::prepare(root.path(), OntologyModel::new([])).unwrap();
         assert_eq!(source.diagnostics().iter().filter(|d| d.non_folio).count(), 1);
         assert_eq!(source.diagnostics().iter().filter(|d| d.error.is_some()).count(), 3);
@@ -682,12 +676,12 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let root = tempfile::tempdir().unwrap();
         let vocabulary = root.path().join("vocabulary.md");
         let instance = root.path().join("instance.md");
-        std::fs::write(&vocabulary, envelope("x0k:wiki/vocabulary", definitions())).unwrap();
-        std::fs::write(&instance, envelope("x0k:wiki/instance", &paper("one", None))).unwrap();
+        std::fs::write(&vocabulary, envelope("wiki:vocabulary", definitions())).unwrap();
+        std::fs::write(&instance, envelope("wiki:instance", &paper("one", None))).unwrap();
         let first = FolioSource::prepare(root.path(), OntologyModel::new([])).unwrap();
         let bytes = std::fs::read(&instance).unwrap();
         let changed = definitions().replace("p:Paper a owl:Class", "p:Paper rdfs:label \"Paper\" ; a owl:Class");
-        std::fs::write(&vocabulary, envelope("x0k:wiki/vocabulary", &changed)).unwrap();
+        std::fs::write(&vocabulary, envelope("wiki:vocabulary", &changed)).unwrap();
         let second = FolioSource::prepare(root.path(), OntologyModel::new([])).unwrap();
         assert_ne!(first.revision_hash(&bytes), second.revision_hash(&bytes));
         assert!(first.project(&instance, b"changed", "new").is_err());
@@ -696,45 +690,34 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         assert!(removed.diagnostics().iter().any(|d| d.error.is_some()));
     }
 
-    #[test]
-    fn base_vocabulary_resolves_legacy_edges_without_becoming_required() {
-        let model = OntologyModel::shipped();
-        let resolved = vocabulary::resolve_property(&model, "motivated_by").unwrap();
-        assert_eq!(resolved, model.expand("x0k:motivatedBy"));
-        assert_eq!(vocabulary::resolve_property(&model, "motivatedBy"), Some(resolved));
-        assert!(vocabulary::resolve_property(&OntologyModel::new([]), "motivated_by").is_none());
-    }
-
-    /// One envelope, two projectors. The folio daemon writes an envelope to
-    /// the entry spine through `x0k_fact_projection::project_envelope`; this
-    /// module writes the same envelope to Dialog-DB. A reader who queries the
+    /// One header, two projectors. The folio daemon writes a header to the
+    /// entry spine through `x0k_fact_projection::project_envelope`; this
+    /// module writes the same header to Dialog-DB. A reader who queries the
     /// term one of them emitted and reads what the other wrote gets zero rows
-    /// and no error, so the two must name ONE term per field — which is why
-    /// both now read `x0k_fact_projection::envelope_predicates` instead of
-    /// spelling their own literals.
+    /// and no error, so the two must name ONE term per field.
     ///
-    /// The three assertions are the whole seam: which terms both sides
-    /// assert, and — named rather than tolerated — which fields only one of
-    /// them carries. Edges are excluded because they resolve through the
-    /// vocabulary here and stay camelCase there; that is a different seam.
+    /// The three assertions are the whole seam: which text terms both sides
+    /// assert, and — named rather than tolerated — which each carries alone.
+    /// Edges are excluded: they are entity values on both sides.
     #[test]
-    fn envelope_fields_carry_the_substrate_spelling() {
+    fn header_fields_carry_the_substrate_spelling() {
         use std::collections::BTreeSet;
         use x0k_fact_projection::{envelope_predicates as substrate, project_envelope, ColophonView};
-        const DOCUMENT: &str = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/example\n  \
-            type: design\n  status: proposed\n  summary: One line.\n  concerns: [a, b]\n  \
-            materialization:\n    loro_doc_id: x0k:document/abc\n    \
-            document_revision_id: x0k:document-revision/def\n    \
-            content_hash: blake3:0123\n---\n# Example\n";
+        const DOCUMENT: &str = "# Example\n\n```turtle folio:document\ndesign:example a x0k:Design ;\n    \
+            x0k:status \"proposed\" ;\n    x0k:summary \"One line.\" ;\n    x0k:concerns \"a\", \"b\" ;\n    \
+            folio:loroDocId \"x0k:document/abc\" ;\n    \
+            folio:documentRevisionId \"x0k:document-revision/def\" ;\n    \
+            folio:contentHash \"blake3:0123\" .\n```\n";
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("decision.md");
         std::fs::write(&path, DOCUMENT).unwrap();
         let model = OntologyModel::shipped();
         let source = FolioSource::prepare(root.path(), OntologyModel::shipped()).unwrap();
         let projection = project(&source, &path);
+        let text = |value: &FactValue| matches!(value, FactValue::Text(_));
         let mine: BTreeSet<String> = projection.batches.iter()
             .flat_map(|(_, facts)| facts)
-            .filter(|fact| fact.entity == projection.uri && matches!(fact.value, FactValue::Text(_)))
+            .filter(|fact| fact.entity == projection.uri && text(&fact.value))
             .map(|fact| fact.predicate.clone())
             .collect();
 
@@ -743,7 +726,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let theirs: BTreeSet<String> = project_envelope(&ColophonView {
             uri: projection.uri.clone(),
             status: colophon.status.unwrap().as_str().into(),
-            doc_type: colophon.doc_type.as_str().into(),
+            class: "x0k:Design".into(),
             subtype: colophon.subtype.clone(),
             body_format: colophon.body_format.clone(),
             concerns: colophon.concerns.clone(),
@@ -751,16 +734,35 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
             materialization_document_revision_id: materialization.document_revision_id.clone(),
             materialization_content_hash: materialization.content_hash.clone(),
             ..ColophonView::default()
-        }).iter().map(|fact| model.expand(&fact.predicate)).collect();
+        }).iter().filter(|fact| text(&fact.value)).map(|fact| model.expand(&fact.predicate)).collect();
 
         let expand = |terms: &[&str]| terms.iter().map(|term| model.expand(term)).collect::<BTreeSet<_>>();
         assert_eq!(&theirs & &mine, expand(&[
-            substrate::STATUS, substrate::DOC_TYPE, substrate::BODY_FORMAT, substrate::CONCERNS]));
-        assert_eq!(&theirs - &mine, expand(&[
+            substrate::STATUS, substrate::BODY_FORMAT, substrate::CONCERNS,
             substrate::MATERIALIZATION_LORO_DOC, substrate::MATERIALIZATION_REVISION,
             substrate::MATERIALIZATION_CONTENT_HASH]));
-        assert_eq!(&mine - &theirs, expand(&[
-            substrate::SUMMARY, substrate::ORIGINAL_ID, "x0k:folio/sourcePath"]));
+        assert!((&theirs - &mine).is_empty(), "{:?}", &theirs - &mine);
+        assert_eq!(&mine - &theirs, expand(&[substrate::SUMMARY, "x0k:folio/sourcePath"]));
+    }
+
+    #[test]
+    fn every_header_statement_is_a_fact_and_an_unknown_edge_refuses() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("page.md");
+        std::fs::write(&path, "# Page\n\n```turtle folio:document\nimplementation:folio\\/page a x0k:Implementation ;\n    \
+            x0k:status \"draft\" ;\n    x0k:confidence \"high\" ;\n    folio:tangleCrate \"substrate/crates/x\" .\n```\n").unwrap();
+        let source = FolioSource::prepare(root.path(), OntologyModel::shipped()).unwrap();
+        let projection = project(&source, &path);
+        let facts: Vec<_> = projection.batches.iter().flat_map(|(_, facts)| facts).collect();
+        let has = |predicate: &str, value: FactValue| facts.iter().any(|fact| fact.predicate == predicate && fact.value == value);
+        assert!(has(RDF_TYPE, FactValue::EntityRef(format!("{X0K_NS}Implementation"))));
+        assert!(has(&format!("{X0K_NS}confidence"), FactValue::Text("high".into())));
+        assert!(has(&format!("{X0K_NS}folio/tangleCrate"), FactValue::Text("substrate/crates/x".into())));
+        assert!(has(&format!("{X0K_NS}bodyFormat"), FactValue::Text("markdown".into())));
+        std::fs::write(&path, "```turtle folio:document\nwiki:page a x0k:Wiki ;\n    x0k:shreds wiki:other .\n```\n").unwrap();
+        let source = FolioSource::prepare(root.path(), OntologyModel::shipped()).unwrap();
+        let error = source.diagnostics()[0].error.as_deref().unwrap();
+        assert!(error.contains("unknown header object property x0k:shreds"), "{error}");
     }
 
     /// Run explicitly against operator-selected files; never embed private corpus fixtures.

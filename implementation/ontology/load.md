@@ -1,32 +1,20 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/ontology/load
-  type: implementation
-  status: draft
-  summary: Reading a set of vocabulary module files into an OntologyModel at run time — the same parse, the same fold, and the same refusals the build script applies, returned as a Result instead of a panic.
-  concerns:
-  - ontology
-  - vocabulary
-  - turtle
-  - loading
-  - publishing
-  tangle:
-    crate: crates/x0k-ontology
-    root: src/load.rs
-  edges:
-    implements:
-    - x0k:design/publish-a-region-as-a-repository
-    constrained_by:
-    - x0k:architecture/state-representation
-    cites:
-    - x0k:architecture/ontology-modules
-    - x0k:implementation/ontology/concept-facts
-    - x0k:implementation/ontology/module-bootstrap
-    - x0k:implementation/ontology/views
----
 
 # Reading a vocabulary the build did not compile
+
+```turtle folio:document
+implementation:ontology\/load a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Reading a set of vocabulary module files into an OntologyModel at run time — the same parse, the same fold, and the same refusals the build script applies, returned as a Result instead of a panic." ;
+    x0k:concerns "ontology", "vocabulary", "turtle", "loading", "publishing" ;
+    x0k:cites architecture:ontology-modules,
+        implementation:ontology\/concept-facts,
+        implementation:ontology\/module-bootstrap,
+        implementation:ontology\/views ;
+    x0k:constrainedBy architecture:state-representation ;
+    x0k:implements design:publish-a-region-as-a-repository ;
+    folio:tangleCrate "crates/x0k-ontology" ;
+    folio:tangleRoot "src/load.rs" .
+```
 
 A publication ships a *set* of vocabulary modules, chosen per build
 (`x0k:architecture/ontology-modules` §3), and until this module the only way

@@ -1,6 +1,6 @@
 {
   "source": "implementation/icon/crate.md",
-  "source_hash": "0d5bb503079d77f2",
+  "source_hash": "87a32246cc030767",
   "pipelines": [
     {
       "kind": "identity-tangle",

@@ -1,13 +1,8 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:design/literate-programming#project-source-code-out-of-a-document
-  type: design
-  status: proposed
-  edges:
-    transcludes:
-      - x0k:design/literate-programming
----
+```turtle folio:document
+design:literate-programming%23project-source-code-out-of-a-document a x0k:Design ;
+    x0k:status "proposed" ;
+    x0k:transcludes design:literate-programming .
+```
 
 ### Project source code out of a document
 
@@ -18,15 +13,16 @@ source out of it. The document is the artifact I maintain; the code is what it
 projects. Nothing asks me to keep the two in agreement, because only one of
 them is authored.
 
-<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/tangle_source_from_a_document" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md"><strong>Affordance</strong> · Project source code out of a document · <code>https://0k.computer/ontology#affordance/tangle_source_from_a_document</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1"></a>
+<a name="folio-instance-78306b3a6166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1"></a><sub data-instance-iri="x0k:affordance/tangle_source_from_a_document" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/tangle_source_from_a_document</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1">source declaration</a> · the graph block at line 18 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md:16</sub><a name="folio-source-78306b3a6166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1"></a>
 
-```yaml x0k:affordance
-id: x0k:affordance/tangle_source_from_a_document
-actors: [human, ai_agent]
-edges:
-  enabledBy:
-    - x0k:software-module/x0k-tangle
-    - x0k:software-module/x0k-folio
+```turtle folio:graph
+@prefix actor: <https://0k.computer/ontology#actor/> .
+@prefix software-module: <https://0k.computer/ontology#software-module/> .
+affordance:tangle_source_from_a_document a x0k:Affordance ;
+    x0k:claimedFor actor:human,
+        actor:ai_agent ;
+    x0k:enabledBy software-module:x0k-tangle,
+        software-module:x0k-folio .
 ```
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/actor-dark.svg"><img alt="Actor" src="../../../../assets/icons/actor-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/proven-dark.svg"><img alt="proven" src="../../../../assets/icons/proven-light.svg" height="16"></picture> *proven* · for a person, an agent · reachable through `cli` `x0k-tangle tangle`, `sdk` `tangle_document`
@@ -42,20 +38,13 @@ edges:
 fn tangle_document_runs_registered_pipeline() {
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().to_path_buf();
-    let doc = r#"---
-x0k:
-format: folio/v1
-id: x0k:design/test
-type: design
-status: proposed
-pipelines:
-- kind: echo
-  input: tokens
-  config:
-    suffix: hello
----
+    let doc = r#"# Test
 
-# Test
+```turtle folio:document
+design:test a x0k:Design ;
+x0k:status "proposed" ;
+folio:pipelines '[{"kind":"echo","input":"tokens","config":{"suffix":"hello"}}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 foo = "bar"
@@ -97,16 +86,11 @@ foo = "bar"
 fn tangle_document_errors_on_unknown_kind() {
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().to_path_buf();
-    let doc = r#"---
-x0k:
-format: folio/v1
-id: x0k:design/test
-type: design
-status: proposed
-pipelines:
-- kind: nope
-  input: tokens
----
+    let doc = r#"```turtle folio:document
+design:test a x0k:Design ;
+x0k:status "proposed" ;
+folio:pipelines '[{"kind":"nope","input":"tokens"}]'^^rdf:JSON .
+```
 
 ```toml {#tokens}
 x = 1
@@ -118,29 +102,42 @@ x = 1
     let err = tangle_document(&doc_path, &workspace, &registry).unwrap_err();
     assert!(err.to_string().contains("unknown pipeline kind"));
 }
+
+/// Chunks alone do not tangle: a document whose header states no
+/// `folio:tangle*` term and no `folio:pipelines` — or that has no
+/// header at all — writes nothing.
 ````
 
 </details>
 
-<details><summary><code>tangle_document_passes_through_when_no_blocks</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
+<details><summary><code>tangle_document_passes_through_when_the_header_declares_nothing</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/dispatcher.md#chunk-tests">#tests</a> in The pipeline dispatcher</summary>
 
-```rust
+````rust
 #[test]
-fn tangle_document_passes_through_when_no_blocks() {
+fn tangle_document_passes_through_when_the_header_declares_nothing() {
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().to_path_buf();
-    let doc_path = workspace.join("plain.md");
-    std::fs::write(&doc_path, "---\nc0k:\n  format: folio/v1\n  id: x0k:design/x\n  type: design\n  status: proposed\n---\nbody\n").unwrap();
     let registry = PipelineRegistry::default();
-    let result = tangle_document(&doc_path, &workspace, &registry).unwrap();
-    assert!(result.identity_outputs.is_empty());
-    assert!(result.pipeline_outputs.is_empty());
-    assert!(result.sidecars_written.is_empty());
+    for (name, doc) in [
+        (
+            "typed.md",
+            "# Plain\n\n```turtle folio:document\ndesign:x a x0k:Design ;\n    \
+             x0k:status \"proposed\" .\n```\n\n```text {#body}\nbody\n```\n",
+        ),
+        ("headerless.md", "# Plain\n\n```text {#body}\nbody\n```\n"),
+    ] {
+        let doc_path = workspace.join(name);
+        std::fs::write(&doc_path, doc).unwrap();
+        let result = tangle_document(&doc_path, &workspace, &registry).unwrap();
+        assert!(result.identity_outputs.is_empty(), "{name}");
+        assert!(result.pipeline_outputs.is_empty(), "{name}");
+        assert!(result.sidecars_written.is_empty(), "{name}");
+    }
 }
 
 /// Identity-tangle is itself a plugin; the default registry has
 /// it pre-registered.
-```
+````
 
 </details>
 
@@ -156,7 +153,8 @@ fn identity_pipeline_registered_in_default_registry() {
     );
 }
 
-/// When a doc has only `tangle:` (no `pipelines:`), the
+/// When a doc's header states only `folio:tangleRoot` (no
+/// `folio:pipelines`), the
 /// dispatcher synthesizes an identity-tangle pipeline run and
 /// emits the result through the same code path.
 ```
@@ -170,17 +168,13 @@ fn identity_pipeline_registered_in_default_registry() {
 fn tangle_document_routes_tangle_block_through_identity_plugin() {
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().to_path_buf();
-    let doc = r#"---
-x0k:
-format: folio/v1
-id: x0k:wiki/code/sample
-type: wiki
-status: proposed
-tangle:
-root: out/sample.txt
----
+    let doc = r#"# Sample
 
-# Sample
+```turtle folio:document
+wiki:code\/sample a x0k:Wiki ;
+x0k:status "proposed" ;
+folio:tangleRoot "out/sample.txt" .
+```
 
 ```text {#body}
 hello world
@@ -238,19 +232,13 @@ hello world
 fn tangle_document_routes_per_language_roots() {
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().to_path_buf();
-    let doc = r#"---
-x0k:
-format: folio/v1
-id: x0k:wiki/code/bilingual
-type: wiki
-status: proposed
-tangle:
-roots:
-  rust: out/demo.rs
-  gallowglass: out/demo.gls
----
+    let doc = r#"# Bilingual
 
-# Bilingual
+```turtle folio:document
+wiki:code\/bilingual a x0k:Wiki ;
+x0k:status "proposed" ;
+folio:tangleRoots '{"rust":"out/demo.rs","gallowglass":"out/demo.gls"}'^^rdf:JSON .
+```
 
 ```rust {#body}
 fn body() {}

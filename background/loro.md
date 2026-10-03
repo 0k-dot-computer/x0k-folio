@@ -1,32 +1,20 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:wiki/loro
-  type: wiki
-  subtype: wiki:Entity
-  status: stable
-  summary: Loro is an MIT-licensed, Rust-built CRDT library (with JS/WASM, Swift, Python bindings) for local-first and collaborative apps, combining an Eg-walker-style replayable event graph with Fugue text, a movable tree, and a movable list, plus Git-like versioning and shallow-snapshot history GC.
-  updated_by: mcp-agent
-  created_at: 2026-06-04T23:27:00.694421Z
-  updated_at: 2026-06-08T16:52:37.585932Z
-  concerns:
-    - crdt
-    - local-first
-    - rust
-    - wasm
-    - collaborative-editing
-    - sync
-    - event-graph
-    - sync-engine
-  edges:
-    cites:
-      - x0k:wiki/automerge
-      - x0k:wiki/event-graph-crdts
-      - x0k:wiki/willow-protocol
-      - x0k:wiki/ucan
-      - x0k:wiki/crdt-formal-verification
----
 # Loro
+
+```turtle folio:document
+wiki:loro a x0k:Wiki ;
+    x0k:status "stable" ;
+    x0k:subtype "wiki:Entity" ;
+    x0k:summary "Loro is an MIT-licensed, Rust-built CRDT library (with JS/WASM, Swift, Python bindings) for local-first and collaborative apps, combining an Eg-walker-style replayable event graph with Fugue text, a movable tree, and a movable list, plus Git-like versioning and shallow-snapshot history GC." ;
+    x0k:updatedBy "mcp-agent" ;
+    x0k:createdAt "2026-06-04T23:27:00.694421Z" ;
+    x0k:updatedAt "2026-06-08T16:52:37.585932Z" ;
+    x0k:concerns "crdt", "local-first", "rust", "wasm", "collaborative-editing", "sync", "event-graph", "sync-engine" ;
+    x0k:cites wiki:automerge,
+        wiki:event-graph-crdts,
+        wiki:willow-protocol,
+        wiki:ucan,
+        wiki:crdt-formal-verification .
+```
 
 Loro is a CRDT library that "makes building local-first and collaborative apps easier" by making JSON data collaborative and version-controlled with P2P sync, automatic merging, and local availability ([github.com/loro-dev/loro](https://github.com/loro-dev/loro)). It is MIT-licensed, written in Rust with JavaScript/WASM, Swift, and Python (`loro-ffi`) bindings, and reached 1.0 in 2026 (current crate releases in the 1.12.x range as of mid-2026). It is positioned as the fastest of the mainstream CRDT libraries in benchmarks, though the youngest in ecosystem maturity relative to [[automerge]] and Yjs. **Loro is x0k's chosen CRDT substrate.**
 

@@ -1,28 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/icon/path
-  type: implementation
-  status: draft
-  summary: 'The path form: an accepted icon as a list of outlines in grid units — every element reduced to absolute moves, lines, curves and arcs, its inherited paints resolved into one fill and one stroke, translations applied — so a native painter adapts it to its own geometry types without re-reading the profile.'
-  concerns:
-  - icons
-  - rendering
-  - shell
-  - profile
-  tangle:
-    crate: crates/x0k-icon
-    root: src/path.rs
-  edges:
-    implements:
-    - x0k:design/icon-profile
-    cites:
-    - x0k:architecture/entity-iconography
-    - x0k:implementation/icon/parse
-    - x0k:implementation/icon/validate
-    - x0k:implementation/icon/paint
----
 # The path form
+
+```turtle folio:document
+implementation:icon\/path a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The path form: an accepted icon as a list of outlines in grid units — every element reduced to absolute moves, lines, curves and arcs, its inherited paints resolved into one fill and one stroke, translations applied — so a native painter adapts it to its own geometry types without re-reading the profile." ;
+    x0k:concerns "icons", "rendering", "shell", "profile" ;
+    x0k:cites architecture:entity-iconography,
+        implementation:icon\/parse,
+        implementation:icon\/validate,
+        implementation:icon\/paint ;
+    x0k:implements design:icon-profile ;
+    folio:tangleCrate "crates/x0k-icon" ;
+    folio:tangleRoot "src/path.rs" .
+```
 
 Two painters in x0k draw marks without an SVG reader: the native shell,
 through `x0k-ui-draw` and vello's imaging `Painter`, and the entity-graph

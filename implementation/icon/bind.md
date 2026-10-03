@@ -1,30 +1,19 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/icon/bind
-  type: implementation
-  status: draft
-  summary: Binding an accepted icon's four roles to strings — a publication's palette block read by serde, one colour per role per scheme; the theme's CSS variables; or the role names themselves — so the emitter writes one form of SVG whatever a surface resolves a paint to.
-  concerns:
-  - icons
-  - svg
-  - themes
-  - palette
-  - publishing
-  tangle:
-    crate: crates/x0k-icon
-    root: src/bind.rs
-  edges:
-    implements:
-    - x0k:design/icon-profile
-    cites:
-    - x0k:architecture/entity-iconography
-    - x0k:architecture/publication-is-the-shipping-unit
-    - x0k:design/theme-system
-    - x0k:implementation/icon/validate
-    - x0k:implementation/icon/emit
----
 # Binding roles
+
+```turtle folio:document
+implementation:icon\/bind a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Binding an accepted icon's four roles to strings — a publication's palette block read by serde, one colour per role per scheme; the theme's CSS variables; or the role names themselves — so the emitter writes one form of SVG whatever a surface resolves a paint to." ;
+    x0k:concerns "icons", "svg", "themes", "palette", "publishing" ;
+    x0k:cites architecture:entity-iconography,
+        architecture:publication-is-the-shipping-unit,
+        design:theme-system,
+        implementation:icon\/validate,
+        implementation:icon\/emit ;
+    x0k:implements design:icon-profile ;
+    folio:tangleCrate "crates/x0k-icon" ;
+    folio:tangleRoot "src/bind.rs" .
+```
 
 An icon names no colour. Its paints are four words — `ink`, `line`,
 `paper`, `accent` — and something outside the icon says what each word is

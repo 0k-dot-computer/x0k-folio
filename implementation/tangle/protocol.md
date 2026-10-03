@@ -1,27 +1,22 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/protocol
-  type: implementation
-  status: draft
-  summary: "The area's overview: what a literate document is, how one dispatch loop services `tangle:` and `pipelines:` alike, and which chapter projects which module of the crate."
-  concerns: [tangle, literate, protocol, overview]
-  edges:
-    cites:
-      - x0k:implementation/tangle/parsing
-      - x0k:implementation/tangle/resolution
-      - x0k:implementation/tangle/chunk-refs
-      - x0k:implementation/tangle/source-refs
-      - x0k:implementation/tangle/pipeline
-      - x0k:implementation/tangle/identity-pipeline
-      - x0k:implementation/tangle/dispatcher
-      - x0k:implementation/tangle/weave
-      - x0k:implementation/tangle/bundle
-    realizes:
-      - x0k:design/literate-programming
-      - x0k:design/literate-pipelines
----
 # The Tangle Protocol
+
+```turtle folio:document
+implementation:tangle\/protocol a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The area's overview: what a literate document is, how one dispatch loop services `tangle:` and `pipelines:` alike, and which chapter projects which module of the crate." ;
+    x0k:concerns "tangle", "literate", "protocol", "overview" ;
+    x0k:cites implementation:tangle\/parsing,
+        implementation:tangle\/resolution,
+        implementation:tangle\/chunk-refs,
+        implementation:tangle\/source-refs,
+        implementation:tangle\/pipeline,
+        implementation:tangle\/identity-pipeline,
+        implementation:tangle\/dispatcher,
+        implementation:tangle\/weave,
+        implementation:tangle\/bundle ;
+    x0k:realizes design:literate-programming,
+        design:literate-pipelines .
+```
 
 `x0k-tangle` is the substrate that makes [literate
 programming](../../background/literate-programming.md "x0k:wiki/literate-programming") real in x0k. A literate document is markdown with named code chunks; the
@@ -66,8 +61,8 @@ knowledge/implementation/tangle/
   crate.md             → crates/x0k-tangle/src/{lib.rs, main.rs}
 ```
 
-Each `<slug>.md` declares a `tangle:` block in its frontmatter naming
-the crate + root, so re-tangling the workspace regenerates the same
+Each `<slug>.md` states `folio:tangleCrate` and `folio:tangleRoot` in
+its header, so re-tangling the workspace regenerates the same
 `.rs` bytes the compiler is consuming right now. Edit a doc, run
 `x0k-tangle workspace`, the source file updates. Edit the source file
 directly and the next workspace pass will overwrite your edit — these
@@ -78,13 +73,14 @@ files are now *generated*. The `@generated` header at the top of each
 
 The user-facing entry point is `tangle_document` (one doc) or
 `tangle_workspace` (every literate root contributed by registered
-plugins). The same loop services both modes — `tangle:` (identity
-output) and `pipelines:` (transformed outputs):
+plugins). The same loop services both modes — a tangle target
+(`folio:tangleCrate`/`folio:tangleRoot`, identity output) and
+`folio:pipelines` (transformed outputs):
 
 ```
 parse document
-  → split frontmatter, extract chunks, parse pipeline declarations
-  → translate `tangle:` block into a synthetic identity-tangle
+  → read the header's tool configuration, extract chunks
+  → translate the tangle target into a synthetic identity-tangle
     PipelineDecl prepended to the declared pipelines
 for each pipeline in document:
   → look up plugin in registry by `kind`
@@ -189,6 +185,6 @@ If you're trying to understand the protocol from scratch:
    plugins into the operational binary has its own chapter in the
    corpus, and that chapter travels only where that crate does.
 
-If you only want to find a specific surface: each page's frontmatter
+If you only want to find a specific surface: each page's header
 declares its tangle target, so grep for the source file name in
 `knowledge/implementation/tangle/` and you'll land on the doc that owns it.

@@ -1,43 +1,31 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/crate
-  type: implementation
-  status: draft
-  summary: The crate's contract rather than a mechanism — the module list and re-exports that say what a consumer may name, and the plugin-less CLI that puts those verbs in a shell.
-  concerns:
-  - tangle
-  - literate
-  - crate
-  - cli
-  - features
-  - publishing
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/lib.rs
-  edges:
-    implements:
-    - x0k:design/literate-programming
-    - x0k:design/publish-a-region-as-a-repository
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/parsing
-    - x0k:implementation/tangle/resolution
-    - x0k:implementation/tangle/identity-pipeline
-    - x0k:implementation/tangle/dispatcher
-    - x0k:implementation/tangle/weave
-    - x0k:implementation/tangle/region-project
-    - x0k:implementation/tangle/region-repo
-    - x0k:implementation/tangle/publishing
-    - x0k:implementation/tangle/receiving
-    - x0k:implementation/tangle/cli-faces
-    - x0k:implementation/tangle/bundle
----
 # x0k-tangle: the crate and its CLI
+
+```turtle folio:document
+implementation:tangle\/crate a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The crate's contract rather than a mechanism — the module list and re-exports that say what a consumer may name, and the plugin-less CLI that puts those verbs in a shell." ;
+    x0k:concerns "tangle", "literate", "crate", "cli", "features", "publishing" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/parsing,
+        implementation:tangle\/resolution,
+        implementation:tangle\/identity-pipeline,
+        implementation:tangle\/dispatcher,
+        implementation:tangle\/weave,
+        implementation:tangle\/region-project,
+        implementation:tangle\/region-repo,
+        implementation:tangle\/publishing,
+        implementation:tangle\/receiving,
+        implementation:tangle\/cli-faces,
+        implementation:tangle\/bundle ;
+    x0k:implements design:literate-programming,
+        design:publish-a-region-as-a-repository ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/lib.rs" .
+```
 
 `x0k-tangle` is the crate that makes a [literate
 document](../../background/literate-programming.md "x0k:wiki/literate-programming") executable:
-it parses the folio/v1 pages under `knowledge/implementation/`, expands
+it parses the literate pages under `knowledge/implementation/`, expands
 their named chunks into source files, weaves them into HTML, and — the
 outward-facing half — projects a whole publication region into a reader
 site or a buildable public repository, and receives what comes back.
@@ -77,12 +65,13 @@ newcomer is [`protocol.md`](protocol.md) first, then inward to outward:
   irreversible publish step, and the inbound contribution.
 - [`cli-faces.md`](cli-faces.md) — the vocabulary check and the
   affordance read-out behind the `check` and `affordances` verbs, the
-  two that make a shipped human claim true from a shell.
+  two that make a shipped human claim true from a shell, and the
+  `declarations` read-out tools call instead of parsing Turtle.
 
 One document threads through those chapters: the publication manifest
 `decisions/publications/x0k-folio.md`, which names this
-crate among the four it publishes. The parser reads it as a folio/v1
-page, `project-repo` projects it as a repository, and the repository's
+crate among the four it publishes. The parser reads its header like any
+other page's, `project-repo` projects it as a repository, and the repository's
 own CI runs the `x0k-tangle` built from that projection over the
 literate documents that produced it — this chapter's own `lib.rs`
 included.
@@ -115,12 +104,14 @@ user needs, and where the document format is specified.
 <a name="chunk-crate-doc"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#crate-doc`</sub>
 
 ```rust {#crate-doc}
-//! Literate programming for folio/v1 documents: tangle a document's
+//! Literate programming for folio documents: tangle a document's
 //! named code chunks into source files, weave it into HTML, and
 //! reconcile edits made on either side.
 //!
-//! A literate document is a markdown page whose frontmatter declares a
-//! `tangle:` block and whose fenced code blocks carry chunk names
+//! A literate document is a markdown page whose header — its first
+//! fenced block, `turtle folio:document` — states a tangle target
+//! (`folio:tangleCrate`, `folio:tangleRoot`) and whose fenced code blocks
+//! carry chunk names
 //! (`{#name}`), file targets (`file="…"`), and `<<references>>` to
 //! other chunks. The format is specified in the `protocol` chapter of
 //! the crate's own literate source (`knowledge/implementation/tangle/`),
@@ -138,13 +129,15 @@ user needs, and where the document format is specified.
 //!   [`source_check::check_source_refs`], and [`faces::vocabulary`] +
 //!   [`faces::check_vocabulary`]: verify every chunk reference resolves
 //!   and no reference cycle exists, resolve every `from=`/`symbol=`
-//!   chunk against its source file, and read every folio/v1 envelope
+//!   chunk against its source file, and read every folio header
 //!   against a vocabulary — one named with `--vocabulary`, one a
 //!   projection recorded, or the set this build compiled — without
 //!   writing anything.
 //!
 //! A fourth, **affordances** — [`faces::declared_affordances`] — reads
-//! the affordance declarations out of a document as data.
+//! the affordance declarations out of a document as data, and
+//! **declarations** — [`faces::declared_instances`] — every declared
+//! instance of any class.
 //!
 //! Everything else in the crate builds outward from those: the
 //! pipeline protocol that lets other generators ride the same
@@ -713,7 +706,7 @@ and `receive-repo` the inbound door. Each variant's doc comment is its
 `--help` text, so the clap derive below is also the user-facing
 contract.
 
-<a name="chunk-command-enum"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [weave-region-command](#chunk-weave-region-command) · [project-repo-command](#chunk-project-repo-command) · [publish-repo-command](#chunk-publish-repo-command) · [receive-repo-command](#chunk-receive-repo-command) · [list-command](#chunk-list-command) · [workspace-command](#chunk-workspace-command)</sub>
+<a name="chunk-command-enum"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [declarations-command](#chunk-declarations-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [weave-region-command](#chunk-weave-region-command) · [project-repo-command](#chunk-project-repo-command) · [publish-repo-command](#chunk-publish-repo-command) · [receive-repo-command](#chunk-receive-repo-command) · [list-command](#chunk-list-command) · [workspace-command](#chunk-workspace-command)</sub>
 
 ```rust {#command-enum file="src/cli.rs"}
 #[derive(Subcommand)]
@@ -721,6 +714,7 @@ enum Command {
     <<tangle-command>>
     <<check-command>>
     <<affordances-command>>
+    <<declarations-command>>
     <<icon-command>>
     <<sync-command>>
     <<index-command>>
@@ -751,13 +745,10 @@ literate document into the code it describes](../../decisions/design/corpus/lite
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d74616e676c65-1"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-tangle" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle tangle · <code>https://0k.computer/ontology#signifier/x0k-tangle-tangle</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d74616e676c65-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d74616e676c65-1"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-tangle-tangle
-edges:
-  signifies:
-    - x0k:affordance/tangle_source_from_a_document
-  presentedOn:
-    - x0k:surface/cli
+```turtle folio:graph
+signifier:x0k-tangle-tangle a x0k:Signifier ;
+    x0k:signifies affordance:tangle_source_from_a_document ;
+    x0k:presentedOn surface:cli .
 ```
 
 <a name="chunk-tangle-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#tangle-command`</sub>
@@ -765,7 +756,7 @@ edges:
 ```rust {#tangle-command file="src/cli.rs"}
 /// Tangle .md documents to their source files (writes .tangle-map.json sidecars)
 Tangle {
-    /// Paths to scan for documents with tangle: frontmatter
+    /// Paths to scan for documents whose header states a tangle target
     paths: Vec<PathBuf>,
     /// Workspace root (defaults to current directory)
     #[arg(long)]
@@ -787,7 +778,7 @@ expendable" is a claim about *these* files at *this* moment.
 ### `x0k-tangle check`
 
 Verify chunk references resolve and no cycles exist, and read every
-folio/v1 envelope under the paths against a vocabulary. The second half
+folio header under the paths against a vocabulary. The second half
 is the affordance of [checking a document against the vocabulary that
 shipped beside it](../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary"), and its help text names
 the two outcomes the affordance promises to tell apart: a predicate no
@@ -804,34 +795,32 @@ set ([`cli-faces.md`](cli-faces.md)).
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d636865636b-2"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-check" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle check · <code>https://0k.computer/ontology#signifier/x0k-tangle-check</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d636865636b-2">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d636865636b-2"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-tangle-check
-edges:
-  signifies:
-    - x0k:affordance/check_a_document_against_shipped_vocabulary
-  presentedOn:
-    - x0k:surface/cli
+```turtle folio:graph
+signifier:x0k-tangle-check a x0k:Signifier ;
+    x0k:signifies affordance:check_a_document_against_shipped_vocabulary ;
+    x0k:presentedOn surface:cli .
 ```
 
 <a name="chunk-check-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#check-command`</sub>
 
 ```rust {#check-command file="src/cli.rs"}
 /// Verify chunk references resolve and no cycles exist, and read every
-/// folio/v1 envelope against a vocabulary.
+/// folio header against a vocabulary.
 ///
-/// Two things can go wrong with an envelope, and they are reported
+/// Two things can go wrong with a header, and they are reported
 /// apart. A defect — a malformed id or edge target, a predicate no
-/// module of the vocabulary declares, an envelope that does not parse —
+/// module of the vocabulary declares, a header that does not parse —
 /// is a gap in what this publication selected, and fails the check. An
 /// edge whose target names no document under the paths scanned simply
 /// leaves the set — often into a wider corpus this selection was drawn
 /// from, and expected either way: printed as a note, never a failure.
 /// `--closed` is the reader saying there is no wider corpus: under
 /// it, an edge that leaves the set is a defect like any other.
-/// A Markdown file with no envelope at all is skipped, and counted
-/// on the summary line so that skipping it is not silent;
-/// `--require-envelope` is the reader saying every file here is
-/// supposed to be typed, under which such a file is a defect too.
+/// A Markdown file with no folio header at all — or an untyped `<>`
+/// one, which names nothing — is skipped, and counted on the summary
+/// line so that skipping it is not silent; `--require-header` is the
+/// reader saying every file here is supposed to be typed, under which
+/// such a file is a defect too.
 /// A third thing is checked across the set: an
 /// affordance claimed for a human that no signifier signifies is a
 /// defect, because the audience has nothing to perceive — unless the
@@ -861,7 +850,7 @@ Check {
     vocabulary: Option<PathBuf>,
     /// Read --vocabulary alone, without the compiled set. Say this only
     /// when that directory holds every term the documents use, the
-    /// folio/v1 envelope's own included.
+    /// header's own included.
     #[arg(long, requires = "vocabulary")]
     only_vocabulary: bool,
     /// Fail on an edge whose target names no document under the paths
@@ -871,19 +860,19 @@ Check {
     #[arg(long)]
     closed: bool,
     /// Fail on a Markdown file under the paths scanned that carries no
-    /// folio/v1 envelope. Say this when every file in the set is
-    /// supposed to be typed: a file without one is skipped in silence,
-    /// which is what lets a corpus adopt one directory at a time and
-    /// what leaves a generated board quietly one row short.
+    /// folio header. Say this when every file in the set is supposed to
+    /// be typed: a file without one is skipped in silence, which is what
+    /// lets a corpus adopt one directory at a time and what leaves a
+    /// generated board quietly one row short.
     #[arg(long)]
-    require_envelope: bool,
+    require_header: bool,
 },
 ```
 
 ### `x0k-tangle affordances`
 
 Print every affordance the documents under the paths declare, as a
-JSON array on stdout: one record per `yaml x0k:affordance` block, with
+JSON array on stdout: one record per affordance a graph block declares, with
 its id, title, description, the document it is defined in, and its
 declared facts grouped by predicate. What a declaration says becomes
 data a reader's own tooling can consume, which is the affordance of
@@ -893,29 +882,57 @@ reported on stderr and skipped.
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d6166666f7264616e636573-3"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-affordances" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle affordances · <code>https://0k.computer/ontology#signifier/x0k-tangle-affordances</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d6166666f7264616e636573-3">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d6166666f7264616e636573-3"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-tangle-affordances
-edges:
-  signifies:
-    - x0k:affordance/read_declared_affordances
-  presentedOn:
-    - x0k:surface/cli
+```turtle folio:graph
+signifier:x0k-tangle-affordances a x0k:Signifier ;
+    x0k:signifies affordance:read_declared_affordances ;
+    x0k:presentedOn surface:cli .
 ```
 
 <a name="chunk-affordances-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#affordances-command`</sub>
 
 ```rust {#affordances-command file="src/cli.rs"}
-/// Print every affordance the folio/v1 documents under the paths
+/// Print every affordance the folio documents under the paths
 /// declare, as a JSON array on stdout.
 ///
-/// One record per `yaml x0k:affordance` block: `id`, `title` (the
-/// enclosing heading), `description` (the prose under it), `defined_in`
-/// (the parent document's id), and `facts` — every other declared fact
-/// grouped by predicate, each value tagged `{"entity": …}` for an id or
-/// `{"string": …}` for a literal. A block the extractor refuses is
-/// reported on stderr and skipped.
+/// One record per `turtle folio:graph` block stating `a x0k:Affordance`:
+/// `id`, `title` (the enclosing heading), `description` (the prose under
+/// it), `defined_in` (the parent document's id), and `facts` — every other
+/// declared fact grouped by compact predicate (`x0k:claimedFor`), each
+/// value tagged `{"entity": …}` for an id or `{"string": …}` for a
+/// literal. A block the extractor refuses is reported on stderr and
+/// skipped.
 Affordances {
-    /// Paths to scan for folio/v1 documents
+    /// Paths to scan for folio documents
+    paths: Vec<PathBuf>,
+},
+```
+
+### `x0k-tangle declarations`
+
+Every instance a graph block under the paths declares, of any class, as
+one JSON array on stdout — the read-out a tool in another language calls
+instead of parsing Turtle ([`cli-faces.md`](cli-faces.md) § Every
+declaration, as data). It has no signifier: it is plumbing for tools,
+and makes no claim on a person.
+
+<a name="chunk-declarations-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#declarations-command`</sub>
+
+```rust {#declarations-command file="src/cli.rs"}
+/// Print every instance the graph blocks under the paths declare, as a
+/// JSON array on stdout.
+///
+/// One record per `turtle folio:graph` instance block, sorted by document
+/// and line: `id` (compact), `class` (kebab-case), `title`,
+/// `description`, `document` (the path), and `statements` — compact
+/// predicate → values, an IRI as its compact id, a literal as the JSON
+/// its datatype names (`rdf:JSON` parsed). A block the extractor refuses
+/// is reported on stderr and skipped.
+Declarations {
+    /// Only instances of this class (kebab-case, e.g. `interface`);
+    /// repeatable. Every class when absent.
+    #[arg(long = "class")]
+    classes: Vec<String>,
+    /// Paths to scan for Markdown documents
     paths: Vec<PathBuf>,
 },
 ```
@@ -933,35 +950,32 @@ broke and the element, and fails the run; the verb never redraws.
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d69636f6e-4"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-icon" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle icon · <code>https://0k.computer/ontology#signifier/x0k-tangle-icon</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d69636f6e-4">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d69636f6e-4"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-tangle-icon
-cue: x0k-tangle icon
-edges:
-  signifies:
-    - x0k:affordance/check_an_icon_against_the_profile
-    - x0k:affordance/show_an_icon_on_a_surface
-  presentedOn:
-    - x0k:surface/cli
+```turtle folio:graph
+signifier:x0k-tangle-icon a x0k:Signifier ;
+    x0k:cue "x0k-tangle icon" ;
+    x0k:signifies affordance:check_an_icon_against_the_profile,
+        affordance:show_an_icon_on_a_surface ;
+    x0k:presentedOn surface:cli .
 ```
 
 <a name="chunk-icon-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#icon-command`</sub>
 
 ```rust {#icon-command file="src/cli.rs"}
-/// Check every `svg x0k:icon` declaration in the folio/v1 documents
+/// Check every `svg x0k:icon` declaration in the folio documents
 /// under the paths against the icon profile, and with `--out` write
 /// each as its light and dark files bound to a publication's palette.
 ///
 /// A drawing outside the profile is printed with the rule it broke and
 /// the element, and fails the run; nothing is redrawn. `--out` needs
-/// `--palette`: the publication document whose envelope carries the
-/// `palette:` block the four paint roles are bound with.
+/// `--palette`: the publication document whose header carries the
+/// `x0k:palette` the four paint roles are bound with.
 Icon {
-    /// Paths to scan for folio/v1 documents
+    /// Paths to scan for folio documents
     paths: Vec<PathBuf>,
     /// Directory to write `<stem>-light.svg` and `<stem>-dark.svg` into
     #[arg(long, requires = "palette")]
     out: Option<PathBuf>,
-    /// The publication document whose `palette:` binds the roles
+    /// The publication document whose `x0k:palette` binds the roles
     #[arg(long, requires = "out")]
     palette: Option<PathBuf>,
 },
@@ -988,9 +1002,9 @@ Sync {
 <a name="chunk-index-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#index-command`</sub>
 
 ```rust {#index-command file="src/cli.rs"}
-/// Build a JSON index of all folio/v1 files
+/// Build a JSON index of every document whose folio header names it
 Index {
-    /// Paths to scan for folio/v1 documents
+    /// Paths to scan for folio documents
     paths: Vec<PathBuf>,
     /// Workspace root (defaults to current directory)
     #[arg(long)]
@@ -1009,13 +1023,10 @@ of [reading a document as the woven page it describes](../../decisions/design/co
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-5"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-weave" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle weave · <code>https://0k.computer/ontology#signifier/x0k-tangle-weave</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-5">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-5"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-tangle-weave
-edges:
-  signifies:
-    - x0k:affordance/weave_a_document
-  presentedOn:
-    - x0k:surface/cli
+```turtle folio:graph
+signifier:x0k-tangle-weave a x0k:Signifier ;
+    x0k:signifies affordance:weave_a_document ;
+    x0k:presentedOn surface:cli .
 ```
 
 <a name="chunk-weave-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#weave-command`</sub>
@@ -1095,7 +1106,7 @@ ProjectRepo {
     #[arg(long)]
     workspace: Option<PathBuf>,
     /// Explicit SPDX license override. Without this flag the license comes
-    /// from the publication doc's `license:` envelope field (the manifest
+    /// from the publication header's `x0k:license` (the manifest
     /// is authoritative); with neither, the projection refuses. There is
     /// no silent default.
     #[arg(long)]
@@ -1253,7 +1264,7 @@ line says which variable it falls back to when the host names one — a
 help text is part of the contract, and a sentence true of one binary
 must not print in another.
 
-<a name="chunk-main-fn"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
+<a name="chunk-main-fn"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-declarations](#chunk-dispatch-declarations) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
 
 ```rust {#main-fn file="src/cli.rs"}
 /// Parse the process arguments and run the verb they name, as `host`.
@@ -1281,6 +1292,7 @@ pub fn run(host: &Host) -> Result<()> {
         <<dispatch-check>>
 
         <<dispatch-affordances>>
+        <<dispatch-declarations>>
 
         <<dispatch-icon>>
 
@@ -1321,7 +1333,8 @@ reads what the document declares before it asks for the work, and says
 which of the two things is missing.
 
 Two shapes reach that arm and only one is a mistake. A document with
-chunks and no `tangle:` block is usually an author who forgot the block,
+chunks and no tangle target in its header is usually an author who
+forgot to state one,
 and the sentence above is for them. A document whose chunks are *all*
 `from=` mirrors owns no code at all: it shows what other files hold, and
 the integration guide recommends it as the first thing an existing
@@ -1444,7 +1457,7 @@ Command::Sync { paths, workspace } => {
 `check` has three halves — the arithmetic is wrong and the third one is
 why. The first walks every markdown document under the paths and
 verifies the chunk references of any that declares chunks. The second
-reads every folio/v1 envelope under the same paths against the shipped
+reads every folio header under the same paths against the shipped
 vocabulary *extended by the one the set carries*
 ([`cli-faces.md`](cli-faces.md)) and prints what it found
 in the affordance's own two categories: a defect as `<path>: <defect>`,
@@ -1454,18 +1467,18 @@ inside those documents are read in the same two categories, which is
 why the same loop prints a second kind of note: `0 declaration(s)
 checked` over a collection that declares two papers was the gate
 reporting a pass it had not run. The third rides the first walk:
-it holds the id every envelope declared and fails the run when two
+it holds the id every header declared and fails the run when two
 documents declare the same one.
 
 The three run in one pass over one set, which is the repair. They used
-to run over two: the envelope half asked
+to run over two: the header half asked
 [`cli-faces.md`](cli-faces.md)'s discovery, which parses each file, and
 the reference half asked `discover_documents`, which grepped for the
-text `tangle:`. Two membership predicates over one argument is two
+tangle key. Two membership predicates over one argument is two
 answers to "what did you check", and only the second one got counted.
 
-A document id is the graph's primary key — every edge in every envelope
-resolves through it, and a `cites:` naming a doubled id names both
+A document id is the graph's primary key — every edge in every header
+resolves through it, and an `x0k:cites` naming a doubled id names both
 documents or neither. Two documents holding one id is therefore a
 defect of the set rather than of either file, so the check is over the
 paths scanned (there is nothing else this process can see) and fails the
@@ -1482,7 +1495,7 @@ Command::Check {
     vocabulary,
     only_vocabulary,
     closed,
-    require_envelope,
+    require_header,
 } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
     let model = crate::faces::vocabulary(vocabulary.as_deref(), only_vocabulary)?;
@@ -1491,7 +1504,7 @@ Command::Check {
     let mut splice_failed = 0;
     let mut source_refs = 0;
     let mut source_ref_failures = 0;
-    let mut envelope_less = Vec::new();
+    let mut header_less = Vec::new();
     let mut ids: HashMap<String, PathBuf> = HashMap::new();
 
     for doc_path in markdown_under(&paths) {
@@ -1505,21 +1518,27 @@ Command::Check {
                 continue;
             }
         };
+        let carries_header = crate::faces::carries_header(&content);
         let parsed = match crate::parser::parse_document(&content) {
             Ok(parsed) => parsed,
             Err(e) => {
-                eprintln!("{}: does not parse: {e}", doc_path.display());
-                has_errors = true;
+                // The only thing that stops a document parsing is its
+                // header, and a header that does not read is the vocabulary
+                // pass's to report — once, with the parser's reason.
+                if !carries_header {
+                    eprintln!("{}: does not parse: {e}", doc_path.display());
+                    has_errors = true;
+                }
                 continue;
             }
         };
 
-        // A file the vocabulary pass will never see, because it claims
-        // no envelope. Skipping it is what makes adoption incremental;
-        // holding on to its name is what keeps skipping it from being
-        // silent.
-        if !x0k_folio::colophon::is_colophon(&content) {
-            envelope_less.push(doc_path.clone());
+        // A file the vocabulary pass will never see, because it carries
+        // no header that names it. Skipping it is what makes adoption
+        // incremental; holding on to its name is what keeps skipping it
+        // from being silent.
+        if !carries_header {
+            header_less.push(doc_path.clone());
         } else if let Some(names) = crate::index::title_disagreement(&content) {
             // Two names, and neither is wrong: a warning, never the verdict.
             eprintln!("{}", title_warning(&doc_path, &names));
@@ -1563,7 +1582,7 @@ Command::Check {
 
     let report = crate::faces::check_vocabulary(&model, &paths)?;
     for (path, reason) in &report.unparsed {
-        eprintln!("{path}: envelope does not parse: {reason}");
+        eprintln!("{path}: header does not parse: {reason}");
         has_errors = true;
     }
     for (path, defect) in &report.corpus.defects {
@@ -1594,27 +1613,27 @@ Command::Check {
         has_errors |= closed;
     }
 
-    if require_envelope {
-        for path in &envelope_less {
+    if require_header {
+        for path in &header_less {
             eprintln!(
-                "{}: carries no folio/v1 envelope, so nothing in this set reads it",
+                "{}: carries no folio header, so nothing in this set reads it",
                 path.display()
             );
         }
-        has_errors |= !envelope_less.is_empty();
+        has_errors |= !header_less.is_empty();
     }
 
     // The counts are the denominator, and a reader wants them most
     // when something failed: one dangling edge reads differently over
-    // fifteen envelopes than over seven hundred. So the line prints
+    // fifteen headers than over seven hundred. So the line prints
     // either way, and the exit code carries the verdict.
     eprintln!(
-        "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set{}",
+        "{}; {} header(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set{}",
         references_verdict(chunked_documents, splice_failed, source_refs, source_ref_failures),
         report.corpus.checked,
         report.declarations.checked,
         report.corpus.dangling.len() + report.declarations.dangling.len(),
-        untyped_clause(envelope_less.len())
+        untyped_clause(header_less.len())
     );
     if has_errors {
         std::process::exit(1);
@@ -1625,7 +1644,7 @@ Command::Check {
 The line says what the run did, and the counts are what make that
 possible to read. It prints on a failing run too, which it did not
 always: a maintainer running `--closed` over a fifteen-ADR log lost
-`15 envelope(s) read` at the moment the denominator was worth most,
+`15 header(s) read` at the moment the denominator was worth most,
 because one dangling edge over fifteen documents and one over seven
 hundred are different situations and only the count tells them apart.
 The exit code carries the verdict; the line carries the arithmetic.
@@ -1652,15 +1671,16 @@ as resolved-of-read the moment any of them did not resolve, and as a
 plain count when they all did, because `7 of 7` is arithmetic nobody
 asked for.
 
-And the line now says what it walked past. A Markdown file with no
-envelope is skipped — that is what lets a corpus adopt this one
-directory at a time, and it was praised as such — but a maintainer
-generating an ADR board from the fifteen envelopes in a directory of
-sixteen files gets a board that is silently one row short, and every
-count on this line agrees with the board rather than with the
-directory. `--require-envelope` is the reader saying the set is meant
-to be wholly typed; the count is there either way, because the reader
-who most needs it is the one who did not know to ask.
+And the line says what it walked past. A Markdown file with no folio
+header is skipped — that is what lets a corpus adopt this one directory
+at a time — and so is a file whose header is an untyped `<>` one, which
+configures a tool and names no document. But a maintainer generating an
+ADR board from the fifteen headers in a directory of sixteen files gets
+a board that is silently one row short, and every count on this line
+agrees with the board rather than with the directory. `--require-header`
+is the reader saying the set is
+meant to be wholly typed; the count is there either way, because the
+reader who most needs it is the one who did not know to ask.
 
 <a name="chunk-references-verdict"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#references-verdict`</sub>
 
@@ -1709,19 +1729,18 @@ fn references_verdict(
 
 /// What `check` says about the Markdown it walked past.
 ///
-/// A file with no envelope is not a defect — ignoring Markdown it does
-/// not own is why a corpus can adopt this verb one directory at a time
-/// — but it is invisible to every other count on the line, and a board
-/// generated from those counts is quietly one row short (Backstage,
-/// 2026-09-23). Saying how many were skipped costs a clause and is the
-/// only way a reader learns the set is not the set they think it is.
-/// Saying it when there were none would be noise, so the clause is
-/// empty then.
-fn untyped_clause(envelope_less: usize) -> String {
-    match envelope_less {
+/// A file with no folio header is not a defect — ignoring Markdown it
+/// does not own is why a corpus can adopt this verb one directory at a
+/// time — but it is invisible to every other count on the line, and a
+/// board generated from those counts is quietly one row short. Saying how
+/// many were skipped costs a clause and is the only way a reader learns
+/// the set is not the set they think it is. Saying it when there were
+/// none would be noise, so the clause is empty then.
+fn untyped_clause(header_less: usize) -> String {
+    match header_less {
         0 => String::new(),
-        1 => ", 1 markdown file carried no envelope".to_string(),
-        n => format!(", {n} markdown files carried no envelope"),
+        1 => ", 1 markdown file carried no header".to_string(),
+        n => format!(", {n} markdown files carried no header"),
     }
 }
 ```
@@ -1737,6 +1756,24 @@ Command::Affordances { paths } => {
     let report = crate::faces::declared_affordances(&paths)?;
     for (path, reason) in &report.skipped {
         eprintln!("{path}: skipped: {reason}");
+    }
+    println!("{}", serde_json::to_string_pretty(&report.records)?);
+}
+```
+
+`declarations` has the same shape, over every class: the records on
+stdout, the refused blocks on stderr, each named by path and line. Its
+vocabulary is the one `check` would read against, so a projection's own
+modules name the prefixes its blocks use.
+
+<a name="chunk-dispatch-declarations"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-declarations`</sub>
+
+```rust {#dispatch-declarations file="src/cli.rs"}
+Command::Declarations { classes, paths } => {
+    let model = crate::faces::vocabulary(None, false)?;
+    let report = crate::faces::declared_instances(&model, &paths, &classes)?;
+    for (place, reason) in &report.skipped {
+        eprintln!("{place}: skipped: {reason}");
     }
     println!("{}", serde_json::to_string_pretty(&report.records)?);
 }
@@ -1764,8 +1801,8 @@ Command::Icon { paths, out, palette } => {
     if let (Some(out), Some(palette)) = (out, palette) {
         let content = std::fs::read_to_string(&palette)
             .with_context(|| format!("reading {}", palette.display()))?;
-        let palette = crate::region_repo::envelope_palette(&content)?.ok_or_else(|| {
-            anyhow::anyhow!("{} carries no `palette:` in its envelope", palette.display())
+        let palette = crate::region_repo::header_palette(&content)?.ok_or_else(|| {
+            anyhow::anyhow!("{} carries no `x0k:palette` in its header", palette.display())
         })?;
         written = crate::faces::write_icon_files(&report, &palette, &out)?.len();
     }
@@ -2178,7 +2215,7 @@ when it names one, else the current directory — is canonicalized before
 anything is written so the tree being tangled
 is named, not implied by the current directory; the library refuses
 writes outside it regardless. Document discovery is a
-content sniff — a `.md` mentioning `tangle:` (or, for `sync`, `from=`) —
+content sniff — a `.md` mentioning `folio:tangle` (or, for `sync`, `from=`) —
 because the parse that would confirm it is what the verb is about to do
 anyway. The rest is report formatting.
 
@@ -2370,17 +2407,17 @@ markdown, then *decide membership by parsing it*.
 
 The old code fused the two and did the deciding with `content.contains`.
 That failed three ways at once. It admitted any prose that merely wrote
-the word `tangle:`. It missed every document whose only declaration was
-`pipelines:`, since this binary's grep did not name that key — and a
+the tangle key. It missed every document whose only declaration was
+its pipelines, since this binary's grep did not name that key — and a
 missed pipelines document is a loud error this binary would otherwise
 have raised, silently not raised. And, worst, the grep lived only in the
 directory branch: a named file was taken as given, so the *same
 document* answered differently depending on how you named it.
 `check dir/` walked past a document with a broken `<<ref>>` and no
-`tangle:` block and then printed `all references OK`; `check dir/doc.md`
+tangle target and then printed `all references OK`; `check dir/doc.md`
 found the same broken reference and exited 1. The documents that shape
 recommends first — reference-only pages built from `from=`/`symbol=`
-chunks, which need no `tangle:` block at all — are exactly the ones the
+chunks, which need no tangle target at all — are exactly the ones the
 directory form dropped, and the directory form is the one every document
 here tells a reader to run.
 
@@ -2457,8 +2494,9 @@ guessing at the second.
 ```rust {#declares file="src/cli.rs"}
 /// What a document declares about itself, read off its parse.
 struct Declares {
-    /// It names somewhere to write: a `tangle:` crate or root,
-    /// per-language roots, or a `pipelines:` block. The same predicate
+    /// It names somewhere to write: a `folio:tangleCrate` or
+    /// `folio:tangleRoot`, per-language `folio:tangleRoots`, or
+    /// `folio:pipelines`. The same predicate
     /// `tangle_document` applies before it does any work.
     target: bool,
     /// It has a chunk to fill from source (`from=`), which is what
@@ -2557,7 +2595,7 @@ disk.
 fn nothing_to_write(path: &Path, chunks: usize) -> String {
     format!(
         "{}: declares {chunks} chunk(s) and no tangle target \
-         (tangle.root, tangle.crate, tangle.roots, or pipelines:); nothing to write",
+         (folio:tangleRoot, folio:tangleCrate, folio:tangleRoots, or folio:pipelines); nothing to write",
         path.display()
     )
 }
@@ -2712,14 +2750,14 @@ use tempfile::TempDir;
 const JS_SOURCE: &str =
     "export function createHorizonRemap(scale) {\n  return (u) => u * scale;\n}\n";
 
-/// A folio/v1 document with a chunk whose `<<ref>>` names nothing, and
-/// no `tangle:` block — the reference-only shape an adopter writes
+/// A document with a chunk whose `<<ref>>` names nothing, and no tangle
+/// target in its header — the reference-only shape an adopter writes
 /// first. `{id}` distinguishes copies.
 fn broken_reference_doc(id: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/{id}\n  \
-         type: implementation\n  status: draft\n  summary: A document with a \
-         broken chunk reference and nowhere to write.\n---\n# Doc\n\n\
+        "# Doc\n\n```turtle folio:document\nimplementation:{id} a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    x0k:summary \"A document with a broken chunk reference \
+         and nowhere to write.\" .\n```\n\n\
          ```rust {{#root file=\"src/lib.rs\"}}\nfn f() {{\n    <<nope>>\n}}\n```\n"
     )
 }
@@ -2860,9 +2898,9 @@ fn sync_passes_a_document_with_nothing_to_fill() {
     write(
         tmp.path(),
         "doc.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/fixture\n  \
-         type: implementation\n  status: draft\n  tangle:\n    crate: fixture\n    \
-         root: src/lib.rs\n---\n# Doc\n\n```rust {#root}\nfn f() {}\n```\n",
+        "# Doc\n\n```turtle folio:document\nimplementation:fixture a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \"fixture\" ;\n    \
+         folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {#root}\nfn f() {}\n```\n",
     );
 
     let out = sync(tmp.path());
@@ -3073,28 +3111,50 @@ fn check_counts_the_source_references_that_did_not_resolve() {
     );
 }
 
-/// A Markdown file with no envelope is skipped — that is what makes
+/// A Markdown file with no folio header is skipped — that is what makes
 /// adoption incremental — and the count is what keeps skipping it from
-/// being silent. `--require-envelope` is the reader saying every file
-/// under these paths is supposed to be typed (Backstage, 2026-09-23).
+/// being silent. An untyped `<>` header names no document, so it counts
+/// the same. `--require-header` is the reader saying every file under
+/// these paths is supposed to be typed.
 #[test]
 fn check_counts_the_markdown_it_walked_past_and_can_be_told_to_refuse_it() {
     let tmp = TempDir::new().unwrap();
     write(
         tmp.path(),
         "typed.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/typed\n  type: design\n  \
-         status: draft\n---\n# Typed\n",
+        "# Typed\n\n```turtle folio:document\ndesign:typed a x0k:Design ;\n    \
+         x0k:status \"draft\" .\n```\n",
     );
-    write(tmp.path(), "untyped.md", "# Untyped\n\nNo envelope here.\n");
+    write(tmp.path(), "untyped.md", "# Untyped\n\nNo header here.\n");
+    write(
+        tmp.path(),
+        "tool-only.md",
+        "# Tool only\n\n```turtle folio:document\n<> folio:tangleCrate \"x\" .\n```\n",
+    );
 
     let out = check_in(tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "an untyped file is not a defect: {stderr}");
     assert!(
-        stderr.contains("1 envelope(s) read against the vocabulary")
-            && stderr.contains("1 markdown file carried no envelope"),
+        stderr.contains("1 header(s) read against the vocabulary")
+            && stderr.contains("2 markdown files carried no header"),
         "the line says what it read and what it walked past: {stderr}"
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("check")
+        .arg(tmp.path())
+        .arg("--workspace")
+        .arg(tmp.path())
+        .arg("--require-header")
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "--require-header let it through: {stderr}");
+    assert!(
+        stderr.contains("untyped.md: carries no folio header")
+            && stderr.contains("tool-only.md: carries no folio header"),
+        "the defect names the files: {stderr}"
     );
 
     let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
@@ -3105,11 +3165,9 @@ fn check_counts_the_markdown_it_walked_past_and_can_be_told_to_refuse_it() {
         .arg("--require-envelope")
         .output()
         .expect("the x0k-tangle binary runs");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "--require-envelope let it through: {stderr}");
     assert!(
-        stderr.contains("untyped.md: carries no folio/v1 envelope"),
-        "the defect names the file: {stderr}"
+        !out.status.success(),
+        "only --require-header names this refusal; another spelling is an unknown flag"
     );
 }
 
@@ -3122,9 +3180,9 @@ fn tangle_names_its_outputs_the_way_the_reader_named_the_workspace() {
     write(
         tmp.path(),
         "docs/ratelimit.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/ratelimit\n  \
-         type: implementation\n  status: draft\n  tangle:\n    \
-         crate: crates/ratelimit\n    root: src/bucket.rs\n---\n# Bucket\n\n\
+        "# Bucket\n\n```turtle folio:document\nimplementation:ratelimit a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \"crates/ratelimit\" ;\n    \
+         folio:tangleRoot \"src/bucket.rs\" .\n```\n\n\
          ```rust {#root}\npub fn take() {}\n```\n",
     );
 
@@ -3272,11 +3330,13 @@ fn check_catches_the_stale_body_sync_left_behind() {
 
 /// A predicate this build is certain to accept, so the fixture measures
 /// the note and not the module selection.
-fn shipped_predicate() -> &'static str {
-    x0k_ontology::KNOWN_EDGE_PREDICATES
+fn shipped_predicate() -> String {
+    let snake = x0k_ontology::KNOWN_EDGE_PREDICATES
         .first()
         .copied()
-        .expect("a build whose vocabulary declares no document edge ships no document module")
+        .expect("a build whose vocabulary declares no document edge ships no document module");
+    let camel = x0k_ontology::snake_to_camel(snake).expect("every known predicate has a term");
+    format!("x0k:{camel}")
 }
 
 #[test]
@@ -3286,8 +3346,8 @@ fn the_dangling_edge_note_claims_only_what_is_true_of_any_tree() {
         tmp.path(),
         "docs/fixture.md",
         &format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/fixture\n  type: design\n  \
-             status: draft\n  edges:\n    {}:\n      - x0k:design/elsewhere\n---\n# Fixture\n",
+            "# Fixture\n\n```turtle folio:document\ndesign:fixture a x0k:Design ;\n    \
+             x0k:status \"draft\" ;\n    {} design:elsewhere .\n```\n",
             shipped_predicate()
         ),
     );
@@ -3312,8 +3372,8 @@ fn closed_makes_an_edge_that_leaves_the_set_fail_the_run() {
         tmp.path(),
         "docs/fixture.md",
         &format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/fixture\n  type: design\n  \
-             status: draft\n  edges:\n    {}:\n      - x0k:design/elsewhere\n---\n# Fixture\n",
+            "# Fixture\n\n```turtle folio:document\ndesign:fixture a x0k:Design ;\n    \
+             x0k:status \"draft\" ;\n    {} design:elsewhere .\n```\n",
             shipped_predicate()
         ),
     );
@@ -3340,10 +3400,10 @@ fn a_declared_edge_that_leaves_the_set_fails_the_run_under_closed_too() {
     write(
         tmp.path(),
         "docs/fixture.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/fixture\n  type: wiki\n  \
-         status: draft\n---\n# Fixture\n\n```yaml x0k:affordance\nid: \
-         x0k:affordance/do_the_thing\nedges:\n  enabledBy:\n    - \
-         x0k:software-module/elsewhere\n```\n",
+        "# Fixture\n\n```turtle folio:document\nwiki:fixture a x0k:Wiki ;\n    \
+         x0k:status \"draft\" .\n```\n\n```turtle folio:graph\n\
+         affordance:do_the_thing a x0k:Affordance ;\n    \
+         x0k:enabledBy x0k:software-module\\/elsewhere .\n```\n",
     );
 
     let open = run(&["check"], tmp.path());
@@ -3396,8 +3456,8 @@ fn check_says_it_checked_nothing_rather_than_asserting_a_pass() {
     write(
         tmp.path(),
         "docs/prose.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/prose\n  type: design\n  \
-         status: draft\n---\n# Prose\n\nNo chunks here.\n",
+        "# Prose\n\n```turtle folio:document\ndesign:prose a x0k:Design ;\n    \
+         x0k:status \"draft\" .\n```\n\nNo chunks here.\n",
     );
 
     let out = run(&["check"], &tmp.path().join("docs"));
@@ -3424,16 +3484,16 @@ fn check_warns_when_the_frontmatter_title_and_the_h1_disagree_and_exits_the_same
     write(
         agree.path(),
         "docs/a.md",
-        "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\nx0k:\n  format: folio/v1\n  \
-         id: x0k:architecture/adr013\n  type: architecture\n---\n\n\
-         # ADR013: Proper use of *HTTP* fetching libraries.\n",
+        "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\n---\n\
+         # ADR013: Proper use of *HTTP* fetching libraries.\n\n\
+         ```turtle folio:document\narchitecture:adr013 a x0k:Architecture .\n```\n",
     );
     let disagree = TempDir::new().unwrap();
     write(
         disagree.path(),
         "docs/c.md",
-        "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\nx0k:\n  format: folio/v1\n  \
-         id: x0k:architecture/adrz\n  type: architecture\n---\n\n# Body H1 Different\n\nText.\n",
+        "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\n---\n# Body H1 Different\n\n\
+         ```turtle folio:document\narchitecture:adrz a x0k:Architecture .\n```\n\nText.\n",
     );
 
     for flags in [&["check"][..], &["check", "--closed"][..]] {
@@ -3470,8 +3530,8 @@ fn check_warns_when_the_frontmatter_title_and_the_h1_disagree_and_exits_the_same
 #[test]
 fn check_fails_two_documents_that_declare_one_id() {
     let tmp = TempDir::new().unwrap();
-    let doc = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/collision\n  \
-               type: design\n  status: draft\n---\n# Copy\n";
+    let doc = "# Copy\n\n```turtle folio:document\ndesign:collision a x0k:Design ;\n    \
+               x0k:status \"draft\" .\n```\n";
     write(tmp.path(), "docs/a.md", doc);
     write(tmp.path(), "docs/b.md", doc);
 
@@ -3497,8 +3557,8 @@ fn check_does_not_see_one_document_twice_through_overlapping_paths() {
     write(
         tmp.path(),
         "docs/inner/d.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/once\n  type: design\n  \
-         status: draft\n---\n# Once\n",
+        "# Once\n\n```turtle folio:document\ndesign:once a x0k:Design ;\n    \
+         x0k:status \"draft\" .\n```\n",
     );
 
     let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
@@ -3539,12 +3599,11 @@ fn tangle_refuses_a_document_that_names_nowhere_to_write() {
 
 /// The shape the integration guide tells an existing codebase to write
 /// first: chunks that mirror symbols out of code the document does not
-/// own, and no `tangle:` block, because there is nothing to write.
+/// own, and no tangle target, because there is nothing to write.
 fn mirror_only_doc() -> String {
-    "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/mirror\n  \
-     type: implementation\n  status: draft\n  summary: A document that \
-     mirrors code it does not own.\n---\n# Doc\n\n\
-     ```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n"
+    "# Doc\n\n```turtle folio:document\nimplementation:mirror a x0k:Implementation ;\n    \
+     x0k:status \"draft\" ;\n    x0k:summary \"A document that mirrors code it does not own.\" .\n\
+     ```\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n"
         .to_string()
 }
 
@@ -3612,9 +3671,9 @@ fn tangle_writes_a_document_that_names_a_target() {
     write(
         tmp.path(),
         "docs/d.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/writes\n  \
-         type: implementation\n  status: draft\n  tangle:\n    crate: .\n    \
-         root: src/lib.rs\n---\n# Doc\n\n```rust {#root}\npub fn f() {}\n```\n",
+        "# Doc\n\n```turtle folio:document\nimplementation:writes a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \".\" ;\n    \
+         folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {#root}\npub fn f() {}\n```\n",
     );
 
     let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
@@ -3636,9 +3695,9 @@ fn tangle_writes_a_document_that_names_a_target() {
 /// generation of it from the next.
 fn tangling_doc(body: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/guard\n  \
-         type: implementation\n  status: draft\n  tangle:\n    crate: .\n    \
-         root: src/lib.rs\n---\n# Doc\n\n```rust {{#root}}\npub fn {body}() {{}}\n```\n"
+        "# Doc\n\n```turtle folio:document\nimplementation:guard a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \".\" ;\n    \
+         folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {{#root}}\npub fn {body}() {{}}\n```\n"
     )
 }
 
@@ -3896,9 +3955,9 @@ The manifest is a complete chunk so repository projection can carry its public f
 ```toml {#package-manifest file="Cargo.toml"}
 [package]
 name = "x0k-tangle"
-version = "0.2.0"
+version = "0.3.0"
 edition = { workspace = true }
-description = "Literate programming tangler and weaver for folio/v1 Markdown: generates source from a document's code blocks, fills quoted-code blocks from existing source, and checks both, and the documents' typed headers, against the tree."
+description = "Literate programming tangler and weaver for folio Markdown: generates source from a document's code blocks, fills quoted-code blocks from existing source, and checks both, and the documents' typed headers, against the tree."
 license = "MIT"
 keywords = ["literate-programming", "tangle", "markdown", "codegen", "documentation"]
 categories = ["development-tools", "development-tools::build-utils", "command-line-utilities", "text-processing"]
@@ -3925,12 +3984,15 @@ default = []
 motifs = [] # severed in this publication: its dependency is not published; enabling it does not build
 
 [dependencies]
-x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.1.2" }
+x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.2.0" }
+# The triples `colophon::parse_turtle` hands back: `index` lists a header's
+# literal statements off them.
+oxrdf = "0.3"
 # The vocabulary a `check` reads documents against. Default features carry
 # the runtime module loader, which is what `--vocabulary <dir>` and the
 # PROVENANCE-recorded default are: a projected repository checks its own
 # documents against the module files it actually shipped.
-x0k-ontology = { path = "../x0k-ontology" , version = "0.2.0" }
+x0k-ontology = { path = "../x0k-ontology" , version = "0.3.0" }
 # Shared renderer-agnostic syntax tokenizer; weave uses it to emit
 # highlighted <span class="tok-*"> spans in the HTML output.
 x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
@@ -3961,8 +4023,8 @@ tree-sitter-julia = "0.23"
 
 serde = { workspace = true }
 serde_json = { workspace = true }
-# A publication's `palette:` block is read out of its envelope as YAML into
-# x0k-icon's own palette type.
+# YAML the repository projector writes (its release workflow) is read back
+# with it.
 serde_norway = "0.9"
 anyhow = { workspace = true }
 clap = { workspace = true }

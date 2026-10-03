@@ -1,13 +1,8 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:design/literate-programming#read-a-document-as-the-woven-artifact
-  type: design
-  status: proposed
-  edges:
-    transcludes:
-      - x0k:design/literate-programming
----
+```turtle folio:document
+design:literate-programming%23read-a-document-as-the-woven-artifact a x0k:Design ;
+    x0k:status "proposed" ;
+    x0k:transcludes design:literate-programming .
+```
 
 ### Read a document as the woven artifact
 
@@ -21,18 +16,17 @@ it is composed and bury the argument under its own output. Following a
 reference is a click, and the reading order stays the one the author chose,
 not the one the compiler needs.
 
-<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f77656176655f615f646f63756d656e74-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/weave_a_document" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md"><strong>Affordance</strong> · Read a document as the woven artifact · <code>https://0k.computer/ontology#affordance/weave_a_document</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f77656176655f615f646f63756d656e74-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f77656176655f615f646f63756d656e74-1"></a>
+<a name="folio-instance-78306b3a6166666f7264616e63652f77656176655f615f646f63756d656e74-1"></a><sub data-instance-iri="x0k:affordance/weave_a_document" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/weave_a_document</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f77656176655f615f646f63756d656e74-1">source declaration</a> · the graph block at line 21 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md:19</sub><a name="folio-source-78306b3a6166666f7264616e63652f77656176655f615f646f63756d656e74-1"></a>
 
-```yaml x0k:affordance
-id: x0k:affordance/weave_a_document
-actors: [human]
-edges:
-  enabledBy:
-    - x0k:software-module/x0k-tangle
-    - x0k:software-module/x0k-syntax
-    - x0k:software-module/x0k-folio
-  requires:
-    - x0k:affordance/tangle_source_from_a_document
+```turtle folio:graph
+@prefix actor: <https://0k.computer/ontology#actor/> .
+@prefix software-module: <https://0k.computer/ontology#software-module/> .
+affordance:weave_a_document a x0k:Affordance ;
+    x0k:claimedFor actor:human ;
+    x0k:enabledBy software-module:x0k-tangle,
+        software-module:x0k-syntax,
+        software-module:x0k-folio ;
+    x0k:requires affordance:tangle_source_from_a_document .
 ```
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/human-dark.svg"><img alt="Human" src="../../../../assets/icons/human-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/proven-dark.svg"><img alt="proven" src="../../../../assets/icons/proven-light.svg" height="16"></picture> *proven* · for a person · reachable through `cli` `x0k-tangle weave`, `sdk` `weave_chapter`, `sdk` `weave_html`
@@ -89,6 +83,34 @@ fn captions_say_file_name_proof_and_assembly_and_links_land() {
     assert!(w.contains("Reads [first lines](../../wiki/first-lines.md \"x0k:wiki/first-lines\") and [elsewhere](x0k:wiki/elsewhere);\n"), "a carried link lands, an uncarried one is left: {w}");
     assert!(w.contains("see `[not a link](x0k:wiki/first-lines)` and [the design](../../../decisions/design/demo-design.md#read-a-line \"x0k:design/demo-design#read-a-line\").\n"), "{w}");
     assert!(!w.contains("chunk-shown"), "a fence inside a fence is not a chunk: {w}");
+}
+
+/// A prose line opening with inline code that quotes a fence opens no
+/// fence, and a fence-like line carrying an info string closes none:
+/// the code below both stays code, and its link stays as written.
+````
+
+</details>
+
+<details><summary><code>an_inline_code_fence_and_an_opening_line_neither_open_nor_close</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/region-gfm.md#chunk-tests">#tests</a> in Weaving a chapter for a forge</summary>
+
+````rust
+#[test]
+fn an_inline_code_fence_and_an_opening_line_neither_open_nor_close() {
+    let (uri, aff) = links();
+    let links = ChapterLinks { uri_to_rel: &uri, affordances: &aff };
+    let tick = |n: usize| "`".repeat(n);
+    let chapter = CHAPTER.replace(
+        "```rust {#parse}\npub fn",
+        &format!(
+            "{four} {three}yaml title {four} is inline code.\n\n{five}rust {{#aside}}\n// [first lines](x0k:wiki/first-lines)\n{five}\n\n```rust {{#parse}}\npub fn",
+            three = tick(3), four = tick(4), five = tick(5),
+        ),
+    );
+    let woven = weave_chapter(&chapter, "knowledge/implementation/demo/lines.md", Some("demo-crate"), &links)
+        .expect("weaves");
+    assert!(woven.contains("// [first lines](x0k:wiki/first-lines)\n"), "a code line is not prose: {woven}");
+    assert_eq!(unweave_chapter(&woven), chapter);
 }
 ````
 
@@ -169,7 +191,7 @@ fn proof_excerpts_do_not_close_on_fences_inside_test_source() {
 ````rust
 #[test]
 fn the_affordance_section_carries_the_evidence_under_its_block() {
-    let page = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/demo-design#read-a-line\n  type: design\n---\n\n### Read a line\n\nI read a line.\n\n```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\nAfter.\n";
+    let page = "```turtle folio:document\ndesign:demo-design%23read-a-line a x0k:Design .\n```\n### Read a line\n\nI read a line.\n\n```turtle folio:graph\naffordance:read_a_line a x0k:Affordance ;\n    x0k:claimedFor x0k:actor\\/human .\n```\n\nAfter.\n";
     let ev = AffordanceEvidence {
         id: "x0k:affordance/read_a_line".to_string(),
         marks: "<img alt=\"proven\">".to_string(),
@@ -187,7 +209,7 @@ fn the_affordance_section_carries_the_evidence_under_its_block() {
         }],
     };
     let out = weave_affordance_section(page, &[ev]);
-    let expected = "```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\n<img alt=\"proven\"> *proven* · for a person · reachable through `cli` `demo read`\n\n*realized in* [Lines](../../../knowledge/implementation/demo/lines.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · <img alt=\"passed\"> passed · <a href=\"../../../knowledge/implementation/demo/lines.md#chunk-tests\">#tests</a> in Lines</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {}\n```\n\n</details>\n\n\nAfter.\n";
+    let expected = "```turtle folio:graph\naffordance:read_a_line a x0k:Affordance ;\n    x0k:claimedFor x0k:actor\\/human .\n```\n\n<img alt=\"proven\"> *proven* · for a person · reachable through `cli` `demo read`\n\n*realized in* [Lines](../../../knowledge/implementation/demo/lines.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · <img alt=\"passed\"> passed · <a href=\"../../../knowledge/implementation/demo/lines.md#chunk-tests\">#tests</a> in Lines</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {}\n```\n\n</details>\n\n\nAfter.\n";
     assert!(out.ends_with(expected), "{out}");
     assert_eq!(weave_affordance_section(page, &[]), page, "no evidence, no change");
 }
@@ -325,17 +347,23 @@ fn render() {}
 fn params_block_renders_data_div() {
     let content = r#"# Viz
 
-```yaml x0k:params
-- id: threshold_gap
-display_name: Hysteresis Gap
-description: Ratio between zoom_in and zoom_out thresholds
-type: { kind: float, min: 0.1, max: 3.0, step: 0.1 }
-default: 1.5
-- id: num_levels
-display_name: LOD Levels
-description: Number of detail levels
-type: { kind: uint, min: 2, max: 8 }
-default: 4
+```turtle folio:graph {source="hysteresis-parameters"}
+x0k:implementation\/canvas\/core\/threshold_gap a folio:Parameter ;
+rdfs:label "Hysteresis Gap" ;
+rdfs:comment "Ratio between zoom_in and zoom_out thresholds" ;
+folio:kind "float" ;
+folio:min 0.1 ;
+folio:max 3.0 ;
+folio:step 0.1 ;
+folio:default 1.5 .
+
+x0k:implementation\/canvas\/core\/num_levels a folio:Parameter ;
+rdfs:label "LOD Levels" ;
+rdfs:comment "Number of detail levels" ;
+folio:kind "uint" ;
+folio:min 2.0 ;
+folio:max 8.0 ;
+folio:default 4 .
 ```
 "#;
     let doc = parse_document(content).unwrap();
@@ -344,11 +372,42 @@ default: 4
     // Should have param-panel-data div
     assert!(output.html.contains("param-panel-data"));
     assert!(output.html.contains("data-params="));
-    // Should contain the param IDs in JSON
-    assert!(output.html.contains("threshold_gap"));
-    assert!(output.html.contains("num_levels"));
-    // Should NOT render as a code block
+    // The panel's JSON, flattened, in the block's order
+    let start = output.html.find("data-params=\"").unwrap() + "data-params=\"".len();
+    let end = start + output.html[start..].find('"').unwrap();
+    let raw = output.html[start..end].replace("&quot;", "\"").replace("&amp;", "&");
+    let params: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(params[0]["id"], "threshold_gap");
+    assert_eq!(params[0]["display_name"], "Hysteresis Gap");
+    assert_eq!(params[0]["kind"], "float");
+    assert_eq!(params[0]["step"], 0.1);
+    assert_eq!(params[0]["default"], 1.5);
+    assert_eq!(params[1]["id"], "num_levels");
+    assert_eq!(params[1]["max"], 8.0);
+    assert_eq!(params[1]["step"], 1);
+    assert_eq!(params[1]["default"], 4);
+    // Neither a code block nor an instance card
     assert!(!output.html.contains("<pre><code"));
+    assert!(!output.html.contains("Unresolved instance"));
+}
+````
+
+</details>
+
+<details><summary><code>the_header_is_lifted_out_of_the_page</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+````rust
+#[test]
+fn the_header_is_lifted_out_of_the_page() {
+    let content = "# Header\n\n```turtle folio:document\ndesign:header a x0k:Design ;\n    \
+        folio:tangleCrate \"demo\" .\n```\n\nProse.\n";
+    let doc = parse_document(content).unwrap();
+    let output = weave_html(content, &doc).unwrap();
+    assert!(!output.html.contains("folio:document"), "{}", output.html);
+    assert!(!output.html.contains("design:header"), "{}", output.html);
+    assert!(output.html.contains("<title>Header</title>"));
+    assert!(output.html.contains("crate: demo"));
+    assert!(output.html.contains("Prose."));
 }
 ````
 

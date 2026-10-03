@@ -26,9 +26,9 @@ use x0k_tangle::{
 const DOC_REL: &str = "knowledge/implementation/demo/colophon.md";
 const PUB_REL: &str = "decisions/publications/demo.md";
 
-const DOC: &str = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/demo/colophon\n  type: implementation\n  status: draft\n  summary: The demo crate's one exported function, and where it trims.\n  tangle:\n    crate: demo-crate\n    root: src/lib.rs\n---\n# The demo colophon\n\nThe envelope parser tolerates keys it does not own. The first line\nis the whole contract.\n\n```rust {#parse-line}\n/// First line of `s`, trimmed.\npub fn parse_line(s: &str) -> &str {\n    s.lines().next().unwrap_or(\"\").trim()\n}\n```\n\n```rust {#root}\npub mod hand;\n\n<<parse-line>>\n```\n";
+const DOC: &str = "# The demo colophon\n\n```turtle folio:document\nimplementation:demo\\/colophon a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"The demo crate's one exported function, and where it trims.\" ;\n    folio:tangleCrate \"demo-crate\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n\nThe header parser tolerates keys it does not own. The first line\nis the whole contract.\n\n```rust {#parse-line}\n/// First line of `s`, trimmed.\npub fn parse_line(s: &str) -> &str {\n    s.lines().next().unwrap_or(\"\").trim()\n}\n```\n\n```rust {#root}\npub mod hand;\n\n<<parse-line>>\n```\n";
 
-const PUB: &str = "---\nx0k:\n  format: folio/v1\n  type: publication\n  id: x0k:publication/demo\n  status: proposed\n  license: MIT\n  copyright: Demo Authors\n  edges:\n    publishes:\n      - x0k:software-module/demo-crate\n  tangle:\n    root: README.md\n---\n# Demo\n\n```markdown {#readme}\n# Demo\n\nA demo publication.\n\n<!-- x0k:contents -->\n```\n";
+const PUB: &str = "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n    x0k:publishes x0k:software-module\\/demo-crate ;\n    folio:tangleRoot \"README.md\" .\n```\n\n```markdown {#readme}\n# Demo\n\nA demo publication.\n\n<!-- x0k:contents -->\n```\n";
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -151,7 +151,7 @@ fn literate_edit_is_received_against_the_monorepo_doc_at_the_clones_rev() {
     assert_eq!(c.target.as_deref(), Some(DOC_REL));
     let patch = c.patch.as_deref().unwrap();
     assert!(patch.starts_with(&format!("--- a/{DOC_REL}\n+++ b/{DOC_REL}\n")));
-    assert!(patch.contains("+The envelope parser tolerates keys it does not own itself."));
+    assert!(patch.contains("+The header parser tolerates keys it does not own itself."));
     assert!(!patch.contains("maintainer added later"), "drift must not appear reversed");
     assert_eq!(report.received(), 1);
     assert_eq!(report.refused(), 0);

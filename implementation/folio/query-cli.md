@@ -1,28 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/query-cli
-  type: implementation
-  status: draft
-  summary: Explicit corpus and database selection for standalone Folio queries.
-  concerns:
-  - folio
-  - query
-  - cli
-  tangle:
-    crate: crates/x0k-folio-cli
-    root: src/main.rs
-  edges:
-    implements:
-    - x0k:design/domains-of-your-own
-    - x0k:affordance/query_the_documents
-    motivated_by:
-    - x0k:intent/c5ccd003-77d6-4b0d-8824-649f6221c259
-    cites:
-    - x0k:architecture/folio-backends
-    - x0k:implementation/folio/ingestion
----
 # Querying a directory of documents
+
+```turtle folio:document
+implementation:folio\/query-cli a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Explicit corpus and database selection for standalone Folio queries." ;
+    x0k:concerns "folio", "query", "cli" ;
+    x0k:cites architecture:folio-backends,
+        implementation:folio\/ingestion ;
+    x0k:implements design:domains-of-your-own,
+        affordance:query_the_documents ;
+    x0k:motivatedBy intent:c5ccd003-77d6-4b0d-8824-649f6221c259 ;
+    folio:tangleCrate "crates/x0k-folio-cli" ;
+    folio:tangleRoot "src/main.rs" .
+```
 
 The command takes explicit corpus and database paths. Its parser, document
 source and database adapter remain separate so a query does not need an
@@ -34,14 +24,11 @@ The CLI exposes document queries through `x0k-folio-cli query`.
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d636c692d7175657279-1"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-folio-cli-query" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/folio/query-cli.md"><strong>Signifier</strong> · The query command · <code>https://0k.computer/ontology#signifier/x0k-folio-cli-query</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d636c692d7175657279-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d666f6c696f2d636c692d7175657279-1"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-folio-cli-query
-cue: x0k-folio-cli query
-edges:
-  signifies:
-    - x0k:affordance/query_the_documents
-  presentedOn:
-    - x0k:surface/cli
+```turtle folio:graph
+signifier:x0k-folio-cli-query a x0k:Signifier ;
+    x0k:cue "x0k-folio-cli query" ;
+    x0k:signifies affordance:query_the_documents ;
+    x0k:presentedOn surface:cli .
 ```
 
 ## Read a collection
@@ -206,18 +193,18 @@ fn recorded(database: &Path) -> Result<Recorded> {
 }
 
 /// The edge predicates this build compiled, in the same shape a report
-/// records: the `edges:` spelling against the IRI facts are stored under.
+/// records: the compact term against the IRI facts are stored under.
 fn shipped_edge_predicates() -> BTreeMap<String, String> {
     x0k_ontology::KNOWN_EDGE_PREDICATES.iter().map(|snake| {
         let camel = x0k_ontology::snake_to_camel(snake).unwrap_or(snake);
-        ((*snake).to_string(), format!("{X0K}{camel}"))
+        (format!("x0k:{camel}"), format!("{X0K}{camel}"))
     }).collect()
 }
 ```
 
 The edge questions ask over the predicates this collection's vocabulary
 declares, not the ones this binary compiled — same reason and same table as
-`--arg`. A reader who declared `jj:superseded_by` and wrote it in an envelope
+`--arg`. A reader who declared `jj:supersededBy` and stated it in a header
 gets it back from `--named edges`, labelled the way they spelled it.
 
 Not one of the four is a single request, and each is plural for its own
@@ -229,8 +216,8 @@ labelling each with the predicate that produced it. The label is a column the
 database never held — it is which question was asked, not what was answered —
 which is why it is added here rather than selected.
 
-The board is the same shape for a quieter reason. `status:` is optional in the
-envelope, and a conjunction over `docType ∧ status ∧ path` silently drops
+The board is the same shape for a quieter reason. `x0k:status` is optional in
+a header, and a conjunction over `rdf:type ∧ status ∧ path` silently drops
 every document that has not been triaged yet — which is the one part of the
 index a hand-maintained one is worst at and this is supposed to replace. So
 the board asks twice: once for the documents that carry a status, then once
@@ -243,7 +230,7 @@ authored from either end — a replacement that claims what it replaces and a
 superseded document that points forward are the same edge read from opposite
 sides — so a board that reads only `supersededBy` answers half the question
 and answers it silently. It did, to a maintainer who typed fifteen ADRs the
-way a person actually edits a log, `supersedes:` on the new one:
+way a person actually edits a log, `supersedes` on the new one:
 `check --closed` passed, the board came back empty, and the note under it
 said no fact in the database used `supersededBy`, which was true and useless.
 So it runs both spellings. The backward one needs two premises rather than
@@ -257,21 +244,20 @@ collapsed where the requests are concatenated.
 
 ```rust {#named-requests}
 /// Every IRI this collection stores one predicate under, keyed by the
-/// `edges:` spelling the collection declares it with.
+/// compact term the collection declares it with.
 ///
-/// A project that declares its own `supersededBy` writes
-/// `bs:superseded_by:` in its envelopes, `check` admits it, `ingest`
-/// projects it and `--named edges` returns it — and then the decision board
+/// A project that declares its own `supersededBy` states
+/// `bs:supersededBy` in its headers, `check` admits it, `ingest` projects
+/// it and `--named edges` returns it — and then the decision board once
 /// asked about the shipped IRI alone and came back empty (Backstage,
-/// 2026-09-23). The board asks about every spelling of the edge the
-/// collection was ingested with, matched on the part after the prefix,
-/// which is the same rule `check` reads an envelope key by. The shipped
-/// spelling is always among them, because a collection that declares none
-/// of its own still has documents typed in ours.
-fn declared_as(edges: &BTreeMap<String, String>, snake: &str, shipped: &str) -> Vec<String> {
+/// 2026-09-23). The board asks about every term the collection was ingested
+/// with whose local name is the edge's, matched on the part after the
+/// prefix. The shipped term is always among them, because a collection that
+/// declares none of its own still has documents typed in ours.
+fn declared_as(edges: &BTreeMap<String, String>, local: &str, shipped: &str) -> Vec<String> {
     let mut found: Vec<String> = edges
         .iter()
-        .filter(|(spelled, _)| spelled.rsplit(':').next() == Some(snake))
+        .filter(|(spelled, _)| spelled.rsplit(':').next() == Some(local))
         .map(|(_, iri)| iri.clone())
         .collect();
     found.push(shipped.to_string());
@@ -288,9 +274,8 @@ impl Named {
 
     /// Whether this question is asked in the collection's own predicates
     /// rather than only in the shipped ones. `status` is not: the three
-    /// terms it reads are the folio/v1 envelope's own, and a vocabulary of
-    /// your own declares classes and edges, never a second spelling of
-    /// `status:`.
+    /// terms it reads are the header's own, and a vocabulary of your own
+    /// declares classes and edges, never a second spelling of `x0k:status`.
     fn reads_the_collections_predicates(self) -> bool {
         !matches!(self, Named::Status)
     }
@@ -332,7 +317,7 @@ impl Named {
                 (None, QueryRequest {
                     premises: vec![json!({
                         "assert": { "with": {
-                            "docType": described(&format!("{X0K}docType")),
+                            "docType": described(RDF_TYPE),
                             "status": described(&format!("{X0K}status")),
                             "path": described(&format!("{X0K}folio/sourcePath")),
                         } },
@@ -349,7 +334,7 @@ impl Named {
                 (None, QueryRequest {
                     premises: vec![json!({
                         "assert": { "with": {
-                            "docType": described(&format!("{X0K}docType")),
+                            "docType": described(RDF_TYPE),
                             "path": described(&format!("{X0K}folio/sourcePath")),
                         } },
                         "where": {
@@ -364,7 +349,7 @@ impl Named {
             ],
             Named::Superseded => {
                 // Authored on the superseded document, looking forward.
-                let forward = declared_as(edges, "superseded_by", &format!("{X0K}supersededBy"))
+                let forward = declared_as(edges, "supersededBy", &format!("{X0K}supersededBy"))
                     .into_iter().map(|predicate| (None, QueryRequest {
                         premises: vec![json!({
                             "assert": { "with": {
@@ -454,9 +439,9 @@ mod named_query_tests {
     }
 
     #[test]
-    fn the_status_board_reads_the_declared_envelope_terms() {
+    fn the_status_board_reads_the_class_and_the_declared_header_terms() {
         assert_eq!(predicates(Named::Status, None), vec![
-            "https://0k.computer/ontology#docType".to_string(),
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#type".to_string(),
             "https://0k.computer/ontology#folio/sourcePath".to_string(),
             "https://0k.computer/ontology#status".to_string(),
         ]);
@@ -516,7 +501,7 @@ mod named_query_tests {
     #[test]
     fn the_board_reads_the_collections_own_supersession_predicate() {
         let mut edges = shipped_edge_predicates();
-        edges.insert("bs:superseded_by".to_string(),
+        edges.insert("bs:supersededBy".to_string(),
             "https://backstage.io/ontology#supersededBy".to_string());
         let described: Vec<String> = {
             let mut found = std::collections::BTreeSet::new();
@@ -532,7 +517,7 @@ mod named_query_tests {
         assert_eq!(Named::Superseded.requests(None, &edges).len(), 3,
             "two forward spellings and one back");
         // `status` is not asked in the collection's terms: its three terms
-        // are the folio/v1 envelope's own, and no module renames them.
+        // are the header's own, and no module renames them.
         assert!(!Named::Status.reads_the_collections_predicates());
         assert!(Named::Superseded.reads_the_collections_predicates());
     }
@@ -541,9 +526,9 @@ mod named_query_tests {
     #[test]
     fn a_predicate_that_merely_ends_in_the_same_word_is_not_collected() {
         let edges = BTreeMap::from([
-            ("bs:not_superseded_by".to_string(), "https://backstage.io/ontology#notSupersededBy".to_string()),
+            ("bs:notSupersededBy".to_string(), "https://backstage.io/ontology#notSupersededBy".to_string()),
         ]);
-        assert_eq!(declared_as(&edges, "superseded_by", "https://0k.computer/ontology#supersededBy"),
+        assert_eq!(declared_as(&edges, "supersededBy", "https://0k.computer/ontology#supersededBy"),
             vec!["https://0k.computer/ontology#supersededBy".to_string()]);
     }
 
@@ -563,11 +548,11 @@ mod named_query_tests {
     #[test]
     fn an_edge_question_asks_over_the_collections_own_predicates() {
         let edges = BTreeMap::from([
-            ("jj:superseded_by".to_string(), "https://jj-vcs.github.io/ontology#supersededBy".to_string()),
+            ("jj:supersededBy".to_string(), "https://jj-vcs.github.io/ontology#supersededBy".to_string()),
         ]);
         let requests = Named::Edges.requests(Some("https://jj-vcs.github.io/ontology#design/a"), &edges);
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].0.as_deref(), Some("jj:superseded_by"));
+        assert_eq!(requests[0].0.as_deref(), Some("jj:supersededBy"));
         let mut described = std::collections::BTreeSet::new();
         collect_described(&requests[0].1, &mut described);
         assert!(described.contains("https://jj-vcs.github.io/ontology#supersededBy"), "got {described:?}");
@@ -760,7 +745,7 @@ than to none. A caller pinned to 0.1.0 gets none of that, and the CHANGELOG's
 ```toml {#cli-manifest file="Cargo.toml"}
 [package]
 name = "x0k-folio-cli"
-version = "0.2.0"
+version = "0.3.0"
 # Not on crates.io: depends on `x0k-folio-dialog`, which cannot be
 # published. The binary ships in the GitHub release, which the install script installs.
 publish = false
@@ -779,14 +764,14 @@ clap = { version = "4", features = ["derive"] }
 fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_norway = "0.9"
+oxrdf = "0.3"
 walkdir = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
-x0k-folio = { path = "../x0k-folio", default-features = false, features = ["document-vocabulary"] , version = "0.1.2" }
-x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.2.0" }
-x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.1" }
-x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.1.1" }
+x0k-folio = { path = "../x0k-folio", default-features = false, features = ["document-vocabulary"] , version = "0.2.0" }
+x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.3.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.2.0" }
+x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.2.0" }
 x0k-folio-dialog = { path = "../x0k-folio-dialog" , version = "0.1.0" }
 
 [dev-dependencies]
@@ -813,7 +798,7 @@ use x0k_folio::document_vocabulary as vocabulary;
 use x0k_folio_cli::source::FolioSource;
 use x0k_folio_dialog::{DialogBackend, QueryRequest, QueryResult};
 use x0k_folio_ingest::{checkpoint, lifecycle::{self, DocumentSource}};
-use x0k_ontology::concept_facts::OntologyModel;
+use x0k_ontology::concept_facts::{OntologyModel, RDF_TYPE};
 
 #[derive(Parser)]
 #[command(version, about = "Query concepts and instances in a directory of Folio documents")]
@@ -990,8 +975,8 @@ fn watch_grace(args: &Corpus) -> std::time::Duration {
 /// the ingest can project.
 ///
 /// There is no "no vocabulary at all" any more. Forgetting the flag used to
-/// mean every document carrying an `edges:` block was rejected for a term
-/// folio/v1 itself declares — a store 55% populated and an exit code, which
+/// mean every document stating an edge was rejected for a term the header
+/// format itself uses — a store 55% populated and an exit code, which
 /// is worse than a refusal and much worse than the obvious default.
 fn base_model(args: &Corpus) -> Result<OntologyModel> {
     vocabulary::select_vocabulary(args.vocabulary.as_deref(), args.only_vocabulary)

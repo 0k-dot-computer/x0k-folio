@@ -1,38 +1,26 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/layout
-  type: implementation
-  status: draft
-  summary: Where a genus lives inside a corpus, and the scope a caller must name to ask — one table replacing six copies, all of which had drifted and none of which said so.
-  concerns:
-  - folio
-  - layout
-  - corpus
-  - genus
-  - paths
-  - relayout
-  tangle:
-    crate: crates/x0k-folio
-    root: src/layout.rs
-  edges:
-    implements:
-    - x0k:architecture/corpus-boundaries
-    cites:
-    - x0k:architecture/filesystem-graph-materialization
-    - x0k:architecture/monorepo-layout
----
 
 # Where a genus lives
 
-A folio document's identity is its envelope `id:`, and its address on disk
+```turtle folio:document
+implementation:folio\/layout a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Where a genus lives inside a corpus, and the scope a caller must name to ask — one table replacing six copies, all of which had drifted and none of which said so." ;
+    x0k:concerns "folio", "layout", "corpus", "genus", "paths", "relayout" ;
+    x0k:cites architecture:filesystem-graph-materialization,
+        architecture:monorepo-layout ;
+    x0k:implements architecture:corpus-boundaries ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/layout.rs" .
+```
+
+A folio document's identity is its header's subject, and its address on disk
 is a function of two things the id does not carry: which **corpus** holds
 it, and which **genus** it belongs to. This chapter is that function. It is
 one table, and the reason it is worth a chapter is that it used to be six.
 
 ## The measurement that produced this chapter
 
-On 2026-09-09 there were 1350 folio/v1 documents in this tree and the
+On 2026-09-09 there were 1350 folio documents in this tree and the
 production corpus walk reached **none of them**:
 
 ```

@@ -1,29 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/source-sync
-  type: implementation
-  status: draft
-  summary: 'The two paths that run against the tangle: filling a `from=` chunk''s body from the file it names, and replacing a named chunk''s body programmatically so a host can write a value back and re-tangle in lockstep.'
-  concerns:
-  - tangle
-  - sync
-  - reverse-tangle
-  - source-refs
-  - chunks
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/sync.rs
-  edges:
-    implements:
-    - x0k:design/literate-programming
-    cites:
-    - x0k:implementation/tangle/source-refs
-    - x0k:implementation/tangle/parsing
-    - x0k:implementation/tangle/reverse-stitch
----
 
 # Pulling code back into the document
+
+```turtle folio:document
+implementation:tangle\/source-sync a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The two paths that run against the tangle: filling a `from=` chunk's body from the file it names, and replacing a named chunk's body programmatically so a host can write a value back and re-tangle in lockstep." ;
+    x0k:concerns "tangle", "sync", "reverse-tangle", "source-refs", "chunks" ;
+    x0k:cites implementation:tangle\/source-refs,
+        implementation:tangle\/parsing,
+        implementation:tangle\/reverse-stitch ;
+    x0k:implements design:literate-programming ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/sync.rs" .
+```
 
 Tangling flows one way: chunks in a [literate
 document](../../background/literate-programming.md "x0k:wiki/literate-programming") become a source file. Two

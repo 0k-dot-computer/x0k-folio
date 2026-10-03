@@ -1,30 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:wiki/event-graph-crdts
-  type: wiki
-  subtype: wiki:Article
-  status: stable
-  summary: A CRDT design that persists only the append-only DAG of original edit operations and rebuilds a transient CRDT on demand to merge concurrent branches — yielding OT-class steady-state cost with CRDT-class correctness. This is the lineage behind Diamond Types and Loro.
-  updated_by: mcp-agent
-  created_at: 2026-06-04T23:30:37.710865Z
-  updated_at: 2026-06-08T16:52:02.910353Z
-  concerns:
-    - concept
-    - crdt
-    - collaborative-editing
-    - algorithms
-    - local-first
-    - sync
-    - data-structures
-    - sync-engine
-  edges:
-    cites:
-      - x0k:wiki/loro
-      - x0k:wiki/automerge
-      - x0k:wiki/accretion-and-bitemporal-data
----
 # Event-Graph CRDTs (Eg-walker / Replayable Event Graph)
+
+```turtle folio:document
+wiki:event-graph-crdts a x0k:Wiki ;
+    x0k:status "stable" ;
+    x0k:subtype "wiki:Article" ;
+    x0k:summary "A CRDT design that persists only the append-only DAG of original edit operations and rebuilds a transient CRDT on demand to merge concurrent branches — yielding OT-class steady-state cost with CRDT-class correctness. This is the lineage behind Diamond Types and Loro." ;
+    x0k:updatedBy "mcp-agent" ;
+    x0k:createdAt "2026-06-04T23:30:37.710865Z" ;
+    x0k:updatedAt "2026-06-08T16:52:02.910353Z" ;
+    x0k:concerns "concept", "crdt", "collaborative-editing", "algorithms", "local-first", "sync", "data-structures", "sync-engine" ;
+    x0k:cites wiki:loro,
+        wiki:automerge,
+        wiki:accretion-and-bitemporal-data .
+```
 
 The **event-graph** approach (formalized as **Eg-walker**, Event Graph Walker, by Joseph Gentle & Martin Kleppmann, EuroSys 2025) inverts the usual CRDT bargain. Classic list CRDTs (RGA, YATA, Fugue) bake conflict-resolution metadata — per-character IDs, tombstones, origin pointers — into the *persistent* document representation. Eg-walker instead persists only the **append-only DAG of original edit operations** (the event graph) and treats the CRDT as a transient computation.
 

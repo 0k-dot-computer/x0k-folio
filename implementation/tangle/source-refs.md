@@ -1,25 +1,15 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/source-refs
-  type: implementation
-  status: draft
-  summary: Tree-sitter symbol extraction for a `from=` chunk — the grammar of the language the chunk declares decides where a symbol's body begins and ends, with no regex and no brace counting — and the symbol listing the doc browser reads.
-  concerns:
-  - tangle
-  - literate
-  - tree-sitter
-  - symbol-extraction
-  - lang-aware
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/source_ref.rs
-  edges:
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/chunk
----
 # Symbol extraction for `from=` chunks
+
+```turtle folio:document
+implementation:tangle\/source-refs a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Tree-sitter symbol extraction for a `from=` chunk — the grammar of the language the chunk declares decides where a symbol's body begins and ends, with no regex and no brace counting — and the symbol listing the doc browser reads." ;
+    x0k:concerns "tangle", "literate", "tree-sitter", "symbol-extraction", "lang-aware" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/chunk ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/source_ref.rs" .
+```
 
 A `from=` chunk is the inverse of a tangle output: instead of the
 document owning code that becomes a source file, the [literate
@@ -660,7 +650,7 @@ above it. In `tree-sitter-rust`, attributes and doc comments are
 *preceding siblings*: a span that begins at the `struct_item` returns
 a struct with no `#[derive(Debug)]` and no `///` line. That is not
 merely lossy. On the graduation path this substrate promises — drop
-`from=`, add `tangle:`, and the document now owns the file — a
+`from=`, state a tangle target, and the document now owns the file — a
 `#[derive(Clone, Copy)]` lost off a public type still compiles, and
 silently removes trait impls from every crate downstream.
 

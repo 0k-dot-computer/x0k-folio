@@ -1,27 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/resolution
-  type: implementation
-  status: draft
-  summary: Recursive `<<name>>` expansion with the call site's indentation re-applied, the language-pinned walk a bilingual document needs, and the sweep that reports undefined refs and cycles before a tangle runs.
-  concerns:
-  - tangle
-  - literate
-  - resolve
-  - expansion
-  - cycle-detection
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/resolve.rs
-  edges:
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/chunk
-    - x0k:implementation/tangle/chunk-refs
-    - x0k:implementation/tangle/parsing
----
 # Resolving `<<chunk-ref>>` expansion
+
+```turtle folio:document
+implementation:tangle\/resolution a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Recursive `<<name>>` expansion with the call site's indentation re-applied, the language-pinned walk a bilingual document needs, and the sweep that reports undefined refs and cycles before a tangle runs." ;
+    x0k:concerns "tangle", "literate", "resolve", "expansion", "cycle-detection" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/chunk,
+        implementation:tangle\/chunk-refs,
+        implementation:tangle\/parsing ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/resolve.rs" .
+```
 
 Parsing a [literate document](../../background/literate-programming.md "x0k:wiki/literate-programming") gives us a
 chunk map. [Resolution](x0k:wiki/dependency-resolution) turns one of those
@@ -72,7 +62,7 @@ round-trip.
 
 Expansion is also *corpus-aware*. A ref written `<<uri::chunk>>`
 names a chunk in another document; resolving it requires a set of
-parsed documents indexed by their frontmatter `id:` URI. The core
+parsed documents indexed by the id their headers state. The core
 walker is generalized to carry an optional [`Corpus`] (defined in
 [`multi-doc-resolve.md`](multi-doc-resolve.md)) and the URI of the
 document currently being expanded. Bare `<<chunk>>` refs resolve
@@ -92,7 +82,7 @@ use std::collections::HashSet;
 
 /// The cycle-detection key. For a within-doc expansion the doc-URI
 /// slot is the empty string; for a corpus expansion it is the target
-/// document's `id:` URI, so the same chunk name in two different docs
+/// document's id, so the same chunk name in two different docs
 /// is two distinct nodes in the visited set.
 pub(crate) type VisitKey = (String, String);
 ```

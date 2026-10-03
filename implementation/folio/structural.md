@@ -1,30 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/structural
-  type: implementation
-  status: draft
-  summary: 'The parser-agnostic block tree both the markdown and the HTML sides parse into: syntactic, orthogonal to the editorial axis, and owned here so two renderer crates can share it without a dependency cycle.'
-  concerns:
-  - folio
-  - blocks
-  - rendering
-  - parsing
-  - identity
-  tangle:
-    crate: crates/x0k-folio
-    root: src/structural_block.rs
-  edges:
-    implements:
-    - x0k:design/body-format-isomorphism
-    - x0k:design/in-prose-authoring
-    cites:
-    - x0k:implementation/folio/segmentation
-    - x0k:implementation/folio/html-canonical
-    motivated_by:
-    - x0k:intent/50de2d40-a0ce-4bb1-98bc-33da47a03c7f
----
 # The structural block tree
+
+```turtle folio:document
+implementation:folio\/structural a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The parser-agnostic block tree both the markdown and the HTML sides parse into: syntactic, orthogonal to the editorial axis, and owned here so two renderer crates can share it without a dependency cycle." ;
+    x0k:concerns "folio", "blocks", "rendering", "parsing", "identity" ;
+    x0k:cites implementation:folio\/segmentation,
+        implementation:folio\/html-canonical ;
+    x0k:implements design:body-format-isomorphism,
+        design:in-prose-authoring ;
+    x0k:motivatedBy intent:50de2d40-a0ce-4bb1-98bc-33da47a03c7f ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/structural_block.rs" .
+```
 
 Two parsers and two renderers meet in the middle of the document
 pipeline: markdown and HTML are both parsed into *something*, and that
@@ -144,7 +132,7 @@ impl StructuralDoc {
 ```
 
 `FenceInfo` is the isomorphism at its smallest grain: a markdown fence
-info string (`yaml x0k:prompt audience=operator`) and an HTML code
+info string (`json x0k:data audience=operator`) and an HTML code
 element's data attributes must round-trip through each other without
 loss or reordering. So the carrier parses *and* normalizes — canonical
 token order is language, `x0k:type`, trailing info, with whitespace
@@ -152,14 +140,13 @@ collapsed — and both projections build it, one from the raw info string
 and one from decomposed attribute parts.
 
 A marker is an instruction, though, and that is a problem for any
-document that wants to *teach* the syntax. `yaml x0k:affordance` in a
-body is not a mention of the inline-entity grammar, it is a declaration
-of an affordance ([`inline-entities.md`](inline-entities.md)), so the
-chapter explaining the grammar cannot show it without making a claim it
-cannot keep. The tangler hit the same wall one layer over and answered
+document that wants to *teach* the syntax. `svg x0k:icon` in a body is
+not a mention of the icon grammar, it is a declaration of an icon
+([`inline-entities.md`](inline-entities.md)), so the chapter explaining
+the grammar cannot show it without making a claim it cannot keep. The tangler hit the same wall one layer over and answered
 it with a `!`: a line reading `<<!name>>` is the literal `<<name>>`,
 never the reference ([`resolution.md`](../tangle/resolution.md)). The
-carrier borrows that answer verbatim. `x0k:!affordance` is an
+carrier borrows that answer verbatim. `x0k:!icon` is an
 **illustrative** marker — it parses, normalizes, round-trips, and
 renders exactly like the real thing, and it declares nothing.
 
@@ -764,11 +751,11 @@ mod tests {
 
     #[test]
     fn fence_info_canonicalizes_type_before_trailing_info() {
-        let carrier = FenceInfo::parse("yaml   audience=operator x0k:prompt");
-        assert_eq!(carrier.language(), Some("yaml"));
-        assert_eq!(carrier.x0k_type(), Some("prompt"));
+        let carrier = FenceInfo::parse("json   audience=operator x0k:data");
+        assert_eq!(carrier.language(), Some("json"));
+        assert_eq!(carrier.x0k_type(), Some("data"));
         assert_eq!(carrier.info(), Some("audience=operator"));
-        assert_eq!(carrier.canonical(), "yaml x0k:prompt audience=operator");
+        assert_eq!(carrier.canonical(), "json x0k:data audience=operator");
     }
 
     #[test]
@@ -786,34 +773,34 @@ mod tests {
 
     #[test]
     fn illustrative_marker_declares_nothing_and_survives_the_round_trip() {
-        let carrier = FenceInfo::parse("yaml x0k:!affordance");
-        assert_eq!(carrier.language(), Some("yaml"));
+        let carrier = FenceInfo::parse("svg x0k:!icon");
+        assert_eq!(carrier.language(), Some("svg"));
         // The whole point: the question consumers ask comes back empty.
         assert_eq!(carrier.x0k_type(), None);
         assert!(carrier.is_illustrative());
-        assert_eq!(carrier.x0k_marker(), Some("!affordance"));
+        assert_eq!(carrier.x0k_marker(), Some("!icon"));
         // A rewrite through the tree must not quietly promote the
         // example into a declaration.
-        assert_eq!(carrier.canonical(), "yaml x0k:!affordance");
+        assert_eq!(carrier.canonical(), "svg x0k:!icon");
         assert_eq!(FenceInfo::parse(&carrier.canonical()), carrier);
     }
 
     #[test]
     fn illustrative_marker_round_trips_through_html_parts() {
-        let carrier = FenceInfo::from_parts(Some("yaml"), Some("!affordance"), None);
+        let carrier = FenceInfo::from_parts(Some("svg"), Some("!icon"), None);
         assert_eq!(carrier.x0k_type(), None);
-        assert_eq!(carrier.x0k_marker(), Some("!affordance"));
-        assert_eq!(carrier.canonical(), "yaml x0k:!affordance");
+        assert_eq!(carrier.x0k_marker(), Some("!icon"));
+        assert_eq!(carrier.canonical(), "svg x0k:!icon");
         // `data-x0k-type` may arrive still wearing the `x0k:` prefix.
         assert_eq!(
-            FenceInfo::from_parts(Some("yaml"), Some("x0k:!affordance"), None),
+            FenceInfo::from_parts(Some("svg"), Some("x0k:!icon"), None),
             carrier
         );
     }
 
     #[test]
     fn a_bare_bang_is_not_a_marker() {
-        let carrier = FenceInfo::parse("yaml x0k:!");
+        let carrier = FenceInfo::parse("svg x0k:!");
         assert_eq!(carrier.x0k_marker(), None);
         assert!(!carrier.is_illustrative());
         assert_eq!(carrier.info(), Some("x0k:!"));

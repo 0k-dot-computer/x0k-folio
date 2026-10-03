@@ -4,22 +4,16 @@ use x0k_folio::{
     CanonicalPatch, CanonicalTextPoint,
 };
 
-const MARKDOWN_DOC: &str = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/patch-markdown
-  type: wiki
----
+const MARKDOWN_DOC: &str = r#"```turtle folio:document
+wiki:patch-markdown a x0k:Wiki .
+```
 A **shared**[source](https://old.example).
 "#;
 
-const HTML_DOC: &str = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/patch-html
-  type: design
-  body_format: html
----
+const HTML_DOC: &str = r#"```turtle folio:document
+design:patch-html a x0k:Design ;
+    x0k:bodyFormat "html" .
+```
 <p>A <strong>shared</strong><a href="https://old.example">source</a>.</p>
 "#;
 
@@ -86,6 +80,6 @@ fn bridge_style_source_edit_cannot_bypass_html_normalization() {
     assert!(canonical.contains(r#"<p a-first="1" z-last="2">"#));
     assert_eq!(canonical, canonicalize_folio_content(&canonical));
 
-    let broken_envelope = raw_bridge_result.replacen("---", "--", 1);
-    assert!(canonicalize_edited_folio_content(HTML_DOC, &broken_envelope).is_err());
+    let broken_header = raw_bridge_result.replacen("folio:document", "folio:documen", 1);
+    assert!(canonicalize_edited_folio_content(HTML_DOC, &broken_header).is_err());
 }

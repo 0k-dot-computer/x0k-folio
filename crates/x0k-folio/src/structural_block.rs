@@ -561,11 +561,11 @@ mod tests {
 
     #[test]
     fn fence_info_canonicalizes_type_before_trailing_info() {
-        let carrier = FenceInfo::parse("yaml   audience=operator x0k:prompt");
-        assert_eq!(carrier.language(), Some("yaml"));
-        assert_eq!(carrier.x0k_type(), Some("prompt"));
+        let carrier = FenceInfo::parse("json   audience=operator x0k:data");
+        assert_eq!(carrier.language(), Some("json"));
+        assert_eq!(carrier.x0k_type(), Some("data"));
         assert_eq!(carrier.info(), Some("audience=operator"));
-        assert_eq!(carrier.canonical(), "yaml x0k:prompt audience=operator");
+        assert_eq!(carrier.canonical(), "json x0k:data audience=operator");
     }
 
     #[test]
@@ -583,34 +583,34 @@ mod tests {
 
     #[test]
     fn illustrative_marker_declares_nothing_and_survives_the_round_trip() {
-        let carrier = FenceInfo::parse("yaml x0k:!affordance");
-        assert_eq!(carrier.language(), Some("yaml"));
+        let carrier = FenceInfo::parse("svg x0k:!icon");
+        assert_eq!(carrier.language(), Some("svg"));
         // The whole point: the question consumers ask comes back empty.
         assert_eq!(carrier.x0k_type(), None);
         assert!(carrier.is_illustrative());
-        assert_eq!(carrier.x0k_marker(), Some("!affordance"));
+        assert_eq!(carrier.x0k_marker(), Some("!icon"));
         // A rewrite through the tree must not quietly promote the
         // example into a declaration.
-        assert_eq!(carrier.canonical(), "yaml x0k:!affordance");
+        assert_eq!(carrier.canonical(), "svg x0k:!icon");
         assert_eq!(FenceInfo::parse(&carrier.canonical()), carrier);
     }
 
     #[test]
     fn illustrative_marker_round_trips_through_html_parts() {
-        let carrier = FenceInfo::from_parts(Some("yaml"), Some("!affordance"), None);
+        let carrier = FenceInfo::from_parts(Some("svg"), Some("!icon"), None);
         assert_eq!(carrier.x0k_type(), None);
-        assert_eq!(carrier.x0k_marker(), Some("!affordance"));
-        assert_eq!(carrier.canonical(), "yaml x0k:!affordance");
+        assert_eq!(carrier.x0k_marker(), Some("!icon"));
+        assert_eq!(carrier.canonical(), "svg x0k:!icon");
         // `data-x0k-type` may arrive still wearing the `x0k:` prefix.
         assert_eq!(
-            FenceInfo::from_parts(Some("yaml"), Some("x0k:!affordance"), None),
+            FenceInfo::from_parts(Some("svg"), Some("x0k:!icon"), None),
             carrier
         );
     }
 
     #[test]
     fn a_bare_bang_is_not_a_marker() {
-        let carrier = FenceInfo::parse("yaml x0k:!");
+        let carrier = FenceInfo::parse("svg x0k:!");
         assert_eq!(carrier.x0k_marker(), None);
         assert!(!carrier.is_illustrative());
         assert_eq!(carrier.info(), Some("x0k:!"));

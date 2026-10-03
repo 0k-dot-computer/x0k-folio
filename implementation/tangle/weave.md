@@ -1,31 +1,20 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/weave
-  type: implementation
-  status: draft
-  summary: 'The other output channel from the same parsed document: self-contained HTML with chunk-headed code, language-tabbed variants, media mount points and parameter panels, consumed directly by the doc browser.'
-  concerns:
-  - tangle
-  - literate
-  - weave
-  - html
-  - rendering
-  - 0k.computer
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/weave.rs
-  edges:
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/parsing
-    - x0k:implementation/tangle/chunk
----
 # Weaving literate documents into HTML
+
+```turtle folio:document
+implementation:tangle\/weave a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The other output channel from the same parsed document: self-contained HTML with chunk-headed code, language-tabbed variants, media mount points and parameter panels, consumed directly by the doc browser." ;
+    x0k:concerns "tangle", "literate", "weave", "html", "rendering", "0k.computer" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/parsing,
+        implementation:tangle\/chunk ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/weave.rs" .
+```
 
 If tangle is the path from `.md` to `.rs`, *weave* is the path from
 `.md` to a browsable page. The two [literate](../../background/literate-programming.md "x0k:wiki/literate-programming") operations consume the
-same parsed document — the same chunk graph, the same frontmatter, the same
+same parsed document — the same chunk graph, the same header, the same
 `<<refs>>` — and produce different output channels. The compiler
 reads tangle's output; humans (and the doc-browser, and now you)
 read weave's.
@@ -55,6 +44,8 @@ only the last inch — colour vs. class — differs.
 ```rust {#imports}
 use crate::parser::{parse_info_string, ParsedDocument};
 use anyhow::Result;
+use x0k_folio::colophon::{is_marker, strip_header, GRAPH_MARKER};
+use x0k_folio::inline_entity::{read_parameters, Parameter};
 use x0k_syntax::{css_class, highlight, HighlightedToken, Language, TokenKind};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::collections::HashSet;
@@ -137,20 +128,17 @@ rustdoc, which is the cue the signifier below records.
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d77656176652d646f63756d656e74-1"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-weave-document" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/weave.md"><strong>Signifier</strong> · The main weave function · <code>https://0k.computer/ontology#signifier/x0k-tangle-weave-document</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d77656176652d646f63756d656e74-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d77656176652d646f63756d656e74-1"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-tangle-weave-document
-cue: weave_html
-edges:
-  signifies:
-    - x0k:affordance/weave_a_document
-  presentedOn:
-    - x0k:surface/sdk
+```turtle folio:graph
+signifier:x0k-tangle-weave-document a x0k:Signifier ;
+    x0k:cue "weave_html" ;
+    x0k:signifies affordance:weave_a_document ;
+    x0k:presentedOn surface:sdk .
 ```
 
 The page's name comes from `index::document_title`, the same resolution the
-index uses — the host frontmatter's `title:`, then the body's `# `, then a
-heading the body opens with, then the envelope's `summary`, all outside
-fenced regions. Weaving
+index uses — the host frontmatter's `title:`, then the body's `# ` (or an
+HTML body's `<h1>`), then a heading the body opens with, then the header's
+`x0k:summary`, all outside fenced regions. Weaving
 asked its own question before, and asked it badly: it took the first *text*
 event in the body whatever preceded it, so a Docusaurus ADR opening with an
 admonition wove as `<title>:::note</title>`. A woven page and an index row
@@ -158,9 +146,14 @@ should not disagree about what a document is called, which is the argument
 for one resolver rather than two. The last fallback is this caller's: with no
 file in hand, a nameless document is titled by the last segment of its id.
 
+The body the page renders is the document with its host frontmatter and
+its header lifted out (`x0k_folio::colophon::strip_header`): the header is
+what the page is *about*, and the meta bar says the part of it a reader
+needs, so the Turtle itself never reaches the page.
+
 The render pass walks the pulldown-cmark event stream and dispatches:
 code blocks go to `render_code_block` (which knows about chunk
-headers, language tabs, media embeds, and the `x0k:params` block);
+headers, language tabs, media embeds, and the parameter panel);
 everything else flows through plain HTML emission.
 
 <a name="chunk-weave-html-fn"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#weave-html-fn`</sub>
@@ -176,7 +169,8 @@ pub fn weave_html_with_instances(
     content: &str, doc: &ParsedDocument, source: &str,
     instances: &crate::instance_rendering::InstancePresentation,
 ) -> Result<WeaveOutput> {
-    let (_, body) = split_body(content);
+    let body = strip_header(content);
+    let body = body.as_str();
     let mut html = String::new();
 
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
@@ -208,7 +202,7 @@ pub fn weave_html_with_instances(
     html.push_str("</style>\n");
     html.push_str("</head>\n<body>\n");
 
-    // Frontmatter metadata
+    // Header metadata
     html.push_str("<nav class=\"doc-meta\">\n");
     if let Some(ref crate_name) = doc.tangle_crate {
         writeln!(html, "<span class=\"meta-tag\">crate: {}</span>", escape_html(crate_name))?;
@@ -543,7 +537,10 @@ markdown, plus the chunk-specific extensions.
 `render_code_block` is the dispatch for fenced blocks. The info-string
 tells us what kind of block this is:
 
-- `yaml x0k:params` / `x0k:params` → data div for the parameter panel
+- a `turtle folio:graph` block whose every subject is a `folio:Parameter`
+  → data div for the parameter panel (checked first: a panel is tool
+  configuration, not an instance with a card)
+- any other `turtle folio:graph` block → its instance card
 - contains `x0k:media` → an embed mount point (the doc-browser
   resolves the ref to a compiled WASM artifact at render time)
 - has `#name` and matches a multi-language chunk → tabbed group
@@ -563,6 +560,13 @@ fn render_code_block(
     instance_context: (&str, &crate::instance_rendering::InstancePresentation),
 ) -> Result<()> {
     let (source, instances) = instance_context;
+    // A parameter panel renders as the panel's data element.
+    if is_marker(info, GRAPH_MARKER) {
+        if let Ok(parameters) = read_parameters(code) {
+            render_param_panel(html, &parameters)?;
+            return Ok(());
+        }
+    }
     if let Some(mut view) = instances.view(source, info, code) {
         *chunk_seq += 1;
         view.occurrence = *chunk_seq;
@@ -570,12 +574,6 @@ fn render_code_block(
         return Ok(());
     }
     let attrs = parse_info_string(info);
-
-    // x0k:params block — render as a param panel data element
-    if info.trim_start().starts_with("yaml x0k:params") || info.trim_start().starts_with("x0k:params") {
-        render_param_panel(html, code)?;
-        return Ok(());
-    }
 
     // x0k:media reference — render as embed mount point
     if info.contains("x0k:media") {
@@ -1597,151 +1595,61 @@ The ref-detection rule matches `find_chunk_refs` in
 [`chunk.rs`](chunk.md) — same trim-start, same strict bounding by
 `<<` / `>>`, same name-validity check.
 
-## The x0k:params block
+## The parameter panel
 
-A `yaml x0k:params` (or just `x0k:params`) fence is a structured
-parameter list authored as YAML. Rather than render it as a code
-block, weave parses the YAML minimally and emits a `<div
-class="param-panel-data" data-params="...">` element with the params
-serialized as JSON. The doc-browser's parameter-panel component
-reads the JSON and builds the interactive control surface.
+A document's parameter panel is a `turtle folio:graph` block whose every
+subject is a `folio:Parameter` — its `rdfs:label`, `rdfs:comment`,
+`folio:kind`, `folio:min`, `folio:max`, `folio:step` and `folio:default`.
+`x0k_folio::inline_entity::read_parameters` reads it, in the block's
+order. Rather than render it as a code block, weave emits a `<div
+class="param-panel-data" data-params="...">` element carrying the list in
+the shape the doc-browser's parameter-panel component reads: `id`,
+`display_name`, `description`, `kind`, `min`, `max`, `step` and `default`
+side by side, with `step` defaulting to 1, `min` to 0 and `max` to 100. The
+attribute value is HTML-escaped JSON. A graph block that is not a panel
+never reaches this function; it is an instance and gets its card.
 
 <a name="chunk-render-param-panel-fn"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#render-param-panel-fn`</sub>
 
 ```rust {#render-param-panel-fn}
-/// Render a `x0k:params` block as a hidden data div that the doc browser
+/// Render a parameter panel as a hidden data div that the doc browser
 /// reads to build the interactive parameter panel.
-///
-/// The YAML content is a list of parameter definitions. We parse it minimally
-/// and re-serialize as JSON in a `data-params` attribute, so the browser-side
-/// component can deserialize without a YAML parser.
-fn render_param_panel(html: &mut String, yaml_content: &str) -> Result<()> {
-    // Minimal YAML-to-JSON conversion for the flat param list format.
-    // Each item has: id, display_name, description, type.kind, type.min/max/step, default.
-    let mut params = Vec::new();
-    let mut current: Option<ParamEntry> = None;
-
-    for line in yaml_content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("- id:") {
-            if let Some(p) = current.take() {
-                params.push(p);
-            }
-            let id = trimmed.strip_prefix("- id:").unwrap().trim().to_string();
-            current = Some(ParamEntry {
-                id,
-                ..Default::default()
-            });
-        } else if let Some(ref mut p) = current {
-            if let Some(val) = trimmed.strip_prefix("display_name:") {
-                p.display_name = val.trim().to_string();
-            } else if let Some(val) = trimmed.strip_prefix("description:") {
-                p.description = val.trim().to_string();
-            } else if let Some(val) = trimmed.strip_prefix("default:") {
-                p.default = val.trim().to_string();
-            } else if let Some(val) = trimmed.strip_prefix("type:") {
-                // Inline type: { kind: float, min: 0.1, max: 3.0, step: 0.1 }
-                let type_str = val.trim();
-                parse_param_type(type_str, p);
-            }
-        }
-    }
-    if let Some(p) = current.take() {
-        params.push(p);
-    }
-
-    // Serialize as JSON array
-    let mut json = String::from("[");
-    for (i, p) in params.iter().enumerate() {
-        if i > 0 {
-            json.push(',');
-        }
-        write!(
-            json,
-            "{{\"id\":\"{}\",\"display_name\":\"{}\",\"description\":\"{}\",\
-             \"kind\":\"{}\",\"min\":{},\"max\":{},\"step\":{},\"default\":{}}}",
-            escape_json(&p.id),
-            escape_json(&p.display_name),
-            escape_json(&p.description),
-            escape_json(&p.kind),
-            p.min,
-            p.max,
-            p.step,
-            p.default,
-        )?;
-    }
-    json.push(']');
-
+fn render_param_panel(html: &mut String, parameters: &[Parameter]) -> Result<()> {
+    use serde_json::{json, Value};
+    let params: Vec<Value> = parameters
+        .iter()
+        .map(|parameter| {
+            let panel = parameter.to_json();
+            let text = |key: &str| panel.get(key).cloned().unwrap_or(json!(""));
+            let kind = panel.get("type").cloned().unwrap_or(Value::Null);
+            let bound = |key: &str, fallback: i64| kind.get(key).cloned().unwrap_or(json!(fallback));
+            json!({
+                "id": parameter.id,
+                "display_name": text("display_name"),
+                "description": text("description"),
+                "kind": kind.get("kind").cloned().unwrap_or(json!("")),
+                "min": bound("min", 0),
+                "max": bound("max", 100),
+                "step": bound("step", 1),
+                "default": panel.get("default").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect();
     writeln!(
         html,
-        "<div class=\"param-panel-data\" data-params='{}'></div>",
-        json,
+        "<div class=\"param-panel-data\" data-params=\"{}\"></div>",
+        escape_html(&serde_json::to_string(&params)?),
     )?;
-
     Ok(())
 }
-
-#[derive(Default)]
-struct ParamEntry {
-    id: String,
-    display_name: String,
-    description: String,
-    kind: String,
-    min: String,
-    max: String,
-    step: String,
-    default: String,
-}
-
-fn parse_param_type(type_str: &str, p: &mut ParamEntry) {
-    // Parse { kind: float, min: 0.1, max: 3.0, step: 0.1 }
-    let inner = type_str
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .trim();
-    for part in inner.split(',') {
-        let part = part.trim();
-        if let Some(val) = part.strip_prefix("kind:") {
-            p.kind = val.trim().to_string();
-        } else if let Some(val) = part.strip_prefix("min:") {
-            p.min = val.trim().to_string();
-        } else if let Some(val) = part.strip_prefix("max:") {
-            p.max = val.trim().to_string();
-        } else if let Some(val) = part.strip_prefix("step:") {
-            p.step = val.trim().to_string();
-        }
-    }
-    // Default step to 1 for integer types
-    if p.step.is_empty() {
-        p.step = "1".to_string();
-    }
-    if p.min.is_empty() {
-        p.min = "0".to_string();
-    }
-    if p.max.is_empty() {
-        p.max = "100".to_string();
-    }
-}
-
-fn escape_json(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-}
 ```
-
-The parser is deliberately small — a real YAML parser would pull in
-a dep we don't need for this single flat-list use case. The shape is
-constrained enough that line-by-line scanning works.
 
 ## Small helpers
 
 `extract_ref_from_info` finds the `ref="..."` value in a fence
 info-string (used by the media-embed path). `heading_tag` maps
 pulldown-cmark levels to HTML tag names. `escape_html` is the
-standard four-replace HTML entity escape. `split_body` is a copy of
-the frontmatter splitter — duplicated rather than shared to keep
-weave's only-dep on `parser` to the chunk-shape side.
+standard four-replace HTML entity escape.
 
 <a name="chunk-small-helpers"></a><sub>[`src/weave.rs`](../../crates/x0k-tangle/src/weave.rs) · `#small-helpers`</sub>
 
@@ -1867,25 +1775,6 @@ fn unique_slug(base: &str, used: &mut HashSet<String>) -> String {
     }
 }
 
-fn split_body(content: &str) -> (Option<&str>, &str) {
-    if !content.starts_with("---") {
-        return (None, content);
-    }
-    let after_first = &content[3..];
-    if let Some(end) = after_first.find("\n---") {
-        let yaml = &after_first[..end];
-        let body_start = 3 + end + 4;
-        let body = if body_start < content.len() {
-            &content[body_start..]
-        } else {
-            ""
-        };
-        let body = body.strip_prefix('\n').unwrap_or(body);
-        (Some(yaml), body)
-    } else {
-        (None, content)
-    }
-}
 ```
 
 ## Scripts bind to an atom
@@ -2850,7 +2739,7 @@ section.footnotes li { margin: 0.4em 0; }
 The weave tests exercise the four rendering paths that matter most:
 single-language chunks (no tabs, has the language badge), multi-
 language chunks (tabs, no per-fence duplication), mixed docs (both
-patterns side-by-side), and the `x0k:params` block (renders as a
+patterns side-by-side), and the parameter panel (renders as a
 data div instead of a code block). One final test checks the onclick
 attribute is present — the doc-browser injects the rendered HTML via
 innerHTML, and an event listener bound at registration time would
@@ -2976,17 +2865,23 @@ fn render() {}
     fn params_block_renders_data_div() {
         let content = r#"# Viz
 
-```yaml x0k:params
-- id: threshold_gap
-  display_name: Hysteresis Gap
-  description: Ratio between zoom_in and zoom_out thresholds
-  type: { kind: float, min: 0.1, max: 3.0, step: 0.1 }
-  default: 1.5
-- id: num_levels
-  display_name: LOD Levels
-  description: Number of detail levels
-  type: { kind: uint, min: 2, max: 8 }
-  default: 4
+```turtle folio:graph {source="hysteresis-parameters"}
+x0k:implementation\/canvas\/core\/threshold_gap a folio:Parameter ;
+    rdfs:label "Hysteresis Gap" ;
+    rdfs:comment "Ratio between zoom_in and zoom_out thresholds" ;
+    folio:kind "float" ;
+    folio:min 0.1 ;
+    folio:max 3.0 ;
+    folio:step 0.1 ;
+    folio:default 1.5 .
+
+x0k:implementation\/canvas\/core\/num_levels a folio:Parameter ;
+    rdfs:label "LOD Levels" ;
+    rdfs:comment "Number of detail levels" ;
+    folio:kind "uint" ;
+    folio:min 2.0 ;
+    folio:max 8.0 ;
+    folio:default 4 .
 ```
 "#;
         let doc = parse_document(content).unwrap();
@@ -2995,11 +2890,36 @@ fn render() {}
         // Should have param-panel-data div
         assert!(output.html.contains("param-panel-data"));
         assert!(output.html.contains("data-params="));
-        // Should contain the param IDs in JSON
-        assert!(output.html.contains("threshold_gap"));
-        assert!(output.html.contains("num_levels"));
-        // Should NOT render as a code block
+        // The panel's JSON, flattened, in the block's order
+        let start = output.html.find("data-params=\"").unwrap() + "data-params=\"".len();
+        let end = start + output.html[start..].find('"').unwrap();
+        let raw = output.html[start..end].replace("&quot;", "\"").replace("&amp;", "&");
+        let params: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(params[0]["id"], "threshold_gap");
+        assert_eq!(params[0]["display_name"], "Hysteresis Gap");
+        assert_eq!(params[0]["kind"], "float");
+        assert_eq!(params[0]["step"], 0.1);
+        assert_eq!(params[0]["default"], 1.5);
+        assert_eq!(params[1]["id"], "num_levels");
+        assert_eq!(params[1]["max"], 8.0);
+        assert_eq!(params[1]["step"], 1);
+        assert_eq!(params[1]["default"], 4);
+        // Neither a code block nor an instance card
         assert!(!output.html.contains("<pre><code"));
+        assert!(!output.html.contains("Unresolved instance"));
+    }
+
+    #[test]
+    fn the_header_is_lifted_out_of_the_page() {
+        let content = "# Header\n\n```turtle folio:document\ndesign:header a x0k:Design ;\n    \
+            folio:tangleCrate \"demo\" .\n```\n\nProse.\n";
+        let doc = parse_document(content).unwrap();
+        let output = weave_html(content, &doc).unwrap();
+        assert!(!output.html.contains("folio:document"), "{}", output.html);
+        assert!(!output.html.contains("design:header"), "{}", output.html);
+        assert!(output.html.contains("<title>Header</title>"));
+        assert!(output.html.contains("crate: demo"));
+        assert!(output.html.contains("Prose."));
     }
 
     #[test]

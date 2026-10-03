@@ -1,17 +1,14 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:wiki/paper-alpha
-  type: wiki
----
 # Alpha
+
+```turtle folio:document
+wiki:paper-alpha a x0k:Wiki .
+```
 
 A paper about reading a collection as a graph.
 
-```yaml paper:paper
-id: paper:paper/alpha
-reviewed: true
-pages: 12
-edges:
-  paper:cites: [paper:paper/beta]
+```turtle folio:graph
+paper:paper\/alpha a paper:Paper ;
+    paper:reviewed true ;
+    paper:pages 12 ;
+    paper:cites paper:paper\/beta .
 ```

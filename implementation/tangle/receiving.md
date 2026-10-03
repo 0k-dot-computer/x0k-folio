@@ -1,29 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/receiving
-  type: implementation
-  status: draft
-  summary: 'The door the world comes back through: a contributor''s clone read as patches against the corpus files it was projected from, because a contribution is a proposal against the graph and never a merge into the projection.'
-  concerns:
-  - tangle
-  - publication
-  - contribution
-  - receive
-  - git
-  - provenance
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/receive.rs
-  edges:
-    implements:
-    - x0k:design/publish-a-region-as-a-repository
-    - x0k:affordance/receive_contribution_as_proposal
-    cites:
-    - x0k:implementation/tangle/publishing
-    - x0k:implementation/folio/colophon
----
 # Receiving a contribution from a projected repository
+
+```turtle folio:document
+implementation:tangle\/receiving a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The door the world comes back through: a contributor's clone read as patches against the corpus files it was projected from, because a contribution is a proposal against the graph and never a merge into the projection." ;
+    x0k:concerns "tangle", "publication", "contribution", "receive", "git", "provenance" ;
+    x0k:cites implementation:tangle\/publishing,
+        implementation:folio\/colophon ;
+    x0k:implements design:publish-a-region-as-a-repository,
+        affordance:receive_contribution_as_proposal ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/receive.rs" .
+```
 
 `region_repo` projects a publication outward as a buildable git
 repository; `publish_repo` pushes it to the world. This module is the
@@ -38,7 +26,7 @@ from, and turns every change into either a patch against a monorepo
 file or a stated reason why no such patch can exist.
 
 The carried example: Carol clones the public bundle, notices a typo in
-`corpora/x0k/implementation/folio/colophon.md` ("the envelope parser
+`corpora/x0k/implementation/folio/colophon.md` ("the header parser
 tolerates keys it does not own"), and fixes it. Nothing about her
 change mentions x0k; she edited a markdown file in a git repository. The
 maintainer runs `x0k-tangle receive-repo <carol's clone> --workspace .`
@@ -351,7 +339,7 @@ a scan is the resolver:
 <a name="chunk-find-publication-doc"></a><sub>[`src/receive.rs`](../../crates/x0k-tangle/src/receive.rs) · `#find-publication-doc`</sub>
 
 ```rust {#find-publication-doc}
-/// Find the publication doc whose `id:` is `uri` under
+/// Find the publication doc whose header subject is `uri` under
 /// the corpus's publications directory.
 fn find_publication_doc(workspace: &Path, layout: &CorpusLayout, uri: &str) -> Result<PathBuf> {
     let dir = workspace.join(layout.class_dir("publication"));
@@ -475,7 +463,7 @@ fn published_crates(pub_doc: &Path) -> Result<Vec<String>> {
     let (env, _) = parse_envelope(&text).map_err(|e| anyhow!("parsing publication: {e:?}"))?;
     Ok(env
         .edges
-        .get("publishes")
+        .get("x0k:publishes")
         .into_iter()
         .flatten()
         .filter_map(|u| u.strip_prefix("x0k:software-module/"))
@@ -1094,7 +1082,7 @@ mod tests {
 
     #[test]
     fn touched_chunks_names_the_innermost_chunk() {
-        let doc = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/t/d\n  type: implementation\n  tangle:\n    crate: c\n    root: src/lib.rs\n---\n\n```rust {#inner}\nfn inner() -> u8 { 1 }\n```\n\n```rust {#root}\nfn outer() {}\n<<inner>>\n```\n";
+        let doc = "```turtle folio:document\nimplementation:t\\/d a x0k:Implementation ;\n    folio:tangleCrate \"c\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {#inner}\nfn inner() -> u8 { 1 }\n```\n\n```rust {#root}\nfn outer() {}\n<<inner>>\n```\n";
         let old = "// @generated\nfn outer() {}\nfn inner() -> u8 { 1 }\n";
         let new = "// @generated\nfn outer() {}\nfn inner() -> u8 { 2 }\n";
         assert_eq!(touched_chunks(doc, old, new), vec!["inner".to_string()]);
@@ -1166,9 +1154,9 @@ const PUB_REL: &str = "decisions/publications/demo.md";
 <a name="chunk-receive-e2e-fixture-docs"></a><sub>[`tests/receive_repo.rs`](../../crates/x0k-tangle/tests/receive_repo.rs) · `#receive-e2e-fixture-docs`</sub>
 
 ```rust {#receive-e2e-fixture-docs file="tests/receive_repo.rs"}
-const DOC: &str = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/demo/colophon\n  type: implementation\n  status: draft\n  summary: The demo crate's one exported function, and where it trims.\n  tangle:\n    crate: demo-crate\n    root: src/lib.rs\n---\n# The demo colophon\n\nThe envelope parser tolerates keys it does not own. The first line\nis the whole contract.\n\n```rust {#parse-line}\n/// First line of `s`, trimmed.\npub fn parse_line(s: &str) -> &str {\n    s.lines().next().unwrap_or(\"\").trim()\n}\n```\n\n```rust {#root}\npub mod hand;\n\n<<parse-line>>\n```\n";
+const DOC: &str = "# The demo colophon\n\n```turtle folio:document\nimplementation:demo\\/colophon a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"The demo crate's one exported function, and where it trims.\" ;\n    folio:tangleCrate \"demo-crate\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n\nThe header parser tolerates keys it does not own. The first line\nis the whole contract.\n\n```rust {#parse-line}\n/// First line of `s`, trimmed.\npub fn parse_line(s: &str) -> &str {\n    s.lines().next().unwrap_or(\"\").trim()\n}\n```\n\n```rust {#root}\npub mod hand;\n\n<<parse-line>>\n```\n";
 
-const PUB: &str = "---\nx0k:\n  format: folio/v1\n  type: publication\n  id: x0k:publication/demo\n  status: proposed\n  license: MIT\n  copyright: Demo Authors\n  edges:\n    publishes:\n      - x0k:software-module/demo-crate\n  tangle:\n    root: README.md\n---\n# Demo\n\n```markdown {#readme}\n# Demo\n\nA demo publication.\n\n<!-- x0k:contents -->\n```\n";
+const PUB: &str = "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n    x0k:publishes x0k:software-module\\/demo-crate ;\n    folio:tangleRoot \"README.md\" .\n```\n\n```markdown {#readme}\n# Demo\n\nA demo publication.\n\n<!-- x0k:contents -->\n```\n";
 ```
 
 `git` runs with identity and signing pinned inline. A test that inherited
@@ -1338,7 +1326,7 @@ fn literate_edit_is_received_against_the_monorepo_doc_at_the_clones_rev() {
     assert_eq!(c.target.as_deref(), Some(DOC_REL));
     let patch = c.patch.as_deref().unwrap();
     assert!(patch.starts_with(&format!("--- a/{DOC_REL}\n+++ b/{DOC_REL}\n")));
-    assert!(patch.contains("+The envelope parser tolerates keys it does not own itself."));
+    assert!(patch.contains("+The header parser tolerates keys it does not own itself."));
     assert!(!patch.contains("maintainer added later"), "drift must not appear reversed");
     assert_eq!(report.received(), 1);
     assert_eq!(report.refused(), 0);

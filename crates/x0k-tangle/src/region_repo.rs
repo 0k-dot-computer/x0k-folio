@@ -6,12 +6,12 @@
 //! standalone, buildable Cargo repository: the published crates' source (both
 //! `@generated` and hand-written), the literate documents that back the
 //! generated code, a standalone workspace manifest, the license bodies for
-//! the publication's declared license (the `license:` field of the
+//! the publication's declared license (the `x0k:license` field of the
 //! publication doc is authoritative — licensing is part of the act of
 //! publishing; the source tree stays proprietary), a README tangled from the
-//! publication doc's own `tangle:` block (the projection dir is the tangle
+//! publication doc's own tangle configuration (the projection dir is the tangle
 //! workspace, so `root: README.md` lands at the repo root; chunks routed to
-//! declared `overlay:` paths seed those files once, and the README's
+//! declared `x0k:overlay` paths seed those files once, and the README's
 //! `<!-- x0k:contents -->` marker is replaced by the generated contents
 //! page, grouped by the concepts that marker names and opening with one
 //! row per affordance declaration the publication publishes, drawn from
@@ -54,7 +54,7 @@
 //! published declaration names under `enabledBy` is published, or excluded —
 //! a declaration naming a module the audience will not have is refused.
 //!
-//! A publication may declare `prebuilt:` — target triples, and optionally an
+//! A publication may declare `x0k:prebuilt` — target triples, and optionally an
 //! npm wrapper or a shell installer — and the projection then also carries a
 //! release lane: a
 //! forge-agnostic `tools/release-artifacts` that packages the entry-point
@@ -85,7 +85,10 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
-use x0k_folio::colophon::{parse_envelope, split_frontmatter, Colophon, DocType};
+use x0k_folio::colophon::{
+    host_frontmatter, is_marker, parse_envelope, predeclared_prefixes, render_document,
+    shipped_prefixes, strip_header, Colophon, DocType, RDF_JSON, XSD_STRING, BODY_FORMAT_MARKDOWN,
+};
 use x0k_folio::transclusion::extract_section;
 use x0k_folio::{EntityId, InlineEntity, ICON_CLASS};
 use x0k_icon::{emit, Accepted, Label, Palette, RoleBinding};
@@ -102,7 +105,7 @@ use crate::region_gfm::{
 
 const SOFTWARE_MODULE_PREFIX: &str = "x0k:software-module/";
 const ONTOLOGY_MODULE_PREFIX: &str = "x0k:ontology-module/";
-/// A literate document, by the `id:` its own envelope declares. Only
+/// A literate document, by the id its own header declares. Only
 /// `excludes` may name one — see [`member_names`].
 const IMPLEMENTATION_DOC_PREFIX: &str = "x0k:implementation/";
 /// A vocabulary module's IRI is this base plus its name; its file in the
@@ -190,7 +193,7 @@ const RESOLVED_WORKSPACE_DEPS: &[(&str, &str)] = &[
 #[derive(Debug, Clone)]
 pub struct RepoProjectOptions {
     /// Explicit SPDX license override. `None` (the default) means the license
-    /// comes from the publication doc's `license:` envelope field — the
+    /// comes from the publication doc's `x0k:license` header field — the
     /// manifest is authoritative, per "licensing is part of the act of
     /// publishing". `Some` is a deliberate caller override. The projector
     /// never invents a license and never silently relicenses: with neither
@@ -248,7 +251,7 @@ pub struct RepoProjectReport {
     pub previous_corpus_rev: Option<String>,
     /// The `corpus_commit` of the previous projection, when it recorded one.
     pub previous_corpus_commit: Option<String>,
-    /// Resolved `overlay:` paths — projected-repo-relative paths the
+    /// Resolved `x0k:overlay` paths — projected-repo-relative paths the
     /// projector preserves exactly as found instead of regenerating.
     pub overlay: Vec<String>,
     /// Projected-repo-relative paths of `@generated` files that arrived
@@ -312,7 +315,7 @@ pub struct RepoProjectReport {
     /// plain text; this list is the wiki's writing queue.
     pub unpublished_concepts: Vec<String>,
     /// The prebuilt-binary distribution the publication declares
-    /// (`prebuilt:`) — the release tag its assets are cut at, the target
+    /// (`x0k:prebuilt`) — the release tag its assets are cut at, the target
     /// triples, and the npm wrapper when one is declared. `None` when the
     /// publication declares none, in which case the projection carries no
     /// release workflow and no wrapper.
@@ -342,7 +345,7 @@ impl ModuleVersionSource {
 /// Where the applied license expression came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LicenseSource {
-    /// The publication doc's `license:` envelope field (the default path).
+    /// The publication doc's `x0k:license` header field (the default path).
     #[default]
     PublicationDoc,
     /// An explicit caller/CLI override.
@@ -438,7 +441,7 @@ pub fn project_publication_repo_with(
     let content = std::fs::read_to_string(region_doc)
         .with_context(|| format!("reading publication doc {}", region_doc.display()))?;
     let (env, _body) =
-        parse_envelope(&content).map_err(|e| anyhow!("not a folio/v1 document: {e:?}"))?;
+        parse_envelope(&content).map_err(|e| anyhow!("the publication doc has no readable header: {e}"))?;
     if env.doc_type != DocType::Publication {
         bail!(
             "document is not a publication (type is `{}`)",
@@ -453,11 +456,11 @@ pub fn project_publication_repo_with(
     // refuses one), so this is always empty here; the severances come from the
     // `severs` edge read below.
     let Members { crates, modules, docs: _, documents, severed: _ } =
-        member_names(env.edges.get("publishes"), "publishes")?;
+        member_names(env.edges.get("x0k:publishes"), "publishes")?;
     if crates.is_empty() {
         bail!("publication has an empty `publishes` membership (no crate)");
     }
-    let excluded = member_names(env.edges.get("excludes"), "excludes")?;
+    let excluded = member_names(env.edges.get("x0k:excludes"), "excludes")?;
     if let Some(m) = excluded.modules.first() {
         bail!(
             "`excludes` names vocabulary module `{m}` — nothing severs a module; \
@@ -472,7 +475,7 @@ pub fn project_publication_repo_with(
     // severs nothing while the publication's prose goes on telling the
     // audience that a feature still live in `default` is unsupported. The same
     // rule an `excludes` document id matching no document already gets.
-    let severed = member_names(env.edges.get("severs"), "severs")?.severed;
+    let severed = member_names(env.edges.get("x0k:severs"), "severs")?.severed;
     let published_set: BTreeSet<&str> = crates.iter().map(String::as_str).collect();
     for sev in &severed {
         if !published_set.contains(sev.krate.as_str()) {
@@ -503,7 +506,7 @@ pub fn project_publication_repo_with(
     // The palette the icons on the contents page and the affordance pages
     // are bound with — the profile's four roles as colours, per scheme.
     // Read now; required only once a row has a mark to show.
-    let palette = envelope_palette(&content)?;
+    let palette = header_palette(&content)?;
 
     // Where this corpus keeps its chapters, its decisions and its concept
     // pages. Read once, from the corpus being projected, and carried to every
@@ -512,14 +515,14 @@ pub fn project_publication_repo_with(
     let packages = SourcePackages::read(workspace)?;
 
     // Licensing is part of the act of publishing: the publication doc's
-    // `license:` field is authoritative, and an explicit caller override is
+    // `x0k:license` field is authoritative, and an explicit caller override is
     // the only alternative. There is no silent default.
     let (license, license_source) = match &opts.license {
         Some(l) => (l.clone(), LicenseSource::Override),
         None => (
-            envelope_scalar(&content, "license").ok_or_else(|| {
+            header_literal(&env, "x0k:license").ok_or_else(|| {
                 anyhow!(
-                    "publication `{}` carries no `license:` in its envelope and no explicit \
+                    "publication `{}` carries no `x0k:license` in its header and no explicit \
                      license override was given — declare the license in the publication doc \
                      (or pass --license to override deliberately)",
                     env.id
@@ -528,14 +531,14 @@ pub fn project_publication_repo_with(
             LicenseSource::PublicationDoc,
         ),
     };
-    let copyright = envelope_scalar(&content, "copyright");
+    let copyright = header_literal(&env, "x0k:copyright");
     let license_bodies = license_files(&license, copyright.as_deref(), current_year())?;
 
-    // Deliberate divergence: `overlay:` names projected-repo-relative paths
+    // Deliberate divergence: `x0k:overlay` names projected-repo-relative paths
     // the public side owns (community files such as CONTRIBUTING.md). They
     // are preserved exactly as found on re-projection; everything else is
     // authoritative from the corpus.
-    let overlay = overlay_paths(&content)?;
+    let overlay = overlay_paths(&env)?;
 
     let (corpus_rev, corpus_commit) = current_corpus_revision(workspace);
     let mut report = RepoProjectReport {
@@ -555,10 +558,10 @@ pub fn project_publication_repo_with(
     };
 
     // crates.io metadata sourced from the publication doc (optional keys the
-    // shared envelope parser tolerates and this reader owns).
+    // shared header parser tolerates and this reader owns).
     let crates_io = CratesIoMeta {
-        repository: envelope_scalar(&content, "repository"),
-        keywords: envelope_string_list(&content, "keywords"),
+        repository: header_literal(&env, "x0k:repository"),
+        keywords: header_literals(&env, "x0k:keywords"),
     };
 
     let mut versions: BTreeMap<String, String> = BTreeMap::new();
@@ -648,7 +651,7 @@ pub fn project_publication_repo_with(
     report.module_version = if modules.is_empty() {
         None
     } else {
-        let entry = member_names(env.edges.get("entryPoint"), "entryPoint")?;
+        let entry = member_names(env.edges.get("x0k:entryPoint"), "entryPoint")?;
         Some(match entry.crates.first() {
             Some(c) => {
                 let v = versions.get(c).ok_or_else(|| {
@@ -693,7 +696,7 @@ pub fn project_publication_repo_with(
     };
     let icons = read_icons(workspace, &layout, &packages, &affordances, palette.clone())?;
 
-    let prebuilt = resolve_prebuilt(&content, &env, &packages, &versions, &crates_io)?;
+    let prebuilt = resolve_prebuilt(&env, &packages, &versions, &crates_io)?;
     report.prebuilt = prebuilt.as_ref().map(PrebuiltPlan::summary);
 
     // A prior projection (a `.git`, or a PROVENANCE.json) is projected INTO,
@@ -792,8 +795,11 @@ pub fn project_publication_repo_with(
     let source_refs: Vec<_> = instance_sources.iter().map(|(id, text)| (id.as_str(), text.as_str())).collect();
     let base = selected_vocabulary_model(&vocab_modules)?;
     let instances = crate::instance_rendering::InstancePresentation::collect(&source_refs, &base);
-    let mut path_map = weave_literate_docs(workspace, output_dir, &literate, &links, &instances, &mut report)?;
-    write_projected_documents(output_dir, &projected_docs, &instances, &mut path_map, &mut report)?;
+    // The prefixes this build predeclares that the published vocabulary does
+    // not: a projected document using one says where it points itself.
+    let undeclared = undeclared_prefixes(&base);
+    let mut path_map = weave_literate_docs(workspace, output_dir, &literate, &links, &instances, &undeclared, &mut report)?;
+    write_projected_documents(output_dir, &projected_docs, &instances, &undeclared, &mut path_map, &mut report)?;
 
     emit_workspace_manifest(output_dir, &crates, &edition)?;
     emit_licenses(output_dir, &crates, &license_bodies)?;
@@ -843,7 +849,7 @@ pub fn project_publication_repo_with(
         &severed_features,
     )?;
 
-    if organized_repository_layout(&content)? {
+    if organized_repository_layout(&env)? {
         organize_repository(output_dir, &mut report, &mut path_map, &layout)?;
         emit_provenance(output_dir, &env.id, &path_map, &report, &license,
             license_source, &source_licenses)?;
@@ -873,12 +879,12 @@ pub fn project_publication_repo_with(
     Ok(report)
 }
 
-/// Read the `overlay:` list from the publication envelope and validate each
+/// Read the `x0k:overlay` list from the publication header and validate each
 /// entry as a plain projected-repo-relative path (no absolute paths, no `..`,
 /// no trailing slash — a directory is named by its bare path).
-fn overlay_paths(content: &str) -> Result<Vec<String>> {
+fn overlay_paths(env: &Colophon) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    for raw in envelope_string_list(content, "overlay") {
+    for raw in header_literals(env, "x0k:overlay") {
         let p = raw.trim().trim_end_matches('/').to_string();
         let path = Path::new(&p);
         if p.is_empty()
@@ -891,7 +897,7 @@ fn overlay_paths(content: &str) -> Result<Vec<String>> {
             })
             || p == "." || p == ".git" || p == "PROVENANCE.json"
         {
-            bail!("`overlay:` entry `{raw}` is not a plain projected-repo-relative path");
+            bail!("`x0k:overlay` entry `{raw}` is not a plain projected-repo-relative path");
         }
         if !out.contains(&p) {
             out.push(p);
@@ -1000,7 +1006,7 @@ struct Members {
     modules: Vec<String>,
     /// Literate documents held back, by the full `x0k:implementation/…` URI.
     /// Kept whole rather than stripped: the match is against a document's own
-    /// envelope `id:`, which is the identity that survives a file move.
+    /// header id, which is the identity that survives a file move.
     docs: Vec<String>,
     /// Documents the publication selects — whole, or one section of one.
     /// Only `publishes` fills this.
@@ -1027,6 +1033,16 @@ struct Severance {
     feature: String,
 }
 
+/// A header's member id with its fragment separator written back as `#`:
+/// the Turtle spells it `%23`, since the id's IRI holds its own fragment.
+/// An id already in the `#` spelling is returned as it came.
+fn fragment_separator(u: &str) -> String {
+    match u.split_once("%23") {
+        Some((id, fragment)) if !u.contains('#') => format!("{id}#{fragment}"),
+        _ => u.to_string(),
+    }
+}
+
 /// Read a membership edge (`publishes`, `excludes`, `entryPoint`): crates
 /// lose their `x0k:software-module/` prefix (and any `#feature` suffix),
 /// vocabulary modules their `x0k:ontology-module/` prefix, and — under
@@ -1035,6 +1051,7 @@ struct Severance {
 fn member_names(uris: Option<&Vec<String>>, edge: &str) -> Result<Members> {
     let mut out = Members::default();
     for u in uris.into_iter().flatten() {
+        let u = &fragment_separator(u);
         if let Some(c) = u.strip_prefix(SOFTWARE_MODULE_PREFIX) {
             // The fragment is the feature, and where it is legal is the
             // whole point. This used to be `split('#').next()` on every
@@ -1106,113 +1123,54 @@ fn member_names(uris: Option<&Vec<String>>, edge: &str) -> Result<Members> {
     Ok(out)
 }
 
-/// Read one top-level scalar (`key: value`) out of a publication doc's
-/// `x0k:` envelope. The shared envelope parser deliberately drops keys it
-/// doesn't own (`license:`, `repository:`, …); publication-specific keys are
-/// read here, by the consumer that owns them, with a tolerant line scan.
-fn envelope_scalar(content: &str, key: &str) -> Option<String> {
-    let (yaml, _) = split_frontmatter(content)?;
-    let prefix = format!("{key}:");
-    for line in yaml.lines() {
-        let indent = line.len() - line.trim_start().len();
-        let trimmed = line.trim_start();
-        if indent == 2 {
-            if let Some(val) = trimmed.strip_prefix(&prefix) {
-                let val = val.trim().trim_matches('"').trim_matches('\'').trim();
-                if !val.is_empty() {
-                    return Some(val.to_string());
-                }
-            }
-        }
-    }
-    None
+/// Every value the header states for `predicate` (a compact term such as
+/// `x0k:keywords`), in statement order — empty when it states none.
+fn header_literals(env: &Colophon, predicate: &str) -> Vec<String> {
+    env.properties
+        .get(predicate)
+        .into_iter()
+        .flatten()
+        .map(|literal| literal.value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
 }
 
-/// Read a top-level string list (`key: [a, b]` inline, or a `- item` block
-/// sequence) out of a publication doc's `x0k:` envelope. Same ownership
-/// rationale as [`envelope_scalar`].
-fn envelope_string_list(content: &str, key: &str) -> Vec<String> {
-    let Some((yaml, _)) = split_frontmatter(content) else {
-        return Vec::new();
+/// The one value the header states for `predicate`, when it states one.
+fn header_literal(env: &Colophon, predicate: &str) -> Option<String> {
+    header_literals(env, predicate).into_iter().next()
+}
+
+/// The one `rdf:JSON` literal the header states for `predicate`, read as
+/// `T` — `None` when the header states none. A second value, a literal of
+/// another datatype, or JSON that does not read as `T` refuses, naming why.
+fn header_json<T: serde::de::DeserializeOwned>(env: &Colophon, predicate: &str) -> Result<Option<T>> {
+    let values = env.properties.get(predicate).map(Vec::as_slice).unwrap_or_default();
+    let literal = match values {
+        [] => return Ok(None),
+        [one] => one,
+        many => bail!("the header states `{predicate}` {} times; state it once", many.len()),
     };
-    let prefix = format!("{key}:");
-    let mut out = Vec::new();
-    let mut in_seq = false;
-    for line in yaml.lines() {
-        let indent = line.len() - line.trim_start().len();
-        let trimmed = line.trim_start();
-        if in_seq {
-            if trimmed.starts_with("- ") && indent > 2 {
-                let item = trimmed[2..].trim().trim_matches('"').trim_matches('\'');
-                if !item.is_empty() {
-                    out.push(item.to_string());
-                }
-                continue;
-            }
-            if trimmed.is_empty() {
-                continue;
-            }
-            break;
-        }
-        if indent == 2 {
-            if let Some(rest) = trimmed.strip_prefix(&prefix) {
-                let rest = rest.trim();
-                if let Some(inline) = rest.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
-                    return inline
-                        .split(',')
-                        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                }
-                if rest.is_empty() {
-                    in_seq = true;
-                }
-            }
-        }
+    if literal.datatype != RDF_JSON {
+        bail!("the header's `{predicate}` is not an `rdf:JSON` literal (datatype `{}`)", literal.datatype);
     }
-    out
+    serde_json::from_str(&literal.value)
+        .map(Some)
+        .map_err(|e| anyhow!("the header's `{predicate}` does not read: {e}"))
 }
 
-/// The lines nested under a top-level envelope key, as a YAML fragment —
-/// `None` when the envelope carries no such key. The block's own indentation
-/// is uniform, so the fragment parses as a mapping without dedenting.
-fn envelope_block(content: &str, key: &str) -> Option<String> {
-    let (yaml, _) = split_frontmatter(content)?;
-    let prefix = format!("{key}:");
-    let mut block = String::new();
-    let mut in_block = false;
-    for line in yaml.lines() {
-        let indent = line.len() - line.trim_start().len();
-        if in_block {
-            if line.trim().is_empty() || indent > 2 {
-                block.push_str(line);
-                block.push('\n');
-                continue;
-            }
-            break;
-        }
-        if indent == 2 && line.trim_start().starts_with(&prefix) {
-            in_block = true;
-        }
-    }
-    in_block.then_some(block)
-}
-
-/// Read the `palette:` block out of a publication doc's `x0k:` envelope
-/// — the icon profile's four roles bound to colours, per scheme — as the
-/// binder's own type. `None` when the envelope carries none; a block
-/// that does not read as one refuses, naming why.
-pub fn envelope_palette(content: &str) -> Result<Option<Palette>> {
-    let Some(block) = envelope_block(content, "palette") else {
-        return Ok(None);
-    };
-    let palette: Palette = serde_norway::from_str(&block).map_err(|e| {
+/// Read the publication header's `x0k:palette` — the icon profile's four
+/// roles bound to colours, per scheme — as the binder's own type. `None`
+/// when the header states none; a statement that does not read as one
+/// refuses, naming why.
+pub fn header_palette(content: &str) -> Result<Option<Palette>> {
+    let (env, _) = parse_envelope(content)
+        .map_err(|e| anyhow!("the publication doc has no readable header: {e}"))?;
+    header_json::<Palette>(&env, "x0k:palette").map_err(|e| {
         anyhow!(
-            "the publication's `palette:` block does not read as the icon profile's four \
+            "the publication's `x0k:palette` does not read as the icon profile's four \
              roles (ink, line, paper, accent) per scheme (light, dark): {e}"
         )
-    })?;
-    Ok(Some(palette))
+    })
 }
 
 fn manifest_package_str(doc: &toml_edit::DocumentMut, key: &str) -> Option<String> {
@@ -1611,7 +1569,7 @@ fn rewrite_vendored_manifest(path: &Path, ctx: &VendorCtx<'_>) -> Result<BTreeSe
     // list is emptied, and the name leaves `default`.
     // The two forms UNION. A feature is severed when a dropped dependency
     // makes it unbuildable (derived, below) OR when the publication names it
-    // under `severs:` (declared). The second form is what makes severance a
+    // under `x0k:severs` (declared). The second form is what makes severance a
     // grain of the publication rather than a by-product of crate exclusion: a
     // feature that gates only code, with no excluded dependency beneath it,
     // has nothing to derive from.
@@ -2481,21 +2439,21 @@ fn modules_rel_dir(crates: &[String]) -> PathBuf {
 /// One document of the literate set: its workspace-relative path, whether it
 /// tangles (and so has a sidecar to carry) or is prose only, and the three
 /// facts the contents page is written from — the crate its chapters back, the
-/// title it heads with, and the `summary:` its own envelope declares.
+/// title it heads with, and the `x0k:summary` its own header declares.
 struct LiterateDoc {
     rel: PathBuf,
     tangled: bool,
     crate_name: Option<String>,
     title: String,
     summary: Option<String>,
-    /// The `id:` its envelope declares — how a proof names its chapter.
+    /// The id its header declares — how a proof names its chapter.
     id: String,
     /// The concept pages it `presupposes` — a prose link to a wiki page,
-    /// or an envelope edge — in the order met: what a reader needs before
+    /// or a header edge — in the order met: what a reader needs before
     /// this chapter makes sense, and what its contents group *rests on*.
     presupposes: Vec<String>,
     /// The affordances it `realizes` — a prose link to an affordance, or
-    /// an envelope edge — in the order met: what its page lists it under.
+    /// a header edge — in the order met: what its page lists it under.
     realizes: Vec<String>,
 }
 
@@ -2524,8 +2482,8 @@ fn heading_title(body: &str, rel: &Path) -> String {
         .unwrap_or_else(|| doc_stem(rel))
 }
 
-/// Discover the literate set: docs whose `tangle.crate` names a published
-/// crate, plus the prose-only docs (no `tangle:` block) in the same area
+/// Discover the literate set: docs whose `folio:tangleCrate` names a published
+/// crate, plus the prose-only docs (no tangle configuration) in the same area
 /// directories under the corpus's implementation root. Docs that tangle to
 /// an unpublished crate stay out even when their area is published.
 fn discover_literate_docs(
@@ -2543,7 +2501,7 @@ fn discover_literate_docs(
     // which is the shape of the defect this severance exists to close. Track
     // what was matched and refuse a name that hit nothing.
     let mut unmatched: BTreeSet<String> = excluded_docs.clone();
-    // Each candidate, paired with whether its envelope declares `tangle:` at
+    // Each candidate, paired with whether its header declares a tangle configuration at
     // all — the fact that separates a prose-only chapter from one that tangles
     // to a crate this publication does not ship.
     let mut candidates: Vec<(LiterateDoc, bool)> = Vec::new();
@@ -2558,10 +2516,7 @@ fn discover_literate_docs(
         let Ok(text) = std::fs::read_to_string(entry.path()) else {
             continue;
         };
-        let Some((_, body)) = split_frontmatter(&text) else {
-            continue;
-        };
-        let Ok((env, _)) = parse_envelope(&text) else {
+        let Ok((env, body)) = parse_envelope(&text) else {
             continue;
         };
         if excluded_docs.contains(&env.id) {
@@ -2571,17 +2526,17 @@ fn discover_literate_docs(
         }
         let rel = entry.path().strip_prefix(workspace).unwrap().to_path_buf();
         // The edges the chapter declares in its prose, unioned with the
-        // envelope's: a link is the edge, written where the sentence needs
+        // header's: a link is the edge, written where the sentence needs
         // it (`x0k_folio::document_edges`).
-        let edges = x0k_folio::document_edges(&env.edges, body);
+        let edges = x0k_folio::document_edges(&env.edges, &body);
         let doc = LiterateDoc {
-            title: heading_title(body, &rel),
+            title: heading_title(&body, &rel),
             crate_name: env.tangle.as_ref().and_then(|t| t.crate_name.as_deref())
                 .and_then(|path| packages.chapter_package(path)),
             summary: env.summary.clone(),
             id: env.id.clone(),
-            presupposes: edges.get("presupposes").cloned().unwrap_or_default(),
-            realizes: edges.get("realizes").cloned().unwrap_or_default(),
+            presupposes: edges.get("x0k:presupposes").cloned().unwrap_or_default(),
+            realizes: edges.get("x0k:realizes").cloned().unwrap_or_default(),
             tangled: false,
             rel,
         };
@@ -2590,7 +2545,7 @@ fn discover_literate_docs(
     if !unmatched.is_empty() {
         bail!(
             "`excludes` names literate document(s) no document under {}/ declares \
-             as its `id:`: {unmatched:?} — an id that matches nothing severs nothing",
+             as its id: {unmatched:?} — an id that matches nothing severs nothing",
             layout.implementation_root().display()
         );
     }
@@ -2680,14 +2635,15 @@ fn project_manifest_chunk(
 
 fn relocate_chapter_crate(text: &str, package: Option<&str>) -> Result<String> {
     let Some(package) = package else { return Ok(text.to_string()); };
-    let (env, _) = parse_envelope(text).map_err(|e| anyhow!("{e:?}"))?;
+    let (mut env, body) = parse_envelope(text).map_err(|e| anyhow!("{e}"))?;
     if env.tangle.as_ref().and_then(|t| t.crate_name.as_deref()) == Some(package) {
         return Ok(text.to_string());
     }
-    let (header, body) = split_frontmatter(text).context("chapter has no envelope")?;
-    let mut yaml: serde_norway::Value = serde_norway::from_str(header)?;
-    yaml["x0k"]["tangle"]["crate"] = serde_norway::Value::String(package.to_string());
-    Ok(format!("---\n{}---\n{}", serde_norway::to_string(&yaml)?, body))
+    env.tangle.get_or_insert_with(Default::default).crate_name = Some(package.to_string());
+    // The header is re-rendered from the edited colophon and placed by the
+    // placement rule; a host frontmatter block stays as it was.
+    let front = host_frontmatter(text).map_or("", |range| &text[range]);
+    Ok(format!("{front}{}", render_document(&env, &body)))
 }
 
 fn weave_literate_docs(
@@ -2696,6 +2652,7 @@ fn weave_literate_docs(
     docs: &[LiterateDoc],
     links: &ChapterLinks,
     instances: &crate::instance_rendering::InstancePresentation,
+    undeclared: &[(String, String)],
     report: &mut RepoProjectReport,
 ) -> Result<BTreeMap<String, String>> {
     let mut path_map = BTreeMap::new();
@@ -2709,6 +2666,7 @@ fn weave_literate_docs(
         let projected_text = project_manifest_chunk(&projected_text, &rel_str, krate, output_dir)?;
         let woven = crate::region_gfm::weave_chapter_with_instances(&projected_text, &rel_str, krate, links, instances)
             .with_context(|| format!("weaving literate doc {}", src.display()))?;
+        let woven = declare_undeclared_prefixes(&woven, undeclared);
         let dst = output_dir.join(&doc.rel);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
@@ -2833,7 +2791,7 @@ fn resolve_named_document(
             .with_context(|| format!("reading concept page {}", path.display()))?;
         if !parse_envelope(&text).map(|(env, _)| env.id == want).unwrap_or(false) {
             bail!(
-                "`publishes` names `{}`, and {} does not declare `{want}` as its `id:`",
+                "`publishes` names `{}`, and {} does not declare `{want}` as its id",
                 sel.reference,
                 path.display()
             );
@@ -2855,7 +2813,7 @@ fn resolve_named_document(
             let Ok(text) = std::fs::read_to_string(entry.path()) else {
                 continue;
             };
-            // The envelope's own `id:` is the identity; the filename is a
+            // The header's own id is the identity; the filename is a
             // convenience that a move may have left behind.
             if parse_envelope(&text).map(|(env, _)| env.id == want).unwrap_or(false) {
                 hits.push(entry.path().to_path_buf());
@@ -2866,13 +2824,13 @@ fn resolve_named_document(
         1 => Ok(hits.remove(0)),
         0 => bail!(
             "`publishes` names `{}`, and no document under {}/ declares \
-             `{want}` as its `id:` — a name that selects nothing is the defect",
+             `{want}` as its id — a name that selects nothing is the defect",
             sel.reference,
             layout.decisions_root().display()
         ),
         n => bail!(
             "`publishes` names `{}`, and {n} documents declare `{want}` as their \
-             `id:`: {hits:?} — an id addresses one document",
+             id: {hits:?} — an id addresses one document",
             sel.reference
         ),
     }
@@ -2914,7 +2872,7 @@ fn project_named_documents(
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading named document {}", path.display()))?;
         let (env, body) = parse_envelope(&content)
-            .map_err(|e| anyhow!("`{}` is not a folio/v1 document: {e:?}", source_rel.display()))?;
+            .map_err(|e| anyhow!("`{}` has no readable header: {e}", source_rel.display()))?;
         let Some(anchor) = sel.id.fragment.clone() else {
             out.push(ProjectedDoc {
                 rel: source_rel.clone(),
@@ -2968,20 +2926,29 @@ fn offered_anchors(body: &str) -> Vec<String> {
 /// the anchor, the parent's genus and status, and a `transcludes` edge
 /// naming the document it was cut from. That edge dangles — the parent
 /// stayed in the corpus — which is what projecting a region out of a
-/// larger graph means, not a defect in this file.
+/// larger graph means, not a defect in this file. The anchor's `#` is
+/// written `%23` in the header: the id's IRI already holds its fragment.
 fn section_document(env: &Colophon, id: &EntityId, section: &str) -> String {
-    let mut out = String::from("---\nx0k:\n  format: folio/v1\n");
-    out.push_str(&format!("  id: {id}\n"));
-    out.push_str(&format!("  type: {}\n", env.doc_type.as_str()));
-    if let Some(status) = env.status {
-        out.push_str(&format!("  status: {}\n", status.as_str()));
-    }
-    out.push_str("  edges:\n    transcludes:\n");
-    out.push_str(&format!("      - {}\n", id.without_fragment()));
-    out.push_str("---\n\n");
-    out.push_str(section.trim_end());
-    out.push('\n');
-    out
+    let mut edges = BTreeMap::new();
+    edges.insert("x0k:transcludes".to_string(), vec![id.without_fragment().to_string()]);
+    let header = Colophon {
+        id: id.to_string().replacen('#', "%23", 1),
+        doc_type: env.doc_type.clone(),
+        subtype: None,
+        status: env.status,
+        concerns: Vec::new(),
+        summary: None,
+        updated_by: None,
+        created_at: None,
+        updated_at: None,
+        edges,
+        properties: BTreeMap::new(),
+        materialization: None,
+        tangle: None,
+        pipelines: Vec::new(),
+        body_format: BODY_FORMAT_MARKDOWN.to_string(),
+    };
+    render_document(&header, &format!("\n{}\n", section.trim_end()))
 }
 
 /// Write the projected documents, recording each in the provenance seam
@@ -2990,6 +2957,7 @@ fn write_projected_documents(
     output_dir: &Path,
     docs: &[ProjectedDoc],
     instances: &crate::instance_rendering::InstancePresentation,
+    undeclared: &[(String, String)],
     path_map: &mut BTreeMap<String, String>,
     report: &mut RepoProjectReport,
 ) -> Result<()> {
@@ -2999,6 +2967,7 @@ fn write_projected_documents(
             std::fs::create_dir_all(parent)?;
         }
         let text = crate::region_gfm::weave_instance_declarations(&doc.text, &doc.rel.to_string_lossy(), instances)?;
+        let text = declare_undeclared_prefixes(&text, undeclared);
         std::fs::write(&dst, text)
             .with_context(|| format!("writing projected document {}", dst.display()))?;
         let rel = doc.rel.to_string_lossy().to_string();
@@ -3007,6 +2976,148 @@ fn write_projected_documents(
         tracing::info!(reference = %doc.reference, "region_repo.document.projected");
     }
     Ok(())
+}
+
+/// The prefixes this build predeclares that `projected` — the vocabulary
+/// a publication ships — does not, as `(prefix, namespace)`.
+fn undeclared_prefixes(projected: &x0k_ontology::concept_facts::OntologyModel) -> Vec<(String, String)> {
+    let declared: BTreeSet<String> =
+        predeclared_prefixes(projected).into_iter().map(|(prefix, _)| prefix).collect();
+    shipped_prefixes()
+        .iter()
+        .filter(|(prefix, _)| !declared.contains(prefix))
+        .cloned()
+        .collect()
+}
+
+/// `text` with an `@prefix` line added at the top of each header and graph
+/// block for every prefix in `undeclared` the block uses and does not
+/// declare itself. A fence inside another fence is quoted, not a block.
+fn declare_undeclared_prefixes(text: &str, undeclared: &[(String, String)]) -> String {
+    if undeclared.is_empty() {
+        return text.to_string();
+    }
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        let trimmed = line.trim_start();
+        let marker = trimmed.chars().next().filter(|c| *c == '`' || *c == '~');
+        let Some(marker) = marker else {
+            out.push_str(line);
+            index += 1;
+            continue;
+        };
+        let width = trimmed.chars().take_while(|c| *c == marker).count();
+        if width < 3 {
+            out.push_str(line);
+            index += 1;
+            continue;
+        }
+        let info = trimmed[width..].trim();
+        if marker == '`' && info.contains('`') {
+            // Inline code quoting a fence, not a fence.
+            out.push_str(line);
+            index += 1;
+            continue;
+        }
+        let close = (index + 1..lines.len()).find(|&at| {
+            let t = lines[at].trim();
+            t.chars().count() >= width && t.chars().all(|c| c == marker)
+        });
+        let Some(close) = close else {
+            out.push_str(&lines[index..].concat());
+            break;
+        };
+        out.push_str(line);
+        let body: String = lines[index + 1..close].concat();
+        if is_marker(info, "folio:document") || is_marker(info, "folio:graph") {
+            let used = turtle_prefixes_used(&body);
+            let declared = turtle_prefixes_declared(&body);
+            for (prefix, namespace) in undeclared {
+                if used.contains(prefix) && !declared.contains(prefix) {
+                    out.push_str(&format!("@prefix {prefix}: <{namespace}> .\n"));
+                }
+            }
+        }
+        out.push_str(&body);
+        out.push_str(lines[close]);
+        index = close + 1;
+    }
+    out
+}
+
+/// The prefixes a block's `@prefix` / `PREFIX` lines declare.
+fn turtle_prefixes_declared(turtle: &str) -> BTreeSet<String> {
+    turtle
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let rest = line
+                .strip_prefix("@prefix")
+                .or_else(|| line.get(..6).filter(|head| head.eq_ignore_ascii_case("prefix")).map(|_| &line[6..]))?;
+            let (name, _) = rest.trim_start().split_once(':')?;
+            Some(name.trim().to_string())
+        })
+        .collect()
+}
+
+/// Every prefix a Turtle text writes a prefixed name with, outside string
+/// literals (short and long, either quote), IRIs and comments.
+fn turtle_prefixes_used(turtle: &str) -> BTreeSet<String> {
+    let chars: Vec<char> = turtle.chars().collect();
+    let in_name = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '\\' | '/' | '%');
+    let mut used = BTreeSet::new();
+    let mut at = 0;
+    while at < chars.len() {
+        let c = chars[at];
+        if c == '"' || c == '\'' {
+            let long = chars.get(at + 1) == Some(&c) && chars.get(at + 2) == Some(&c);
+            at += if long { 3 } else { 1 };
+            while at < chars.len() {
+                if chars[at] == '\\' {
+                    at += 2;
+                    continue;
+                }
+                if long {
+                    if chars[at] == c && chars.get(at + 1) == Some(&c) && chars.get(at + 2) == Some(&c) {
+                        at += 3;
+                        break;
+                    }
+                } else if chars[at] == c || chars[at] == '\n' {
+                    at += 1;
+                    break;
+                }
+                at += 1;
+            }
+        } else if c == '<' {
+            while at < chars.len() && chars[at] != '>' && !chars[at].is_whitespace() {
+                at += 1;
+            }
+            at += 1;
+        } else if c == '#' {
+            while at < chars.len() && chars[at] != '\n' {
+                at += 1;
+            }
+        } else if c.is_ascii_alphabetic() && (at == 0 || !in_name(chars[at - 1])) {
+            let start = at;
+            while at < chars.len() && (chars[at].is_alphanumeric() || matches!(chars[at], '_' | '-' | '.')) {
+                at += 1;
+            }
+            if chars.get(at) == Some(&':') {
+                used.insert(chars[start..at].iter().collect::<String>());
+                // The local name, escapes included, is not a prefix.
+                at += 1;
+                while at < chars.len() && !chars[at].is_whitespace() && !matches!(chars[at], ';' | ',' | '(' | ')' | '[' | ']') {
+                    at += if chars[at] == '\\' { 2 } else { 1 };
+                }
+            }
+        } else {
+            at += 1;
+        }
+    }
+    used
 }
 
 /// The closure rule for published declarations: every module an affordance
@@ -3021,12 +3132,12 @@ fn affordance_closure(
     let mut violations: Vec<String> = Vec::new();
     for doc in docs {
         let (_, body) = parse_envelope(&doc.text)
-            .map_err(|e| anyhow!("projected document `{}` lost its envelope: {e:?}", doc.reference))?;
+            .map_err(|e| anyhow!("projected document `{}` lost its header: {e}", doc.reference))?;
         for record in x0k_folio::extract_from_markdown(&body, &classes) {
             // A malformed block is the extractor's report, not this guard's.
             let Ok(entity) = record else { continue };
             for (predicate, value) in x0k_folio::declared_facts(&entity) {
-                if predicate != "enabledBy" {
+                if predicate != "x0k:enabledBy" {
                     continue;
                 }
                 let Some(krate) = value
@@ -3065,7 +3176,7 @@ fn affordance_closure(
 /// it: the declaration's own fields, and the cues and chapters of the
 /// signifiers pointing at it. Nothing a row shows is outside this record.
 struct AffordanceRecord {
-    /// The declared `id:`, e.g. `x0k:affordance/read_a_line`.
+    /// The declared id, e.g. `x0k:affordance/read_a_line`.
     id: String,
     /// The heading of the section that declares it.
     title: String,
@@ -3143,7 +3254,7 @@ fn proof_target(file: &str) -> Option<TestTarget> {
 }
 
 /// The three things a row can say about an affordance. Derived, never
-/// typed: a `status:` scalar in the declaration is not read.
+/// typed: an `x0k:status` literal in the declaration is not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AffordanceStatus {
     /// At least one proof test ran green at projection, and none ran red.
@@ -3214,17 +3325,14 @@ fn entity_targets(facts: &[(String, String)], predicate: &str, prefix: &str) -> 
         .collect()
 }
 
-/// The record of one declaration. Actors are read in both spellings the
-/// extractor has used — `claimedFor → x0k:actor/<kind>`, the vocabulary's
-/// word, and the older bare `actors` list — so the table does not care
-/// which extractor drew the facts.
+/// The record of one declaration. Its actors are the `x0k:claimedFor`
+/// statements naming `x0k:actor/<kind>`, once each in statement order.
 fn affordance_record(entity: &InlineEntity, document: &str) -> AffordanceRecord {
     let facts = x0k_folio::declared_facts(entity);
     let mut actors: Vec<String> = Vec::new();
     for (predicate, value) in &facts {
         let kind = match predicate.as_str() {
-            "claimedFor" => value.strip_prefix("entity:x0k:actor/"),
-            "actors" | "x0k:affordance/actors" => value.strip_prefix("string:"),
+            "x0k:claimedFor" => value.strip_prefix("entity:x0k:actor/"),
             _ => None,
         };
         if let Some(kind) = kind.filter(|k| !actors.iter().any(|a| a == k)) {
@@ -3269,7 +3377,7 @@ fn read_declarations(
     ]);
     for record in x0k_folio::extract_from_markdown(body, &classes) {
         let Ok(entity) = record else { continue };
-        match entity.marker_class.as_str() {
+        match entity.class.as_str() {
             "affordance" if declarations => records.push(affordance_record(&entity, document)),
             ICON_CLASS if declarations => {
                 if let Some(svg) = icon_svg(&entity) {
@@ -3284,13 +3392,13 @@ fn read_declarations(
                 // the function's name.
                 let cue = facts
                     .iter()
-                    .find(|(p, _)| p == "x0k:signifier/cue")
+                    .find(|(p, _)| p == "x0k:cue")
                     .and_then(|(_, v)| v.strip_prefix("string:"))
                     .map(str::to_string)
                     .unwrap_or_else(|| entity.title.clone());
                 signifiers.push(Signifier {
-                    signifies: entity_targets(&facts, "signifies", ""),
-                    surfaces: entity_targets(&facts, "presentedOn", "x0k:surface/"),
+                    signifies: entity_targets(&facts, "x0k:signifies", ""),
+                    surfaces: entity_targets(&facts, "x0k:presentedOn", "x0k:surface/"),
                     cue,
                     chapter: chapter.clone(),
                 });
@@ -3320,7 +3428,7 @@ fn affordance_records(
     let mut proofs: Vec<(String, Proof)> = Vec::new();
     for doc in docs {
         let (_, body) = parse_envelope(&doc.text)
-            .map_err(|e| anyhow!("projected document `{}` lost its envelope: {e:?}", doc.reference))?;
+            .map_err(|e| anyhow!("projected document `{}` lost its header: {e}", doc.reference))?;
         let rel = doc.rel.to_string_lossy().to_string();
         // A projected section is named by its own heading, which is what
         // the row would link a reader to.
@@ -3332,9 +3440,7 @@ fn affordance_records(
             .with_context(|| format!("reading literate doc {}", doc.rel.display()))?;
         let rel = doc.rel.to_string_lossy().to_string();
         let chapter = (doc.title.clone(), rel.clone());
-        if let Some((_, body)) = split_frontmatter(&text) {
-            read_declarations(body, false, &rel, &chapter, &mut records, &mut signifiers, &mut icons);
-        }
+        read_declarations(&strip_header(&text), false, &rel, &chapter, &mut records, &mut signifiers, &mut icons);
         // The proofs, read with the tangler's own parser so the chunk's
         // file target and bodies are the ones the tangle used.
         let (Some(crate_name), true) = (doc.crate_name.as_deref(), doc.tangled) else {
@@ -3898,7 +4004,7 @@ impl Icons {
 /// from the records, the marks from the pages the design places them
 /// on. `None` when the publication names no affordance — there is
 /// nothing to show, and no palette is asked for. A publication whose
-/// rows show marks and whose envelope binds them to nothing refuses.
+/// rows show marks and whose header binds them to nothing refuses.
 fn read_icons(
     workspace: &Path,
     layout: &CorpusLayout,
@@ -3912,7 +4018,7 @@ fn read_icons(
     let Some(palette) = palette else {
         bail!(
             "repository projection refused — the publication names affordances, whose rows \
-             show icons, and its envelope carries no `palette:` to bind them with (a projected \
+             show icons, and its header carries no `x0k:palette` to bind them with (a projected \
              repository has no theme document; x0k:design/icon-profile § \"The paints\")"
         );
     };
@@ -3966,9 +4072,10 @@ fn mark_declaration(
             let rel = path.strip_prefix(workspace).unwrap_or(&path).display().to_string();
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {rel}, the class page declaring the `{name}` mark"))?;
-            let (yaml, body) = split_frontmatter(&text)
+            let front = host_frontmatter(&text)
                 .ok_or_else(|| anyhow!("{rel} carries no frontmatter"))?;
-            let title = yaml
+            let (frontmatter, body) = (&text[front.clone()], &text[front.end..]);
+            let title = frontmatter
                 .lines()
                 .find_map(|l| l.strip_prefix("label:"))
                 .map(|v| v.trim().trim_matches('"').to_string())
@@ -3981,11 +4088,10 @@ fn mark_declaration(
                 .with_context(|| format!("locating the document declaring the `{name}` mark"))?;
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
-            let (_, body) = split_frontmatter(&text)
-                .ok_or_else(|| anyhow!("{} carries no frontmatter", path.display()))?;
+            let body = strip_header(&text);
             let rel = path.strip_prefix(workspace).unwrap_or(&path).display().to_string();
             let entity = format!("x0k:{ICON_CLASS}/{}", x0k_folio::transclusion::heading_slug(heading));
-            (Label::for_entity(&entity, heading), body.to_string(), heading.to_string(), format!("{rel} § {heading}"))
+            (Label::for_entity(&entity, heading), body, heading.to_string(), format!("{rel} § {heading}"))
         }
     };
     let svgs = declared_icons(&body, &heading);
@@ -4010,13 +4116,13 @@ fn declared_icons(body: &str, heading: &str) -> Vec<String> {
     x0k_folio::extract_from_markdown(body, &classes)
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|e| e.marker_class == ICON_CLASS && e.title == heading)
+        .filter(|e| e.class == ICON_CLASS && e.title == heading)
         .filter_map(|e| icon_svg(&e))
         .collect()
 }
 
 /// The tree file declaring `id`: under the implementation root for a
-/// literate document, found by its envelope; under a class directory for
+/// literate document, found by its header; under a class directory for
 /// the rest, by the lookup a named document gets.
 fn find_document(workspace: &Path, layout: &CorpusLayout, id: &str) -> Result<PathBuf> {
     if id.starts_with(IMPLEMENTATION_DOC_PREFIX) {
@@ -4033,7 +4139,7 @@ fn find_document(workspace: &Path, layout: &CorpusLayout, id: &str) -> Result<Pa
             }
         }
         bail!(
-            "no document under {}/ declares `{id}` as its `id:`",
+            "no document under {}/ declares `{id}` as its id",
             layout.implementation_root().display()
         );
     }
@@ -4178,8 +4284,8 @@ fn license_files(
                 let Some(holder) = copyright.map(str::trim).filter(|h| !h.is_empty()) else {
                     bail!(
                         "license expression `{expr}`: MIT's notice line names a copyright \
-                         holder, and the publication declares no `copyright:` — add one to \
-                         the envelope"
+                         holder, and the publication declares no `x0k:copyright` — add one to \
+                         the header"
                     );
                 };
                 ("LICENSE-MIT", MIT_LICENSE.replace("{copyright}", &format!("{year} {holder}")))
@@ -4271,7 +4377,7 @@ fn generate_lockfile(output_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Tangle the publication doc's own `tangle:` block into the projection:
+/// Tangle the publication doc's own tangle configuration into the projection:
 /// its `root: README.md` chunk becomes `<output_dir>/README.md`, and any
 /// chunk routed (`file="…"`) to a declared overlay path seeds that path
 /// when it is absent, and any chunk routed to `assets/diagrams/<stem>.svg`
@@ -4373,8 +4479,8 @@ fn tangle_publication_doc(
         .collect();
     if !outputs.iter().any(|p| p == readme) || !stray.is_empty() {
         bail!(
-            "publication {} must tangle `README.md` (a `tangle:` block with \
-             `root: README.md` and one named markdown chunk) plus, at most, other \
+            "publication {} must tangle `README.md` (a tangle configuration with \
+             `folio:tangleRoot \"README.md\"` and one named markdown chunk) plus, at most, other \
              root-level Markdown documents — its declared overlay paths {:?} are \
              seeded once, any other root-level Markdown is regenerated every \
              projection; it tangled {:?}",
@@ -4413,7 +4519,7 @@ fn tangle_publication_doc(
         let text = std::fs::read_to_string(&path)?;
         let palette = palette.ok_or_else(|| {
             anyhow!(
-                "{} routes a diagram to {} but carries no `palette:` to bind it with",
+                "{} routes a diagram to {} but carries no `x0k:palette` to bind it with",
                 rel.display(),
                 source.display()
             )
@@ -4605,7 +4711,7 @@ fn doc_member_key(rel: &Path) -> String {
 }
 
 /// One entry of the page: the document's title as the link, and its own
-/// envelope `summary:` as the sentence. A document that does not say what it
+/// header `x0k:summary` as the sentence. A document that does not say what it
 /// is about cannot be listed — the fallback would be its title printed
 /// twice, which reads as a description and carries no information.
 fn contents_entry(doc: &LiterateDoc) -> Result<String> {
@@ -4616,7 +4722,7 @@ fn contents_entry(doc: &LiterateDoc) -> Result<String> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
             anyhow!(
-                "literate document {} ships with no `summary:` in its envelope — \
+                "literate document {} ships with no `x0k:summary` in its header — \
                  the contents page is written from the documents, so a document \
                  that does not say what it is about cannot be listed",
                 doc.rel.display()
@@ -4638,9 +4744,7 @@ fn concept_pages(projected: &[ProjectedDoc]) -> BTreeMap<String, (String, String
         .iter()
         .filter(|d| d.reference.starts_with("x0k:wiki/"))
         .map(|d| {
-            let title = split_frontmatter(&d.text)
-                .map(|(_, body)| heading_title(body, &d.rel))
-                .unwrap_or_else(|| doc_stem(&d.rel));
+            let title = heading_title(&strip_header(&d.text), &d.rel);
             (d.reference.clone(), (title, d.rel.to_string_lossy().to_string()))
         })
         .collect()
@@ -5053,7 +5157,7 @@ const PREBUILT_TARGETS: &[PrebuiltTarget] = &[
         node_arch: "arm64", archive: ".zip", exe: ".exe", runner: "windows-11-arm", setup: "" },
 ];
 
-/// The `prebuilt:` envelope block, as declared.
+/// The header's `x0k:prebuilt` structure, as declared.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PrebuiltDecl {
@@ -5068,7 +5172,7 @@ struct PrebuiltDecl {
     installer: Option<InstallerDecl>,
 }
 
-/// The `installer:` sub-block: an `install.sh` the release carries. Its one
+/// The `installer` member: an `install.sh` the release carries. Its one
 /// field names the script's environment variables — `<envPrefix>_VERSION`,
 /// `<envPrefix>_INSTALL_DIR` and the rest — and defaults to the asset name,
 /// upper-cased, because a reader who has two such installers needs two names.
@@ -5079,7 +5183,7 @@ struct InstallerDecl {
     env_prefix: Option<String>,
 }
 
-/// The `npm:` sub-block: the wrapper package, and the command names it links.
+/// The `npm` member: the wrapper package, and the command names it links.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct NpmDecl {
@@ -5170,23 +5274,20 @@ impl PrebuiltPlan {
     }
 }
 
-/// Read and check the publication's `prebuilt:` declaration. `Ok(None)` when
+/// Read and check the publication's `x0k:prebuilt` declaration. `Ok(None)` when
 /// it carries none — the projection is then byte-identical to one from a
 /// projector that had never heard of this lane.
 fn resolve_prebuilt(
-    content: &str,
     env: &Colophon,
     packages: &SourcePackages,
     versions: &BTreeMap<String, String>,
     crates_io: &CratesIoMeta,
 ) -> Result<Option<PrebuiltPlan>> {
-    let Some(block) = envelope_block(content, "prebuilt") else {
+    let Some(decl) = header_json::<PrebuiltDecl>(env, "x0k:prebuilt")? else {
         return Ok(None);
     };
-    let decl: PrebuiltDecl = serde_norway::from_str(&block)
-        .map_err(|e| anyhow!("the publication's `prebuilt:` block does not read: {e}"))?;
     if decl.targets.is_empty() {
-        bail!("`prebuilt:` declares no `targets:` — name at least one target triple");
+        bail!("`x0k:prebuilt` declares no `targets` — name at least one target triple");
     }
     let mut targets: Vec<&'static PrebuiltTarget> = Vec::new();
     let mut seen: BTreeMap<String, &str> = BTreeMap::new();
@@ -5196,7 +5297,7 @@ fn resolve_prebuilt(
             .find(|t| t.triple == triple)
             .ok_or_else(|| {
                 anyhow!(
-                    "`prebuilt:` names target `{triple}`, which this projector has no \
+                    "`x0k:prebuilt` names target `{triple}`, which this projector has no \
                      release row for — known targets: {}",
                     PREBUILT_TARGETS.iter().map(|t| t.triple).collect::<Vec<_>>().join(", ")
                 )
@@ -5204,16 +5305,16 @@ fn resolve_prebuilt(
         let key = format!("{}-{}", target.node_platform, target.node_arch);
         if let Some(other) = seen.insert(key.clone(), target.triple) {
             bail!(
-                "`prebuilt:` names both `{other}` and `{triple}`, which a consumer on \
+                "`x0k:prebuilt` names both `{other}` and `{triple}`, which a consumer on \
                  {key} cannot choose between — name one per platform"
             );
         }
         targets.push(target);
     }
-    let entry = member_names(env.edges.get("entryPoint"), "entryPoint")?;
+    let entry = member_names(env.edges.get("x0k:entryPoint"), "entryPoint")?;
     let entry_crate = entry.crates.first().cloned().ok_or_else(|| {
         anyhow!(
-            "`prebuilt:` needs an `entryPoint` crate: its manifest `version` is what the \
+            "`x0k:prebuilt` needs an `entryPoint` crate: its manifest `version` is what the \
              release is tagged with and what the wrapper publishes as"
         )
     })?;
@@ -5253,7 +5354,7 @@ fn resolve_prebuilt(
     for (command, bin) in &commands {
         if !binary_crates.contains_key(bin) {
             bail!(
-                "`prebuilt:` maps command `{command}` to binary `{bin}`, which no \
+                "`x0k:prebuilt` maps command `{command}` to binary `{bin}`, which no \
                  `entryPoint` crate of this publication builds (it builds: {})",
                 binary_crates.keys().cloned().collect::<Vec<_>>().join(", ")
             );
@@ -5261,7 +5362,7 @@ fn resolve_prebuilt(
         if command.is_empty()
             || !command.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
         {
-            bail!("`prebuilt:` command name `{command}` is not a plain command name");
+            bail!("`x0k:prebuilt` command name `{command}` is not a plain command name");
         }
     }
     let npm = match decl.npm {
@@ -5269,7 +5370,7 @@ fn resolve_prebuilt(
         Some(n) => {
             let project = github_project(
                 crates_io,
-                "`prebuilt.npm:` needs the publication's `repository:` — the wrapper's \
+                "`x0k:prebuilt` `npm` needs the publication's `x0k:repository` — the wrapper's \
                  postinstall builds its download URL from it",
                 "this wrapper",
             )?;
@@ -5288,7 +5389,7 @@ fn resolve_prebuilt(
         Some(i) => {
             let project = github_project(
                 crates_io,
-                "`prebuilt.installer:` needs the publication's `repository:` — install.sh \
+                "`x0k:prebuilt` `installer` needs the publication's `x0k:repository` — install.sh \
                  builds its download URL from it",
                 "install.sh",
             )?;
@@ -5299,7 +5400,7 @@ fn resolve_prebuilt(
                 .collect();
             if targets.is_empty() {
                 bail!(
-                    "`prebuilt.installer:` needs a target a POSIX shell runs on — every declared \
+                    "`x0k:prebuilt` `installer` needs a target a POSIX shell runs on — every declared \
                      target is Windows, and install.sh would refuse every machine that can run it"
                 );
             }
@@ -5309,7 +5410,7 @@ fn resolve_prebuilt(
                 || !env_prefix.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
             {
                 bail!(
-                    "`prebuilt.installer:` names envPrefix `{env_prefix}`, which is not a portable \
+                    "`x0k:prebuilt` `installer` names envPrefix `{env_prefix}`, which is not a portable \
                      variable name (upper-case letters, digits and `_`, not starting with a digit)"
                 );
             }
@@ -5369,7 +5470,7 @@ fn env_var_prefix(package: &str) -> String {
     out
 }
 
-/// The publication's `repository:` as `<owner>/<repo>`, refused with
+/// The publication's `x0k:repository` as `<owner>/<repo>`, refused with
 /// `missing` when absent and when it is not a GitHub project — the only
 /// release-URL shape the prebuilt lane builds.
 fn github_project(crates_io: &CratesIoMeta, missing: &str, builder: &str) -> Result<String> {
@@ -5937,7 +6038,7 @@ else
   echo "note: skipping cargo-deny (install it: cargo install cargo-deny)" >&2
 fi
 # Re-tangle every literate document (the tangler discovers the ones with a
-# `tangle:` block). A tangle failure fails CI — it is never swallowed.
+# tangle configuration). A tangle failure fails CI — it is never swallowed.
 # `cargo run` finds the binary wherever CARGO_TARGET_DIR put it.
 cargo run --locked -q -p x0k-tangle --bin x0k-tangle -- tangle {literate_root} --workspace .
 # The committed @generated code and .tangle-map.json sidecars must be exactly
@@ -7168,6 +7269,49 @@ mod tests {
         // A severance is not a crate membership: the crate is already in
         // `publishes`, and pushing it here would double-count it.
         assert!(m.crates.is_empty());
+
+        // The header's own spelling: the separator written `%23`.
+        let encoded = member_names(
+            Some(&uris(&["x0k:software-module/x0k-fact-projection%23envelope"])),
+            "severs",
+        )
+        .expect("an encoded severance parses");
+        assert_eq!(
+            encoded.severed,
+            vec![Severance { krate: "x0k-fact-projection".into(), feature: "envelope".into() }]
+        );
+    }
+
+    /// A header or graph block using a prefix the published vocabulary does
+    /// not predeclare declares it itself in the projected copy; a prefix
+    /// both predeclare, one the block declares, one inside a string or an
+    /// IRI or a comment, and every other block are left as they were.
+    #[test]
+    fn a_projected_block_declares_the_prefixes_the_published_vocabulary_lacks() {
+        let undeclared = vec![
+            ("actor".to_string(), "https://0k.computer/ontology#actor/".to_string()),
+            ("software-module".to_string(), "https://0k.computer/ontology#software-module/".to_string()),
+            ("test".to_string(), "https://0k.computer/ontology#test/".to_string()),
+        ];
+        let page = "# Read\n\n```turtle folio:document\ndesign:read a x0k:Design ;\n    x0k:summary \"test:not-a-name\" .\n```\n\n\
+            ### Read a line\n\n```turtle folio:graph\naffordance:read_a_line a x0k:Affordance ;\n    \
+            x0k:claimedFor actor:human ;\n    x0k:enabledBy software-module:demo-crate ;\n    \
+            rdfs:seeAlso <urn:test:x> . # test:also-not\n```\n\n\
+            ````turtle folio:graph\n@prefix actor: <https://0k.computer/ontology#actor/> .\naffordance:b a x0k:Affordance ;\n    x0k:claimedFor actor:ai_agent .\n````\n\n\
+            ```turtle {#vocab file=\"v.ttl\"}\nx0k:p rdfs:range actor:human .\n```\n\n\
+            ```markdown\n```turtle folio:graph\nx0k:q x0k:r actor:quoted .\n```\n```\n";
+        let projected = declare_undeclared_prefixes(page, &undeclared);
+        let expected = page
+            .replacen(
+                "```turtle folio:graph\naffordance:read_a_line",
+                "```turtle folio:graph\n@prefix actor: <https://0k.computer/ontology#actor/> .\n\
+                 @prefix software-module: <https://0k.computer/ontology#software-module/> .\naffordance:read_a_line",
+                1,
+            );
+        assert_eq!(projected, expected);
+        // The prefix tables themselves: what the projection must declare is
+        // what this build predeclares beyond the published vocabulary.
+        assert!(undeclared_prefixes(&x0k_ontology::concept_facts::OntologyModel::shipped()).is_empty());
     }
 
     /// A fragment outside `severs` is a mistake to name, not a suffix to
@@ -7303,7 +7447,7 @@ mod tests {
     #[test]
     fn a_group_marker_carries_a_heading_a_blurb_and_area_qualified_members() {
         let m = marker_of(
-            "<!-- x0k:contents\n# What a document is\n> The envelope and the tree.\n  folio/format\n  tangle/chunk\n# Just a heading\n  folio/colophon\n-->\n",
+            "<!-- x0k:contents\n# What a document is\n> The header and the tree.\n  folio/format\n  tangle/chunk\n# Just a heading\n  folio/colophon\n-->\n",
         )
         .unwrap()
         .expect("the marker is found");
@@ -7312,7 +7456,7 @@ mod tests {
             panic!("the marker declares groups");
         };
         assert_eq!(groups[0].heading, "What a document is");
-        assert_eq!(groups[0].blurb.as_deref(), Some("The envelope and the tree."));
+        assert_eq!(groups[0].blurb.as_deref(), Some("The header and the tree."));
         assert_eq!(groups[0].members, vec!["folio/format", "tangle/chunk"]);
         // A group need not carry a blurb; nothing else supplies one either.
         assert_eq!(groups[1].blurb, None);
@@ -7392,7 +7536,7 @@ mod tests {
             doc("knowledge/implementation/other/b.md", "B", Some("The second.")),
         ];
         let plan = ContentsPlan::Groups(vec![
-            group("What a document is", Some("The envelope and the tree."), &["other/b"]),
+            group("What a document is", Some("The header and the tree."), &["other/b"]),
             group("Chunks", None, &["demo/a"]),
         ]);
         let page = render(&docs, &plan).unwrap();
@@ -7401,7 +7545,7 @@ mod tests {
             "",
             "### What a document is",
             "",
-            "The envelope and the tree.",
+            "The header and the tree.",
             "",
             "- [B](knowledge/implementation/other/b.md) — The second.",
             "",
@@ -7640,7 +7784,7 @@ mod tests {
     /// of every build the projection can make, so the prose above them has
     /// to stop linking to what rustdoc can no longer resolve. The incident
     /// is the 2026-09-22 pre-publication run: fourteen unresolved links
-    /// across three files, all behind one `severs:` edge.
+    /// across three files, all behind one `x0k:severs` edge.
     #[test]
     fn a_severance_demotes_the_links_to_what_it_took_out() {
         let ws = tempfile::tempdir().expect("tempdir");
@@ -7649,7 +7793,7 @@ mod tests {
         std::fs::write(
             krate.join("src/lib.rs"),
             concat!(
-                "//! - [`project_envelope`] projects an envelope, and\n",
+                "//! - [`project_envelope`] projects a header, and\n",
                 "//!   [`relation_graph::fold_relation_graph`] folds it.\n",
                 "//! [`FactEntry`] and [the guide](https://example.invalid/a) stay.\n",
                 "pub mod fact;\n",
@@ -7676,7 +7820,7 @@ mod tests {
         let lib = std::fs::read_to_string(krate.join("src/lib.rs")).unwrap();
         let (count, rewritten) = demote_severed_links(&lib, "demo-facts", &gone);
         assert_eq!(count, 2);
-        assert!(rewritten.contains("//! - `project_envelope` projects an envelope, and"));
+        assert!(rewritten.contains("//! - `project_envelope` projects a header, and"));
         assert!(rewritten.contains("//!   `relation_graph::fold_relation_graph` folds it."));
         assert!(
             rewritten.contains("[`FactEntry`] and [the guide](https://example.invalid/a) stay."),
@@ -7704,16 +7848,17 @@ mod tests {
     }
 }
 
-fn organized_repository_layout(content: &str) -> Result<bool> {
-    let (header, _) = split_frontmatter(content).context("publication has no envelope")?;
-    let yaml: serde_norway::Value = serde_norway::from_str(header)?;
-    let field = &yaml["x0k"]["repositoryLayout"];
-    if field.is_null() && yaml["x0k"].as_mapping().is_some_and(|map|
-        !map.contains_key(serde_norway::Value::String("repositoryLayout".to_string()))) {
-        return Ok(false);
+fn organized_repository_layout(env: &Colophon) -> Result<bool> {
+    let values = env.properties.get("x0k:repositoryLayout").map(Vec::as_slice).unwrap_or_default();
+    let value = match values {
+        [] => return Ok(false),
+        [one] => one,
+        many => bail!("x0k:repositoryLayout is stated {} times; state it once", many.len()),
+    };
+    if value.datatype != XSD_STRING {
+        bail!("x0k:repositoryLayout must be a string (canonical or organized), not a `{}` literal", value.datatype);
     }
-    let value = field.as_str().context("repositoryLayout must be a string (canonical or organized)")?;
-    match value {
+    match value.value.as_str() {
         "canonical" => Ok(false),
         "organized" => Ok(true),
         other => bail!("unknown repositoryLayout {other}"),
@@ -8042,12 +8187,19 @@ mod organized_layout_tests {
 
     #[test]
     fn repository_layout_rejects_present_non_string_values() {
-        assert!(!organized_repository_layout("---\nx0k:\n  id: demo\n---\n").unwrap());
-        assert!(organized_repository_layout("---\nx0k:\n  repositoryLayout: organized\n---\n").unwrap());
-        for value in ["1", "true", "null", "[organized]", "{name: organized}"] {
-            let text = format!("---\nx0k:\n  repositoryLayout: {value}\n---\n");
-            assert!(organized_repository_layout(&text).unwrap_err().to_string().contains("must be a string"), "{value}");
+        let layout = |statements: &str| {
+            let doc = format!("# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication{statements} .\n```\n");
+            let (env, _) = parse_envelope(&doc).unwrap_or_else(|e| panic!("{e}\n{doc}"));
+            organized_repository_layout(&env)
+        };
+        assert!(!layout("").unwrap());
+        assert!(layout(" ;\n    x0k:repositoryLayout \"organized\"").unwrap());
+        assert!(!layout(" ;\n    x0k:repositoryLayout \"canonical\"").unwrap());
+        for value in ["1", "true", "'[\"organized\"]'^^rdf:JSON", "'{\"name\":\"organized\"}'^^rdf:JSON"] {
+            let error = layout(&format!(" ;\n    x0k:repositoryLayout {value}")).unwrap_err().to_string();
+            assert!(error.contains("must be a string"), "{value}: {error}");
         }
+        assert!(layout(" ;\n    x0k:repositoryLayout \"sideways\"").unwrap_err().to_string().contains("unknown"));
     }
 
     #[test]

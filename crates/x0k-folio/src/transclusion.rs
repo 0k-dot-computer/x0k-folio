@@ -31,9 +31,8 @@
 //!
 //! # Two declaration forms
 //!
-//! 1. Frontmatter `transcludes:` sequence in the `x0k:` envelope — order
-//!    is the reading order; each entry becomes a `transcludes` edge and is
-//!    appended (in order) to the resolved body.
+//! 1. `folio:transcludes` statements in the header — statement order is
+//!    the reading order; each is appended (in order) to the resolved body.
 //! 2. Inline fence in the body:
 //!    ```text
 //!    x0k:transclude {ref="x0k:design/places#brief"}
@@ -98,11 +97,11 @@ impl TranscludeRef {
 }
 
 /// A source of document bodies for resolution. Implementors map a
-/// folio URI to that document's **body markdown** (frontmatter
-/// envelope already stripped). Returning `None` means "no such document
+/// folio URI to that document's **body markdown** (header already
+/// stripped). Returning `None` means "no such document
 /// in scope" — the reference degrades to a link with a warning.
 pub trait DocSource {
-    /// Return the target document's body markdown (frontmatter stripped),
+    /// Return the target document's body markdown (header stripped),
     /// or `None` if the URI does not resolve within this source.
     fn body(&self, uri: &str) -> Option<String>;
 }
@@ -147,68 +146,29 @@ pub struct Resolved {
     pub transcluded_uris: Vec<String>,
 }
 
-/// Extract the `transcludes:` sequence from a folio/v1 frontmatter
-/// envelope. Order is preserved (it is the reading order). Returns an
-/// empty vec when there is no frontmatter or no `transcludes:` key.
-///
-/// The scan is line-oriented and tolerant: it looks inside the leading
-/// `---`-delimited block for a `transcludes:` key whose value is a YAML
-/// block sequence of `- <ref>` items (the canonical authoring shape).
-pub fn frontmatter_transcludes(content: &str) -> Vec<String> {
-    let Some(envelope) = frontmatter_block(content) else {
+/// The `folio:transcludes` references a document's header states, in
+/// statement order (the reading order). Empty when there is no header or it
+/// states none.
+pub fn header_transcludes(content: &str) -> Vec<String> {
+    let Some(header) = crate::colophon::find_header(content) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
-    let mut in_seq = false;
-    // Indentation (column) of the `transcludes:` key, so we know when the
-    // sequence ends (a key at the same-or-shallower indent).
-    let mut key_indent = 0usize;
-    for raw in envelope.lines() {
-        let indent = raw.len() - raw.trim_start().len();
-        let line = raw.trim_start();
-        if !in_seq {
-            if line == "transcludes:"
-                || line.starts_with("transcludes:")
-                    && line["transcludes:".len()..].trim().is_empty()
-            {
-                in_seq = true;
-                key_indent = indent;
-            }
-            continue;
-        }
-        // We are inside the sequence. A `- item` line that is indented
-        // deeper than the key continues the sequence.
-        if line.starts_with("- ") && indent > key_indent {
-            let item = line[2..].trim();
-            let item = item.trim_matches('"').trim_matches('\'').trim();
-            if !item.is_empty() {
-                out.push(item.to_string());
-            }
-            continue;
-        }
-        if line.is_empty() {
-            // Blank line inside the sequence — tolerate and keep scanning.
-            continue;
-        }
-        // Any other content at the key's indent (or shallower) ends the
-        // sequence.
-        if indent <= key_indent {
-            break;
-        }
-    }
-    out
-}
-
-/// Return the inner text of the leading `---`-delimited frontmatter block,
-/// or `None` when the content does not open with one.
-fn frontmatter_block(content: &str) -> Option<&str> {
-    let rest = content.strip_prefix("---")?;
-    // The opening `---` must be followed by a newline.
-    let rest = rest
-        .strip_prefix('\n')
-        .or_else(|| rest.strip_prefix("\r\n"))?;
-    let end = rest.find("\n---")?;
-    Some(&rest[..end])
+    let Ok(triples) = crate::colophon::parse_turtle(
+        &header.text,
+        crate::colophon::shipped_prefixes(),
+        header.line + 1,
+    ) else {
+        return Vec::new();
+    };
+    let predicate = format!("{}transcludes", crate::colophon::FOLIO_NS);
+    triples
+        .iter()
+        .filter(|triple| triple.predicate.as_str() == predicate)
+        .filter_map(|triple| match &triple.object {
+            oxrdf::Term::Literal(reference) => Some(reference.value().to_string()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// One inline transclude fence found in a body, with its byte range so the
@@ -375,7 +335,7 @@ pub fn replace_section(body: &str, anchor: &str, new_section: &str) -> Option<St
     out.extend_from_slice(&lines[end..]);
     let mut joined = out.join("\n");
     // Preserve a trailing newline if the original body had one (the body
-    // is the post-frontmatter region; decision/wiki files end with `\n`).
+    // is the document minus its header; decision/wiki files end with `\n`).
     if body.ends_with('\n') && !joined.ends_with('\n') {
         joined.push('\n');
     }
@@ -426,18 +386,18 @@ pub fn heading_slug(text: &str) -> String {
 
 /// Resolve all transclusions in a spine document.
 ///
-/// `spine_content` is the full spine file (frontmatter + body); the
-/// frontmatter `transcludes:` sequence is read from it and its bodies
+/// `spine_content` is the full spine file (header + body); the header's
+/// `folio:transcludes` references are read from it and their bodies
 /// appended (in order) after inline fences in the body are resolved.
-/// `frontmatter_refs` may be passed pre-extracted (e.g. by the weave,
-/// which already parsed the envelope); pass `None` to extract them here.
+/// `header_refs` may be passed pre-extracted (e.g. by the weave,
+/// which already parsed the header); pass `None` to extract them here.
 pub fn resolve(
     spine_content: &str,
-    frontmatter_refs: Option<Vec<String>>,
+    header_refs: Option<Vec<String>>,
     source: &dyn DocSource,
 ) -> Resolved {
-    let (_, body) = split_body(spine_content);
-    let fm_refs = frontmatter_refs.unwrap_or_else(|| frontmatter_transcludes(spine_content));
+    let body = split_body(spine_content);
+    let fm_refs = header_refs.unwrap_or_else(|| header_transcludes(spine_content));
 
     let mut warnings = Vec::new();
     let mut transcluded: HashSet<String> = HashSet::new();
@@ -448,7 +408,7 @@ pub fn resolve(
     let mut visited: HashSet<String> = HashSet::new();
 
     let resolved_body = resolve_body(
-        body,
+        &body,
         source,
         0,
         &mut visited,
@@ -456,7 +416,7 @@ pub fn resolve(
         &mut transcluded,
     );
 
-    // Append frontmatter transclusions in reading order.
+    // Append header transclusions in reading order.
     let mut out = resolved_body;
     for r in &fm_refs {
         let section = resolve_ref(r, source, 0, &mut visited, &mut warnings, &mut transcluded);
@@ -487,11 +447,11 @@ pub fn resolve(
 pub fn resolve_with_root(
     spine_content: &str,
     root_uri: &str,
-    frontmatter_refs: Option<Vec<String>>,
+    header_refs: Option<Vec<String>>,
     source: &dyn DocSource,
 ) -> Resolved {
-    let (_, body) = split_body(spine_content);
-    let fm_refs = frontmatter_refs.unwrap_or_else(|| frontmatter_transcludes(spine_content));
+    let body = split_body(spine_content);
+    let fm_refs = header_refs.unwrap_or_else(|| header_transcludes(spine_content));
 
     let mut warnings = Vec::new();
     let mut transcluded: HashSet<String> = HashSet::new();
@@ -499,7 +459,7 @@ pub fn resolve_with_root(
     visited.insert(root_uri.to_string());
 
     let resolved_body = resolve_body(
-        body,
+        &body,
         source,
         0,
         &mut visited,
@@ -634,26 +594,11 @@ fn degrade_to_link(parsed: &TranscludeRef) -> String {
     format!("[{label}]({})", parsed.to_ref_string())
 }
 
-/// Split a folio/v1 file into `(frontmatter, body)`. Mirrors the
-/// weave's `split_body` so resolution sees the same body the renderer does.
-pub fn split_body(content: &str) -> (Option<&str>, &str) {
-    if !content.starts_with("---") {
-        return (None, content);
-    }
-    let after_first = &content[3..];
-    if let Some(end) = after_first.find("\n---") {
-        let yaml = &after_first[..end];
-        let body_start = 3 + end + 4;
-        let body = if body_start < content.len() {
-            &content[body_start..]
-        } else {
-            ""
-        };
-        let body = body.strip_prefix('\n').unwrap_or(body);
-        (Some(yaml), body)
-    } else {
-        (None, content)
-    }
+/// A folio file's body: the document with its header lifted out
+/// ([`strip_header`](crate::colophon::strip_header)), so resolution sees
+/// the same body the renderer does.
+pub fn split_body(content: &str) -> String {
+    crate::colophon::strip_header(content)
 }
 
 #[cfg(test)]
@@ -662,12 +607,12 @@ mod tests {
     use std::collections::HashMap;
 
     /// In-memory `DocSource` over URI → full-file content. `body` strips
-    /// the frontmatter the same way the real renderer does.
+    /// the header the same way the real renderer does.
     struct MapSource(HashMap<String, String>);
 
     impl DocSource for MapSource {
         fn body(&self, uri: &str) -> Option<String> {
-            self.0.get(uri).map(|c| split_body(c).1.to_string())
+            self.0.get(uri).map(|c| split_body(c))
         }
     }
 
@@ -701,9 +646,9 @@ mod tests {
     }
 
     #[test]
-    fn frontmatter_transcludes_in_reading_order() {
-        let content = "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/spine\n  type: wiki\n  status: stable\n  transcludes:\n    - x0k:design/a#brief\n    - x0k:design/b#brief\n  edges:\n    cites:\n      - x0k:wiki/x\n---\n\n# Spine\n\nBody.\n";
-        let refs = frontmatter_transcludes(content);
+    fn header_transcludes_in_reading_order() {
+        let content = "# Spine\n\n```turtle folio:document\nwiki:spine a x0k:Wiki ;\n    x0k:status \"stable\" ;\n    folio:transcludes \"x0k:design/a#brief\", \"x0k:design/b#brief\" ;\n    x0k:cites wiki:x .\n```\n\nBody.\n";
+        let refs = header_transcludes(content);
         assert_eq!(refs, vec!["x0k:design/a#brief", "x0k:design/b#brief"]);
     }
 
@@ -745,7 +690,7 @@ mod tests {
 
     #[test]
     fn resolve_inline_fence_inlines_section() {
-        let a = "---\nx0k:\n  id: x0k:design/a\n---\n\n# A\n\n## Brief\n\nA's brief.\n\n## Other\n\nnope\n";
+        let a = "```turtle folio:document\ndesign:a a x0k:Design .\n```\n\n# A\n\n## Brief\n\nA's brief.\n\n## Other\n\nnope\n";
         let spine = "Intro.\n\n```x0k:transclude {ref=\"x0k:design/a#brief\"}\n```\n\nOutro.\n";
         let source = src(&[("x0k:design/a", a)]);
         let r = resolve(spine, Some(vec![]), &source);
@@ -758,10 +703,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_frontmatter_refs_appended_in_order() {
-        let a = "---\nx0k:\n  id: x0k:design/a\n---\n\n## Brief\n\nAlpha brief.\n";
-        let b = "---\nx0k:\n  id: x0k:design/b\n---\n\n## Brief\n\nBeta brief.\n";
-        let spine = "---\nx0k:\n  id: x0k:wiki/spine\n  transcludes:\n    - x0k:design/a#brief\n    - x0k:design/b#brief\n---\n\n# Spine\n\nConnective prose.\n";
+    fn resolve_header_refs_appended_in_order() {
+        let a = "```turtle folio:document\ndesign:a a x0k:Design .\n```\n\n## Brief\n\nAlpha brief.\n";
+        let b = "```turtle folio:document\ndesign:b a x0k:Design .\n```\n\n## Brief\n\nBeta brief.\n";
+        let spine = "# Spine\n\n```turtle folio:document\nwiki:spine a x0k:Wiki ;\n    folio:transcludes \"x0k:design/a#brief\", \"x0k:design/b#brief\" .\n```\n\nConnective prose.\n";
         let source = src(&[("x0k:design/a", a), ("x0k:design/b", b)]);
         let r = resolve(spine, None, &source);
         let alpha = r.body.find("Alpha brief.").unwrap();
@@ -773,8 +718,8 @@ mod tests {
     #[test]
     fn recursive_resolution_inlines_nested() {
         // a transcludes b; spine transcludes a.
-        let a = "---\nx0k:\n  id: x0k:design/a\n---\n\n## Brief\n\nA top.\n\n```x0k:transclude {ref=\"x0k:design/b#brief\"}\n```\n";
-        let b = "---\nx0k:\n  id: x0k:design/b\n---\n\n## Brief\n\nB nested.\n";
+        let a = "```turtle folio:document\ndesign:a a x0k:Design .\n```\n\n## Brief\n\nA top.\n\n```x0k:transclude {ref=\"x0k:design/b#brief\"}\n```\n";
+        let b = "```turtle folio:document\ndesign:b a x0k:Design .\n```\n\n## Brief\n\nB nested.\n";
         let spine = "```x0k:transclude {ref=\"x0k:design/a#brief\"}\n```\n";
         let source = src(&[("x0k:design/a", a), ("x0k:design/b", b)]);
         let r = resolve(spine, Some(vec![]), &source);
@@ -789,8 +734,8 @@ mod tests {
     #[test]
     fn cycle_degrades_to_link_with_warning() {
         // a transcludes b; b transcludes a → cycle when b re-includes a.
-        let a = "---\nx0k:\n  id: x0k:design/a\n---\n\n## Brief\n\nA.\n\n```x0k:transclude {ref=\"x0k:design/b#brief\"}\n```\n";
-        let b = "---\nx0k:\n  id: x0k:design/b\n---\n\n## Brief\n\nB.\n\n```x0k:transclude {ref=\"x0k:design/a#brief\"}\n```\n";
+        let a = "```turtle folio:document\ndesign:a a x0k:Design .\n```\n\n## Brief\n\nA.\n\n```x0k:transclude {ref=\"x0k:design/b#brief\"}\n```\n";
+        let b = "```turtle folio:document\ndesign:b a x0k:Design .\n```\n\n## Brief\n\nB.\n\n```x0k:transclude {ref=\"x0k:design/a#brief\"}\n```\n";
         let spine = "```x0k:transclude {ref=\"x0k:design/a#brief\"}\n```\n";
         let source = src(&[("x0k:design/a", a), ("x0k:design/b", b)]);
         let r = resolve(spine, Some(vec![]), &source);
@@ -807,7 +752,7 @@ mod tests {
 
     #[test]
     fn self_transclusion_is_a_cycle() {
-        let spine = "---\nx0k:\n  id: x0k:wiki/spine\n---\n\n# Spine\n\n```x0k:transclude {ref=\"x0k:wiki/spine\"}\n```\n";
+        let spine = "# Spine\n\n```turtle folio:document\nwiki:spine a x0k:Wiki .\n```\n\n```x0k:transclude {ref=\"x0k:wiki/spine\"}\n```\n";
         let source = src(&[("x0k:wiki/spine", spine)]);
         let r = resolve_with_root(spine, "x0k:wiki/spine", Some(vec![]), &source);
         assert!(r
@@ -830,7 +775,7 @@ mod tests {
 
     #[test]
     fn whole_doc_transclusion_when_no_anchor() {
-        let a = "---\nx0k:\n  id: x0k:wiki/a\n---\n\n# A\n\nWhole body here.\n";
+        let a = "```turtle folio:document\nwiki:a a x0k:Wiki .\n```\n# A\n\nWhole body here.\n";
         let spine = "```x0k:transclude {ref=\"x0k:wiki/a\"}\n```\n";
         let source = src(&[("x0k:wiki/a", a)]);
         let r = resolve(spine, Some(vec![]), &source);

@@ -1,45 +1,34 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/format
-  type: implementation
-  status: draft
-  summary: The crate root — its chapter map, and the one feature flag that severs the substrate-facing half so a standalone build is pure functions over strings.
-  concerns:
-  - folio
-  - format
-  - crate
-  - features
-  - publishing
-  tangle:
-    crate: crates/x0k-folio
-    root: src/lib.rs
-  edges:
-    implements:
-    - x0k:design/literate-programming
-    cites:
-    - x0k:architecture/filesystem-graph-materialization
-    - x0k:implementation/folio/colophon
-    - x0k:implementation/folio/identity
-    - x0k:implementation/folio/checking
-    - x0k:implementation/folio/inline-entities
-    - x0k:implementation/folio/segmentation
-    - x0k:implementation/folio/provenance
-    - x0k:implementation/folio/structural
-    - x0k:implementation/folio/transclusion
-    - x0k:implementation/folio/html-canonical
-    - x0k:implementation/folio/canonical-patch
-    - x0k:implementation/folio/projection
----
 # x0k-folio: the format library
+
+```turtle folio:document
+implementation:folio\/format a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The crate root — its chapter map, and the one feature flag that severs the substrate-facing half so a standalone build is pure functions over strings." ;
+    x0k:concerns "folio", "format", "crate", "features", "publishing" ;
+    x0k:cites architecture:filesystem-graph-materialization,
+        implementation:folio\/colophon,
+        implementation:folio\/identity,
+        implementation:folio\/checking,
+        implementation:folio\/inline-entities,
+        implementation:folio\/segmentation,
+        implementation:folio\/provenance,
+        implementation:folio\/structural,
+        implementation:folio\/transclusion,
+        implementation:folio\/html-canonical,
+        implementation:folio\/canonical-patch,
+        implementation:folio\/projection ;
+    x0k:implements design:literate-programming ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/lib.rs" .
+```
 
 Every document in x0k's corpus — the body of markdown files, kept
 under version control, from which the system's decisions, reference
 pages, publication manifests, and its own code are all derived — is a
-**folio/v1** document: a YAML envelope declaring identity, genus, and
-graph edges, over a markdown or HTML body. This [literate page](../../background/literate-programming.md "x0k:wiki/literate-programming") is one
+**folio** document: a markdown or HTML body whose first fenced block is a
+Turtle header declaring identity, genus, and graph edges. This [literate page](../../background/literate-programming.md "x0k:wiki/literate-programming") is one
 of them. `x0k-folio` is the library that makes that
-sentence precise. It owns the envelope's one parser and renderer, the
+sentence precise. It owns the header's one parser and renderer, the
 block-level identity schemes that let judgments and proposals attach to
 prose, the canonical HTML form, the one patch grammar editors speak to
 either body dialect, transclusion, and the projection plugin that binds
@@ -47,13 +36,14 @@ the format into the live substrate.
 
 The crate reads as chapters, each owning one idea:
 
-- [`colophon.md`](colophon.md) — the envelope: one parser, one
-  renderer, permissive keys, closed keywords.
-- [`document-vocabulary.md`](document-vocabulary.md) — Turtle definitions
-  and YAML instances assembled against a selected vocabulary.
+- [`colophon.md`](colophon.md) — the header: one parser, one renderer,
+  the vocabulary's own terms, predeclared prefixes.
+- [`document-vocabulary.md`](document-vocabulary.md) — vocabulary and
+  instances from `turtle folio:graph` blocks, assembled against a selected
+  vocabulary.
 - [`identity.md`](identity.md) — the id grammar: class and slug, the
   substrate's locator half deliberately absent.
-- [`checking.md`](checking.md) — reading an envelope against the
+- [`checking.md`](checking.md) — reading a header against the
   vocabulary the bundle ships; a missing term and a missing target are
   different answers. Also the declaration check: a human claim with no
   signifier is a defect.
@@ -75,8 +65,8 @@ The crate reads as chapters, each owning one idea:
   `plugins` feature.
 
 A single document threads through those chapters: the publication
-manifest `decisions/publications/x0k-folio.md`, whose
-envelope the colophon parses, whose body the segmenter addresses, whose
+manifest `publications/x0k-folio/x0k-folio.md`, whose
+header the colophon parses, whose body the segmenter addresses, whose
 sections transclusion can inline — and which, projected as a repository,
 publishes this very crate.
 
@@ -103,7 +93,7 @@ class registry.
 <a name="chunk-module-doc"></a><sub>[`src/lib.rs`](../../crates/x0k-folio/src/lib.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
-//! folio/v1 envelope types + HTML canonicalizer, and — under the `plugins`
+//! The folio header's types + HTML canonicalizer, and — under the `plugins`
 //! feature — the projection plugin that binds the format into a live substrate.
 //!
 //! Substrate for ontology-aware markdown/HTML documents. Lives apart from
@@ -113,17 +103,17 @@ class registry.
 //!
 //! Modules:
 //!
-//! - [`colophon`] — envelope parser and types (`Colophon`, `DocType`, `Status`, `Materialization`)
+//! - [`colophon`] — the header's parser, renderer and types (`Colophon`, `DocType`, `Status`, `Materialization`)
 //! - [`entity_id`] — the id grammar: `<scheme>:<class>/<slug>`, parsed and rendered
-//! - [`envelope_check`] — an envelope read against a vocabulary the caller names
+//! - [`envelope_check`] — a header read against a vocabulary the caller names
 //! - [`inline_entity`] — entities authored inside a document body, extracted
-//! - [`html_canonical`] — HTML canonicalizer for folio/v1 HTML bodies (stable attribute ordering, whitespace policy, behavior stripping)
+//! - [`html_canonical`] — HTML canonicalizer for folio HTML bodies (stable attribute ordering, whitespace policy, behavior stripping)
 //! - `projection` — the `ColophonProjection` projection plugin. Compiled only
 //!   under the `plugins` feature; the source ships either way, so a build
 //!   without the feature has a module to read and no item to link to. Named
 //!   in prose rather than as a doc link for exactly that reason.
 //!
-//! Plugin registration: at startup, a host that wants the `folio/v1` projection
+//! Plugin registration: at startup, a host that wants the `folio/v2` projection
 //! active calls `projection::register_colophon_factory` before loading its class
 //! registry. Nothing hard-wires that registration.
 ```
@@ -173,8 +163,9 @@ pub use envelope_check::{
 #[cfg(feature = "document-vocabulary")]
 pub use envelope_check::{check_instances, InstanceCheck};
 pub use inline_entity::{
-    declared_facts, declared_facts_with, defined_in_fact, document_edges, extract_from_markdown,
-    inline_entity_facts, prose_edges, InlineEntity, InlineEntityError, ICON_CLASS,
+    declared_facts, defined_in_fact, document_edges, extract_from_markdown, inline_entity_facts,
+    prose_edges, read_graph_block, read_parameters, GraphContent, InlineEntity,
+    InlineEntityError, Object, Parameter, ParameterValue, ICON_CLASS,
 };
 pub use canonical_patch::{
     apply_body_patches, apply_folio_patches, apply_markdown_patches,
@@ -182,7 +173,7 @@ pub use canonical_patch::{
     CanonicalPatch, CanonicalPatchError, CanonicalTextPoint,
 };
 #[cfg(feature = "plugins")]
-pub use projection::{ColophonProjection, FOLIO_V1_PLUGIN_NAME};
+pub use projection::{ColophonProjection, FOLIO_PLUGIN_NAME};
 pub use structural_block::{
     BlockId, BlockIdAllocator, FenceInfo, InlineSpan, MarkerId, StructuralBlock, StructuralDoc,
     StructuralListItem, TableAlignment,
@@ -195,7 +186,7 @@ pub use transclusion::{
 ## Plugin registration
 
 The one function at the crate root exists for a wiring reason: daemons
-that want `plugin = "folio/v1"` entries in their projection-classes
+that want `plugin = "folio/v2"` entries in their projection-classes
 config to resolve must register the factory before loading their
 `ClassRegistry`, and the registration must be idempotent because
 multiple startup paths may call it. A `std::sync::Once` makes duplicate
@@ -206,10 +197,10 @@ two routes converge on one factory entry.
 <a name="chunk-register-factory"></a><sub>[`src/lib.rs`](../../crates/x0k-folio/src/lib.rs) · `#register-factory`</sub>
 
 ```rust {#register-factory}
-/// Idempotent registration of the `folio/v1` projection factory in
+/// Idempotent registration of the `folio/v2` projection factory in
 /// `x0k_types::class_registry::PLUGIN_FACTORIES`. Daemons call this once at
 /// startup (before loading their `ClassRegistry`) so that
-/// `plugin = "folio/v1"` entries in `config/projection-classes.toml`
+/// `plugin = "folio/v2"` entries in `config/projection-classes.toml`
 /// resolve to a `ColophonProjection` instance.
 ///
 /// Wrapped in a `std::sync::Once` so duplicate calls are no-ops — mirrors
@@ -224,7 +215,7 @@ pub fn register_colophon_factory() {
 
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
-        register_plugin_factory(FOLIO_V1_PLUGIN_NAME, |pt, lep| {
+        register_plugin_factory(FOLIO_PLUGIN_NAME, |pt, lep| {
             Arc::new(ColophonProjection::new(pt, lep))
         });
     });
@@ -244,7 +235,7 @@ pub fn register_colophon_factory() {
 ```
 
 A candor note on the shape of the whole: this crate is a bundle of
-sibling concerns — envelope, identity, canonicalization, transclusion —
+sibling concerns — header, identity, canonicalization, transclusion —
 rather than one algorithm, and the honest justification is dependency
 geometry, not conceptual unity. Each module is what two or more
 downstream crates need to share without depending on each other, and

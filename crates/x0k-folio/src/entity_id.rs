@@ -21,7 +21,7 @@
 //! This is `x0k_types::EntityUri` without its `locator` half. The
 //! locator pins a URI to a content state (a Loro frontier, a jj commit,
 //! an object-store hash) and belongs to the substrate that owns those
-//! states; the class and identifier are folio/v1 syntax and belong with
+//! states; the class and identifier are folio syntax and belong with
 //! the format. `x0k:architecture/publication-projection` §6 is the rule:
 //! a type crossing the publication boundary is split at its meaning.
 //!
@@ -255,7 +255,7 @@ impl fmt::Display for EntityIdError {
             Self::UnknownScheme { input, scheme } => write!(
                 f,
                 "id `{input}` uses the namespace prefix `{scheme}`, which no loaded \
-                 vocabulary module declares — a `turtle folio:ontology` block \
+                 vocabulary module declares — a `turtle folio:graph` block \
                  declares its prefix only to a scan that reads the document \
                  holding it, so scan the directory rather than the one file, or \
                  load the modules from a directory of `.ttl` files"

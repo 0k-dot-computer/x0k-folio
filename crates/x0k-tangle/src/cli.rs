@@ -62,7 +62,7 @@ struct Cli {
 enum Command {
     /// Tangle .md documents to their source files (writes .tangle-map.json sidecars)
     Tangle {
-        /// Paths to scan for documents with tangle: frontmatter
+        /// Paths to scan for documents whose header states a tangle target
         paths: Vec<PathBuf>,
         /// Workspace root (defaults to current directory)
         #[arg(long)]
@@ -72,21 +72,22 @@ enum Command {
         force: bool,
     },
     /// Verify chunk references resolve and no cycles exist, and read every
-    /// folio/v1 envelope against a vocabulary.
+    /// folio header against a vocabulary.
     ///
-    /// Two things can go wrong with an envelope, and they are reported
+    /// Two things can go wrong with a header, and they are reported
     /// apart. A defect — a malformed id or edge target, a predicate no
-    /// module of the vocabulary declares, an envelope that does not parse —
+    /// module of the vocabulary declares, a header that does not parse —
     /// is a gap in what this publication selected, and fails the check. An
     /// edge whose target names no document under the paths scanned simply
     /// leaves the set — often into a wider corpus this selection was drawn
     /// from, and expected either way: printed as a note, never a failure.
     /// `--closed` is the reader saying there is no wider corpus: under
     /// it, an edge that leaves the set is a defect like any other.
-    /// A Markdown file with no envelope at all is skipped, and counted
-    /// on the summary line so that skipping it is not silent;
-    /// `--require-envelope` is the reader saying every file here is
-    /// supposed to be typed, under which such a file is a defect too.
+    /// A Markdown file with no folio header at all — or an untyped `<>`
+    /// one, which names nothing — is skipped, and counted on the summary
+    /// line so that skipping it is not silent; `--require-header` is the
+    /// reader saying every file here is supposed to be typed, under which
+    /// such a file is a defect too.
     /// A third thing is checked across the set: an
     /// affordance claimed for a human that no signifier signifies is a
     /// defect, because the audience has nothing to perceive — unless the
@@ -116,7 +117,7 @@ enum Command {
         vocabulary: Option<PathBuf>,
         /// Read --vocabulary alone, without the compiled set. Say this only
         /// when that directory holds every term the documents use, the
-        /// folio/v1 envelope's own included.
+        /// header's own included.
         #[arg(long, requires = "vocabulary")]
         only_vocabulary: bool,
         /// Fail on an edge whose target names no document under the paths
@@ -126,41 +127,59 @@ enum Command {
         #[arg(long)]
         closed: bool,
         /// Fail on a Markdown file under the paths scanned that carries no
-        /// folio/v1 envelope. Say this when every file in the set is
-        /// supposed to be typed: a file without one is skipped in silence,
-        /// which is what lets a corpus adopt one directory at a time and
-        /// what leaves a generated board quietly one row short.
+        /// folio header. Say this when every file in the set is supposed to
+        /// be typed: a file without one is skipped in silence, which is what
+        /// lets a corpus adopt one directory at a time and what leaves a
+        /// generated board quietly one row short.
         #[arg(long)]
-        require_envelope: bool,
+        require_header: bool,
     },
-    /// Print every affordance the folio/v1 documents under the paths
+    /// Print every affordance the folio documents under the paths
     /// declare, as a JSON array on stdout.
     ///
-    /// One record per `yaml x0k:affordance` block: `id`, `title` (the
-    /// enclosing heading), `description` (the prose under it), `defined_in`
-    /// (the parent document's id), and `facts` — every other declared fact
-    /// grouped by predicate, each value tagged `{"entity": …}` for an id or
-    /// `{"string": …}` for a literal. A block the extractor refuses is
-    /// reported on stderr and skipped.
+    /// One record per `turtle folio:graph` block stating `a x0k:Affordance`:
+    /// `id`, `title` (the enclosing heading), `description` (the prose under
+    /// it), `defined_in` (the parent document's id), and `facts` — every other
+    /// declared fact grouped by compact predicate (`x0k:claimedFor`), each
+    /// value tagged `{"entity": …}` for an id or `{"string": …}` for a
+    /// literal. A block the extractor refuses is reported on stderr and
+    /// skipped.
     Affordances {
-        /// Paths to scan for folio/v1 documents
+        /// Paths to scan for folio documents
         paths: Vec<PathBuf>,
     },
-    /// Check every `svg x0k:icon` declaration in the folio/v1 documents
+    /// Print every instance the graph blocks under the paths declare, as a
+    /// JSON array on stdout.
+    ///
+    /// One record per `turtle folio:graph` instance block, sorted by document
+    /// and line: `id` (compact), `class` (kebab-case), `title`,
+    /// `description`, `document` (the path), and `statements` — compact
+    /// predicate → values, an IRI as its compact id, a literal as the JSON
+    /// its datatype names (`rdf:JSON` parsed). A block the extractor refuses
+    /// is reported on stderr and skipped.
+    Declarations {
+        /// Only instances of this class (kebab-case, e.g. `interface`);
+        /// repeatable. Every class when absent.
+        #[arg(long = "class")]
+        classes: Vec<String>,
+        /// Paths to scan for Markdown documents
+        paths: Vec<PathBuf>,
+    },
+    /// Check every `svg x0k:icon` declaration in the folio documents
     /// under the paths against the icon profile, and with `--out` write
     /// each as its light and dark files bound to a publication's palette.
     ///
     /// A drawing outside the profile is printed with the rule it broke and
     /// the element, and fails the run; nothing is redrawn. `--out` needs
-    /// `--palette`: the publication document whose envelope carries the
-    /// `palette:` block the four paint roles are bound with.
+    /// `--palette`: the publication document whose header carries the
+    /// `x0k:palette` the four paint roles are bound with.
     Icon {
-        /// Paths to scan for folio/v1 documents
+        /// Paths to scan for folio documents
         paths: Vec<PathBuf>,
         /// Directory to write `<stem>-light.svg` and `<stem>-dark.svg` into
         #[arg(long, requires = "palette")]
         out: Option<PathBuf>,
-        /// The publication document whose `palette:` binds the roles
+        /// The publication document whose `x0k:palette` binds the roles
         #[arg(long, requires = "out")]
         palette: Option<PathBuf>,
     },
@@ -173,9 +192,9 @@ enum Command {
         #[arg(long)]
         workspace: Option<PathBuf>,
     },
-    /// Build a JSON index of all folio/v1 files
+    /// Build a JSON index of every document whose folio header names it
     Index {
-        /// Paths to scan for folio/v1 documents
+        /// Paths to scan for folio documents
         paths: Vec<PathBuf>,
         /// Workspace root (defaults to current directory)
         #[arg(long)]
@@ -240,7 +259,7 @@ enum Command {
         #[arg(long)]
         workspace: Option<PathBuf>,
         /// Explicit SPDX license override. Without this flag the license comes
-        /// from the publication doc's `license:` envelope field (the manifest
+        /// from the publication header's `x0k:license` (the manifest
         /// is authoritative); with neither, the projection refuses. There is
         /// no silent default.
         #[arg(long)]
@@ -465,7 +484,7 @@ pub fn run(host: &Host) -> Result<()> {
             vocabulary,
             only_vocabulary,
             closed,
-            require_envelope,
+            require_header,
         } => {
             let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
             let model = crate::faces::vocabulary(vocabulary.as_deref(), only_vocabulary)?;
@@ -474,7 +493,7 @@ pub fn run(host: &Host) -> Result<()> {
             let mut splice_failed = 0;
             let mut source_refs = 0;
             let mut source_ref_failures = 0;
-            let mut envelope_less = Vec::new();
+            let mut header_less = Vec::new();
             let mut ids: HashMap<String, PathBuf> = HashMap::new();
 
             for doc_path in markdown_under(&paths) {
@@ -488,21 +507,27 @@ pub fn run(host: &Host) -> Result<()> {
                         continue;
                     }
                 };
+                let carries_header = crate::faces::carries_header(&content);
                 let parsed = match crate::parser::parse_document(&content) {
                     Ok(parsed) => parsed,
                     Err(e) => {
-                        eprintln!("{}: does not parse: {e}", doc_path.display());
-                        has_errors = true;
+                        // The only thing that stops a document parsing is its
+                        // header, and a header that does not read is the vocabulary
+                        // pass's to report — once, with the parser's reason.
+                        if !carries_header {
+                            eprintln!("{}: does not parse: {e}", doc_path.display());
+                            has_errors = true;
+                        }
                         continue;
                     }
                 };
 
-                // A file the vocabulary pass will never see, because it claims
-                // no envelope. Skipping it is what makes adoption incremental;
-                // holding on to its name is what keeps skipping it from being
-                // silent.
-                if !x0k_folio::colophon::is_colophon(&content) {
-                    envelope_less.push(doc_path.clone());
+                // A file the vocabulary pass will never see, because it carries
+                // no header that names it. Skipping it is what makes adoption
+                // incremental; holding on to its name is what keeps skipping it
+                // from being silent.
+                if !carries_header {
+                    header_less.push(doc_path.clone());
                 } else if let Some(names) = crate::index::title_disagreement(&content) {
                     // Two names, and neither is wrong: a warning, never the verdict.
                     eprintln!("{}", title_warning(&doc_path, &names));
@@ -546,7 +571,7 @@ pub fn run(host: &Host) -> Result<()> {
 
             let report = crate::faces::check_vocabulary(&model, &paths)?;
             for (path, reason) in &report.unparsed {
-                eprintln!("{path}: envelope does not parse: {reason}");
+                eprintln!("{path}: header does not parse: {reason}");
                 has_errors = true;
             }
             for (path, defect) in &report.corpus.defects {
@@ -577,27 +602,27 @@ pub fn run(host: &Host) -> Result<()> {
                 has_errors |= closed;
             }
 
-            if require_envelope {
-                for path in &envelope_less {
+            if require_header {
+                for path in &header_less {
                     eprintln!(
-                        "{}: carries no folio/v1 envelope, so nothing in this set reads it",
+                        "{}: carries no folio header, so nothing in this set reads it",
                         path.display()
                     );
                 }
-                has_errors |= !envelope_less.is_empty();
+                has_errors |= !header_less.is_empty();
             }
 
             // The counts are the denominator, and a reader wants them most
             // when something failed: one dangling edge reads differently over
-            // fifteen envelopes than over seven hundred. So the line prints
+            // fifteen headers than over seven hundred. So the line prints
             // either way, and the exit code carries the verdict.
             eprintln!(
-                "{}; {} envelope(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set{}",
+                "{}; {} header(s) read against the vocabulary, {} declaration(s) checked, {} edge(s) leave the set{}",
                 references_verdict(chunked_documents, splice_failed, source_refs, source_ref_failures),
                 report.corpus.checked,
                 report.declarations.checked,
                 report.corpus.dangling.len() + report.declarations.dangling.len(),
-                untyped_clause(envelope_less.len())
+                untyped_clause(header_less.len())
             );
             if has_errors {
                 std::process::exit(1);
@@ -608,6 +633,14 @@ pub fn run(host: &Host) -> Result<()> {
             let report = crate::faces::declared_affordances(&paths)?;
             for (path, reason) in &report.skipped {
                 eprintln!("{path}: skipped: {reason}");
+            }
+            println!("{}", serde_json::to_string_pretty(&report.records)?);
+        }
+        Command::Declarations { classes, paths } => {
+            let model = crate::faces::vocabulary(None, false)?;
+            let report = crate::faces::declared_instances(&model, &paths, &classes)?;
+            for (place, reason) in &report.skipped {
+                eprintln!("{place}: skipped: {reason}");
             }
             println!("{}", serde_json::to_string_pretty(&report.records)?);
         }
@@ -624,8 +657,8 @@ pub fn run(host: &Host) -> Result<()> {
             if let (Some(out), Some(palette)) = (out, palette) {
                 let content = std::fs::read_to_string(&palette)
                     .with_context(|| format!("reading {}", palette.display()))?;
-                let palette = crate::region_repo::envelope_palette(&content)?.ok_or_else(|| {
-                    anyhow::anyhow!("{} carries no `palette:` in its envelope", palette.display())
+                let palette = crate::region_repo::header_palette(&content)?.ok_or_else(|| {
+                    anyhow::anyhow!("{} carries no `x0k:palette` in its header", palette.display())
                 })?;
                 written = crate::faces::write_icon_files(&report, &palette, &out)?.len();
             }
@@ -1155,19 +1188,18 @@ fn references_verdict(
 
 /// What `check` says about the Markdown it walked past.
 ///
-/// A file with no envelope is not a defect — ignoring Markdown it does
-/// not own is why a corpus can adopt this verb one directory at a time
-/// — but it is invisible to every other count on the line, and a board
-/// generated from those counts is quietly one row short (Backstage,
-/// 2026-09-23). Saying how many were skipped costs a clause and is the
-/// only way a reader learns the set is not the set they think it is.
-/// Saying it when there were none would be noise, so the clause is
-/// empty then.
-fn untyped_clause(envelope_less: usize) -> String {
-    match envelope_less {
+/// A file with no folio header is not a defect — ignoring Markdown it
+/// does not own is why a corpus can adopt this verb one directory at a
+/// time — but it is invisible to every other count on the line, and a
+/// board generated from those counts is quietly one row short. Saying how
+/// many were skipped costs a clause and is the only way a reader learns
+/// the set is not the set they think it is. Saying it when there were
+/// none would be noise, so the clause is empty then.
+fn untyped_clause(header_less: usize) -> String {
+    match header_less {
         0 => String::new(),
-        1 => ", 1 markdown file carried no envelope".to_string(),
-        n => format!(", {n} markdown files carried no envelope"),
+        1 => ", 1 markdown file carried no header".to_string(),
+        n => format!(", {n} markdown files carried no header"),
     }
 }
 
@@ -1175,7 +1207,7 @@ fn untyped_clause(envelope_less: usize) -> String {
 fn nothing_to_write(path: &Path, chunks: usize) -> String {
     format!(
         "{}: declares {chunks} chunk(s) and no tangle target \
-         (tangle.root, tangle.crate, tangle.roots, or pipelines:); nothing to write",
+         (folio:tangleRoot, folio:tangleCrate, folio:tangleRoots, or folio:pipelines); nothing to write",
         path.display()
     )
 }
@@ -1251,8 +1283,9 @@ fn is_markdown(path: &Path) -> bool {
 
 /// What a document declares about itself, read off its parse.
 struct Declares {
-    /// It names somewhere to write: a `tangle:` crate or root,
-    /// per-language roots, or a `pipelines:` block. The same predicate
+    /// It names somewhere to write: a `folio:tangleCrate` or
+    /// `folio:tangleRoot`, per-language `folio:tangleRoots`, or
+    /// `folio:pipelines`. The same predicate
     /// `tangle_document` applies before it does any work.
     target: bool,
     /// It has a chunk to fill from source (`from=`), which is what

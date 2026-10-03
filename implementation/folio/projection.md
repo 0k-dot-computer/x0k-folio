@@ -1,29 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/projection
-  type: implementation
-  status: draft
-  summary: The Loro round trip — document projected to a file, a human's file edit parsed back into ops — behind the `plugins` feature; the one chapter whose module a standalone build never compiles.
-  concerns:
-  - folio
-  - projection
-  - loro
-  - plugins
-  - materialization
-  tangle:
-    crate: crates/x0k-folio
-    root: src/projection.rs
-  edges:
-    implements:
-    - x0k:design/body-format-isomorphism
-    cites:
-    - x0k:architecture/filesystem-graph-materialization
-    - x0k:implementation/folio/colophon
-    - x0k:implementation/folio/html-canonical
-    - x0k:implementation/folio/format
----
-# The folio/v1 projection plugin
+# The folio projection plugin
+
+```turtle folio:document
+implementation:folio\/projection a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The Loro round trip — document projected to a file, a human's file edit parsed back into ops — behind the `plugins` feature; the one chapter whose module a standalone build never compiles." ;
+    x0k:concerns "folio", "projection", "loro", "plugins", "materialization" ;
+    x0k:cites architecture:filesystem-graph-materialization,
+        implementation:folio\/colophon,
+        implementation:folio\/html-canonical,
+        implementation:folio\/format ;
+    x0k:implements design:body-format-isomorphism ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/projection.rs" .
+```
 
 **This module does not build outside the monorepo.** If you are reading
 it in the published `x0k-folio` repository, you are holding source that
@@ -41,8 +30,7 @@ A folio document that lives in [Loro](../../background/loro.md "x0k:wiki/loro") 
 [CRDT](../../background/event-graph-crdts.md "x0k:wiki/event-graph-crdts") document store the
 daemon keeps its live state in — is *projected* to a file on disk, and
 a human's file edit is *parsed back* into Loro ops; this module
-implements both directions of that round trip for `format: folio/v1`
-documents.
+implements both directions of that round trip for folio documents.
 
 Why the module is absent from the public build, in one paragraph: the
 plugin's traits come from `x0k-types` — the substrate's class registry
@@ -59,7 +47,7 @@ the monorepo builds is the format wired into its substrate.
 Both directions are thin by design:
 
 - **Render** (Loro → file): the Loro doc stores the rendered file body —
-  envelope plus markdown, as written by the upstream renderer — under
+  header plus markdown, as written by the upstream renderer — under
   the `content` text path. Render reads it and emits the bytes
   verbatim. No synthesis: an empty or absent `content` means an empty
   file.
@@ -72,11 +60,11 @@ Both directions are thin by design:
 <a name="chunk-module-doc"></a><sub>[`src/projection.rs`](../../crates/x0k-folio/src/projection.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
-//! `folio/v1` projection plugin.
+//! The folio projection plugin.
 //!
 //! Reads the canonical body text out of the Loro doc (`content`
 //! LoroText path) and emits it verbatim. The body already includes
-//! the rendered `--- ... ---` envelope plus markdown — the wiki
+//! the rendered header plus markdown — the wiki
 //! crate's `to_folio_markdown` is the upstream renderer that
 //! writes into `content`, so this plugin is a thin pass-through on
 //! the read side.
@@ -87,10 +75,10 @@ Both directions are thin by design:
 //!
 //! One plugin instance per `ClassEntry` in the registry — multiple
 //! classes (`x0k:wiki/*`, `x0k:design/*`, …) all map to plugin name
-//! `folio/v1` but each carries its own `PathTemplate` +
+//! `folio/v2` but each carries its own `PathTemplate` +
 //! `LiveEditPolicy`.
 
-use crate::colophon::{parse_envelope, render_envelope, BODY_FORMAT_HTML};
+use crate::colophon::{parse_envelope, replace_body, BODY_FORMAT_HTML};
 use crate::html_canonical::normalize_html;
 use anyhow::{Context, Result};
 use x0k_types::operations::DocumentOp;
@@ -100,20 +88,20 @@ use x0k_types::projection_plugin::{
 
 /// Canonical plugin name. Matches the value used in
 /// `config/projection-classes.toml` for the `plugin = "..."` entries.
-pub const FOLIO_V1_PLUGIN_NAME: &str = "folio/v1";
+pub const FOLIO_PLUGIN_NAME: &str = "folio/v2";
 ```
 
 ## The plugin
 
 One instance per class entry: many document classes (`x0k:wiki/*`,
-`x0k:design/*`, …) all name plugin `folio/v1`, each parameterized with
+`x0k:design/*`, …) all name plugin `folio/v2`, each parameterized with
 its own path template and live-edit policy. The plugin itself holds
 nothing else — it is a stateless pair of functions plus configuration.
 
 <a name="chunk-plugin-type"></a><sub>[`src/projection.rs`](../../crates/x0k-folio/src/projection.rs) · `#plugin-type`</sub>
 
 ```rust {#plugin-type}
-/// `folio/v1` projection plugin instance. Parameterized per class
+/// The folio projection plugin instance. Parameterized per class
 /// (via the registry) by `path_template` and `live_edit_policy`.
 #[derive(Debug, Clone)]
 pub struct ColophonProjection {
@@ -132,16 +120,16 @@ impl ColophonProjection {
 
 impl ProjectionPlugin for ColophonProjection {
     fn name(&self) -> &str {
-        FOLIO_V1_PLUGIN_NAME
+        FOLIO_PLUGIN_NAME
     }
 
     fn render(&self, doc_handle: &dyn DocumentBodyHandle) -> Result<Vec<u8>> {
-        // The Loro doc stores the rendered file body (envelope +
+        // The Loro doc stores the rendered file body (header +
         // markdown) under `content`. Empty or absent means "the file
         // would be empty"; we emit zero bytes rather than synthesize.
         let body = doc_handle
             .read_text("content")
-            .context("folio/v1 render: read `content` from doc handle")?
+            .context("folio render: read `content` from doc handle")?
             .unwrap_or_default();
         Ok(body.into_bytes())
     }
@@ -164,11 +152,11 @@ impl ProjectionPlugin for ColophonProjection {
 
 The parse side receives old and new bytes and must produce Loro text
 ops. Markdown bodies pass through verbatim. HTML bodies take the
-canonicalization detour: if the new content parses as a folio/v1 file
-with `body_format: html`, the envelope is re-rendered canonically and
-the body normalized, and the *canonical* form is what gets diffed — so
-concurrent edits round-trip through Loro without diff drift. A file
-that doesn't parse (no envelope yet, raw body) falls back to the
+canonicalization detour: if the new content parses as a folio document
+whose header states `x0k:bodyFormat "html"`, the body is normalized, and
+the *canonical* form is what gets diffed — so concurrent edits round-trip
+through Loro without diff drift. A file that doesn't parse (no header yet,
+raw body) falls back to the
 verbatim diff rather than erroring; the materializer must never refuse
 a half-written file.
 
@@ -178,51 +166,38 @@ a half-written file.
 impl ProjectionParser for ColophonProjection {
     fn parse_diff(&self, old: &[u8], new: &[u8]) -> Result<Vec<DocumentOp>> {
         let old =
-            std::str::from_utf8(old).context("folio/v1 parse_diff: old bytes are not UTF-8")?;
+            std::str::from_utf8(old).context("folio parse_diff: old bytes are not UTF-8")?;
         let new =
-            std::str::from_utf8(new).context("folio/v1 parse_diff: new bytes are not UTF-8")?;
+            std::str::from_utf8(new).context("folio parse_diff: new bytes are not UTF-8")?;
         // HTML bodies are normalized on write so concurrent edits round-trip
         // through Loro without diff drift. Markdown bodies pass through
-        // unchanged. If the new content isn't parseable as a folio/v1
-        // file (no envelope yet, raw body), fall back to the verbatim diff.
+        // unchanged. If the new content isn't parseable as a folio
+        // document (no header yet, raw body), fall back to the verbatim diff.
         let new_canonicalized = canonicalize_html_body_if_needed(new);
         let new_str = new_canonicalized.as_deref().unwrap_or(new);
         Ok(build_text_diff_ops(old, new_str))
     }
 }
 
-/// If `content` parses as a folio/v1 file with `body_format: html`,
-/// return the canonicalized form (envelope re-rendered + body normalized).
-/// Otherwise return `None` — the caller treats the input verbatim.
+/// If `content` parses as a folio document with an HTML body, return the
+/// canonicalized form (header kept, body normalized). Otherwise return
+/// `None` — the caller treats the input verbatim.
 ///
 /// This is the single chokepoint where HTML bodies pick up canonical
 /// normalization before being written into the Loro `content` text path.
-/// Markdown bodies are passed through unchanged (the parsed envelope is
-/// re-rendered identically, and the markdown body is appended verbatim).
 fn canonicalize_html_body_if_needed(content: &str) -> Option<String> {
     let (env, body) = parse_envelope(content).ok()?;
     if env.body_format != BODY_FORMAT_HTML {
         return None;
     }
-    let normalized_body = normalize_html(&body);
-    // The renderer emits the canonical envelope; concatenate with the
-    // normalized body. The body in folio/v1 files starts on the line
-    // *after* the closing `---`, which `render_envelope` already terminates
-    // with a newline — so the body slots in directly.
-    let mut out = String::with_capacity(content.len());
-    out.push_str(&render_envelope(&env));
-    out.push_str(&normalized_body);
-    Some(out)
+    Some(replace_body(content, &normalize_html(&body)))
 }
 ```
 
-Note what `canonicalize_html_body_if_needed` does to an HTML file's
-*envelope*: it re-renders it through
-[`colophon.md`](colophon.md)'s canonical renderer, which normalizes
-field order and drops unknown keys. For HTML-bodied documents that is
-correct — they are machine-projected, nobody hand-edits their
-frontmatter. It is exactly the operation the markdown path must never
-perform, which is why the markdown path returns `None` and diffs the
+Note what `canonicalize_html_body_if_needed` leaves alone: the header. It
+splices the normalized body back with [`replace_body`](colophon.md), so the
+header's bytes — a human's statement order and comments included — are the
+ones that were there. The markdown path returns `None` and diffs the
 author's bytes untouched.
 
 ## The minimal diff
@@ -347,12 +322,12 @@ mod tests {
     fn render_returns_content_bytes() {
         let plugin = fixture();
         let handle = StubHandle {
-            content: Some("---\nx0k:\n  format: folio/v1\n---\nbody\n".to_string()),
+            content: Some("```turtle folio:document\nwiki:page a x0k:Wiki .\n```\nbody\n".to_string()),
         };
         let rendered = plugin.render(&handle).unwrap();
         assert_eq!(
             String::from_utf8(rendered).unwrap(),
-            "---\nx0k:\n  format: folio/v1\n---\nbody\n"
+            "```turtle folio:document\nwiki:page a x0k:Wiki .\n```\nbody\n"
         );
     }
 
@@ -410,8 +385,8 @@ mod tests {
     #[test]
     fn name_is_canonical() {
         let plugin = fixture();
-        assert_eq!(plugin.name(), "folio/v1");
-        assert_eq!(plugin.name(), FOLIO_V1_PLUGIN_NAME);
+        assert_eq!(plugin.name(), "folio/v2");
+        assert_eq!(plugin.name(), FOLIO_PLUGIN_NAME);
     }
 
     #[test]

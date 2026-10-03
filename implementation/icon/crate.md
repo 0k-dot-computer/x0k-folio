@@ -1,31 +1,20 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/icon/crate
-  type: implementation
-  status: draft
-  summary: The crate's contract rather than a mechanism — the five chapters composed, the one face that checks a declaration end to end, the design's worked-example icons carried as fixtures every chapter tests against, and what a consumer may name.
-  concerns:
-  - icons
-  - svg
-  - crate
-  - publishing
-  - profile
-  tangle:
-    crate: crates/x0k-icon
-    root: src/lib.rs
-  edges:
-    implements:
-    - x0k:design/icon-profile
-    cites:
-    - x0k:architecture/entity-iconography
-    - x0k:publication/x0k-folio
-    - x0k:implementation/icon/parse
-    - x0k:implementation/icon/validate
-    - x0k:implementation/icon/bind
-    - x0k:implementation/icon/emit
----
 # x0k-icon: the crate
+
+```turtle folio:document
+implementation:icon\/crate a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The crate's contract rather than a mechanism — the five chapters composed, the one face that checks a declaration end to end, the design's worked-example icons carried as fixtures every chapter tests against, and what a consumer may name." ;
+    x0k:concerns "icons", "svg", "crate", "publishing", "profile" ;
+    x0k:cites architecture:entity-iconography,
+        publication:x0k-folio,
+        implementation:icon\/parse,
+        implementation:icon\/validate,
+        implementation:icon\/bind,
+        implementation:icon\/emit ;
+    x0k:implements design:icon-profile ;
+    folio:tangleCrate "crates/x0k-icon" ;
+    folio:tangleRoot "src/lib.rs" .
+```
 
 There is one icon language in x0k and one implementation of it. The
 [`entity-iconography` ADR](x0k:architecture/entity-iconography) decides
@@ -177,14 +166,11 @@ is the cue, and the record of *via what* lives beside the face:
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d69636f6e2d636865636b-1"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-icon-check" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/icon/crate.md"><strong>Signifier</strong> · The face · <code>https://0k.computer/ontology#signifier/x0k-icon-check</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d69636f6e2d636865636b-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d69636f6e2d636865636b-1"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-icon-check
-cue: check
-edges:
-  signifies:
-    - x0k:affordance/check_an_icon_against_the_profile
-  presentedOn:
-    - x0k:surface/sdk
+```turtle folio:graph
+signifier:x0k-icon-check a x0k:Signifier ;
+    x0k:cue "check" ;
+    x0k:signifies affordance:check_an_icon_against_the_profile ;
+    x0k:presentedOn surface:sdk .
 ```
 
 ## The first inhabitants, as fixtures

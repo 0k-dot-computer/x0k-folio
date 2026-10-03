@@ -1,29 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/pipeline
-  type: implementation
-  status: draft
-  summary: The plugin contract — the trait, the typed input and output surfaces, the error shape, the registry — pure data and no I/O, which is what lets identity tangling be one plugin among others.
-  concerns:
-  - tangle
-  - literate
-  - pipelines
-  - plugin
-  - protocol
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/pipeline.rs
-  edges:
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/identity-pipeline
-    - x0k:implementation/tangle/dispatcher
-    - x0k:implementation/tangle/chunk
-    realizes:
-    - x0k:design/literate-pipelines
----
 # The pipeline protocol
+
+```turtle folio:document
+implementation:tangle\/pipeline a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The plugin contract — the trait, the typed input and output surfaces, the error shape, the registry — pure data and no I/O, which is what lets identity tangling be one plugin among others." ;
+    x0k:concerns "tangle", "literate", "pipelines", "plugin", "protocol" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/identity-pipeline,
+        implementation:tangle\/dispatcher,
+        implementation:tangle\/chunk ;
+    x0k:realizes design:literate-pipelines ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/pipeline.rs" .
+```
 
 This module defines the *contract* between tangle — the
 [literate](../../background/literate-programming.md "x0k:wiki/literate-programming") chunk-to-source step — and its
@@ -42,16 +31,17 @@ Two principles shape the module:
 - **Identity tangling is just another plugin.** The `IdentityPipeline`
   defined in [`identity-pipeline`](identity-pipeline.md) implements
   the same trait and lives in `PipelineRegistry::default()`. There's
-  no special-case code path for the `tangle:` frontmatter block — it
-  becomes a synthetic `PipelineDecl` before dispatch.
+  no special-case code path for the header's `folio:tangleCrate` /
+  `folio:tangleRoot` — they become a synthetic `PipelineDecl` before
+  dispatch.
 
 ## Module header
 
 The module-level doc-comment summarizes the protocol and points at
-the upstream design contract. The frontmatter example doubles as a
+the upstream design contract. The header example doubles as a
 spec for human readers — anyone debugging pipeline declarations can
-grep `pipelines:` in a literate doc and read this comment to know the
-shape.
+grep `folio:pipelines` in a literate doc and read this comment to know
+the shape.
 
 <a name="chunk-module-header"></a><sub>[`src/pipeline.rs`](../../crates/x0k-tangle/src/pipeline.rs) · `#module-header`</sub>
 
@@ -77,20 +67,15 @@ shape.
 //! consumers (build scripts) build their own registry with only the
 //! plugins they need.
 //!
-//! ## Frontmatter shape
+//! ## Header shape
 //!
-//! See [`x0k_folio::colophon::PipelineDecl`] for the
-//! frontmatter wire format. Pipelines are declared inside the `x0k:`
-//! envelope under `pipelines:`.
+//! See [`x0k_folio::colophon::PipelineDecl`] for the wire format.
+//! Pipelines are declared in the document's header as one
+//! `folio:pipelines` JSON array. `input` is the shorthand for a
+//! single input; the long form is `"inputs": { … }`.
 //!
-//! ```yaml
-//! x0k:
-//!   pipelines:
-//!     - kind: theme-codegen
-//!       input: tokens                   # shorthand; long form is `inputs: { ... }`
-//!       config:
-//!         name: pansophia
-//!         scheme: single
+//! ```turtle
+//! folio:pipelines '[{"kind":"theme-codegen","input":"tokens","config":{"name":"pansophia","scheme":"single"}}]'^^rdf:JSON
 //! ```
 ```
 
@@ -120,8 +105,8 @@ changes across the substrate.
 /// and returns the artifacts to write. The plugin must be pure (no
 /// filesystem access, no global state); tangle owns I/O.
 pub trait TanglePipeline: Send + Sync {
-    /// Unique identifier — matches the `kind:` field in
-    /// frontmatter pipeline declarations.
+    /// Unique identifier — matches the `kind` field of a
+    /// `folio:pipelines` declaration.
     fn kind(&self) -> &str;
 
     /// Transform the inputs to outputs. Called with the resolved
@@ -157,7 +142,7 @@ fields are organized by what the plugin uses them for:
   typed shape. Untyped on the boundary so the trait stays
   config-shape-agnostic.
 - **`inputs`** — already-resolved chunk content keyed by the
-  parameter name from the frontmatter `inputs:` map.
+  parameter name from the declaration's `inputs` map.
 - **`all_chunks`, `chunk_order`** — for plugins that need the full
   doc graph (identity tangling walks the whole graph to find
   top-level chunks; theme-codegen ignores these).
@@ -177,19 +162,19 @@ pub struct PipelineContext<'a> {
     /// [`PipelineOutput::path`]; tangle joins them against this when
     /// writing.
     pub workspace_root: &'a Path,
-    /// The pipeline's `config:` block from the frontmatter, captured
+    /// The declaration's `config` object, captured
     /// as untyped JSON. Plugins deserialize this into their own typed
     /// shape via `serde_json`.
     pub config: &'a serde_json::Value,
     /// Resolved chunk inputs, keyed by the plugin-parameter name
-    /// declared in the frontmatter `inputs:` map. For single-input
-    /// plugins, the shorthand `input: <name>` normalizes to the
+    /// declared in the declaration's `inputs` map. For single-input
+    /// plugins, the shorthand `"input": "<name>"` normalizes to the
     /// canonical `"default"` key.
     pub inputs: &'a HashMap<String, ChunkInput>,
     /// The document's full parsed chunk graph, keyed by chunk name
     /// with one entry per language variant. Identity-tangle and any
     /// other pipeline that needs to walk the doc beyond the declared
-    /// `inputs:` (e.g., to resolve `<<refs>>` across the whole graph)
+    /// `inputs` (e.g., to resolve `<<refs>>` across the whole graph)
     /// reads through this. Plugins that work off `inputs` alone may
     /// ignore it.
     pub all_chunks: &'a HashMap<String, Vec<crate::chunk::Chunk>>,
@@ -538,9 +523,9 @@ pipeline into a vec, call `guard_outputs` once, and only then write.
 kinds map onto distinct operator concerns:
 
 - **`MissingInput`** — the doc didn't declare a chunk the plugin
-  expected; surface this as "your `inputs:` map is incomplete."
-- **`InvalidConfig`** — the `config:` block didn't deserialize;
-  surface as "your `config:` shape doesn't match what this plugin
+  expected; surface this as "your `inputs` map is incomplete."
+- **`InvalidConfig`** — the `config` object didn't deserialize;
+  surface as "your `config` shape doesn't match what this plugin
   expects."
 - **`TransformFailed`** — generic plugin-side failure (bad TOML, bad
   symbol, etc.); the message carries the detail.
@@ -562,11 +547,11 @@ pub struct PipelineError {
 
 #[derive(Debug)]
 pub enum PipelineErrorKind {
-    /// The `inputs:` map referenced a chunk by name, but the
+    /// The `inputs` map referenced a chunk by name, but the
     /// document didn't define one (and tangle reported it as
     /// missing).
     MissingInput { name: String },
-    /// The `config:` payload didn't deserialize into the plugin's
+    /// The `config` payload didn't deserialize into the plugin's
     /// expected shape.
     InvalidConfig,
     /// Any other plugin-side failure — bad TOML, unknown role,
@@ -596,7 +581,7 @@ impl PipelineError {
     pub fn missing_input(name: impl Into<String>) -> Self {
         let n = name.into();
         Self {
-            message: format!("expected `{n}` to be declared in `inputs:`"),
+            message: format!("expected `{n}` to be declared in `inputs`"),
             kind: PipelineErrorKind::MissingInput { name: n },
         }
     }

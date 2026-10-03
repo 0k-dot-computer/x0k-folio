@@ -1,6 +1,6 @@
 {
   "source": "implementation/tangle/region-weave.md",
-  "source_hash": "3cf9989eaed8f786",
+  "source_hash": "380eef4c8a177ecb",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,11 +9,11 @@
       "outputs": [
         {
           "path": "crates/x0k-tangle/tests/region_weave.rs",
-          "hash": "4ca3785eaee8fcca"
+          "hash": "c8658376342448ed"
         },
         {
           "path": "crates/x0k-tangle/src/region_weave.rs",
-          "hash": "c60c1ba7af9cbedb"
+          "hash": "795cbe432073c236"
         }
       ]
     }

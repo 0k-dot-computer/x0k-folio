@@ -1,28 +1,16 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/ontology/concept-facts
-  type: implementation
-  status: draft
-  summary: Why the vocabulary lives as facts in the concept region rather than compiled from a schema file, and how the module files are materialized back out of it.
-  concerns:
-  - ontology
-  - facts
-  - projection
-  - turtle
-  - materialized-view
-  tangle:
-    crate: crates/x0k-ontology
-    root: src/concept_facts.rs
-  edges:
-    constrained_by:
-    - x0k:architecture/state-representation
-    cites:
-    - x0k:implementation/entry-spine/spine
-    motivated_by:
-    - x0k:intent/ba2f3043-cb4f-4ec6-87c5-d58b5d71e30b
----
 # Concepts Are Facts
+
+```turtle folio:document
+implementation:ontology\/concept-facts a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Why the vocabulary lives as facts in the concept region rather than compiled from a schema file, and how the module files are materialized back out of it." ;
+    x0k:concerns "ontology", "facts", "projection", "turtle", "materialized-view" ;
+    x0k:cites implementation:entry-spine\/spine ;
+    x0k:constrainedBy architecture:state-representation ;
+    x0k:motivatedBy intent:ba2f3043-cb4f-4ec6-87c5-d58b5d71e30b ;
+    folio:tangleCrate "crates/x0k-ontology" ;
+    folio:tangleRoot "src/concept_facts.rs" .
+```
 
 An ontology stops being [extensible by
 assertion](x0k:wiki/open-world-assumption) when its vocabulary is
@@ -605,9 +593,9 @@ impl OntologyModel {
 
 ## A refinement points into the import closure
 
-A module may **refine** a property it can see: a `needBy` declared
-`rdfs:subPropertyOf` the `time` module's `due` says that a need-by is a kind of due
-(`x0k:architecture/ontology-modules` §1, as amended 2026-09-25). This is the
+A module may **refine** a property it can see: `acme:cites
+rdfs:subPropertyOf x0k:mentions` says that a citation is a kind of mention
+(`x0k:architecture/ontology-modules` §1). This is the
 use rule for properties. A refinement is a declaration fact of the refining
 term, so it lives in the refining module's file. It points into that
 module's import closure the same way a subclass does, and it never
@@ -1432,7 +1420,12 @@ mod refinement_tests {
         if model.modules().iter().any(|module| module.iri == TIME_MODULE_IRI) {
             assert_eq!(
                 model.time_roles(),
-                set(&[DUE, PLANNED, "https://0k.computer/ontology/time#unavailable"]),
+                set(&[
+                    DUE,
+                    "https://0k.computer/ontology/time#occurred",
+                    PLANNED,
+                    "https://0k.computer/ontology/time#unavailable",
+                ]),
             );
         } else {
             assert!(model.time_roles().is_empty());

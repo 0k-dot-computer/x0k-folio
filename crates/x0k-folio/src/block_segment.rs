@@ -358,26 +358,20 @@ mod tests {
         assert_ne!(hash_block("hello world"), hash_block("hello  world"));
     }
 
-    /// The save tool preserves frontmatter byte-for-byte by keeping the
-    /// content prefix (everything before the parsed body slice) and swapping
-    /// only the body. This guards against `render_envelope`'s canonicalizing
-    /// field reorder ever leaking into the human-canonical decisions tree.
+    /// The save tool preserves the header byte-for-byte by splicing a new
+    /// body around it with `replace_body` rather than re-rendering it —
+    /// a human's statement order and comments survive the save.
     #[test]
-    fn body_swap_preserves_frontmatter_verbatim() {
-        let file = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/x\n  type: design\n  status: proposed\n  # a human comment that render_envelope would drop\n  concerns:\n    - ui\n---\nOriginal body paragraph.\n";
+    fn body_swap_preserves_the_header_verbatim() {
+        let file = "# X\n\n```turtle folio:document\ndesign:x a x0k:Design ;\n    # a human comment a renderer would drop\n    x0k:status \"proposed\" ;\n    x0k:concerns \"ui\" .\n```\n\nOriginal body paragraph.\n";
         let (_env, body) = crate::colophon::parse_envelope(file).expect("parses");
-        // Reconstruct the verbatim prefix exactly as save_decision_body does.
-        let prefix = &file[..file.len() - body.len()];
-        let rebuilt = format!("{prefix}{body}");
         assert_eq!(
-            rebuilt, file,
-            "prefix+body must reconstruct the source byte-for-byte"
+            crate::colophon::replace_body(file, &body),
+            file,
+            "header + body must reconstruct the source byte-for-byte"
         );
-
-        // Swapping the body keeps the frontmatter (incl. the comment) intact.
-        let new_body = "Revised body paragraph.\n";
-        let swapped = format!("{prefix}{new_body}");
-        assert!(swapped.contains("# a human comment that render_envelope would drop"));
+        let swapped = crate::colophon::replace_body(file, "# X\n\nRevised body paragraph.\n");
+        assert!(swapped.contains("# a human comment a renderer would drop"));
         assert!(swapped.contains("Revised body paragraph."));
         assert!(!swapped.contains("Original body paragraph."));
     }

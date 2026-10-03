@@ -1,52 +1,45 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/identity-pipeline
-  type: implementation
-  status: draft
-  summary: 'The plugin that makes the `tangle:` block ordinary: a synthesized declaration routed through the same loop as every other codegen, so identity tangling keeps no private code path.'
-  concerns:
-  - tangle
-  - literate
-  - identity-pipeline
-  - plugin
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/identity_pipeline.rs
-  edges:
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/pipeline
-    - x0k:implementation/tangle/dispatcher
-    - x0k:implementation/tangle/chunk-refs
----
 # Identity tangling as a plugin
 
+```turtle folio:document
+implementation:tangle\/identity-pipeline a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The plugin that makes the `tangle:` block ordinary: a synthesized declaration routed through the same loop as every other codegen, so identity tangling keeps no private code path." ;
+    x0k:concerns "tangle", "literate", "identity-pipeline", "plugin" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/pipeline,
+        implementation:tangle\/dispatcher,
+        implementation:tangle\/chunk-refs ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/identity_pipeline.rs" .
+```
+
 The architectural payoff of the pipeline protocol is that *[identity
-tangling](../../background/literate-programming.md "x0k:wiki/literate-programming") stops being a special case*. Before, `tangle:` and
-`pipelines:` had separate code paths — separate parsers, separate
-file writers, separate sidecar shapes. Now both flow through the same
-dispatch loop because identity tangling is just one more plugin
+tangling](../../background/literate-programming.md "x0k:wiki/literate-programming") stops being a special case*. The header's
+`folio:tangleCrate` / `folio:tangleRoot` and its `folio:pipelines`
+flow through the same dispatch loop — one parser, one file writer, one
+sidecar shape — because identity tangling is just one more plugin
 registered with the registry.
 
 `IdentityPipeline` is what makes that work. It implements
-`TanglePipeline`; the dispatcher synthesizes a `PipelineDecl` for the
-`tangle:` block and routes it through the same loop as theme-codegen
-and any future pipeline.
+`TanglePipeline`; the dispatcher synthesizes a `PipelineDecl` from the
+header's `folio:tangleCrate` / `folio:tangleRoot` / `folio:tangleRoots`
+and routes it through the same loop as theme-codegen and any future
+pipeline.
 
 ## Module header
 
 The doc-comment captures the synthesis trick so future readers don't
-have to re-derive it: the `tangle:` block isn't a separate concept,
-it's the shorthand for "run the identity-tangle pipeline."
+have to re-derive it: the header's tangle terms aren't a separate
+concept, they're the shorthand for "run the identity-tangle pipeline."
 
 <a name="chunk-module-header"></a><sub>[`src/identity_pipeline.rs`](../../crates/x0k-tangle/src/identity_pipeline.rs) · `#module-header`</sub>
 
 ```rust {#module-header}
 //! Identity tangling expressed as a [`TanglePipeline`].
 //!
-//! In the layered protocol, the `tangle:` frontmatter block is the
-//! shorthand for "run the identity-tangle pipeline on this doc". The
+//! In the layered protocol, the header's `folio:tangleCrate` /
+//! `folio:tangleRoot` / `folio:tangleRoots` are the shorthand for "run
+//! the identity-tangle pipeline on this doc". The
 //! dispatcher in [`crate::pipeline_runner`] synthesizes a [`PipelineDecl`]
 //! for it before dispatch, so identity tangling rides the same code path
 //! as every other pipeline.
@@ -55,7 +48,7 @@ it's the shorthand for "run the identity-tangle pipeline."
 //!
 //! ## What the plugin does
 //!
-//! - Reads the `tangle:` config from `ctx.config`: `{ "crate": "...",
+//! - Reads the tangle config from `ctx.config`: `{ "crate": "...",
 //!   "root": "...", "roots": { lang: path, ... } }` (all optional; crate
 //!   may be absent for repo-root tangle targets).
 //! - Walks `ctx.all_chunks` to find chunks that aren't fragments (i.e.
@@ -64,9 +57,9 @@ it's the shorthand for "run the identity-tangle pipeline."
 //! - For each top-level chunk, resolves its output path:
 //!   - `file=<path>` attribute on the chunk → that path under crate dir
 //!     (or workspace root when no crate is set)
-//!   - else the `roots:` entry for the chunk's fence language, when the
+//!   - else the `roots` entry for the chunk's fence language, when the
 //!     doc declares per-language roots (the bilingual form)
-//!   - else falls back to `root:` from the config
+//!   - else falls back to `root` from the config
 //! - Expands `<<refs>>` recursively (via [`crate::resolve::expand_chunk`],
 //!   or its language-pinned sibling for per-language roots, over an
 //!   ephemeral [`crate::parser::ParsedDocument`]).
@@ -79,7 +72,7 @@ it's the shorthand for "run the identity-tangle pipeline."
 //! (pipeline: identity-tangle) from <source> — DO NOT EDIT.` header
 //! using the comment style on each output. `resolve_comment_style`
 //! picks that style from two sources, most specific first: the
-//! document's own `comment_styles:` declaration, then the built-in
+//! document's own `comment_styles` declaration, then the built-in
 //! table in `comment_style_for_path`. The table matches the output's
 //! file *name* first (`Makefile`, `.gitignore` and friends have no
 //! extension for `Path::extension` to find), then its lowercased
@@ -89,18 +82,12 @@ it's the shorthand for "run the identity-tangle pipeline."
 //! ## Declaring a style
 //!
 //! A document whose output language the table does not know declares
-//! the marker itself, in the identity pipeline's `config:`:
+//! the marker itself, in the identity pipeline's `config` — a line
+//! marker (`jl`), a block open/close pair (`ml`), or `null` to write no
+//! header at all (`bin`):
 //!
-//! ```yaml
-//! x0k:
-//!   pipelines:
-//!     - kind: identity-tangle
-//!       config:
-//!         root: analysis/fit.jl
-//!         comment_styles:
-//!           jl: "#"            # a line marker
-//!           ml: ["(*", "*)"]   # a block open/close pair
-//!           bin:               # null — write no header at all
+//! ```turtle
+//! folio:pipelines '[{"kind":"identity-tangle","config":{"root":"analysis/fit.jl","comment_styles":{"jl":"#","ml":["(*","*)"],"bin":null}}}]'^^rdf:JSON
 //! ```
 //!
 //! Keys match the way the table matches: exact file name first, then
@@ -112,19 +99,13 @@ it's the shorthand for "run the identity-tangle pipeline."
 //!
 //! Top-level chunks are concatenated with nothing between them, which
 //! is fine for Rust and wrong for a language whose style checker counts
-//! blank lines. `join:` declares the separator, as a number of blank
-//! lines for the whole document or a map keyed the same way
-//! `comment_styles:` is:
+//! blank lines. `join` declares the separator, as a number of blank
+//! lines for the whole document (two, for PEP 8 E301/E302) or — for a
+//! document with per-language `roots` — a map keyed the same way
+//! `comment_styles` is (`"join":{"py":2}`):
 //!
-//! ```yaml
-//! x0k:
-//!   pipelines:
-//!     - kind: identity-tangle
-//!       config:
-//!         root: pymc_extras/model.py
-//!         join: 2              # PEP 8 E301/E302
-//!         # or, for a document with per-language `roots:`
-//!         # join: { py: 2 }
+//! ```turtle
+//! folio:pipelines '[{"kind":"identity-tangle","config":{"root":"pymc_extras/model.py","join":2}}]'^^rdf:JSON
 //! ```
 //!
 //! Absent, it is zero, which is the concatenation every document in the
@@ -200,9 +181,9 @@ struct IdentityConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum JoinDecl {
-    /// `join: 2`
+    /// `"join": 2`
     Uniform(usize),
-    /// `join: { py: 2 }`
+    /// `"join": {"py": 2}`
     PerOutput(BTreeMap<String, usize>),
 }
 
@@ -213,32 +194,32 @@ impl Default for JoinDecl {
 }
 
 /// One author-declared style. A bare string is a line marker; a
-/// two-element sequence is a block open/close pair. Untagged, so the
-/// YAML reads the way the marker looks.
+/// two-element array is a block open/close pair. Untagged, so the
+/// JSON reads the way the marker looks.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum CommentStyleDecl {
-    /// `jl: "#"`
+    /// `"jl": "#"`
     Line(String),
-    /// `ml: ["(*", "*)"]`
+    /// `"ml": ["(*", "*)"]`
     Block([String; 2]),
 }
 ```
 
 The `crate` field is renamed (Rust reserves the bare identifier) but
-the JSON wire name stays `crate` to match how `tangle:` is authored
-in the frontmatter. `roots` is a `BTreeMap` for deterministic
+the JSON wire name stays `crate`, the name the synthesized config
+gives `folio:tangleCrate`. `roots` is a `BTreeMap` for deterministic
 iteration; output *order* still follows chunk declaration order, so
 the map's sorting never shows up in emitted bytes.
 
 `comment_styles` is the one field with no counterpart in
 `TangleConfig`. The dispatcher synthesizes the identity config from
-the `tangle:` block's three known keys, so a document reaches this
-field by declaring the pipeline explicitly under `pipelines:` instead
-of using the `tangle:` shorthand. Everything downstream of the config
-JSON already carries it; teaching the `tangle:` shorthand to forward
-a `comment_styles:` submap is a change to the frontmatter walk and
-the synthesis site, not to this plugin.
+the header's three tangle terms, so a document reaches this field by
+declaring the pipeline explicitly in `folio:pipelines` instead of
+using the `folio:tangleRoot` shorthand. Everything downstream of the
+config JSON already carries it; teaching the shorthand to forward a
+`comment_styles` map is a change to the header reader and the
+synthesis site, not to this plugin.
 
 ## The plugin struct
 
@@ -258,7 +239,7 @@ pub struct IdentityPipeline;
 
 This is the bulk of the file. Walk it from the outside in:
 
-1. Deserialize the `tangle:` config into typed shape.
+1. Deserialize the tangle config into typed shape.
 2. Identify "fragment chunks" — chunks referenced from another chunk
    via `<<name>>`. Fragments are not top-level outputs; their content
    ends up inlined at their call sites instead. An escaped `<<!name>>`
@@ -266,18 +247,18 @@ This is the bulk of the file. Walk it from the outside in:
    nothing a fragment.
 3. For each top-level chunk (non-fragment, non-media, non-`from=`),
    determine its target file path (via `file=`, the per-language
-   `roots:` entry, or the config's `root:`), expand its body via
+   `roots` entry, or the config's `root`), expand its body via
    `expand_chunk`, and append to the right output bucket.
 4. Compose each bucket into a single string and return one
    `PipelineOutput` per bucket with comment style derived from
    extension.
 
-A doc with per-language `roots:` changes the grain of step 3: every
+A doc with per-language `roots` changes the grain of step 3: every
 language *variant* of a top-level chunk is its own output, routed to
 its language's root and expanded with reference resolution pinned to
 that language. A single-target doc keeps the historical grain — the
 first variant speaks for the name — so every existing doc tangles to
-the same bytes it did before `roots:` existed. The same gate applies
+the same bytes it did before `roots` existed. The same gate applies
 to fragment collection: per-language docs scan every variant's body
 for `<<refs>>` (the Gallowglass body's fragments are as real as the
 Rust body's); single-target docs scan only the first, preserving
@@ -295,16 +276,16 @@ up-to-date: 0, errored: 0`, which reads as success, over nothing.
 
 A root is not where the documents are. **A root is only how far the
 walk goes.** Membership is decided one document at a time, downstream,
-by `doc_freshness`: a `.md` whose parsed frontmatter declares neither
-`tangle:` nor `pipelines:` is `DocFreshness::Skip` no matter which root
+by `doc_freshness`: a `.md` whose parsed header declares neither
+a `folio:tangle*` term nor `folio:pipelines` is `DocFreshness::Skip` no matter which root
 it sits under.
 
 So the first instinct is to widen — claim `corpora/`, the container
 [`x0k:architecture/monorepo-layout`](../../decisions/architecture/production/monorepo-layout.md)
-puts every corpus under, and let the frontmatter sort it out. That is
+puts every corpus under, and let the header sort it out. That is
 wrong, and the counterexample is one document.
 `corpora/x0k/publications/x0k-folio/x0k-folio.md` declares
-`tangle: root: README.md` with no `crate:`. It is a **region**
+`folio:tangleRoot "README.md"` with no `folio:tangleCrate`. It is a **region**
 document: its outputs are relative to the root of the repository the
 region publishes as, and the publishing face gives it that root. Walked
 by a monorepo-root sweep it resolves against the monorepo instead, and
@@ -313,7 +294,7 @@ repo's own `README.md`, `IMPLEMENTATION.md` and `guides/CONTRIBUTING.md`.
 The clobber guard would not stop it: those files carry no sidecar
 record, and adopting an unrecorded file is allowed.
 
-The frontmatter gate is therefore weaker than it looks. It answers "is
+The header gate is therefore weaker than it looks. It answers "is
 this a literate document?" — it does not answer "is this document's
 workspace *our* workspace?", which is the question a root is really
 scoping. Publications answer it differently from implementations, so
@@ -347,7 +328,7 @@ and afterwards were not.
 /// The literate trees this plugin claims, as workspace-relative paths.
 ///
 /// One entry per corpus, naming its implementation genus — the genus
-/// whose `tangle:` targets are monorepo-relative. Publications are
+/// whose tangle targets are monorepo-relative. Publications are
 /// deliberately absent: a publication is a region document whose
 /// outputs resolve against the region's own repository root, and
 /// sweeping one from here overwrites the monorepo's `README.md`.
@@ -454,7 +435,7 @@ impl TanglePipeline for IdentityPipeline {
 
                 // Target resolution, most specific first: the chunk's own
                 // `file=`, the doc's per-language root for this variant's
-                // fence language, the single `root:`. A variant with none
+                // fence language, the single `root`. A variant with none
                 // of the three is not a tangle output.
                 let lang_root = chunk
                     .lang
@@ -544,7 +525,7 @@ Two non-obvious choices deserve naming:
 
 ```rust {#helpers}
 /// Build a [`ParsedDocument`] from the chunk graph + declaration
-/// order. Identity tangling does not need frontmatter; `expand_chunk`
+/// order. Identity tangling does not need the header; `expand_chunk`
 /// reads only the `chunks` and `chunk()` lookups.
 fn synthetic_parsed_doc(
     all_chunks: &HashMap<String, Vec<Chunk>>,
@@ -589,25 +570,20 @@ Markdown editors, and a second evaluator hit it independently and also
 found it only by experiment. It is a trick, and a substrate whose
 correct use is a trick is a substrate that teaches the wrong thing.
 
-`join:` is the separator, declared rather than smuggled in as
-whitespace:
+`join` is the separator, declared rather than smuggled in as
+whitespace — here PEP 8's two blank lines between top-level chunks:
 
-```yaml
-x0k:
-  pipelines:
-    - kind: identity-tangle
-      config:
-        root: pymc_extras/model.py
-        join: 2                    # PEP 8: two blank lines between top-level chunks
+```turtle
+folio:pipelines '[{"kind":"identity-tangle","config":{"root":"pymc_extras/model.py","join":2}}]'^^rdf:JSON
 ```
 
 A bare integer speaks for every output of the document. A map keys them
-the way `comment_styles:` does — output file name first, then lowercased
-extension — so a document with per-language `roots:` can space its
+the way `comment_styles` does — output file name first, then lowercased
+extension — so a document with per-language `roots` can space its
 Python two lines apart and leave its Rust exactly as it was:
 
-```yaml
-        join: { py: 2 }
+```json
+"join": {"py": 2}
 ```
 
 <a name="chunk-join-resolution"></a><sub>[`src/identity_pipeline.rs`](../../crates/x0k-tangle/src/identity_pipeline.rs) · `#join-resolution`</sub>
@@ -620,7 +596,7 @@ const MAX_JOIN_BLANK_LINES: usize = 8;
 
 /// Blank lines to place between consecutive top-level chunks in one
 /// output, resolved most-specific-first: the output's file name, its
-/// lowercased extension, then zero. A bare `join:` integer answers for
+/// lowercased extension, then zero. A bare `join` integer answers for
 /// every output without consulting the keys at all.
 fn resolve_join(path: &std::path::Path, declared: &JoinDecl) -> Result<usize, PipelineError> {
     let blanks = match declared {
@@ -668,7 +644,7 @@ outputs across this corpus are Python; fourteen silent rewrites is a
 small number and a bad precedent.
 
 *A declaration* leaves every existing document producing the bytes it
-produced before, because an absent `join:` is `Uniform(0)` and
+produced before, because an absent `join` is `Uniform(0)` and
 `Uniform(0)` walks the same push-and-newline loop the plugin always
 walked. Nothing is inferred, the setting is greppable, and the reader
 of a Python module can find out why it is spaced the way it is by
@@ -681,11 +657,11 @@ again.
 
 A document that composes through a single `#root` chunk — the
 overwhelmingly common shape here — has exactly one top-level chunk, so
-`join:` never fires. That document already controls its spacing: blank
+`join` never fires. That document already controls its spacing: blank
 lines written *between* `<<refs>>` inside the root body are interior to
 that body, survive the parser untouched, and land in the output
 verbatim. Two blank lines between two refs give two blank lines in the
-file. `join:` is for the other shape, where several chunks each name
+file. `join` is for the other shape, where several chunks each name
 their own target and the concatenation is the plugin's to decide.
 
 And the trailing-blank asymmetry itself is routed around, not removed.
@@ -707,7 +683,7 @@ header*, and saying it must not read as saying nothing.
 
 ```rust {#style-resolution}
 /// Resolve the header style for one output: the document's
-/// `comment_styles:` declaration first, then the built-in table.
+/// `comment_styles` declaration first, then the built-in table.
 /// Fails only on a malformed declared marker — a config error the
 /// author can see and fix, rather than bytes written into a file.
 fn resolve_comment_style(
@@ -928,7 +904,7 @@ and each loses more than it gains:
 The warning is what makes the fallback honest rather than merely
 convenient: `//` still goes in, the operator sees
 `tangle.comment_style.unknown` with the path and the extension, and
-`comment_styles:` is a one-line fix that does not wait on us. The
+`comment_styles` is a one-line fix that does not wait on us. The
 residual exposure is a language whose comment marker is not `//` and
 whose author never reads the warning; the table above shrinks that set
 to the ones nobody has written yet.
@@ -1444,6 +1420,8 @@ mod tests {
 ```
 
 ## Composing the module
+
+<a name="chunk-root"></a><sub>[`src/identity_pipeline.rs`](../../crates/x0k-tangle/src/identity_pipeline.rs) · `#root` · assembles [module-header](#chunk-module-header) · [imports](#chunk-imports) · [kind-and-config](#chunk-kind-and-config) · [plugin-struct](#chunk-plugin-struct) · [literate-roots](#chunk-literate-roots) · [transform-impl](#chunk-transform-impl) · [helpers](#chunk-helpers) · [style-resolution](#chunk-style-resolution) · [join-resolution](#chunk-join-resolution) · [marker-interning](#chunk-marker-interning) · [comment-style-table](#chunk-comment-style-table) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-header>>

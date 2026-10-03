@@ -1,6 +1,6 @@
 {
-  "corpus_commit": "b8a243f942ea5920c4960be29f229fd2da55116d",
-  "corpus_rev": "rxpolyzxotnkrmwuxswysumstrzlxtwu",
+  "corpus_commit": "bfb280c24d43ad448030b5dd046d1c264a257b5f",
+  "corpus_rev": "xukrxsrxvsovwxvopnxxxwyqpxxtzuzo",
   "crates": [
     "x0k-folio",
     "x0k-ontology",
@@ -131,7 +131,7 @@
     "implementation/tangle/source-sync.md",
     "implementation/tangle/weave.md"
   ],
-  "module_version": "0.2.0",
+  "module_version": "0.3.0",
   "module_version_source": "entry-point-crate",
   "modules": [
     "core",
@@ -220,7 +220,7 @@
     },
     "installer": "install.sh",
     "npm_package": null,
-    "tag": "v0.2.0",
+    "tag": "v0.3.0",
     "targets": [
       "x86_64-unknown-linux-musl",
       "aarch64-unknown-linux-musl",
@@ -228,7 +228,7 @@
       "aarch64-apple-darwin",
       "x86_64-pc-windows-msvc"
     ],
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "proofs": {
     "x0k:test/x0k-icon/src/bind.rs::a_fifth_role_or_a_missing_scheme_does_not_read": "passed",
@@ -255,12 +255,13 @@
     "x0k:test/x0k-icon/src/validate.rs::the_tangle_icon_is_accepted": "passed",
     "x0k:test/x0k-tangle/src/pipeline_runner.rs::identity_pipeline_registered_in_default_registry": "passed",
     "x0k:test/x0k-tangle/src/pipeline_runner.rs::tangle_document_errors_on_unknown_kind": "passed",
-    "x0k:test/x0k-tangle/src/pipeline_runner.rs::tangle_document_passes_through_when_no_blocks": "passed",
+    "x0k:test/x0k-tangle/src/pipeline_runner.rs::tangle_document_passes_through_when_the_header_declares_nothing": "passed",
     "x0k:test/x0k-tangle/src/pipeline_runner.rs::tangle_document_routes_per_language_roots": "passed",
     "x0k:test/x0k-tangle/src/pipeline_runner.rs::tangle_document_routes_tangle_block_through_identity_plugin": "passed",
     "x0k:test/x0k-tangle/src/pipeline_runner.rs::tangle_document_runs_registered_pipeline": "passed",
     "x0k:test/x0k-tangle/src/region_gfm.rs::a_source_holding_a_woven_line_is_refused": "passed",
     "x0k:test/x0k-tangle/src/region_gfm.rs::a_string_literal_naming_an_id_is_not_a_woven_line": "passed",
+    "x0k:test/x0k-tangle/src/region_gfm.rs::an_inline_code_fence_and_an_opening_line_neither_open_nor_close": "passed",
     "x0k:test/x0k-tangle/src/region_gfm.rs::captions_say_file_name_proof_and_assembly_and_links_land": "passed",
     "x0k:test/x0k-tangle/src/region_gfm.rs::proof_excerpts_do_not_close_on_fences_inside_test_source": "passed",
     "x0k:test/x0k-tangle/src/region_gfm.rs::relative_links_climb_out_and_descend": "passed",
@@ -299,6 +300,7 @@
     "x0k:test/x0k-tangle/src/weave.rs::rust_chunk_emits_highlight_spans": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::single_language_chunk_renders_without_tabs": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::tab_buttons_have_onclick": "passed",
+    "x0k:test/x0k-tangle/src/weave.rs::the_header_is_lifted_out_of_the_page": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::the_recurrence_survives_the_whole_weave": "passed",
     "x0k:test/x0k-tangle/src/weave.rs::two_documents_woven_into_one_directory_keep_two_pages": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::affordances_prints_each_declaration_as_a_record": "passed",
@@ -309,7 +311,7 @@
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_notes_an_edge_out_of_the_set_and_passes": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_passes_an_agent_only_claim_with_no_signifier": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::check_reads_a_document_against_the_vocabulary_it_is_pointed_at": "passed",
-    "x0k:test/x0k-tangle/tests/cli_faces.rs::check_reports_an_envelope_that_does_not_parse": "passed",
+    "x0k:test/x0k-tangle/tests/cli_faces.rs::check_reports_a_header_that_does_not_parse": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::icon_accepts_a_declaration_in_the_profile": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::icon_refuses_a_drawing_by_rule_naming_the_element_and_fails": "passed",
     "x0k:test/x0k-tangle/tests/cli_faces.rs::icon_writes_each_declaration_as_its_light_and_dark_files": "passed"

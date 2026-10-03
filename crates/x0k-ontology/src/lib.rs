@@ -27,10 +27,11 @@
 //! that does not ask for it gets the fold and its views and nothing
 //! else.
 //!
-//! Snake-case is the wire/frontmatter form on folio/v1 envelopes;
-//! camelCase is the URI suffix that appears in the ontology view. The two
-//! forms map deterministically by inserting `_` before uppercase
-//! letter boundaries (excluding position 0) and lowercasing.
+//! The generated tables key a predicate by its snake-case form;
+//! camelCase is the URI suffix that appears in the ontology view and the
+//! term a document header writes (`x0k:motivatedBy`). The two forms map
+//! deterministically by inserting `_` before uppercase letter boundaries
+//! (excluding position 0) and lowercasing.
 
 pub mod concept_facts;
 

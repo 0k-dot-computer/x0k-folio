@@ -3,7 +3,7 @@
 //!
 //! The **atlas** is the keystone shared layout that connects the publication's
 //! map / narrative / deep-dive views. From a publication region's members (each
-//! a folio/v1 wiki page) it computes, *in Rust during projection*, a
+//! a folio wiki page) it computes, *in Rust during projection*, a
 //! deterministic **time×idea plane**:
 //!
 //! - **x** is a linear map of the node's anchor **year** → horizontal position,
@@ -39,8 +39,8 @@
 //!
 //! # Sourcing decisions (year / lane)
 //!
-//! **year** resolves in precedence order: (1) an explicit `year:` frontmatter
-//! field, (2) the curated anchor-year table ([`CURATED_YEARS`]) for the known
+//! **year** resolves in precedence order: (1) an explicit `x0k:year` in the
+//! header, (2) the curated anchor-year table ([`CURATED_YEARS`]) for the known
 //! lineage members, (3) the earliest 18xx/19xx/20xx year mined from the page
 //! body, (4) otherwise the node is *flagged* (its URI lands in
 //! [`Atlas::unresolved_years`] and it is omitted from the plane).
@@ -53,7 +53,7 @@
 use crate::region_weave::RegionInput;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use x0k_folio::colophon::{parse_envelope, split_frontmatter};
+use x0k_folio::colophon::{parse_envelope, strip_header};
 
 /// Horizontal pixels per year. `x = (year - min_year) * X_SCALE`.
 pub const X_SCALE: f64 = 60.0;
@@ -256,8 +256,8 @@ pub const CURATED_THREADS: &[(&str, &[&str])] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum YearSource {
-    /// Explicit `year:` frontmatter field.
-    Frontmatter,
+    /// Explicit `x0k:year` in the header.
+    Header,
     /// Curated anchor-year table.
     Curated,
     /// Earliest 18xx/19xx/20xx year mined from the body.
@@ -376,8 +376,8 @@ pub fn build_atlas(input: &RegionInput) -> Atlas {
     }
 
     // 1. Influence edges: cites + body wikilinks, restricted in-region, deduped.
-    //    `cites` targets are full URIs (already class-correct in authored
-    //    frontmatter); body-wikilink targets arrive as a raw `x0k:wiki/<slug>`
+    //    `x0k:cites` targets are full URIs (already class-correct in the
+    //    authored header); body-wikilink targets arrive as a raw `x0k:wiki/<slug>`
     //    marker and are resolved to the real member URI by slug.
     let mut edge_set: BTreeSet<(String, String)> = BTreeSet::new();
     for m in &input.members {
@@ -424,11 +424,12 @@ pub fn build_atlas(input: &RegionInput) -> Atlas {
 
     for m in &input.members {
         let slug = member_slug(&m.uri);
-        let (yaml, body) = split_frontmatter(&m.content).unwrap_or(("", m.content.as_str()));
+        let body = strip_header(&m.content);
+        let body = body.as_str();
 
-        // year precedence: frontmatter > curated > body-mine > flag.
-        let (year, year_source) = if let Some(y) = frontmatter_year(yaml) {
-            (y, YearSource::Frontmatter)
+        // year precedence: header > curated > body-mine > flag.
+        let (year, year_source) = if let Some(y) = header_year(&m.content) {
+            (y, YearSource::Header)
         } else if let Some(&y) = slug.as_deref().and_then(|s| curated_years.get(s)) {
             (y, YearSource::Curated)
         } else if let Some(y) = body_mine_year(body) {
@@ -474,7 +475,8 @@ pub fn build_atlas(input: &RegionInput) -> Atlas {
         unresolved_years.clear();
         for (i, m) in input.members.iter().enumerate() {
             let slug = member_slug(&m.uri);
-            let (_, body) = split_frontmatter(&m.content).unwrap_or(("", m.content.as_str()));
+            let body = strip_header(&m.content);
+            let body = body.as_str();
             let mut threads: Vec<String> = slug
                 .as_deref()
                 .and_then(|s| curated_threads.get(s))
@@ -587,22 +589,22 @@ fn member_slug(uri: &str) -> Option<String> {
     (!slug.is_empty()).then(|| slug.to_string())
 }
 
-/// Collect a member's in-region influence targets: `edges.cites` targets plus
+/// Collect a member's in-region influence targets: `x0k:cites` targets plus
 /// body `[[wikilink]]` slugs (mapped to `x0k:wiki/<slug>`). Mirrors the
 /// wikilink/cites scanning used by `region_weave`; membership filtering is the
 /// caller's job.
 pub fn scan_influence_targets(content: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if let Ok((env, body)) = parse_envelope(content) {
-        if let Some(cites) = env.edges.get("cites") {
+        if let Some(cites) = env.edges.get("x0k:cites") {
             out.extend(cites.iter().cloned());
         }
         for slug in scan_body_wikilinks(&body) {
             out.push(format!("x0k:wiki/{slug}"));
         }
     } else {
-        // No parseable envelope — still mine the whole content for wikilinks.
-        for slug in scan_body_wikilinks(content) {
+        // No typed header — still mine the body for wikilinks.
+        for slug in scan_body_wikilinks(&strip_header(content)) {
             out.push(format!("x0k:wiki/{slug}"));
         }
     }
@@ -645,21 +647,14 @@ fn parse_wikilink_slug(bytes: &[u8], start: usize) -> Option<(String, usize)> {
     Some((slug, j + 2))
 }
 
-/// Scan a frontmatter YAML block for a `year: NNNN` field (top level under the
-/// `x0k:` envelope; matched leniently by leading-whitespace + `year:`).
-fn frontmatter_year(yaml: &str) -> Option<u32> {
-    for line in yaml.lines() {
-        let t = line.trim_start();
-        if let Some(rest) = t.strip_prefix("year:") {
-            let v = rest.trim();
-            if let Ok(y) = v.parse::<u32>() {
-                if (1800..=2099).contains(&y) {
-                    return Some(y);
-                }
-            }
-        }
-    }
-    None
+/// The header's `x0k:year`, when it states one in the plausible range.
+fn header_year(content: &str) -> Option<u32> {
+    let (env, _) = parse_envelope(content).ok()?;
+    env.properties
+        .get("x0k:year")?
+        .iter()
+        .find_map(|literal| literal.value.trim().parse::<u32>().ok())
+        .filter(|y| (1800..=2099).contains(y))
 }
 
 /// Mine the earliest 18xx/19xx/20xx year from body text (the smallest such
@@ -719,23 +714,21 @@ mod tests {
         }
     }
 
-    /// Build a folio/v1 wiki page with optional `year:` and `cites:`.
+    /// Build a wiki page with an optional `x0k:year` and `x0k:cites`; the
+    /// header goes under the body's `# ` line.
     fn wiki(slug: &str, year: Option<u32>, cites: &[&str], body: &str) -> String {
-        let mut fm = String::from("---\nx0k:\n  format: folio/v1\n  type: wiki\n");
-        fm.push_str(&format!("  id: x0k:wiki/{slug}\n"));
+        let mut header = format!("```turtle folio:document\nwiki:{slug} a x0k:Wiki");
         if let Some(y) = year {
-            fm.push_str(&format!("  year: {y}\n"));
+            header.push_str(&format!(" ;\n    x0k:year {y}"));
         }
         if !cites.is_empty() {
-            fm.push_str("  edges:\n    cites:\n");
-            for c in cites {
-                fm.push_str(&format!("      - {c}\n"));
-            }
+            let targets: Vec<String> = cites.iter().map(|c| c.replace('/', "\\/")).collect();
+            header.push_str(&format!(" ;\n    x0k:cites {}", targets.join(", ")));
         }
-        fm.push_str("---\n\n");
-        fm.push_str(body);
-        fm.push('\n');
-        fm
+        header.push_str(" .\n```\n");
+        let mut doc = x0k_folio::colophon::place_header(&header, body);
+        doc.push('\n');
+        doc
     }
 
     /// Placements for one node URI, by lane name.
@@ -748,10 +741,10 @@ mod tests {
             .collect()
     }
 
-    // (a) Year sourcing — frontmatter > curated > body-mine, with a fixture each.
+    // (a) Year sourcing — header > curated > body-mine, with a fixture each.
     #[test]
-    fn year_source_frontmatter_wins() {
-        // Slug absent from the curated table, frontmatter year set, body year too.
+    fn year_source_header_wins() {
+        // Slug absent from the curated table, header year set, body year too.
         let c = wiki(
             "made-up-node",
             Some(1955),
@@ -765,7 +758,7 @@ mod tests {
         let atlas = build_atlas(&input);
         let n = &atlas.nodes[0];
         assert_eq!(n.year, 1955);
-        assert_eq!(n.year_source, YearSource::Frontmatter);
+        assert_eq!(n.year_source, YearSource::Header);
     }
 
     #[test]
@@ -789,7 +782,7 @@ mod tests {
 
     #[test]
     fn year_source_body_mine_fallback() {
-        // Slug absent from curated, no frontmatter year → earliest body year.
+        // Slug absent from curated, no header year → earliest body year.
         let c = wiki(
             "made-up-node",
             None,

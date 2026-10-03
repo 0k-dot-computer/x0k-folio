@@ -45,7 +45,7 @@ use std::path::PathBuf;
 pub struct RegionMember {
     /// The member's entity URI, exactly as authored (`x0k:design/foo`).
     pub uri: String,
-    /// Full source markdown of the member's decision doc (frontmatter + body).
+    /// Full source markdown of the member's decision doc (header + body).
     pub content: String,
     /// The member's workspace-relative source path, e.g.
     /// `decisions/design/foo.md`. Used as a second link-match key so an
@@ -168,7 +168,7 @@ pub fn weave_region_with_vocabulary(
     let mut transclusion_warnings: Vec<String> = Vec::new();
 
     // Transclusion source: every member, keyed by URI. A spine member's
-    // `transcludes:` / inline `x0k:transclude` references resolve against
+    // `folio:transcludes` / inline `x0k:transclude` references resolve against
     // the region's own membership (intra-region targets only).
     let transclude_source = RegionDocSource::new(input);
 
@@ -197,9 +197,9 @@ pub fn weave_region_with_vocabulary(
         for w in &resolved.warnings {
             transclusion_warnings.push(format!("{}: {:?}", m.uri, w));
         }
-        // Splice the resolved body back behind the member's frontmatter so
-        // the weaver still sees a complete folio/v1 file.
-        let transcluded_content = reassemble_with_body(&m.content, &resolved.body);
+        // Place the resolved body back under the member's header so the
+        // weaver still sees a complete document.
+        let transcluded_content = x0k_folio::colophon::replace_body(&m.content, &resolved.body);
         // Pre-process `[[slug]]` wikilinks BEFORE weaving: in-region → a
         // markdown link `[title](x0k:wiki/slug)` (later rewritten to the local
         // `.html` by `rewrite_cross_doc_links`); out-of-region → plain text.
@@ -266,7 +266,7 @@ pub fn weave_region_with_vocabulary(
 
 /// A [`x0k_folio::transclusion::DocSource`] backed by a region's
 /// members. Maps a folio URI to that member's **body markdown**
-/// (frontmatter stripped), so transclusion references resolve against the
+/// (header lifted out), so transclusion references resolve against the
 /// region's own membership. Only intra-region targets
 /// resolve; an out-of-region reference returns `None` and degrades to a
 /// link (recorded as a warning).
@@ -278,8 +278,8 @@ impl RegionDocSource {
     fn new(input: &RegionInput) -> Self {
         let mut by_uri = HashMap::new();
         for m in &input.members {
-            // Store the FULL file content; `DocSource::body` strips the
-            // frontmatter via the shared `split_body` so the inlined
+            // Store the FULL file content; `DocSource::body` lifts the
+            // header out via the shared `split_body` so the inlined
             // markdown matches what the renderer sees.
             by_uri.insert(m.uri.clone(), m.content.clone());
         }
@@ -291,7 +291,7 @@ impl x0k_folio::transclusion::DocSource for RegionDocSource {
     fn body(&self, uri: &str) -> Option<String> {
         self.by_uri
             .get(uri)
-            .map(|c| x0k_folio::transclusion::split_body(c).1.to_string())
+            .map(|c| x0k_folio::transclusion::split_body(c))
     }
 }
 
@@ -319,27 +319,6 @@ fn scan_media_refs(text: &str) -> Vec<String> {
         }
     }
     refs
-}
-
-/// Reassemble a folio/v1 file from its original frontmatter and a
-/// (transclusion-resolved) body. Preserves the `---`-delimited envelope
-/// byte-for-byte; only the body region is replaced. If the input has no
-/// frontmatter, returns the resolved body alone.
-fn reassemble_with_body(original: &str, new_body: &str) -> String {
-    match x0k_folio::transclusion::split_body(original) {
-        (Some(yaml), _) => {
-            let mut out = String::with_capacity(yaml.len() + new_body.len() + 16);
-            out.push_str("---");
-            out.push_str(yaml);
-            out.push_str("\n---\n");
-            out.push_str(new_body);
-            if !new_body.ends_with('\n') {
-                out.push('\n');
-            }
-            out
-        }
-        (None, _) => new_body.to_string(),
-    }
 }
 
 /// The entry member's artifact filename.
@@ -375,8 +354,8 @@ pub fn build_wiki_title_map(input: &RegionInput) -> HashMap<String, (String, Str
     map
 }
 
-/// Extract the first markdown `# ` heading from a doc's body (cheap line scan).
-/// Skips the frontmatter envelope. Returns `None` if no H1 is present.
+/// Extract the first markdown `# ` heading from a doc (cheap line scan).
+/// Returns `None` if no H1 is present.
 fn first_h1(content: &str) -> Option<String> {
     for line in content.lines() {
         let t = line.trim_start();
@@ -913,11 +892,11 @@ mod tests {
         }
     }
 
-    /// A minimal folio/v1 member body. The weaver only needs the markdown
-    /// body; frontmatter is split off by `weave_html`'s `split_body`.
+    /// A minimal member document. The weaver only needs the markdown
+    /// body; `weave_html` lifts the header out.
     fn doc(title: &str, body: &str) -> String {
         format!(
-            "---\nx0k:\n  format: folio/v1\n  type: design\n  id: x0k:design/x\n---\n\n# {title}\n\n{body}\n"
+            "# {title}\n\n```turtle folio:document\ndesign:x a x0k:Design .\n```\n\n{body}\n"
         )
     }
 
@@ -1152,7 +1131,7 @@ mod tests {
     fn wikilink_resolves_end_to_end_to_local_html() {
         // An in-region `[[slug]]` becomes a markdown link, then the cross-doc
         // rewrite turns the `x0k:wiki/slug` href into the member's local file.
-        let entry = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/lineage\n  subtype: index\n  summary: x\n  edges:\n    cites:\n      - x0k:wiki/hypercard\n---\n\n# Lineage\n\nSee [[hypercard]].\n".to_string();
+        let entry = "# Lineage\n\n```turtle folio:document\nwiki:lineage a x0k:Wiki ;\n    x0k:subtype \"index\" ;\n    x0k:summary \"x\" ;\n    x0k:cites wiki:hypercard .\n```\n\nSee [[hypercard]].\n".to_string();
         let card = doc("HyperCard", "Body.");
         let input = RegionInput {
             entry_point_uri: "x0k:wiki/lineage".to_string(),
@@ -1186,11 +1165,11 @@ mod tests {
     }
 
     #[test]
-    fn wiki_frontmatter_with_extra_fields_weaves() {
-        // Wiki frontmatter carries extra fields (subtype, summary, edges.cites).
+    fn a_wiki_header_with_extra_fields_weaves() {
+        // A wiki header carries extra terms (subtype, summary, cites).
         // Confirm parse_document + weave_html tolerate them.
-        let content = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/x\n  subtype: node\n  summary: a short summary\n  updated_by: agent\n  created_at: 2026-06-05\n  concerns: [lineage]\n  edges:\n    cites:\n      - x0k:wiki/y\n---\n\n# X Page\n\nProse with a [[y]] link.\n";
-        let parsed = parse_document(content).expect("wiki frontmatter should parse");
+        let content = "# X Page\n\n```turtle folio:document\nwiki:x a x0k:Wiki ;\n    x0k:subtype \"node\" ;\n    x0k:summary \"a short summary\" ;\n    x0k:updatedBy \"agent\" ;\n    x0k:createdAt \"2026-06-05\" ;\n    x0k:concerns \"lineage\" ;\n    x0k:cites wiki:y .\n```\n\nProse with a [[y]] link.\n";
+        let parsed = parse_document(content).expect("a wiki header should parse");
         let out = weave_html(content, &parsed).expect("wiki page should weave");
         assert!(out.html.starts_with("<!DOCTYPE html>"));
         assert_eq!(out.title.as_deref(), Some("X Page"));

@@ -1,27 +1,16 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/materialize
-  type: implementation
-  status: draft
-  summary: The folio/v1 materializer — facts back out to an envelope, with no Loro anywhere in it, so the published build ships a facts→file implementation instead of a feature-gated one.
-  concerns:
-  - folio
-  - materialization
-  - facts
-  - projection
-  - publication
-  tangle:
-    crate: crates/x0k-folio
-    root: src/materialize.rs
-  edges:
-    implements:
-    - x0k:architecture/filesystem-graph-materialization
-    cites:
-    - x0k:architecture/publication-is-the-shipping-unit
----
 
 # Facts back out to a folio
+
+```turtle folio:document
+implementation:folio\/materialize a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The folio materializer — facts back out to a header, with no Loro anywhere in it, so the published build ships a facts→file implementation instead of a feature-gated one." ;
+    x0k:concerns "folio", "materialization", "facts", "projection", "publication" ;
+    x0k:cites architecture:publication-is-the-shipping-unit ;
+    x0k:implements architecture:filesystem-graph-materialization ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/materialize.rs" .
+```
 
 The sibling chapter `projection.md` is the folio plugin the daemon calls,
 and it is exactly the thing this publication cannot ship: it reads a Loro
@@ -41,15 +30,15 @@ plugin was carrying that never needed the substrate.
 
 Start with the honest limit, because it decides the shape of everything
 below. [`project_envelope`](x0k_fact_projection::project_envelope) projects
-a folio *envelope*: status, type, subtype, body format, concerns, the
+a folio *header*: status, class, subtype, body format, concerns, the
 materialization pointers, and the edges. It does not project the body, and
 no predicate on the fact plane names one today.
 
-So this materializer reconstructs the envelope exactly and renders the body
+So this materializer reconstructs the header exactly and renders the body
 from `x0k:folio/body` when a producer has put one there. Absent that fact,
-the document materializes as its envelope with an empty body — which is the
+the document materializes as its header with an empty body — which is the
 true statement about what the facts contain, not a gap papered over. The
-round-trip this chapter proves is therefore envelope-exact, and that is
+round-trip this chapter proves is therefore header-exact, and that is
 precisely as much as the fact plane currently supports.
 
 <a name="chunk-body-predicate"></a><sub>[`src/materialize.rs`](../../crates/x0k-folio/src/materialize.rs) · `#body-predicate`</sub>
@@ -60,29 +49,31 @@ precisely as much as the fact plane currently supports.
 /// In the `x0k:folio/*` namespace `x0k-fact-projection` already owns
 /// (beside `bodyFormat`, which presumes a body exists), but deliberately
 /// NOT emitted by `project_envelope` — that function projects the
-/// envelope, and a body reaching the fact plane is a producer's choice.
+/// header, and a body reaching the fact plane is a producer's choice.
 /// A materializer reads it if it is there.
 pub const BODY_PREDICATE: &str = "x0k:folio/body";
 ```
 
-## Rebuilding the envelope
+## Rebuilding the header
 
 The reconstruction is a fold over one entity's facts, and its only real
 decisions are what to do with a value that does not belong. Two rules, both
 refusals:
 
-- A **text fact under a known envelope predicate whose value is not a legal
-  member of that field** — a status of `"perhaps"`, a type of `"poem"` — is
-  an error, not a field to drop. Dropping it would materialize a document
+- A **fact under a known header predicate whose value is not a legal member
+  of that field** — a status of `"perhaps"`, a class that is no genus — is an
+  error, not a field to drop. Dropping it would materialize a document
   that silently disagrees with the facts it came from.
-- An **entity reference under any predicate** is an edge. That is the same
-  division `project_envelope` makes on the way in, read backwards, so a
-  predicate nobody has heard of round-trips rather than being lost.
+- An **entity reference under any other predicate** is an edge. That is the
+  same division `project_envelope` makes on the way in, read backwards, so a
+  predicate nobody has heard of round-trips rather than being lost. The spine
+  spells an edge in the shared namespace by its bare local name
+  (`motivatedBy`); the header's compact term is `x0k:motivatedBy`.
 
 <a name="chunk-from-facts"></a><sub>[`src/materialize.rs`](../../crates/x0k-folio/src/materialize.rs) · `#from-facts`</sub>
 
 ```rust {#from-facts}
-/// Rebuild a folio envelope from one entity's facts.
+/// Rebuild a folio header from one entity's facts.
 ///
 /// The inverse of `project_envelope`,
 /// including its treatment of unknown predicates: anything carrying an
@@ -94,7 +85,7 @@ pub fn colophon_from_facts(facts: &[FactEntry]) -> Result<(Colophon, String), Ma
     };
     // Written out rather than spread from a default: `Colophon` has no
     // `Default`, and giving it one so this line could be shorter would put a
-    // genus-less envelope one `..` away from every other caller.
+    // genus-less header one `..` away from every other caller.
     let mut envelope = Colophon {
         id: first.entity.clone(),
         doc_type: DocType::Implementation,
@@ -106,6 +97,7 @@ pub fn colophon_from_facts(facts: &[FactEntry]) -> Result<(Colophon, String), Ma
         created_at: None,
         updated_at: None,
         edges: BTreeMap::new(),
+        properties: BTreeMap::new(),
         materialization: None,
         tangle: None,
         pipelines: Vec::new(),
@@ -124,24 +116,25 @@ pub fn colophon_from_facts(facts: &[FactEntry]) -> Result<(Colophon, String), Ma
             )));
         }
         match &fact.value {
+            FactValue::EntityRef(class) if fact.predicate == envelope_predicates::CLASS => {
+                envelope.doc_type = DocType::of_class(&full_c0k(class), None).map_err(|_| {
+                    MaterializeError(format!("`{class}` is not a folio genus"))
+                })?;
+                saw_type = true;
+            }
             FactValue::EntityRef(target) => {
-                envelope
-                    .edges
-                    .entry(fact.predicate.clone())
-                    .or_default()
-                    .push(target.clone());
+                let predicate = if fact.predicate.contains(':') {
+                    fact.predicate.clone()
+                } else {
+                    format!("x0k:{}", fact.predicate)
+                };
+                envelope.edges.entry(predicate).or_default().push(target.clone());
             }
             FactValue::Text(text) => match fact.predicate.as_str() {
                 envelope_predicates::STATUS => {
                     envelope.status = Some(Status::from_str(text).ok_or_else(|| {
                         MaterializeError(format!("`{text}` is not a folio status"))
                     })?);
-                }
-                envelope_predicates::DOC_TYPE => {
-                    envelope.doc_type = DocType::from_str(text).ok_or_else(|| {
-                        MaterializeError(format!("`{text}` is not a folio type"))
-                    })?;
-                    saw_type = true;
                 }
                 envelope_predicates::SUBTYPE => envelope.subtype = Some(text.clone()),
                 envelope_predicates::BODY_FORMAT => envelope.body_format = text.clone(),
@@ -160,17 +153,17 @@ pub fn colophon_from_facts(facts: &[FactEntry]) -> Result<(Colophon, String), Ma
                 }
                 BODY_PREDICATE => body = text.clone(),
                 // A text value under an unknown predicate is not an edge and
-                // has no envelope field. Refusing is what keeps a lossy
+                // has no header field. Refusing is what keeps a lossy
                 // render from looking like a successful one.
                 other => {
                     return Err(MaterializeError(format!(
-                        "no envelope field for text predicate `{other}`"
+                        "no header field for text predicate `{other}`"
                     )))
                 }
             },
             other => {
                 return Err(MaterializeError(format!(
-                    "folio envelopes carry text and entity refs; got {other:?} at `{}`",
+                    "folio headers project to text and entity refs; got {other:?} at `{}`",
                     fact.predicate
                 )))
             }
@@ -181,7 +174,7 @@ pub fn colophon_from_facts(facts: &[FactEntry]) -> Result<(Colophon, String), Ma
         return Err(MaterializeError(format!(
             "`{}` has no `{}` fact, so its genus is unknown",
             envelope.id,
-            envelope_predicates::DOC_TYPE
+            envelope_predicates::CLASS
         )));
     }
     if saw_materialization {
@@ -195,14 +188,14 @@ pub fn colophon_from_facts(facts: &[FactEntry]) -> Result<(Colophon, String), Ma
 
 Everything above is the work; the trait implementation is the seam it
 plugs into. The placement and the policy are held rather than hardcoded,
-because one `folio/v1` name serves many classes — `x0k:wiki/*` and
+because one `folio/v2` name serves many classes — `x0k:wiki/*` and
 `x0k:design/*` are the same format at different paths under different
 policies.
 
 <a name="chunk-materializer"></a><sub>[`src/materialize.rs`](../../crates/x0k-folio/src/materialize.rs) · `#materializer`</sub>
 
 ```rust {#materializer}
-/// The `folio/v1` materializer: facts → envelope bytes.
+/// The folio materializer: facts → document bytes.
 ///
 /// Parameterized per class by placement and policy, so several instances
 /// of one format serve `x0k:wiki/*`, `x0k:design/*` and the rest.
@@ -223,7 +216,7 @@ impl FolioMaterializer {
 
 impl Materializer for FolioMaterializer {
     fn name(&self) -> &str {
-        FOLIO_V1_MATERIALIZER_NAME
+        FOLIO_MATERIALIZER_NAME
     }
 
     fn placement(&self) -> &PathTemplate {
@@ -236,15 +229,13 @@ impl Materializer for FolioMaterializer {
 
     fn render(&self, facts: &[FactEntry]) -> Result<Vec<u8>, MaterializeError> {
         let (envelope, body) = colophon_from_facts(facts)?;
-        let mut out = render_envelope(&envelope);
-        out.push_str(&body);
-        Ok(out.into_bytes())
+        Ok(render_document(&envelope, &body).into_bytes())
     }
 }
 
 /// The name this materializer answers to, matching the `plugin = "..."`
 /// spelling a class manifest uses.
-pub const FOLIO_V1_MATERIALIZER_NAME: &str = "folio/v1";
+pub const FOLIO_MATERIALIZER_NAME: &str = "folio/v2";
 ```
 
 ## The module
@@ -252,7 +243,7 @@ pub const FOLIO_V1_MATERIALIZER_NAME: &str = "folio/v1";
 <a name="chunk-root"></a><sub>[`src/materialize.rs`](../../crates/x0k-folio/src/materialize.rs) · `#root` · assembles [body-predicate](#chunk-body-predicate) · [from-facts](#chunk-from-facts) · [materializer](#chunk-materializer) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
-//! The `folio/v1` materializer — facts back out to an envelope.
+//! The folio materializer — facts back out to a header.
 //!
 //! [`FolioMaterializer`] implements
 //! [`Materializer`] with no Loro, no
@@ -262,16 +253,17 @@ pub const FOLIO_V1_MATERIALIZER_NAME: &str = "folio/v1";
 //! and severed at publish, and this module is not a smaller version of it
 //! but the direction it was carrying that never needed the substrate.
 //!
-//! The round-trip is envelope-exact: the fact plane holds a folio's
-//! envelope, and [`BODY_PREDICATE`] is where a producer may put the body
+//! The round-trip is header-exact: the fact plane holds a folio's
+//! header, and [`BODY_PREDICATE`] is where a producer may put the body
 //! it does not otherwise carry.
 //!
 //! Governing decision:
 //! `corpora/x0k/decisions/architecture/production/filesystem-graph-materialization.md` §8.
 
 use crate::colophon::{
-    render_envelope, Colophon, DocType, Materialization, Status, BODY_FORMAT_MARKDOWN,
+    render_document, Colophon, DocType, Materialization, Status, BODY_FORMAT_MARKDOWN,
 };
+use x0k_ontology::concept_facts::full_c0k;
 use x0k_fact_projection::materialize::{
     LiveEditPolicy, MaterializeError, Materializer, PathTemplate,
 };
@@ -316,6 +308,7 @@ mod tests {
             uri: "x0k:design/code-ingestion".to_string(),
             status: "accepted".to_string(),
             doc_type: "design".to_string(),
+            class: "x0k:Design".to_string(),
             subtype: None,
             body_format: BODY_FORMAT_MARKDOWN.to_string(),
             concerns: vec!["corpus".to_string(), "literate".to_string()],
@@ -359,13 +352,18 @@ mod tests {
             uri: envelope.id.clone(),
             status: envelope.status.map(|s| s.as_str().to_string()).unwrap_or_default(),
             doc_type: envelope.doc_type.as_str().to_string(),
+            class: x0k_ontology::concept_facts::bare_c0k(&envelope.doc_type.class_iri()),
             subtype: envelope.subtype.clone(),
             body_format: envelope.body_format.clone(),
             concerns: envelope.concerns.clone(),
             materialization_loro_doc_id: None,
             materialization_document_revision_id: None,
             materialization_content_hash: None,
-            edges: envelope.edges.iter().map(|(p, t)| (p.clone(), t.clone())).collect(),
+            edges: envelope
+                .edges
+                .iter()
+                .map(|(p, t)| (p.strip_prefix("x0k:").unwrap_or(p).to_string(), t.clone()))
+                .collect(),
             unknown_edges: Vec::new(),
         };
         if let Some(m) = &envelope.materialization {
@@ -378,7 +376,7 @@ mod tests {
 
     /// A body a producer put on the fact plane comes back out with it.
     #[test]
-    fn a_body_fact_is_rendered_after_the_envelope() {
+    fn a_body_fact_is_rendered_with_the_header() {
         let mut facts = project_envelope(&view());
         facts.push(FactEntry::new(
             "x0k:design/code-ingestion",
@@ -387,22 +385,21 @@ mod tests {
         ));
         let bytes = materializer().render(&facts).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        assert!(text.ends_with("\n# Ingesting code you already have\n"), "{text}");
         let (_, body) = parse_envelope(&text).unwrap();
-        assert!(body.contains("Ingesting code you already have"));
+        assert_eq!(body, "\n# Ingesting code you already have\n");
     }
 
-    /// Without a body fact the document is its envelope — the true
+    /// Without a body fact the document is its header — the true
     /// statement about what the facts hold.
     #[test]
-    fn no_body_fact_materializes_an_envelope_alone() {
+    fn no_body_fact_materializes_a_header_alone() {
         let text = String::from_utf8(materializer().render(&project_envelope(&view())).unwrap())
             .unwrap();
         let (_, body) = parse_envelope(&text).unwrap();
         assert!(body.trim().is_empty(), "unexpected body: {body:?}");
     }
 
-    /// A value no envelope field accepts is a refusal, not a dropped
+    /// A value no header field accepts is a refusal, not a dropped
     /// field: materializing it would produce a document that disagrees
     /// with the facts it came from.
     #[test]
@@ -416,7 +413,7 @@ mod tests {
     }
 
     /// One materializer call renders one entity. Facts about two would
-    /// otherwise interleave into a single envelope.
+    /// otherwise interleave into a single header.
     #[test]
     fn facts_about_two_entities_are_refused() {
         let mut facts = project_envelope(&view());

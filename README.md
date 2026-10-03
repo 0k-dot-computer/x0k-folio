@@ -26,16 +26,13 @@ Where to start depends on what your documents already are:
 Here is a whole document, `docs/occlusion.md`:
 
 ````markdown
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/occlusion
-  type: implementation
-  status: accepted
-  tangle:
-    root: src/occlusion.js
----
 # Ambient occlusion
+
+```turtle folio:document
+implementation:occlusion a x0k:Implementation ;
+    x0k:status "accepted" ;
+    folio:tangleRoot "src/occlusion.js" .
+```
 
 The visibility term is the mean of the samples the sampler returned.
 
@@ -63,7 +60,9 @@ x0k-tangle tangle docs/occlusion.md --workspace .
 files. It writes `src/occlusion.js` and `src/occlusion.d.ts`, each opening
 with a `@generated` header in that file's own comment style, plus a
 `docs/occlusion.tangle-map.json` sidecar recording which chunk produced which
-file.
+file. The Turtle block under the title is the document's own header:
+`folio:tangleRoot` names the file a chunk lands in when it names no other,
+and the rest of it says [what the document is](#typed-documents).
 
 One document, two files, two languages. The declarations and the code they
 declare cannot fall out of step, because there is one place to edit them and
@@ -128,37 +127,38 @@ provenance, and building from source.
 
 ## Typed documents
 
-Each document has a small YAML header that gives it an identity, a kind, and
-named relationships to other documents. An implementation can name the design
-it follows; a design can name the decision that supports it; a decision can
-name the one that replaced it:
+Each document has a small header — one Turtle block under its title — that
+gives it an identity, a kind, and named relationships to other documents. An
+implementation can name the design it follows; a design can name the decision
+that supports it; a decision can name the one that replaced it:
 
-```yaml
----
-x0k:
-  format: folio/v1
-  id: acme:decision/retry-budget
-  type: decision
-  status: superseded
-  edges:
-    superseded_by:
-      - acme:decision/retry-budget-v2
----
+````markdown
+# Retry budget
+
+```turtle folio:document
+decision:retry-budget a x0k:Decision ;
+    x0k:status "superseded" ;
+    x0k:supersededBy decision:retry-budget-v2 .
 ```
+````
 
+The subject is the document, `a` names its class, and every other line is a
+statement in the vocabulary's own terms: `x0k:supersededBy` is the property
+the vocabulary file declares, spelled the same way, and `decision:` is a
+prefix you get without declaring it, one per class the vocabulary has.
 `check` validates headers against the shipped vocabulary, or yours:
 `--vocabulary <dir>` adds your own modules, and
 [a six-line module](guides/INTEGRATING.md#the-smallest-module-of-all) gives
-your documents their own id prefix, like `acme:` here. What a typed
+your documents ids under a prefix of your own, such as `acme:`. What a typed
 collection gives you, and the command behind each:
 
 | What | Command | Fails when |
 |---|---|---|
-| Check headers and links against the vocabulary | `x0k-tangle check <dir>` | a type or edge the vocabulary does not declare; in a class it describes, an undeclared field or a literal its datatype contradicts |
+| Check headers and links against the vocabulary | `x0k-tangle check <dir>` | a class or edge the vocabulary does not declare; in a class it describes, an undeclared field or a literal its datatype contradicts |
 | Gate CI on a closed set | `x0k-tangle check <dir> --closed` | an edge names a document that is not in the set, such as a rename nobody finished |
 | Keep generated code in step | `x0k-tangle tangle <doc>`, then `git diff --exit-code` | a generated file no longer matches its document |
 | Keep quoted code current | `x0k-tangle sync <path…>`, then `check` | a mirror no longer matches the source it quotes |
-| Ask across the set | `x0k-folio-cli ingest`, then `query --named status` or `--named superseded` | — (lists every document's status, or each replaced decision and what replaced it, read from `superseded_by` edges) |
+| Ask across the set | `x0k-folio-cli ingest`, then `query --named status` or `--named superseded` | — (lists every document's status, or each replaced decision and what replaced it, read from `x0k:supersededBy` edges) |
 
 Out of the box an edge to a document outside the scanned folder is a note,
 not a failure, because a collection is usually part of something larger;
@@ -250,8 +250,9 @@ a small example, and explain the cost of keeping it up to date.
 ## Vocabularies and publications
 
 The vocabulary is RDF. Its concepts are OWL classes, and a document can define
-concepts of its own in a `turtle folio:ontology` block and describe particular
-things with them in typed blocks.
+concepts of its own in a `turtle folio:graph` block and describe particular
+things with them in more graph blocks, one thing per section — the heading is
+its title and the prose its description.
 [`crates/x0k-folio-cli/examples/papers/`](crates/x0k-folio-cli/examples/papers)
 is a small collection that does both — a `paper:` namespace and a `Paper`
 class, and two papers citing each other — to copy as a start.

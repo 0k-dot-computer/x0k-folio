@@ -1,31 +1,19 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/presentation
-  type: implementation
-  status: draft
-  summary: 'Wrapping the woven pages in a canvas shell instead of forking the weaver: the pages move under `pages/` as the fallback a screen reader and a crawler still get, and the shell reads static JSON with no daemon in the loop.'
-  concerns:
-  - tangle
-  - publication
-  - presentation
-  - render-vello
-  - fallback
-  - theme
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/presentation.rs
-  edges:
-    implements:
-    - x0k:design/author-and-publish-the-same-surface
-    cites:
-    - x0k:implementation/tangle/region-weave
-    - x0k:implementation/tangle/region-project
-    - x0k:implementation/tangle/atlas
-    - x0k:implementation/folio/colophon
----
 
 # The shell wraps the weave; it does not fork it
+
+```turtle folio:document
+implementation:tangle\/presentation a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Wrapping the woven pages in a canvas shell instead of forking the weaver: the pages move under `pages/` as the fallback a screen reader and a crawler still get, and the shell reads static JSON with no daemon in the loop." ;
+    x0k:concerns "tangle", "publication", "presentation", "render-vello", "fallback", "theme" ;
+    x0k:cites implementation:tangle\/region-weave,
+        implementation:tangle\/region-project,
+        implementation:tangle\/atlas,
+        implementation:folio\/colophon ;
+    x0k:implements design:author-and-publish-the-same-surface ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/presentation.rs" .
+```
 
 A woven region is already a publication: one standalone HTML page per
 member, cross-linked, with a site nav and an `atlas.json`. It is also
@@ -411,16 +399,19 @@ inert.
 
 ```rust {#members-json}
 /// Build `members.json`: `{ "members": { "<uri>": {title, summary, body} } }`.
-/// `title` is the member's first H1, `summary` its frontmatter `summary:` field,
+/// `title` is the member's first H1, `summary` its header's `x0k:summary`,
 /// `body` a cleaned prose excerpt of its body (the deep-doc portal text).
 pub fn build_members_json(input: &RegionInput) -> Vec<u8> {
     use serde_json::{Map, Value};
     let mut members = Map::new();
     for m in &input.members {
-        let (front, body) = split_frontmatter(&m.content);
-        let title = first_h1(&m.content).unwrap_or_else(|| m.uri.clone());
-        let summary = frontmatter_field(front, "summary").unwrap_or_default();
-        let excerpt = body_excerpt(body);
+        let body = x0k_folio::colophon::strip_header(&m.content);
+        let title = first_h1(&body).unwrap_or_else(|| m.uri.clone());
+        let summary = x0k_folio::colophon::parse_envelope(&m.content)
+            .ok()
+            .and_then(|(env, _)| env.summary)
+            .unwrap_or_default();
+        let excerpt = body_excerpt(&body);
         let mut obj = Map::new();
         obj.insert("title".into(), Value::String(title));
         obj.insert("summary".into(), Value::String(summary));
@@ -448,60 +439,14 @@ fn stub_narrative_json() -> Vec<u8> {
 }
 ```
 
-## A third frontmatter splitter
+## The member's own words
 
-`split_frontmatter` here is the third near-duplicate of one operation in
-the published crates, beside `x0k_folio::colophon::split_frontmatter` and
-`x0k_folio::transclusion::split_body`. `first_h1` likewise has copies in
-the region weaver and the atlas builder. They are kept as they are: each is
-a dozen lines, each tolerates slightly different input (this one accepts a
-BOM and CRLF envelopes), and the duplication is named rather than resolved
-so the byte-for-byte projection of this module stays honest.
-
-<a name="chunk-split-frontmatter"></a><sub>[`src/presentation.rs`](../../crates/x0k-tangle/src/presentation.rs) · `#split-frontmatter`</sub>
-
-```rust {#split-frontmatter}
-/// Split a folio/v1 document into `(frontmatter, body)`. If the leading
-/// `---`-delimited envelope is absent, frontmatter is empty and the whole input
-/// is the body.
-fn split_frontmatter(content: &str) -> (&str, &str) {
-    let trimmed = content.trim_start_matches('\u{feff}');
-    if let Some(rest) = trimmed.strip_prefix("---\n") {
-        if let Some(end) = rest.find("\n---\n") {
-            let front = &rest[..end];
-            let body = &rest[end + "\n---\n".len()..];
-            return (front, body);
-        }
-        if let Some(end) = rest.find("\n---\r\n") {
-            let front = &rest[..end];
-            let body = &rest[end + "\n---\r\n".len()..];
-            return (front, body);
-        }
-    }
-    ("", content)
-}
-```
-
-<a name="chunk-frontmatter-field"></a><sub>[`src/presentation.rs`](../../crates/x0k-tangle/src/presentation.rs) · `#frontmatter-field`</sub>
-
-```rust {#frontmatter-field}
-/// Pull a top-level scalar `key: value` from a frontmatter block (cheap line
-/// scan; only matches keys indented two spaces under the `x0k:` envelope, which
-/// is where wiki `summary:` lives). Strips surrounding quotes.
-fn frontmatter_field(front: &str, key: &str) -> Option<String> {
-    let needle = format!("  {key}:");
-    for line in front.lines() {
-        if let Some(rest) = line.strip_prefix(&needle) {
-            let v = rest.trim();
-            let v = v.trim_matches(|c| c == '"' || c == '\'');
-            if !v.is_empty() {
-                return Some(v.to_string());
-            }
-        }
-    }
-    None
-}
-```
+A member's summary is its header's `x0k:summary`, read with the shared
+header parser, and its body is the document with the header lifted out
+(`strip_header`), so the Turtle never reaches the portal. `first_h1` has
+copies in the region weaver and the atlas builder; each is a few lines and
+the duplication is named rather than resolved so the byte-for-byte
+projection of this module stays honest.
 
 <a name="chunk-first-h1"></a><sub>[`src/presentation.rs`](../../crates/x0k-tangle/src/presentation.rs) · `#first-h1`</sub>
 
@@ -619,26 +564,9 @@ mod tests {
 
     fn wiki_doc(id: &str, title: &str, summary: &str, body: &str) -> String {
         format!(
-            "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: {id}\n  summary: {summary}\n---\n\n# {title}\n\n{body}\n"
+            "# {title}\n\n```turtle folio:document\n{} a x0k:Wiki ;\n    x0k:summary \"{summary}\" .\n```\n\n{body}\n",
+            id.replace('/', "\\/")
         )
-    }
-
-    #[test]
-    fn split_frontmatter_extracts_body() {
-        let c = "---\nx0k:\n  type: wiki\n---\n\n# Title\n\nBody text.\n";
-        let (front, body) = split_frontmatter(c);
-        assert!(front.contains("type: wiki"));
-        assert!(body.contains("# Title"));
-        assert!(body.contains("Body text."));
-    }
-
-    #[test]
-    fn frontmatter_summary_field_parsed() {
-        let front = "x0k:\n  format: folio/v1\n  summary: A short summary\n  type: wiki";
-        assert_eq!(
-            frontmatter_field(front, "summary").as_deref(),
-            Some("A short summary")
-        );
     }
 
     #[test]
@@ -674,6 +602,7 @@ mod tests {
         assert_eq!(a["title"], "Alpha");
         assert_eq!(a["summary"], "Summary A");
         assert!(a["body"].as_str().unwrap().contains("Prose about alpha."));
+        assert!(!a["body"].as_str().unwrap().contains("folio:document"), "the header is not prose: {a}");
         assert!(v["members"]["x0k:wiki/b"]["title"] == "Beta");
     }
 
@@ -787,7 +716,7 @@ mod tests {
 
 ## The file
 
-<a name="chunk-root"></a><sub>[`src/presentation.rs`](../../crates/x0k-tangle/src/presentation.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [shell-assets](#chunk-shell-assets) · [apply-publication-shell](#chunk-apply-publication-shell) · [escape-html-text](#chunk-escape-html-text) · [motif-loader](#chunk-motif-loader) · [thread-hex](#chunk-thread-hex) · [publication-theme](#chunk-publication-theme) · [fallback-paths](#chunk-fallback-paths) · [members-json](#chunk-members-json) · [stub-narrative](#chunk-stub-narrative) · [split-frontmatter](#chunk-split-frontmatter) · [frontmatter-field](#chunk-frontmatter-field) · [first-h1](#chunk-first-h1) · [body-excerpt](#chunk-body-excerpt) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/presentation.rs`](../../crates/x0k-tangle/src/presentation.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [shell-assets](#chunk-shell-assets) · [apply-publication-shell](#chunk-apply-publication-shell) · [escape-html-text](#chunk-escape-html-text) · [motif-loader](#chunk-motif-loader) · [thread-hex](#chunk-thread-hex) · [publication-theme](#chunk-publication-theme) · [fallback-paths](#chunk-fallback-paths) · [members-json](#chunk-members-json) · [stub-narrative](#chunk-stub-narrative) · [first-h1](#chunk-first-h1) · [body-excerpt](#chunk-body-excerpt) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -810,9 +739,6 @@ mod tests {
 
 <<stub-narrative>>
 
-<<split-frontmatter>>
-
-<<frontmatter-field>>
 
 <<first-h1>>
 

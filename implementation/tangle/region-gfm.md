@@ -1,29 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/region-gfm
-  type: implementation
-  status: draft
-  summary: 'A chapter woven for a forge''s renderer — a caption over every named fence, x0k: links rewritten to shipped paths — under two tested invariants, the same tangle and line-for-line inversion; and an affordance''s section woven with the evidence its record holds.'
-  concerns:
-  - tangle
-  - publishing
-  - weave
-  - markdown
-  - github
-  - affordances
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/region_gfm.rs
-  edges:
-    implements:
-    - x0k:design/publish-a-region-as-a-repository
-    cites:
-    - x0k:implementation/tangle/region-repo
-    - x0k:implementation/tangle/receiving
-    - x0k:implementation/tangle/weave
----
 # Weaving a chapter for a forge
+
+```turtle folio:document
+implementation:tangle\/region-gfm a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "A chapter woven for a forge's renderer — a caption over every named fence, x0k: links rewritten to shipped paths — under two tested invariants, the same tangle and line-for-line inversion; and an affordance's section woven with the evidence its record holds." ;
+    x0k:concerns "tangle", "publishing", "weave", "markdown", "github", "affordances" ;
+    x0k:cites implementation:tangle\/region-repo,
+        implementation:tangle\/receiving,
+        implementation:tangle\/weave ;
+    x0k:implements design:publish-a-region-as-a-repository ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/region_gfm.rs" .
+```
 
 A [literate program](../../background/literate-programming.md "x0k:wiki/literate-programming") has two projections:
 the tangle, which is the code, and the weave, which is the document as
@@ -79,7 +67,12 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{bail, Result};
-use x0k_folio::colophon::{parse_envelope, split_frontmatter};
+use x0k_folio::colophon::{
+    compact_iri, find_header, host_frontmatter, is_marker, read_tool_config, shipped_prefixes,
+    GRAPH_MARKER,
+};
+use x0k_folio::inline_entity::{read_graph_block, GraphContent};
+use x0k_ontology::concept_facts::X0K_NS;
 
 use crate::chunk_refs::find_chunk_refs_aware;
 use crate::parser::parse_info_string;
@@ -87,9 +80,43 @@ use crate::parser::parse_info_string;
 
 ## The segments of a body
 
+A chapter's host frontmatter, when it has one, is a site generator's and
+is never woven; everything after it is. The header needs no special case:
+it is a fenced block like any other, carried exactly as written, and it
+names no chunk, so it gets no caption.
+
+<a name="chunk-split-host"></a><sub>[`src/region_gfm.rs`](../../crates/x0k-tangle/src/region_gfm.rs) · `#split-host`</sub>
+
+```rust {#split-host}
+/// `text` cut after its host frontmatter: the part no weave touches, and
+/// the part every weave walks.
+fn split_host(text: &str) -> (&str, &str) {
+    let end = host_frontmatter(text).map_or(0, |range| range.end);
+    text.split_at(end)
+}
+
+/// The id of the affordance a graph block declares, compact, or `None`
+/// when the block declares vocabulary, an instance of another class, or
+/// does not read.
+fn affordance_id(block: &str) -> Option<String> {
+    let prefixes = shipped_prefixes();
+    match read_graph_block(block, prefixes, 1).ok()? {
+        GraphContent::Instance { subject, class, .. } if class == format!("{X0K_NS}Affordance") => {
+            Some(compact_iri(&subject, prefixes))
+        }
+        _ => None,
+    }
+}
+```
+
 Both weaves walk the body the same way: as a run of prose lines and
 fenced blocks, where a fence opens on a run of three or more backticks
-or tildes and closes on a run of the same character at least as long.
+or tildes and closes on a run of the same character at least as long
+with nothing after it. A backtick run whose info string holds another
+backtick opens nothing — at the start of a paragraph it is inline code
+quoting a fence — and a run followed by an info string closes nothing,
+which is what keeps a five-backtick chunk's opening line from closing a
+block it does not belong to.
 That is CommonMark's rule, and it is also the tangler's, which is why
 the weave can promise to leave every fence exactly where the tangler
 finds it. An indented or nested fence — a chapter quoting markdown
@@ -112,13 +139,22 @@ enum Segment<'a> {
     },
 }
 
-/// The fence run a line opens or closes: its character and length, when
-/// the line starts (after indentation) with three or more of one.
+/// The fence run a line opens: its character and length, when the line
+/// starts (after indentation) with three or more of one. A backtick run
+/// whose info string holds a backtick is inline code, not a fence.
 fn fence_run(line: &str) -> Option<(char, usize)> {
     let t = line.trim_start();
     let c = t.chars().next().filter(|c| *c == '`' || *c == '~')?;
     let n = t.chars().take_while(|x| *x == c).count();
-    (n >= 3).then_some((c, n))
+    (n >= 3 && !(c == '`' && t[n..].contains('`'))).then_some((c, n))
+}
+
+/// True when `line` closes a fence opened by `n` of `c`: a run of `c` at
+/// least that long and nothing after it.
+fn closes_fence(line: &str, c: char, n: usize) -> bool {
+    let t = line.trim_start();
+    let run = t.chars().take_while(|x| *x == c).count();
+    run >= n && t[run..].trim().is_empty()
 }
 
 /// Cut a body into segments. Lines keep their terminators, so the
@@ -129,7 +165,7 @@ fn segments(body: &str) -> Vec<Segment<'_>> {
     for line in body.split_inclusive('\n') {
         let run = fence_run(line);
         if let Some((c, n, _, _, _)) = &open {
-            if run.is_some_and(|(c2, n2)| c2 == *c && n2 >= *n) {
+            if closes_fence(line, *c, *n) {
                 let (_, _, open_line, info, body) = open.take().unwrap();
                 out.push(Segment::Fence { open: open_line, info, body, close: Some(line) });
                 continue;
@@ -244,13 +280,14 @@ pub fn weave_chapter_with_instances(
     text: &str, rel: &str, crate_name: Option<&str>, links: &ChapterLinks,
     instances: &crate::instance_rendering::InstancePresentation,
 ) -> Result<String> {
-    let Some((_, body)) = split_frontmatter(text) else {
-        bail!("{rel} carries no folio/v1 envelope");
-    };
-    let head = &text[..text.len() - body.len()];
-    let root = parse_envelope(text)
+    if find_header(text).is_none() {
+        bail!("{rel} carries no folio header");
+    }
+    let (head, body) = split_host(text);
+    let root = read_tool_config(text)
         .ok()
-        .and_then(|(env, _)| env.tangle.and_then(|t| t.root));
+        .flatten()
+        .and_then(|(tangle, _)| tangle.root);
     let mut out = String::with_capacity(text.len() + text.len() / 4);
     out.push_str(head);
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
@@ -424,8 +461,9 @@ fn code_span(s: &str) -> (&str, &str) {
 
 The inverse drops what the weave added and restores what it rewrote,
 and nothing else: a caption line and the blank line under it; a link's
-path in favour of the id in its title. It reads only the body — the
-envelope was never woven — and it needs no knowledge of the projection,
+path in favour of the id in its title. It reads only what the weave
+read — a host frontmatter is never woven, and the header is a fence the
+weave leaves as written — and it needs no knowledge of the projection,
 which is what lets the receiver apply it to a clone it did not make.
 
 <a name="chunk-unweave-chapter"></a><sub>[`src/region_gfm.rs`](../../crates/x0k-tangle/src/region_gfm.rs) · `#unweave-chapter`</sub>
@@ -433,12 +471,9 @@ which is what lets the receiver apply it to a clone it did not make.
 ```rust {#unweave-chapter}
 /// Recover the source chapter from its woven form: caption lines (and
 /// the blank line under each) dropped, rewritten links restored from
-/// the id kept as their title. The envelope is not read.
+/// the id kept as their title. The header is not read.
 pub fn unweave_chapter(text: &str) -> String {
-    let Some((_, body)) = split_frontmatter(text) else {
-        return text.to_string();
-    };
-    let head = &text[..text.len() - body.len()];
+    let (head, body) = split_host(text);
     let mut out = String::with_capacity(text.len());
     out.push_str(head);
     let mut lines = body.split_inclusive('\n').peekable();
@@ -513,7 +548,7 @@ is not.
 /// What the projector knows about one affordance, for its page. Links
 /// are already relative to the page.
 pub struct AffordanceEvidence {
-    /// The declared id, matched against the `id:` line of the block.
+    /// The declared id, matched against the subject of the block.
     pub id: String,
     /// The actor mark and the status mark, rendered; empty when the
     /// projection holds no icons.
@@ -544,14 +579,11 @@ pub struct ProofEvidence {
     pub source: String,
 }
 
-/// Weave the evidence under each `yaml x0k:affordance` block of `text`
-/// whose `id:` an entry of `evidence` names. Blocks without evidence,
-/// and everything else, are left as written.
+/// Weave the evidence under each `turtle folio:graph` block of `text`
+/// declaring an affordance whose id an entry of `evidence` names. Blocks
+/// without evidence, and everything else, are left as written.
 pub fn weave_affordance_section(text: &str, evidence: &[AffordanceEvidence]) -> String {
-    let Some((_, body)) = split_frontmatter(text) else {
-        return text.to_string();
-    };
-    let head = &text[..text.len() - body.len()];
+    let (head, body) = split_host(text);
     let mut out = String::with_capacity(text.len() * 2);
     out.push_str(head);
     for segment in segments(body) {
@@ -565,13 +597,10 @@ pub fn weave_affordance_section(text: &str, evidence: &[AffordanceEvidence]) -> 
                 if let Some(close) = close {
                     out.push_str(close);
                 }
-                if info != "yaml x0k:affordance" {
+                if !is_marker(&info, GRAPH_MARKER) {
                     continue;
                 }
-                let id = body
-                    .iter()
-                    .find_map(|l| l.trim().strip_prefix("id:"))
-                    .map(|v| v.trim().to_string());
+                let id = affordance_id(&body.concat());
                 if let Some(ev) = id.and_then(|id| evidence.iter().find(|e| e.id == id)) {
                     out.push('\n');
                     out.push_str(&render_evidence(ev));
@@ -660,14 +689,11 @@ renderer that is not ours.
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d77656176652d63686170746572-1"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-weave-chapter" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/region-gfm.md"><strong>Signifier</strong> · Signifier · <code>https://0k.computer/ontology#signifier/x0k-tangle-weave-chapter</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d77656176652d63686170746572-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d77656176652d63686170746572-1"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-tangle-weave-chapter
-cue: weave_chapter
-edges:
-  signifies:
-    - x0k:affordance/weave_a_document
-  presentedOn:
-    - x0k:surface/sdk
+```turtle folio:graph
+signifier:x0k-tangle-weave-chapter a x0k:Signifier ;
+    x0k:cue "weave_chapter" ;
+    x0k:signifies affordance:weave_a_document ;
+    x0k:presentedOn surface:sdk .
 ```
 
 ## Tests
@@ -685,7 +711,7 @@ mod tests {
     use super::*;
     use crate::parser::parse_document;
 
-    const CHAPTER: &str = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/demo/lines\n  type: implementation\n  status: draft\n  summary: A demo.\n  tangle:\n    crate: demo-crate\n    root: src/lib.rs\n---\n# Lines\n\nReads [first lines](x0k:wiki/first-lines) and [elsewhere](x0k:wiki/elsewhere);\nsee `[not a link](x0k:wiki/first-lines)` and [the design](x0k:design/demo-design#read-a-line).\n\n````markdown\n```rust {#shown}\n<<not-assembled>>\n```\n````\n\n```rust {#parse}\npub fn parse_line(s: &str) -> &str { s.lines().next().unwrap_or(\"\").trim() }\n```\n\n```rust {#root}\n<<parse>>\n<<parse>>\n<<!parse>>\n```\n\n```rust {#parse}\n// continued\n```\n\n```rust {#tests file=\"tests/proof.rs\" proves=\"x0k:affordance/read_a_line\"}\n#[test]\nfn a_line_is_read() { assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\"); }\n```\n";
+    const CHAPTER: &str = "# Lines\n\n```turtle folio:document\nimplementation:demo\\/lines a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"A demo.\" ;\n    folio:tangleCrate \"demo-crate\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n\nReads [first lines](x0k:wiki/first-lines) and [elsewhere](x0k:wiki/elsewhere);\nsee `[not a link](x0k:wiki/first-lines)` and [the design](x0k:design/demo-design#read-a-line).\n\n````markdown\n```rust {#shown}\n<<not-assembled>>\n```\n````\n\n```rust {#parse}\npub fn parse_line(s: &str) -> &str { s.lines().next().unwrap_or(\"\").trim() }\n```\n\n```rust {#root}\n<<parse>>\n<<parse>>\n<<!parse>>\n```\n\n```rust {#parse}\n// continued\n```\n\n```rust {#tests file=\"tests/proof.rs\" proves=\"x0k:affordance/read_a_line\"}\n#[test]\nfn a_line_is_read() { assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\"); }\n```\n";
 
     fn links() -> (BTreeMap<String, String>, BTreeMap<String, (String, String)>) {
         let mut uri = BTreeMap::new();
@@ -738,6 +764,27 @@ mod tests {
         assert!(w.contains("Reads [first lines](../../wiki/first-lines.md \"x0k:wiki/first-lines\") and [elsewhere](x0k:wiki/elsewhere);\n"), "a carried link lands, an uncarried one is left: {w}");
         assert!(w.contains("see `[not a link](x0k:wiki/first-lines)` and [the design](../../../decisions/design/demo-design.md#read-a-line \"x0k:design/demo-design#read-a-line\").\n"), "{w}");
         assert!(!w.contains("chunk-shown"), "a fence inside a fence is not a chunk: {w}");
+    }
+
+    /// A prose line opening with inline code that quotes a fence opens no
+    /// fence, and a fence-like line carrying an info string closes none:
+    /// the code below both stays code, and its link stays as written.
+    #[test]
+    fn an_inline_code_fence_and_an_opening_line_neither_open_nor_close() {
+        let (uri, aff) = links();
+        let links = ChapterLinks { uri_to_rel: &uri, affordances: &aff };
+        let tick = |n: usize| "`".repeat(n);
+        let chapter = CHAPTER.replace(
+            "```rust {#parse}\npub fn",
+            &format!(
+                "{four} {three}yaml title {four} is inline code.\n\n{five}rust {{#aside}}\n// [first lines](x0k:wiki/first-lines)\n{five}\n\n```rust {{#parse}}\npub fn",
+                three = tick(3), four = tick(4), five = tick(5),
+            ),
+        );
+        let woven = weave_chapter(&chapter, "knowledge/implementation/demo/lines.md", Some("demo-crate"), &links)
+            .expect("weaves");
+        assert!(woven.contains("// [first lines](x0k:wiki/first-lines)\n"), "a code line is not prose: {woven}");
+        assert_eq!(unweave_chapter(&woven), chapter);
     }
 
     #[test]
@@ -794,7 +841,7 @@ mod tests {
 
     #[test]
     fn the_affordance_section_carries_the_evidence_under_its_block() {
-        let page = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/demo-design#read-a-line\n  type: design\n---\n\n### Read a line\n\nI read a line.\n\n```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\nAfter.\n";
+        let page = "```turtle folio:document\ndesign:demo-design%23read-a-line a x0k:Design .\n```\n### Read a line\n\nI read a line.\n\n```turtle folio:graph\naffordance:read_a_line a x0k:Affordance ;\n    x0k:claimedFor x0k:actor\\/human .\n```\n\nAfter.\n";
         let ev = AffordanceEvidence {
             id: "x0k:affordance/read_a_line".to_string(),
             marks: "<img alt=\"proven\">".to_string(),
@@ -812,7 +859,7 @@ mod tests {
             }],
         };
         let out = weave_affordance_section(page, &[ev]);
-        let expected = "```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nactors: [human]\n```\n\n<img alt=\"proven\"> *proven* · for a person · reachable through `cli` `demo read`\n\n*realized in* [Lines](../../../knowledge/implementation/demo/lines.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · <img alt=\"passed\"> passed · <a href=\"../../../knowledge/implementation/demo/lines.md#chunk-tests\">#tests</a> in Lines</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {}\n```\n\n</details>\n\n\nAfter.\n";
+        let expected = "```turtle folio:graph\naffordance:read_a_line a x0k:Affordance ;\n    x0k:claimedFor x0k:actor\\/human .\n```\n\n<img alt=\"proven\"> *proven* · for a person · reachable through `cli` `demo read`\n\n*realized in* [Lines](../../../knowledge/implementation/demo/lines.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · <img alt=\"passed\"> passed · <a href=\"../../../knowledge/implementation/demo/lines.md#chunk-tests\">#tests</a> in Lines</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {}\n```\n\n</details>\n\n\nAfter.\n";
         assert!(out.ends_with(expected), "{out}");
         assert_eq!(weave_affordance_section(page, &[]), page, "no evidence, no change");
     }
@@ -829,12 +876,14 @@ mod tests {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/region_gfm.rs`](../../crates/x0k-tangle/src/region_gfm.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [segments](#chunk-segments) · [chapter-links](#chunk-chapter-links) · [weave-chapter](#chunk-weave-chapter) · [rewrite-links](#chunk-rewrite-links) · [unweave-chapter](#chunk-unweave-chapter) · [affordance-evidence](#chunk-affordance-evidence) · [relative-link](#chunk-relative-link) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/region_gfm.rs`](../../crates/x0k-tangle/src/region_gfm.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [split-host](#chunk-split-host) · [segments](#chunk-segments) · [chapter-links](#chunk-chapter-links) · [weave-chapter](#chunk-weave-chapter) · [rewrite-links](#chunk-rewrite-links) · [unweave-chapter](#chunk-unweave-chapter) · [affordance-evidence](#chunk-affordance-evidence) · [relative-link](#chunk-relative-link) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
 
 <<imports>>
+
+<<split-host>>
 
 <<segments>>
 

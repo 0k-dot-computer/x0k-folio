@@ -41,4 +41,4 @@
 <https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
 <https://0k.computer/ontology/core> <http://www.w3.org/2000/01/rdf-schema#comment> "The self-typed root every x0k vocabulary module stands on: Concept, the one meta-level that every class and property occupies." .
 <https://0k.computer/ontology/core> <http://www.w3.org/2000/01/rdf-schema#label> "core" .
-<https://0k.computer/ontology/core> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/core/0.2.0> .
+<https://0k.computer/ontology/core> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/core/0.3.0> .

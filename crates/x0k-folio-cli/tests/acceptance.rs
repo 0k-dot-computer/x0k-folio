@@ -167,7 +167,7 @@ impl Fixture {
     fn edit_pages(&self, pages: u32) {
         let path = self.corpus.join("alpha.md");
         let body = fs::read_to_string(&path).unwrap();
-        fs::write(path, body.replace("pages: 12", &format!("pages: {pages}"))).unwrap();
+        fs::write(path, body.replace("paper:pages 12", &format!("paper:pages {pages}"))).unwrap();
     }
 }
 
@@ -188,11 +188,11 @@ fn the_default_base_is_the_shipped_set() -> Result<(), String> {
     let fixture = Fixture::new();
     let decisions = fixture.home.join("decisions");
     fs::create_dir(&decisions).unwrap();
-    let document = |id: &str, edges: &str| format!(
-        "---\nx0k:\n  format: folio/v1\n  id: {id}\n  type: design\n  status: accepted\n{edges}---\n# Body\n");
+    let document = |subject: &str, edges: &str| format!(
+        "# Body\n\n```turtle folio:document\n{subject} a x0k:Design ;\n    x0k:status \"accepted\"{edges} .\n```\n");
     fs::write(decisions.join("alpha.md"),
-        document("x0k:design/alpha", "  edges:\n    refined_by: [x0k:design/beta]\n")).unwrap();
-    fs::write(decisions.join("beta.md"), document("x0k:design/beta", "")).unwrap();
+        document("design:alpha", " ;\n    x0k:refinedBy design:beta")).unwrap();
+    fs::write(decisions.join("beta.md"), document("design:beta", "")).unwrap();
     let report = fixture.run(&["ingest", "--root", decisions.to_str().unwrap(),
         "--database", fixture.home.join("default-db").to_str().unwrap()]).success();
     assert_eq!(report["invalid_documents"], 0,
@@ -216,11 +216,11 @@ fn the_board_reads_the_collections_predicates_and_roots_both_views() {
     let log = fixture.home.join("adrs");
     fs::create_dir(&log).unwrap();
     fs::write(log.join("adr013.md"), concat!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:architecture/adr013\n  type: architecture\n",
-        "  status: superseded\n  edges:\n    bs:superseded_by: [x0k:architecture/adr014]\n---\n# ADR013\n")).unwrap();
+        "# ADR013\n\n```turtle folio:document\narchitecture:adr013 a x0k:Architecture ;\n",
+        "    x0k:status \"superseded\" ;\n    bs:supersededBy architecture:adr014 .\n```\n")).unwrap();
     fs::write(log.join("adr014.md"), concat!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:architecture/adr014\n  type: architecture\n",
-        "  status: accepted\n---\n# ADR014\n")).unwrap();
+        "# ADR014\n\n```turtle folio:document\narchitecture:adr014 a x0k:Architecture ;\n",
+        "    x0k:status \"accepted\" .\n```\n")).unwrap();
     let database = fixture.home.join("board-db");
 
     // Both flags at once: `--shipped` names the default out loud and
@@ -285,9 +285,9 @@ fn edit_invalid_rename_delete_preserve_source_ownership() {
     assert!(last_good.iter().any(|row| row["value"]["value"] == "99"));
     let alpha = fixture.corpus.join("alpha.md");
     let valid = fs::read_to_string(&alpha).unwrap();
-    fs::write(&alpha, "---\nx0k:\n  format: folio/v1\n---\n").unwrap();
+    fs::write(&alpha, "```turtle folio:document\nnot turtle\n```\n").unwrap();
     let beta = fixture.corpus.join("beta.md");
-    fs::write(&beta, fs::read_to_string(&beta).unwrap().replace("pages: 12", "pages: 33")).unwrap();
+    fs::write(&beta, fs::read_to_string(&beta).unwrap().replace("paper:pages 12", "paper:pages 33")).unwrap();
     fixture.corpus_command("ingest").failure("rejected");
     let partial = rows(&fixture.query(&format!("{PAPER}pages")));
     assert!(partial.iter().any(|row| row["value"]["value"] == "99"));
@@ -319,7 +319,7 @@ fn rebuild_matches_incremental_answers_and_retains_last_good_on_failure() {
     let original = fixture.status()["database"]["generation"].as_str().unwrap().to_string();
     let alpha = fixture.corpus.join("alpha.md");
     let valid = fs::read_to_string(&alpha).unwrap();
-    fs::write(&alpha, "---\nx0k:\n  format: folio/v1\n---\n").unwrap();
+    fs::write(&alpha, "```turtle folio:document\nnot turtle\n```\n").unwrap();
     fixture.corpus_command("rebuild").failure("rebuild incomplete");
     assert_eq!(fixture.status()["database"]["generation"], original);
     assert_eq!(rows(&fixture.query(&format!("{PAPER}pages"))), expected);

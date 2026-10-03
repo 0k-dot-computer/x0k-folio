@@ -8,7 +8,7 @@
 //! one `cargo publish --dry-run --workspace` excluding those, and —
 //! only under `really: true` — runs the real `cargo publish` and pushes
 //! the projected git history to the remote the publication doc's
-//! `publishedOn:` edge names (resolved via `[publish.remotes]` in
+//! `x0k:publishedOn` edge names (resolved via `[publish.remotes]` in
 //! `config/x0k-tangle.toml`). The default run stops after the rehearsal
 //! and reports; nothing outward-facing happens without the flag.
 
@@ -23,7 +23,7 @@ use x0k_folio::colophon::parse_envelope;
 #[derive(Debug, Clone, Default)]
 pub struct PublishRepoOptions {
     /// Explicit SPDX license override, passed through to the projection.
-    /// `None` keeps the publication doc's `license:` authoritative.
+    /// `None` keeps the publication doc's `x0k:license` authoritative.
     pub license: Option<String>,
     /// Emit the `.github/workflows/` thin wrappers in the projection.
     pub emit_github: bool,
@@ -68,7 +68,7 @@ pub struct PublishRepoReport {
     /// projection did not build or test green and the rehearsal never
     /// ran, or when nothing is pending and there was nothing to rehearse.
     pub rehearsal: Option<PublishRehearsal>,
-    /// The remote URL the `publishedOn:` surface resolved to, when
+    /// The remote URL the `x0k:publishedOn` surface resolved to, when
     /// configured.
     pub remote: Option<String>,
     /// The surface URI the publication doc names (e.g.
@@ -472,7 +472,7 @@ fn cargo_in(dir: &Path, target_dir: &Path, args: &[&str]) -> Result<(bool, Strin
     Ok((out.status.success(), tail))
 }
 
-/// Resolve the publication's `publishedOn:` surface to a configured git
+/// Resolve the publication's `x0k:publishedOn` surface to a configured git
 /// remote URL. Returns `(surface_uri, url)` — either may be `None` (no
 /// edge; no config entry). Missing config is a reported gap, not an
 /// error: the dry-run stages are useful without a remote.
@@ -482,7 +482,7 @@ fn resolve_remote(region_doc: &Path, workspace: &Path) -> Result<(Option<String>
     let (env, _) = parse_envelope(&content).map_err(|e| anyhow!("parsing publication: {e}"))?;
     let Some(surface) = env
         .edges
-        .get("publishedOn")
+        .get("x0k:publishedOn")
         .and_then(|v| v.first())
         .cloned()
     else {
@@ -754,7 +754,7 @@ mod tests {
         let doc_path = tmp.path().join("pub.md");
         std::fs::write(
             &doc_path,
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:publication/x\n  type: publication\n  edges:\n    publishedOn:\n      - x0k:surface/github\n---\nbody\n",
+            "# X\n\n```turtle folio:document\npublication:x a x0k:Publication ;\n    x0k:publishedOn surface:github .\n```\n\nbody\n",
         )
         .unwrap();
         // No config: surface resolves, remote does not.

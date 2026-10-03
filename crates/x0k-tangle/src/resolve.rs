@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 /// The cycle-detection key. For a within-doc expansion the doc-URI
 /// slot is the empty string; for a corpus expansion it is the target
-/// document's `id:` URI, so the same chunk name in two different docs
+/// document's id, so the same chunk name in two different docs
 /// is two distinct nodes in the visited set.
 pub(crate) type VisitKey = (String, String);
 

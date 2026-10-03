@@ -29,16 +29,23 @@ fn empty_atlas() -> x0k_tangle::Atlas {
     }
 }
 
-/// A minimal folio/v1 design doc body (frontmatter split off by the weaver).
+/// A compact `x0k:` id as a Turtle term: its `/` escaped.
+fn term(id: &str) -> String {
+    id.replace('/', "\\/")
+}
+
+/// A minimal design document (the weaver lifts the header out).
 fn design_doc(id: &str, title: &str, body: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  type: design\n  id: {id}\n  status: proposed\n---\n\n# {title}\n\n{body}\n"
+        "# {title}\n\n```turtle folio:document\n{} a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\n{body}\n",
+        term(id)
     )
 }
 
 fn architecture_doc(id: &str, title: &str, body: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  type: architecture\n  id: {id}\n  status: proposed\n---\n\n# {title}\n\n{body}\n"
+        "# {title}\n\n```turtle folio:document\n{} a x0k:Architecture ;\n    x0k:status \"proposed\" .\n```\n\n{body}\n",
+        term(id)
     )
 }
 
@@ -197,19 +204,13 @@ fn project_publication_writes_navigable_artifact_to_disk() {
     .unwrap();
 
     // The publication doc demarcating the region.
-    let publication = "---\n\
-        x0k:\n\
-        \x20\x20format: folio/v1\n\
-        \x20\x20type: publication\n\
-        \x20\x20id: x0k:publication/sample-region\n\
-        \x20\x20status: proposed\n\
-        \x20\x20edges:\n\
-        \x20\x20\x20\x20publishes:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:design/author\n\
-        \x20\x20\x20\x20\x20\x20- x0k:architecture/web-first\n\
-        \x20\x20\x20\x20entryPoint:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:design/author\n\
-        ---\n\n# Sample Region\n\nA demonstration publication.\n";
+    let publication = "# Sample Region\n\n\
+        ```turtle folio:document\n\
+        publication:sample-region a x0k:Publication ;\n\
+        \x20   x0k:status \"proposed\" ;\n\
+        \x20   x0k:publishes design:author, architecture:web-first ;\n\
+        \x20   x0k:entryPoint design:author .\n\
+        ```\n\nA demonstration publication.\n";
     let pub_path = pub_dir.join("sample-region.md");
     fs::write(&pub_path, publication).unwrap();
 
@@ -295,16 +296,12 @@ fn single_member_publication_defaults_entry() {
     )
     .unwrap();
 
-    let publication = "---\n\
-        x0k:\n\
-        \x20\x20format: folio/v1\n\
-        \x20\x20type: publication\n\
-        \x20\x20id: x0k:publication/solo-pub\n\
-        \x20\x20status: proposed\n\
-        \x20\x20edges:\n\
-        \x20\x20\x20\x20publishes:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:design/solo\n\
-        ---\n\n# Solo Pub\n";
+    let publication = "# Solo Pub\n\n\
+        ```turtle folio:document\n\
+        publication:solo-pub a x0k:Publication ;\n\
+        \x20   x0k:status \"proposed\" ;\n\
+        \x20   x0k:publishes design:solo .\n\
+        ```\n";
     let pub_path = pub_dir.join("solo-pub.md");
     fs::write(&pub_path, publication).unwrap();
 
@@ -336,30 +333,24 @@ fn self_booting_artifact_bundles_wasm_data_shell_and_fallback() {
     )
     .unwrap();
 
-    // Two wiki members with a frontmatter summary + body (deep-doc portal text).
+    // Two wiki members with a header summary + body (deep-doc portal text).
     for (slug, title) in [("alpha", "Alpha Page"), ("beta", "Beta Page")] {
         fs::write(
             wiki_dir.join(format!("{slug}.md")),
             format!(
-                "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/{slug}\n  summary: Summary of {title}\n---\n\n# {title}\n\nReal prose body for {title}.\n"
+                "# {title}\n\n```turtle folio:document\nwiki:{slug} a x0k:Wiki ;\n    x0k:summary \"Summary of {title}\" .\n```\n\nReal prose body for {title}.\n"
             ),
         )
         .unwrap();
     }
 
-    let publication = "---\n\
-        x0k:\n\
-        \x20\x20format: folio/v1\n\
-        \x20\x20type: publication\n\
-        \x20\x20id: x0k:publication/lineage-mini\n\
-        \x20\x20status: proposed\n\
-        \x20\x20edges:\n\
-        \x20\x20\x20\x20publishes:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:wiki/alpha\n\
-        \x20\x20\x20\x20\x20\x20- x0k:wiki/beta\n\
-        \x20\x20\x20\x20entryPoint:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:wiki/alpha\n\
-        ---\n\n# Lineage Mini\n";
+    let publication = "# Lineage Mini\n\n\
+        ```turtle folio:document\n\
+        publication:lineage-mini a x0k:Publication ;\n\
+        \x20   x0k:status \"proposed\" ;\n\
+        \x20   x0k:publishes wiki:alpha, wiki:beta ;\n\
+        \x20   x0k:entryPoint wiki:alpha .\n\
+        ```\n";
     let pub_path = pub_dir.join("lineage-mini.md");
     fs::write(&pub_path, publication).unwrap();
 
@@ -426,10 +417,10 @@ fn self_booting_artifact_bundles_wasm_data_shell_and_fallback() {
 
 #[test]
 fn spine_transcludes_two_briefs_into_one_woven_page() {
-    let design_a = "---\nx0k:\n  format: folio/v1\n  type: design\n  id: x0k:design/alpha\n  status: proposed\n---\n\n# Alpha\n\nlead\n\n## Brief\n\nAlpha's brief paragraph.\n\n## Purpose\n\nAlpha purpose (must NOT be inlined).\n";
-    let design_b = "---\nx0k:\n  format: folio/v1\n  type: design\n  id: x0k:design/beta\n  status: proposed\n---\n\n# Beta\n\nlead\n\n## Brief\n\nBeta's brief paragraph.\n\n## Purpose\n\nBeta purpose (must NOT be inlined).\n";
-    // Spine: inline fence pulls alpha#brief; frontmatter pulls beta#brief.
-    let spine = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/spine\n  status: stable\n  transcludes:\n    - x0k:design/beta#brief\n---\n\n# Spine\n\nConnective prose before.\n\n```x0k:transclude {ref=\"x0k:design/alpha#brief\"}\n```\n\nConnective prose after.\n";
+    let design_a = "# Alpha\n\n```turtle folio:document\ndesign:alpha a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\nlead\n\n## Brief\n\nAlpha's brief paragraph.\n\n## Purpose\n\nAlpha purpose (must NOT be inlined).\n";
+    let design_b = "# Beta\n\n```turtle folio:document\ndesign:beta a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\nlead\n\n## Brief\n\nBeta's brief paragraph.\n\n## Purpose\n\nBeta purpose (must NOT be inlined).\n";
+    // Spine: inline fence pulls alpha#brief; the header pulls beta#brief.
+    let spine = "# Spine\n\n```turtle folio:document\nwiki:spine a x0k:Wiki ;\n    x0k:status \"stable\" ;\n    folio:transcludes \"x0k:design/beta#brief\" .\n```\n\nConnective prose before.\n\n```x0k:transclude {ref=\"x0k:design/alpha#brief\"}\n```\n\nConnective prose after.\n";
 
     let input = RegionInput {
         entry_point_uri: "x0k:wiki/spine".to_string(),
@@ -469,7 +460,7 @@ fn spine_transcludes_two_briefs_into_one_woven_page() {
     );
     assert!(
         index.contains("Beta's brief paragraph."),
-        "frontmatter transclusion of beta#brief not inlined"
+        "header transclusion of beta#brief not inlined"
     );
     // The spine's own connective prose surrounds them.
     assert!(index.contains("Connective prose before."));
@@ -496,8 +487,8 @@ fn spine_transcludes_two_briefs_into_one_woven_page() {
 fn edit_through_to_source_is_reflected_when_spine_reresolves() {
     use x0k_folio::transclusion::{replace_section, split_body};
 
-    let source_before = "---\nx0k:\n  format: folio/v1\n  type: design\n  id: x0k:design/source\n  status: proposed\n---\n\n# Source\n\n## Brief\n\noriginal source brief.\n\n## Purpose\n\npurpose stays put.\n";
-    let spine = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/spine\n  status: stable\n---\n\n# Spine\n\nSpine connective prose.\n\n```x0k:transclude {ref=\"x0k:design/source#brief\"}\n```\n";
+    let source_before = "# Source\n\n```turtle folio:document\ndesign:source a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\n## Brief\n\noriginal source brief.\n\n## Purpose\n\npurpose stays put.\n";
+    let spine = "# Spine\n\n```turtle folio:document\nwiki:spine a x0k:Wiki ;\n    x0k:status \"stable\" .\n```\n\nSpine connective prose.\n\n```x0k:transclude {ref=\"x0k:design/source#brief\"}\n```\n";
 
     let weave = |source_content: &str| {
         let input = RegionInput {
@@ -534,9 +525,11 @@ fn edit_through_to_source_is_reflected_when_spine_reresolves() {
 
     // Apply the edit-through to the SOURCE body's `#brief` section — the
     // exact transform `DocumentViewer::save_transclusion_edit` performs.
-    let (yaml, body) = split_body(source_before);
-    let new_body = replace_section(body, "brief", "## Brief\n\nEDITED source brief.\n").unwrap();
-    let source_after = format!("---{}\n---\n{new_body}", yaml.unwrap());
+    let body = split_body(source_before);
+    let new_body = replace_section(&body, "brief", "## Brief\n\nEDITED source brief.\n").unwrap();
+    let source_after = x0k_folio::colophon::replace_body(source_before, &new_body);
+    // The header is kept byte-for-byte.
+    assert!(source_after.contains("```turtle folio:document\ndesign:source a x0k:Design ;"));
     // The source's other section is preserved by the edit.
     assert!(source_after.contains("purpose stays put."));
     assert!(source_after.contains("EDITED source brief."));
@@ -561,7 +554,7 @@ fn edit_through_to_source_is_reflected_when_spine_reresolves() {
 
 #[test]
 fn spine_self_transclusion_degrades_to_link_with_warning() {
-    let spine = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/loop\n  status: stable\n---\n\n# Loop\n\n```x0k:transclude {ref=\"x0k:wiki/loop\"}\n```\n";
+    let spine = "# Loop\n\n```turtle folio:document\nwiki:loop a x0k:Wiki ;\n    x0k:status \"stable\" .\n```\n\n```x0k:transclude {ref=\"x0k:wiki/loop\"}\n```\n";
     let input = RegionInput {
         entry_point_uri: "x0k:wiki/loop".to_string(),
         members: vec![RegionMember {

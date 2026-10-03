@@ -1,28 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/fact-projection/materialize
-  type: implementation
-  status: draft
-  summary: The facts→file half of materialization — a materializer renders facts to bytes and names where they land, with no Loro, no ops, and no daemon in the contract.
-  concerns:
-  - facts
-  - materialization
-  - projection
-  - seam
-  - publication
-  tangle:
-    crate: crates/x0k-fact-projection
-    root: src/materialize.rs
-  edges:
-    implements:
-    - x0k:architecture/filesystem-graph-materialization
-    cites:
-    - x0k:architecture/state-representation
-    - x0k:architecture/publication-is-the-shipping-unit
----
 
 # Rendering facts back to a file
+
+```turtle folio:document
+implementation:fact-projection\/materialize a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The facts→file half of materialization — a materializer renders facts to bytes and names where they land, with no Loro, no ops, and no daemon in the contract." ;
+    x0k:concerns "facts", "materialization", "projection", "seam", "publication" ;
+    x0k:cites architecture:state-representation,
+        architecture:publication-is-the-shipping-unit ;
+    x0k:implements architecture:filesystem-graph-materialization ;
+    folio:tangleCrate "crates/x0k-fact-projection" ;
+    folio:tangleRoot "src/materialize.rs" .
+```
 
 The storage half of materialization ships and is published: a `FactSink`
 takes facts, with an optional notifier and query engine beside it, and
@@ -405,7 +394,7 @@ rules.
 /// where and how their graph lands on disk.
 pub trait Materializer: Send + Sync {
     /// Stable identifier, for diagnostics and registry validation
-    /// (today: `"folio/v1"`). Several class entries may share a name while
+    /// (today: `"folio/v2"`). Several class entries may share a name while
     /// carrying different placements.
     fn name(&self) -> &str;
 

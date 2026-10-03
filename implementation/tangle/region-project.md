@@ -1,29 +1,19 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/region-project
-  type: implementation
-  status: draft
-  summary: The filesystem half the pure region weaver leaves out — resolving a publication's members with nothing but the envelope parser and a corpus layout read from the class registry, shared by the CLI and the MCP tool so the two cannot drift.
-  concerns:
-  - tangle
-  - publication
-  - projection
-  - io
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/region_project.rs
-  edges:
-    implements:
-    - x0k:design/author-and-publish-the-same-surface
-    cites:
-    - x0k:architecture/monorepo-layout
-    - x0k:implementation/tangle/region-weave
-    - x0k:implementation/tangle/presentation
-    - x0k:implementation/folio/colophon
----
 
 # Region projection: the filesystem side
+
+```turtle folio:document
+implementation:tangle\/region-project a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The filesystem half the pure region weaver leaves out — resolving a publication's members with nothing but the envelope parser and a corpus layout read from the class registry, shared by the CLI and the MCP tool so the two cannot drift." ;
+    x0k:concerns "tangle", "publication", "projection", "io" ;
+    x0k:cites architecture:monorepo-layout,
+        implementation:tangle\/region-weave,
+        implementation:tangle\/presentation,
+        implementation:folio\/colophon ;
+    x0k:implements design:author-and-publish-the-same-surface ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/region_project.rs" .
+```
 
 The region weaver is pure — content in, bytes out. Something still has to
 read the publication doc, find each member's file, write the artifact, and
@@ -33,7 +23,7 @@ drift: both call `project_publication`, and the report they return has one
 shape.
 
 The central idea is that the projector stays *thin and decoupled*. It
-resolves a publication region with nothing but the shared envelope parser
+resolves a publication region with nothing but the shared header parser
 from `x0k-folio` and a statement of where each document class lives in the
 corpus, rather than depending on the corpus's own graph service. That
 statement is the invariant every other reader of the corpus must agree
@@ -55,8 +45,8 @@ table is loaded.
 //! `tangle_weave_region` MCP tool so the two surfaces behave identically:
 //!
 //! 1. Parse the publication decision doc into a [`RegionInput`]
-//!    ([`parse_publication_region`]) — resolving its `publishes:` edge to
-//!    member files with the shared envelope parser from `x0k-folio`.
+//!    ([`parse_publication_region`]) — resolving its `x0k:publishes` edge
+//!    to member files with the shared header parser from `x0k-folio`.
 //! 2. Call [`weave_region`].
 //! 3. Write each [`ArtifactFile`](crate::ArtifactFile).
 //! 4. (Unless `no_motifs`, and only with the `motifs` feature) content-address
@@ -85,7 +75,7 @@ use std::path::{Path, PathBuf};
 ## The carried example
 
 `x0k-tangle weave-region decisions/publications/foo.md --output-dir out`
-reads the publication doc, resolves its `publishes:` edge to member files
+reads the publication doc, resolves its `x0k:publishes` edge to member files
 under whatever roots the registry gives their classes, weaves them, wraps the
 result in the presentation shell, writes every file under `out/`, and — with
 the `motifs` feature on — copies the render-vello bundle and each embedded
@@ -335,7 +325,7 @@ duplicated: a class's directory *is* its `path_template` with the
 `{slug}.md` leaf removed, which is why `design` needs no row of its own
 here. What the registry cannot say is where the two document kinds it does
 not project live — a literate chapter, which is file-canonical and found by
-the `id:` its own envelope declares rather than by joining an id onto a
+the id its own header declares rather than by joining an id onto a
 directory, and a manuscript — plus the umbrella the class directories hang
 from, which a named document's search needs when its class has no row at
 all. Those three are a `[corpus]` table beside the class rows, in the same
@@ -500,7 +490,8 @@ impl CorpusLayout {
 
 ## Resolving the region
 
-The publication doc's `publishes:` edge lists member URIs; each is mapped to
+The publication header's `x0k:publishes` edge lists member URIs; each is
+mapped to
 its file and read. The layout is read once here, not once per member: the
 registry is one small file and a hundred members should not open it a
 hundred times.
@@ -508,8 +499,9 @@ hundred times.
 <a name="chunk-parse-publication-region"></a><sub>[`src/region_project.rs`](../../crates/x0k-tangle/src/region_project.rs) · `#parse-publication-region`</sub>
 
 ```rust {#parse-publication-region}
-/// Resolve a publication doc into a [`RegionInput`]: read its `publishes:`
-/// edge with the shared envelope parser and map each member URI to its
+/// Resolve a publication doc into a [`RegionInput`]: read its
+/// `x0k:publishes` edge with the shared header parser and map each member
+/// URI to its
 /// file. Member sources are read here (the pure weaver takes pre-read
 /// content).
 pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<RegionInput> {
@@ -518,7 +510,7 @@ pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<Regio
     let layout = CorpusLayout::read(workspace);
 
     let (env, _body) =
-        parse_envelope(content).map_err(|e| anyhow!("not a folio/v1 document: {e:?}"))?;
+        parse_envelope(content).map_err(|e| anyhow!("the publication's header does not read: {e}"))?;
     if env.doc_type != DocType::Publication {
         return Err(anyhow!(
             "document is not a publication (type is `{}`)",
@@ -526,15 +518,14 @@ pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<Regio
         ));
     }
 
-    let member_uris: Vec<String> = env.edges.get("publishes").cloned().unwrap_or_default();
+    let member_uris: Vec<String> = env.edges.get("x0k:publishes").cloned().unwrap_or_default();
     if member_uris.is_empty() {
-        return Err(anyhow!("publication has an empty `publishes` membership"));
+        return Err(anyhow!("publication has an empty `x0k:publishes` membership"));
     }
 
     let entry_point_uri = env
         .edges
-        .get("entryPoint")
-        .or_else(|| env.edges.get("entry_point"))
+        .get("x0k:entryPoint")
         .and_then(|v| v.first().cloned())
         .or_else(|| {
             if member_uris.len() == 1 {
@@ -545,7 +536,7 @@ pub fn parse_publication_region(content: &str, workspace: &Path) -> Result<Regio
         })
         .ok_or_else(|| {
             anyhow!(
-                "publication has no `entryPoint` and {} members; entry point is ambiguous",
+                "publication has no `x0k:entryPoint` and {} members; entry point is ambiguous",
                 member_uris.len()
             )
         })?;

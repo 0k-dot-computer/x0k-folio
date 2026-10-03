@@ -24,7 +24,7 @@ file it lands in, what it proves and what it assembles, and a link that names
 a document of the corpus lands on the copy shipped here, the original name
 kept as the link's title. The corpus document is the source, and the projection
 records that, so an edit made here can be routed back to it. Pointing an agent
-at the repository is a first-class way in — the typed envelopes and the shipped
+at the repository is a first-class way in — the typed headers and the shipped
 vocabulary are much of what makes that work — but the map below is for a
 person deciding where to look.
 
@@ -42,19 +42,19 @@ person deciding where to look.
 
 ### What a document is
 
-The envelope at the top, the identity it declares, and the block tree beneath it.
+The header under the title, the identity it declares, and the block tree beneath it.
 
 *rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](background/literate-programming.md)
 
 - [x0k-folio: the format library](implementation/folio/format.md) — The crate root — its chapter map, and the one feature flag that severs the substrate-facing half so a standalone build is pure functions over strings.
-- [The colophon: one envelope, one parser, one renderer](implementation/folio/colophon.md) — The envelope's single parser and renderer, permissive about keys it does not own and closed about the keywords it does, consumed by every crate that touches a folio file.
+- [The colophon: one header, one parser, one renderer](implementation/folio/colophon.md) — The document header's single parser and renderer — a Turtle block whose one subject is the document, read with the vocabulary's own terms and consumed by every crate that touches a folio file.
 - [Who a document says it is](implementation/folio/identity.md) — The identity half of an x0k URI — scheme, class, slug, and the fragment that names a part of what the slug names — parsed and rendered by the format library itself, so a document can say who it is without a substrate underneath it.
 - [Where a genus lives](implementation/folio/layout.md) — Where a genus lives inside a corpus, and the scope a caller must name to ask — one table replacing six copies, all of which had drifted and none of which said so.
 - [The structural block tree](implementation/folio/structural.md) — The parser-agnostic block tree both the markdown and the HTML sides parse into: syntactic, orthogonal to the editorial axis, and owned here so two renderer crates can share it without a dependency cycle.
 
 ### The vocabulary a document is written in
 
-Where the terms an envelope uses come from, how they reach the code as tables, and what it means for a document to check against them.
+Where the terms a header uses come from, how they reach the code as tables, and what it means for a document to check against them.
 
 *rests on:* open-world-assumption · rdf-and-owl
 
@@ -62,7 +62,7 @@ Where the terms an envelope uses come from, how they reach the code as tables, a
 - [The vocabulary, folded once, at build time](implementation/ontology/module-bootstrap.md) — The build script that loads the checked vocabulary modules through the library's own loader and emits the constant tables the crate root re-exports — so a consumer gets a linked table without folding anything.
 - [Reading a vocabulary the build did not compile](implementation/ontology/load.md) — Reading a set of vocabulary module files into an OntologyModel at run time — the same parse, the same fold, and the same refusals the build script applies, returned as a Result instead of a panic.
 - [The crate root is a compatibility view](implementation/ontology/views.md) — How the crate root turns whichever module set is present into the class, property, and edge-predicate tables other crates check a document against.
-- [Checking a document against what shipped with it](implementation/folio/checking.md) — Reading an envelope against a vocabulary the caller names — and keeping a missing term, which is a packaging defect, apart from a missing target, which is the boundary working.
+- [Checking a document against what shipped with it](implementation/folio/checking.md) — Reading a header against a vocabulary the caller names — and keeping a missing term, which is a packaging defect, apart from a missing target, which is the boundary working.
 
 ### A document that reaches beyond itself
 
@@ -71,8 +71,8 @@ Inclusion by reference instead of copying, and entities authored inside prose an
 *rests on:* dependency-resolution · [Literate Programming &amp; Legibility-as-Sovereignty](background/literate-programming.md)
 
 - [Transclusion: include, don't copy](implementation/folio/transclusion.md) — The shared resolution core for inclusion by reference — spines, section addressing, cycle and depth limits, degrade-to-link on any failure — driven identically by the weaver and by the native document viewer.
-- [Entities authored inside prose](implementation/folio/inline-entities.md) — Pulling an entity that was authored inside a document's prose back out of it — the section is the record, the heading is the title, and the extractor reads declarations without resolving them.
-- [A vocabulary beside its examples](implementation/folio/document-vocabulary.md) — Assemble document-carried Turtle vocabulary and typed YAML instances without a host registry.
+- [Entities authored inside prose](implementation/folio/inline-entities.md) — Pulling an entity that was authored inside a document's prose back out of it — the section is the record, the heading is the title, the graph block is its statements, and the extractor reads declarations without resolving them.
+- [A vocabulary beside its examples](implementation/folio/document-vocabulary.md) — Assemble document-carried vocabulary and instances — one Turtle carrier, `turtle folio:graph` — without a host registry.
 
 ### Querying documents
 
@@ -88,10 +88,10 @@ Prepare a collection, reconcile its source contributions, and query its facts wi
 
 The neutral tuple a document projects into, its wire form, and the way back out to a file. The read seam and the derived folds are severed from this publication, and their chapters travel with them.
 
-- [What a fact is, before any substrate has it](implementation/fact-projection/fact.md) — The substrate-neutral fact tuple, and the projection of a folio/v1 envelope into a batch of them — typed, ordered, and deliberately uncaused.
+- [What a fact is, before any substrate has it](implementation/fact-projection/fact.md) — The substrate-neutral fact tuple, and the projection of a folio header into a batch of them — typed, ordered, and deliberately uncaused.
 - [The bytes a fact rides on](implementation/fact-projection/payload.md) — The wire form of a fact — a separate type from the in-memory one, because a field reorder must never change the bytes of every fact in the system.
 - [Rendering facts back to a file](implementation/fact-projection/materialize.md) — The facts→file half of materialization — a materializer renders facts to bytes and names where they land, with no Loro, no ops, and no daemon in the contract.
-- [Facts back out to a folio](implementation/folio/materialize.md) — The folio/v1 materializer — facts back out to an envelope, with no Loro anywhere in it, so the published build ships a facts→file implementation instead of a feature-gated one.
+- [Facts back out to a folio](implementation/folio/materialize.md) — The folio materializer — facts back out to a header, with no Loro anywhere in it, so the published build ships a facts→file implementation instead of a feature-gated one.
 
 ### One canonical form
 
@@ -108,7 +108,7 @@ Block identity that survives an edit, the log of who has answered for a block as
 
 - [Segmentation: two identities for every block](implementation/folio/segmentation.md) — Why a block needs both an identifier that survives edits and a hash that does not, and how the pair makes an acceptance go stale rather than orphaned or silently migrated onto someone else's paragraph.
 - [Provenance: an append-only log and a fold](implementation/folio/provenance.md) — Per-block provenance as event sourcing: events appended and never deleted, folded to current state and then to a viewer-relative display, answering whether a human has taken responsibility for a block as it now stands.
-- [The folio/v1 projection plugin](implementation/folio/projection.md) — The Loro round trip — document projected to a file, a human's file edit parsed back into ops — behind the `plugins` feature; the one chapter whose module a standalone build never compiles.
+- [The folio projection plugin](implementation/folio/projection.md) — The Loro round trip — document projected to a file, a human's file edit parsed back into ops — behind the `plugins` feature; the one chapter whose module a standalone build never compiles.
 
 ### Chunks, and resolving them
 
@@ -133,7 +133,7 @@ The plugin contract every projection goes through, identity tangling as one plug
 - [Identity tangling as a plugin](implementation/tangle/identity-pipeline.md) — The plugin that makes the `tangle:` block ordinary: a synthesized declaration routed through the same loop as every other codegen, so identity tangling keeps no private code path.
 - [The pipeline dispatcher](implementation/tangle/dispatcher.md) — The three entry points — one document, a directory, the whole workspace — and the loop between them that resolves inputs, runs each declared pipeline, writes outputs and records the sidecar.
 - [x0k-tangle: the crate and its CLI](implementation/tangle/crate.md) — The crate's contract rather than a mechanism — the module list and re-exports that say what a consumer may name, and the plugin-less CLI that puts those verbs in a shell.
-- [The faces behind `check`, `affordances` and `icon`](implementation/tangle/cli-faces.md) — The three verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, an affordance declaration read out as data, and an icon declaration checked against the profile and written bound to a publication's palette — each proven by running the binary the repository ships.
+- [The faces behind `check`, `affordances`, `declarations` and `icon`](implementation/tangle/cli-faces.md) — The three verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, an affordance declaration read out as data, and an icon declaration checked against the profile and written bound to a publication's palette — each proven by running the binary the repository ships.
 
 ### Back the other way
 
@@ -185,7 +185,7 @@ The small drawing language every mark on these pages is declared in: a declarati
 ### Vocabulary modules
 
 - [`x0k-ontology/ontology/modules/core.ttl`](crates/x0k-ontology/ontology/modules/core.ttl) — The self-typed root every x0k vocabulary module stands on: Concept, the one meta-level that every class and property occupies.
-- [`x0k-ontology/ontology/modules/document.ttl`](crates/x0k-ontology/ontology/modules/document.ttl) — The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with the document-to-document edges and the folio/v1 envelope properties that stay inside the genus.
+- [`x0k-ontology/ontology/modules/document.ttl`](crates/x0k-ontology/ontology/modules/document.ttl) — The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with the document-to-document edges, the header properties that stay inside the genus, and the folio: tool-configuration terms a header or a parameter panel carries.
 - [`x0k-ontology/ontology/modules/software.ttl`](crates/x0k-ontology/ontology/modules/software.ttl) — The publishable software vocabulary: Affordance, Signifier, Surface, and their relations to documents and implementations. enabledBy belongs here through its Affordance domain; its SoftwareModule target constraint is a shape. SoftwareModule and its Artifact superclass remain in product and work. A publication can select core, document, and software without importing those modules.
 
 ## Lineage
@@ -205,7 +205,7 @@ deadline you maintain the artifact that runs and let the prose rot, and stranger
 never did agree on a vocabulary. That is the cost that changed. An agent writes
 the prose and, more to the point, reads it — recovering intent from a document
 far better than from code — so the explanation stops being a tax on shipping and
-becomes the fastest way to hand the work on. It writes the envelope too, and acts
+becomes the fastest way to hand the work on. It writes the header too, and acts
 on a partial graph rather than needing a whole one, so an unfinished vocabulary
 pays immediately instead of paying at the end or never. On top of that,
 enforcement: CI re-derives every generated file on each run and fails if what is

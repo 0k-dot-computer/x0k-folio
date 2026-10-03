@@ -1,25 +1,15 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/fact-projection/payload
-  type: implementation
-  status: draft
-  summary: The wire form of a fact — a separate type from the in-memory one, because a field reorder must never change the bytes of every fact in the system.
-  concerns:
-  - facts
-  - wire-format
-  - serialization
-  - versioning
-  - substrate
-  tangle:
-    crate: crates/x0k-fact-projection
-    root: src/payload.rs
-  edges:
-    implements:
-    - x0k:architecture/entry-based-substrate
----
 
 # The bytes a fact rides on
+
+```turtle folio:document
+implementation:fact-projection\/payload a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The wire form of a fact — a separate type from the in-memory one, because a field reorder must never change the bytes of every fact in the system." ;
+    x0k:concerns "facts", "wire-format", "serialization", "versioning", "substrate" ;
+    x0k:implements architecture:entry-based-substrate ;
+    folio:tangleCrate "crates/x0k-fact-projection" ;
+    folio:tangleRoot "src/payload.rs" .
+```
 
 A fact in memory is a struct you refactor. A fact on the spine is bytes that
 other nodes already hold and will hold for as long as the log does. This

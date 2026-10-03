@@ -1,27 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/icon/parse
-  type: implementation
-  status: draft
-  summary: Reading an icon-profile declaration into its typed form — the two grids and their numbers, the four roles, the six elements and their geometry — permissive enough to carry what the checker will refuse, so that every refusal can name its rule and its element.
-  concerns:
-  - icons
-  - svg
-  - parsing
-  - profile
-  tangle:
-    crate: crates/x0k-icon
-    root: src/parse.rs
-  edges:
-    implements:
-    - x0k:design/icon-profile
-    cites:
-    - x0k:architecture/entity-iconography
-    - x0k:implementation/icon/validate
-    - x0k:implementation/icon/crate
----
 # Reading a declaration
+
+```turtle folio:document
+implementation:icon\/parse a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Reading an icon-profile declaration into its typed form — the two grids and their numbers, the four roles, the six elements and their geometry — permissive enough to carry what the checker will refuse, so that every refusal can name its rule and its element." ;
+    x0k:concerns "icons", "svg", "parsing", "profile" ;
+    x0k:cites architecture:entity-iconography,
+        implementation:icon\/validate,
+        implementation:icon\/crate ;
+    x0k:implements design:icon-profile ;
+    folio:tangleCrate "crates/x0k-icon" ;
+    folio:tangleRoot "src/parse.rs" .
+```
 
 An icon in x0k is a few lines of SVG written under the heading of the
 thing it depicts — a fenced `svg x0k:icon` block in a design, on a class

@@ -1,27 +1,23 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:design/publish-a-region-as-a-repository#query-the-documents
-  type: design
-  status: proposed
-  edges:
-    transcludes:
-      - x0k:design/publish-a-region-as-a-repository
----
+```turtle folio:document
+design:publish-a-region-as-a-repository%23query-the-documents a x0k:Design ;
+    x0k:status "proposed" ;
+    x0k:transcludes design:publish-a-region-as-a-repository .
+```
 
 ### Query the documents
 
 Ask questions across a collection's concepts, instances, and relationships.
 
-<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f71756572795f7468655f646f63756d656e7473-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/query_the_documents" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/query-the-documents.md"><strong>Affordance</strong> · Query the documents · <code>https://0k.computer/ontology#affordance/query_the_documents</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f71756572795f7468655f646f63756d656e7473-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f71756572795f7468655f646f63756d656e7473-1"></a>
+<a name="folio-instance-78306b3a6166666f7264616e63652f71756572795f7468655f646f63756d656e7473-1"></a><sub data-instance-iri="x0k:affordance/query_the_documents" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/query-the-documents.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/query_the_documents</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f71756572795f7468655f646f63756d656e7473-1">source declaration</a> · the graph block at line 13 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/query-the-documents.md:11</sub><a name="folio-source-78306b3a6166666f7264616e63652f71756572795f7468655f646f63756d656e7473-1"></a>
 
-```yaml x0k:affordance
-id: x0k:affordance/query_the_documents
-actors: [human, ai_agent]
-edges:
-  enabledBy:
-    - x0k:software-module/x0k-folio-cli
-    - x0k:software-module/x0k-folio-dialog
+```turtle folio:graph
+@prefix actor: <https://0k.computer/ontology#actor/> .
+@prefix software-module: <https://0k.computer/ontology#software-module/> .
+affordance:query_the_documents a x0k:Affordance ;
+    x0k:claimedFor actor:human,
+        actor:ai_agent ;
+    x0k:enabledBy software-module:x0k-folio-cli,
+        software-module:x0k-folio-dialog .
 ```
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/actor-dark.svg"><img alt="Actor" src="../../../../assets/icons/actor-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/declared-dark.svg"><img alt="declared" src="../../../../assets/icons/declared-light.svg" height="16"></picture> *declared* · for a person, an agent · reachable through `cli` `x0k-folio-cli query`

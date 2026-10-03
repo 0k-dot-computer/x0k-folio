@@ -1,6 +1,6 @@
 {
   "source": "implementation/syntax/tokenizer.md",
-  "source_hash": "2c3036965cf26e54",
+  "source_hash": "71836030fa02e19c",
   "pipelines": [
     {
       "kind": "identity-tangle",

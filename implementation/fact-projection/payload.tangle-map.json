@@ -1,6 +1,6 @@
 {
   "source": "implementation/fact-projection/payload.md",
-  "source_hash": "1f6e16dbf3f91ac9",
+  "source_hash": "ef6881a84620c728",
   "pipelines": [
     {
       "kind": "identity-tangle",

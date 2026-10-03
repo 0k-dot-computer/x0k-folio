@@ -1,26 +1,15 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/provenance
-  type: implementation
-  status: draft
-  summary: 'Per-block provenance as event sourcing: events appended and never deleted, folded to current state and then to a viewer-relative display, answering whether a human has taken responsibility for a block as it now stands.'
-  concerns:
-  - folio
-  - provenance
-  - underwriting
-  - trust
-  - events
-  tangle:
-    crate: crates/x0k-folio
-    root: src/block_provenance.rs
-  edges:
-    implements:
-    - x0k:design/prose-provenance-and-underwriting
-    cites:
-    - x0k:implementation/folio/segmentation
----
 # Provenance: an append-only log and a fold
+
+```turtle folio:document
+implementation:folio\/provenance a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Per-block provenance as event sourcing: events appended and never deleted, folded to current state and then to a viewer-relative display, answering whether a human has taken responsibility for a block as it now stands." ;
+    x0k:concerns "folio", "provenance", "underwriting", "trust", "events" ;
+    x0k:cites implementation:folio\/segmentation ;
+    x0k:implements design:prose-provenance-and-underwriting ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/block_provenance.rs" .
+```
 
 A document in a human-agent workshop accumulates prose from many hands —
 the operator (the human who runs the system and answers for what it

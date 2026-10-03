@@ -8,7 +8,19 @@ use tracing::{info, trace, warn};
 use x0k_fact_projection::{FactEntry};
 use x0k_fact_projection::payload::{file_content_cause, file_deleted_cause, FactPayload};
 use crate::backend::{self, Backend, FactBatches, backend_names};
-use crate::checkpoint::{load_state, write_source_state};
+use crate::checkpoint::write_source_state;
+
+async fn load_state(path:&Path)->Result<IngesterState> {
+    let path=path.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::checkpoint::load_state(&path)).await?
+}
+async fn persist_source(path:&Path,key:&str,state:&IngesterState)->Result<()> {
+    let mut snapshot=IngesterState::default();
+    if let Some(file)=state.files.get(key) {snapshot.files.insert(key.into(),file.clone());}
+    if let Some(recovery)=state.recovery.get(key) {snapshot.recovery.insert(key.into(),recovery.clone());}
+    let path=path.to_path_buf();let key=key.to_string();
+    tokio::task::spawn_blocking(move || write_source_state(&path,&key,&snapshot)).await?
+}
 /// The host's complete fact projection for one source revision.
 #[derive(Debug, Clone)]
 pub struct DocumentProjection {
@@ -19,7 +31,7 @@ pub struct DocumentProjection {
 
 /// None means a non-document; Err preserves its last-good projection.
 /// Discovery must cover the complete source set owned by this checkpoint.
-pub trait DocumentSource: Send {
+pub trait DocumentSource: Send + Sync {
     /// Read a discovered source; virtual sources may override filesystem I/O.
     fn read(&self, path: &Path) -> Result<Vec<u8>> { Ok(std::fs::read(path)?) }
 
@@ -129,10 +141,15 @@ fn longest_grace(registry: &[Backend]) -> Option<std::time::Duration> {
         backend.grace.map(|grace| longest.max(grace))
     })
 }
-fn probe_incarnations(sinks: &[(String, crate::delivery::Worker)], deadline: Option<std::time::Instant>)
+async fn probe_incarnations(sinks: &[(String, crate::delivery::Worker)], deadline: Option<std::time::Instant>)
     -> BTreeMap<String, Result<Option<String>>> {
-    let submitted: Vec<_> = sinks.iter().map(|(name,worker)| (name.clone(),worker.start_identity())).collect();
-    submitted.into_iter().map(|(name,ticket)| (name,ticket.and_then(|ticket|ticket.identity_until(deadline)))).collect()
+    let submitted: Vec<_> = sinks.iter().map(|(name,worker)| (name.clone(),worker.identity_awaitable())).collect();
+    let mut answers=BTreeMap::new();
+    for (name,ticket) in submitted {
+        let result=match ticket {Ok(ticket)=>ticket.identity_async(deadline).await,Err(error)=>Err(error)};
+        answers.insert(name,result);
+    }
+    answers
 }
 fn bind_incarnation(revision: &mut BackendRevision, value: &Result<Option<String>>,
     acked: &mut BTreeSet<String>, name: &str) -> bool {
@@ -159,7 +176,7 @@ fn bind_incarnation(revision: &mut BackendRevision, value: &Result<Option<String
 }
 /// Persist possible effects before delivering them; failed backends keep their
 /// own prior facts. Regression: recovery_survives_backend_outage_and_restart.
-pub fn deliver(
+pub async fn deliver(
     state: &mut IngesterState,
     state_path: &Path,
     path_key: &str,
@@ -173,7 +190,7 @@ pub fn deliver(
             longest_grace(&registry))
     };
     let delivery_started = std::time::Instant::now();
-    let identities = probe_incarnations(&sinks, grace.map(|grace| delivery_started + grace / 3));
+    let identities = probe_incarnations(&sinks, grace.map(|grace| delivery_started + grace / 3)).await;
     let prior = state.files.get(path_key).cloned();
     if prior.is_none() && desired.is_none() {
         return Ok(0);
@@ -224,7 +241,7 @@ pub fn deliver(
         let revision = &recovery.revisions[&sink.0];
         if revision.facts.is_none() {
             let cause = file_content_cause(revision.applied_hash.as_deref().unwrap_or_default());
-            pending_reads.insert(sink.0.clone(), sink.1.start_read(&cause));
+            pending_reads.insert(sink.0.clone(), sink.1.read_awaitable(&cause));
         }
     }
     let read_wait_started = delivery_started;
@@ -234,8 +251,9 @@ pub fn deliver(
         if !available.contains(&sink.0) { continue; }
         let revision = recovery.revisions.get_mut(&sink.0).unwrap();
         if revision.facts.is_none() {
-            let recovered = pending_reads.remove(&sink.0).unwrap()
-                .and_then(|ticket| ticket.facts_until(read_deadline));
+            let recovered = match pending_reads.remove(&sink.0).unwrap() {
+                Ok(ticket)=>ticket.facts_async(read_deadline).await,Err(error)=>Err(error),
+            };
             match recovered {
                 Ok(Some(facts)) => {
                     revision.facts = Some(facts.iter().map(|f| FactPayload::from_fact(f).to_bytes()).collect());
@@ -266,16 +284,16 @@ pub fn deliver(
         acked_by: acked.clone(),
     });
     // No sink call is permitted before this durable write succeeds.
-    write_source_state(state_path, path_key, state)?;
+    persist_source(state_path, path_key, state).await?;
     let mut submitted = Vec::new();
     for sink in &sinks {
         let Some(possible) = ready.remove(&sink.0) else { continue };
-        submitted.push((sink.0.clone(),sink.1.source(path_key,&batches,possible,&cause)));
+        submitted.push((sink.0.clone(),sink.1.source_awaitable(path_key,&batches,possible,&cause)));
     }
     let deadline = completion_grace.map(|grace| std::time::Instant::now() + grace);
     for (name, ticket) in submitted {
         let delivery = std::time::Instant::now();
-        let result = ticket.and_then(|ticket| ticket.count_until(deadline));
+        let result = match ticket {Ok(ticket)=>ticket.count_async(deadline).await,Err(error)=>Err(error)};
         let elapsed_ms = delivery.elapsed().as_millis() as u64;
         match &result {
             Ok(facts) => info!(path = %path_key, backend = %name, facts = *facts,
@@ -297,7 +315,7 @@ pub fn deliver(
         state.files.remove(path_key);
         state.recovery.remove(path_key);
     }
-    write_source_state(state_path, path_key, state)?;
+    persist_source(state_path, path_key, state).await?;
     Ok(footprint)
 }
 pub async fn reconcile(
@@ -310,13 +328,13 @@ pub async fn reconcile(
     validate_backend_names(&lock_backends(backends))?;
     let paths = source.discover(repo_root)?;
     let names = backend_names(&lock_backends(backends));
-    let mut state = load_state(state_path)?;
+    let mut state = load_state(state_path).await?;
     let (identity_sinks, identity_grace) = {
         let registry=lock_backends(backends);
         (registry.iter().map(|b|(b.name.clone(),b.worker.clone())).collect::<Vec<_>>(),
             longest_grace(&registry))
     };
-    let identities=probe_incarnations(&identity_sinks,identity_grace.map(|grace| std::time::Instant::now()+grace));
+    let identities=probe_incarnations(&identity_sinks,identity_grace.map(|grace| std::time::Instant::now()+grace)).await;
     let mut ingested = 0usize;
     let mut total_facts = 0usize;
     let mut seen_paths: HashSet<String> = HashSet::new();
@@ -345,7 +363,7 @@ pub async fn reconcile(
                 }
             }
             if before != (record.clone(),file.clone()) {
-                write_source_state(state_path,&path_key,&state)?;
+                persist_source(state_path,&path_key,&state).await?;
             }
         }
         let bytes = match source.read(path) {
@@ -379,7 +397,7 @@ pub async fn reconcile(
             }
         };
         let facts_written = deliver(
-            &mut state, state_path, &path_key, backends, projection.as_ref())?;
+            &mut state, state_path, &path_key, backends, projection.as_ref()).await?;
         if projection.is_none() { continue; }
         total_facts += facts_written;
         ingested += 1;
@@ -399,12 +417,12 @@ pub async fn reconcile(
         .cloned()
         .collect();
     for key in gone {
-        deliver(&mut state, state_path, &key, backends, None)?;
+        deliver(&mut state, state_path, &key, backends, None).await?;
     }
     Ok((paths.len(), ingested, total_facts))
 }
 /// Apply one source event using the same checkpoint and delivery protocol.
-pub fn apply_path_change(
+pub async fn apply_path_change(
     source: &dyn DocumentSource,
     path: &Path,
     state_path: &Path,
@@ -412,13 +430,13 @@ pub fn apply_path_change(
 ) -> Result<usize> {
     validate_backend_names(&lock_backends(backends))?;
     if !source.accepts(path) { return Ok(0); }
-    let mut state = load_state(state_path)?;
+    let mut state = load_state(state_path).await?;
     let key = path.to_string_lossy().to_string();
     if !path.exists() {
-        return deliver(&mut state, state_path, &key, backends, None);
+        return deliver(&mut state, state_path, &key, backends, None).await;
     }
     let bytes = source.read(path)?;
     let hash = source.revision_hash(&bytes);
     let projection = source.project(path, &bytes, &hash)?;
-    deliver(&mut state, state_path, &key, backends, projection.as_ref())
+    deliver(&mut state, state_path, &key, backends, projection.as_ref()).await
 }

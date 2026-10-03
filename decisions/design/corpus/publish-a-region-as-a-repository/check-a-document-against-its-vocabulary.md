@@ -1,13 +1,8 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:design/publish-a-region-as-a-repository#check-a-document-against-its-vocabulary
-  type: design
-  status: proposed
-  edges:
-    transcludes:
-      - x0k:design/publish-a-region-as-a-repository
----
+```turtle folio:document
+design:publish-a-region-as-a-repository%23check-a-document-against-its-vocabulary a x0k:Design ;
+    x0k:status "proposed" ;
+    x0k:transcludes design:publish-a-region-as-a-repository .
+```
 
 ### Check a document against its vocabulary
 
@@ -20,30 +15,31 @@ predicate no shipped module declares, which is a gap in what this publication
 selected, or a target naming no document here, which is an edge into the
 private corpus this was projected from and is expected.
 
-<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/check_a_document_against_shipped_vocabulary" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md"><strong>Affordance</strong> · Check a document against its vocabulary · <code>https://0k.computer/ontology#affordance/check_a_document_against_shipped_vocabulary</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1"></a>
+<a name="folio-instance-78306b3a6166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1"></a><sub data-instance-iri="x0k:affordance/check_a_document_against_shipped_vocabulary" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/check_a_document_against_shipped_vocabulary</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1">source declaration</a> · the graph block at line 20 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md:18</sub><a name="folio-source-78306b3a6166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1"></a>
 
-```yaml x0k:affordance
-id: x0k:affordance/check_a_document_against_shipped_vocabulary
-actors: [human, ai_agent]
-edges:
-  enabledBy:
-    - x0k:software-module/x0k-folio
-    - x0k:software-module/x0k-ontology
+```turtle folio:graph
+@prefix actor: <https://0k.computer/ontology#actor/> .
+@prefix software-module: <https://0k.computer/ontology#software-module/> .
+affordance:check_a_document_against_shipped_vocabulary a x0k:Affordance ;
+    x0k:claimedFor actor:human,
+        actor:ai_agent ;
+    x0k:enabledBy software-module:x0k-folio,
+        software-module:x0k-ontology .
 ```
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/actor-dark.svg"><img alt="Actor" src="../../../../assets/icons/actor-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/proven-dark.svg"><img alt="proven" src="../../../../assets/icons/proven-light.svg" height="16"></picture> *proven* · for a person, an agent · reachable through `cli` `x0k-tangle check`, `sdk` `check_envelope`
 
-*realized in* [Checking a document against what shipped with it](../../../../implementation/folio/checking.md) · [Entities authored inside prose](../../../../implementation/folio/inline-entities.md) · [The faces behind `check`, `affordances` and `icon`](../../../../implementation/tangle/cli-faces.md) · [x0k-tangle: the crate and its CLI](../../../../implementation/tangle/crate.md)
+*realized in* [Checking a document against what shipped with it](../../../../implementation/folio/checking.md) · [Entities authored inside prose](../../../../implementation/folio/inline-entities.md) · [The faces behind `check`, `affordances`, `declarations` and `icon`](../../../../implementation/tangle/cli-faces.md) · [x0k-tangle: the crate and its CLI](../../../../implementation/tangle/crate.md)
 
 *proven by* each test below, as its chapter tangles it and as it ran at projection.
 
-<details><summary><code>check_notes_an_edge_out_of_the_set_and_passes</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>check_notes_an_edge_out_of_the_set_and_passes</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust
 #[test]
 fn check_notes_an_edge_out_of_the_set_and_passes() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
 
     let out = run(&["check"], tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -61,13 +57,13 @@ fn check_notes_an_edge_out_of_the_set_and_passes() {
 
 </details>
 
-<details><summary><code>check_names_an_undeclared_predicate_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>check_names_an_undeclared_predicate_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust
 #[test]
 fn check_names_an_undeclared_predicate_and_fails() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "docs/fixture.md", &design_doc("frobnicates"));
+    write(tmp.path(), "docs/fixture.md", &design_doc("x0k:frobnicates"));
 
     let out = run(&["check"], tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -107,9 +103,9 @@ fn write_scratch_vocabulary(dir: &Path) {
 
 </details>
 
-<details><summary><code>check_reads_a_document_against_the_vocabulary_it_is_pointed_at</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>check_reads_a_document_against_the_vocabulary_it_is_pointed_at</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
-```rust
+````rust
 #[test]
 fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
     let tmp = TempDir::new().unwrap();
@@ -118,8 +114,8 @@ fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
     write(
         tmp.path(),
         "docs/brief.md",
-        "---\nx0k:\n  format: folio/v1\n  id: mycorp:brief/tender-process\n  \
-         type: brief\n  status: proposed\n---\n# A brief\n",
+        "# A brief\n\n```turtle folio:document\nmycorp:brief\\/tender-process a mycorp:Brief ;\n    \
+         x0k:status \"proposed\" .\n```\n",
     );
     let docs = tmp.path().join("docs");
 
@@ -133,8 +129,8 @@ fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
         "a genus and a namespace the named vocabulary declares must check clean: {stderr}"
     );
 
-    // The same document against the vocabulary this build compiled: the
-    // genus is not a class it declares, so the envelope does not parse.
+    // The same document against the vocabulary this build compiled: it
+    // knows no `mycorp:` prefix, so the header does not parse.
     let out = run(&["check"], &docs);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -143,52 +139,60 @@ fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
     );
     assert!(stderr.contains("brief.md"), "the document is named: {stderr}");
 }
-```
+````
 
 </details>
 
-<details><summary><code>check_reports_an_envelope_that_does_not_parse</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>check_reports_a_header_that_does_not_parse</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ````rust
 #[test]
-fn check_reports_an_envelope_that_does_not_parse() {
-    let tmp = TempDir::new().unwrap();
-    write(
-        tmp.path(),
-        "docs/broken.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/broken\n  type: nonsense\n---\n# Broken\n",
-    );
+fn check_reports_a_header_that_does_not_parse() {
+    for header in [
+        "design:broken a x0k:Nonsense .",
+        "design:broken a x0k:Design ;\n    x0k:status .",
+    ] {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "docs/broken.md",
+            &format!("# Broken\n\n```turtle folio:document\n{header}\n```\n"),
+        );
 
-    let out = run(&["check"], tmp.path());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "check passed a malformed envelope: {stderr}");
-    assert!(stderr.contains("broken.md"), "the document is named: {stderr}");
+        let out = run(&["check"], tmp.path());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "check passed a malformed header: {stderr}");
+        assert!(
+            stderr.contains("broken.md: header does not parse"),
+            "the document is named, once as a header: {stderr}"
+        );
+        assert_eq!(stderr.matches("broken.md").count(), 1, "reported once: {stderr}");
+    }
 }
 
-/// A design declaring one affordance for the given actors and no signifier.
-fn lonely_doc(actors: &str) -> String {
+/// A design declaring one affordance claimed for the given actor and no
+/// signifier.
+fn lonely_doc(actor: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/lonely\n  type: design\n  \
-         status: draft\n---\n# Lonely\n\n### Frob alone\n\nI frob, and nothing shows me how.\n\n\
-         ```yaml x0k:affordance\nid: x0k:affordance/frob_alone\nstatus: wip\n\
-         actors: [{actors}]\n```\n"
+        "# Lonely\n\n```turtle folio:document\ndesign:lonely a x0k:Design ;\n    \
+         x0k:status \"draft\" .\n```\n\n### Frob alone\n\nI frob, and nothing shows me how.\n\n\
+         ```turtle folio:graph\naffordance:frob_alone a x0k:Affordance ;\n    \
+         x0k:status \"wip\" ;\n    x0k:claimedFor x0k:actor\\/{actor} .\n```\n"
     )
 }
 
 /// A chapter declaring a signifier for some *other* affordance: enough
 /// for the set to be one where signification lives, and no answer at all
 /// for `frob_alone`.
-const SIGNIFYING_CHAPTER: &str = "---\nx0k:\n  format: folio/v1\n  \
-     id: x0k:implementation/elsewhere\n  type: implementation\n  \
-     status: draft\n---\n# Elsewhere\n\n### `frob_together`\n\n\
-     ```yaml x0k:signifier\nid: x0k:signifier/frob-together\nedges:\n  \
-     signifies:\n    - x0k:affordance/frob_together\n  presentedOn:\n    \
-     - x0k:surface/cli\n```\n";
+const SIGNIFYING_CHAPTER: &str = "# Elsewhere\n\n```turtle folio:document\n\
+     implementation:elsewhere a x0k:Implementation ;\n    x0k:status \"draft\" .\n```\n\n\
+     ### `frob_together`\n\n```turtle folio:graph\nsignifier:frob-together a x0k:Signifier ;\n    \
+     x0k:signifies affordance:frob_together ;\n    x0k:presentedOn surface:cli .\n```\n";
 ````
 
 </details>
 
-<details><summary><code>check_names_a_human_claim_no_signifier_signifies_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>check_names_a_human_claim_no_signifier_signifies_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust
 #[test]
@@ -215,7 +219,7 @@ fn check_names_a_human_claim_no_signifier_signifies_and_fails() {
 
 </details>
 
-<details><summary><code>check_notes_a_human_claim_when_the_set_declares_no_signifier_at_all</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>check_notes_a_human_claim_when_the_set_declares_no_signifier_at_all</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust
 #[test]
@@ -247,7 +251,7 @@ fn check_notes_a_human_claim_when_the_set_declares_no_signifier_at_all() {
 
 </details>
 
-<details><summary><code>check_passes_an_agent_only_claim_with_no_signifier</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>check_passes_an_agent_only_claim_with_no_signifier</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust
 #[test]

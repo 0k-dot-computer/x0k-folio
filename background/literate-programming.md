@@ -1,31 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:wiki/literate-programming
-  type: wiki
-  subtype: wiki:Entity
-  status: stable
-  summary: "Donald Knuth's 1984 literate programming reframed a program as an explanation addressed to humans first (\"Let us change our traditional attitude to the construction of programs: instead of imagining that our main task is to instruct a computer what to do, let us concentrate rather on explaining to human beings what we want a computer to do\"), with code woven into prose (WEB/TeX). x0k itself is literate-programming-based. This page also frames the cross-cutting legibility-as-sovereignty sub-facet of the malleability thread: you cannot truly own, audit, or reshape what you cannot understand, so opacity is a soft form of lock-in and extraction. The legibility motif runs Knuth to Wirth's Oberon to Kay/VPRI's STEPS to minimalism (Forth, suckless) to the tiny frozen kernels (Nock, PLAN/SKEW's four combinators)."
-  updated_by: mcp-agent
-  created_at: 2026-06-08T11:53:39.745572Z
-  updated_at: 2026-06-08T16:54:19.326117Z
-  concerns:
-    - literate-programming
-    - legibility
-    - malleable-software
-    - minimalism
-    - durable-computing
-    - sovereignty
-    - lineage
-    - history
-    - knuth
-  edges:
-    cites:
-      - x0k:wiki/plan-plunder
-      - x0k:wiki/urbit
-      - x0k:wiki/alex-komoroske
----
 # Literate Programming &amp; Legibility-as-Sovereignty
+
+```turtle folio:document
+wiki:literate-programming a x0k:Wiki ;
+    x0k:status "stable" ;
+    x0k:subtype "wiki:Entity" ;
+    x0k:summary "Donald Knuth's 1984 literate programming reframed a program as an explanation addressed to humans first (\"Let us change our traditional attitude to the construction of programs: instead of imagining that our main task is to instruct a computer what to do, let us concentrate rather on explaining to human beings what we want a computer to do\"), with code woven into prose (WEB/TeX). x0k itself is literate-programming-based. This page also frames the cross-cutting legibility-as-sovereignty sub-facet of the malleability thread: you cannot truly own, audit, or reshape what you cannot understand, so opacity is a soft form of lock-in and extraction. The legibility motif runs Knuth to Wirth's Oberon to Kay/VPRI's STEPS to minimalism (Forth, suckless) to the tiny frozen kernels (Nock, PLAN/SKEW's four combinators)." ;
+    x0k:updatedBy "mcp-agent" ;
+    x0k:createdAt "2026-06-08T11:53:39.745572Z" ;
+    x0k:updatedAt "2026-06-08T16:54:19.326117Z" ;
+    x0k:concerns "literate-programming", "legibility", "malleable-software", "minimalism", "durable-computing", "sovereignty", "lineage", "history", "knuth" ;
+    x0k:cites wiki:plan-plunder,
+        wiki:urbit,
+        wiki:alex-komoroske .
+```
 
 **Literate programming** is Donald Knuth's 1984 reframing of what a program
 *is*. Instead of source code with comments bolted on, a literate program is a

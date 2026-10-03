@@ -1,20 +1,15 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/instance-rendering
-  type: implementation
-  status: draft
-  summary: Instance identity, fields and source declarations rendered with the selected vocabulary on HTML and forge surfaces.
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/instance_rendering.rs
-  edges:
-    cites:
-    - x0k:implementation/folio/document-vocabulary
-    - x0k:implementation/tangle/weave
-    - x0k:implementation/tangle/region-gfm
----
 # Instances on a reading surface
+
+```turtle folio:document
+implementation:tangle\/instance-rendering a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Instance identity, fields and source declarations rendered with the selected vocabulary on HTML and forge surfaces." ;
+    x0k:cites implementation:folio\/document-vocabulary,
+        implementation:tangle\/weave,
+        implementation:tangle\/region-gfm ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/instance_rendering.rs" .
+```
 
 A concept need not have a dedicated renderer to remain useful. The fallback
 shows its heading-derived title, resolved identity, concept and authored fields.
@@ -32,7 +27,14 @@ The collection is resolved before any member is rendered, so a definition in
 one selected document can describe an instance in another. Callers may pass
 their selected base model. Single-document entry points retain the supplied
 base vocabulary by default. Resolution errors remain visible beside the
-original YAML; an unresolved declaration is never silently discarded.
+original declaration; an unresolved declaration is never silently discarded.
+
+A declaration is a `turtle folio:graph` block that states one instance. The
+collector reads whole files — the header is a block of its own that the
+extractor passes over — so the byte range a card cites is a range of the file
+itself. A block that declares vocabulary rather than an instance gets no card;
+a block that does not read gets an unresolved one carrying the parser's
+reason, with the declaration beneath it as written.
 
 HTML uses the existing weave and publication theme variables. Forge output
 adds one reversible caption above the original fence. These are surface
@@ -42,7 +44,9 @@ renderings, not a new theme or plugin registry.
 
 ```rust {#root}
 use std::collections::BTreeMap;
+use x0k_folio::colophon::{compact_iri, is_marker, predeclared_prefixes, shipped_prefixes, GRAPH_MARKER};
 use x0k_folio::document_vocabulary::{load_definitions, collect_instances, validate_relationships, DocumentSource};
+use x0k_folio::inline_entity::{read_graph_block, GraphContent, Object};
 use x0k_ontology::concept_facts::OntologyModel;
 
 /// A presentation reads the selected collection, never a global custom-term registry.
@@ -50,6 +54,22 @@ pub struct InstancePresentation {
     instances: BTreeMap<(String, String), InstanceView>,
     diagnostic: Option<String>,
     document_diagnostics: BTreeMap<String, String>,
+    /// The prefixes a block is read with: the resolved vocabulary's (or the
+    /// base's when the vocabulary failed to resolve), then every prefix the
+    /// compiled vocabulary adds, so a block whose class the selected
+    /// vocabulary leaves out still reads — and is shown unresolved, with its
+    /// identity — rather than failing as Turtle.
+    prefixes: Vec<(String, String)>,
+}
+
+fn reading_prefixes(model: &OntologyModel) -> Vec<(String, String)> {
+    let mut prefixes = predeclared_prefixes(model);
+    for (prefix, namespace) in shipped_prefixes() {
+        if !prefixes.iter().any(|(known, _)| known == prefix) {
+            prefixes.push((prefix.clone(), namespace.clone()));
+        }
+    }
+    prefixes
 }
 
 pub struct InstanceView {
@@ -66,17 +86,15 @@ pub struct InstanceView {
 
 impl InstancePresentation {
     pub fn collect(documents: &[(&str, &str)], base: &OntologyModel) -> Self {
-        let sources: Vec<_> = documents.iter().map(|(id, content)| DocumentSource {
-            id,
-            body: x0k_folio::colophon::split_frontmatter(content).map(|(_, body)| body).unwrap_or(content),
-        }).collect();
+        let sources: Vec<_> = documents.iter().map(|(id, content)| DocumentSource { id, body: content }).collect();
         let vocabulary = match load_definitions(&sources, base) {
             Ok(vocabulary) => vocabulary,
             Err(error) => return Self {
                 instances: BTreeMap::new(), diagnostic: Some(error.to_string()),
-                document_diagnostics: BTreeMap::new(),
+                document_diagnostics: BTreeMap::new(), prefixes: reading_prefixes(base),
             },
         };
+        let prefixes = reading_prefixes(&vocabulary.model);
         let mut document_diagnostics = BTreeMap::new();
         let mut candidates = Vec::new();
         for source in &sources {
@@ -109,7 +127,7 @@ impl InstancePresentation {
         // Definitions/model failures without a source remain globally fail-closed.
         while let Err(error) = validate_relationships(&vocabulary.model, &candidates) {
             if error.sources.is_empty() {
-                return Self { instances: BTreeMap::new(), diagnostic: Some(error.to_string()), document_diagnostics };
+                return Self { instances: BTreeMap::new(), diagnostic: Some(error.to_string()), document_diagnostics, prefixes };
             }
             let before = candidates.len();
             for source in &error.sources {
@@ -117,7 +135,7 @@ impl InstancePresentation {
             }
             candidates.retain(|instance| !document_diagnostics.contains_key(&instance.source.document));
             if candidates.len() == before {
-                return Self { instances: BTreeMap::new(), diagnostic: Some(error.to_string()), document_diagnostics };
+                return Self { instances: BTreeMap::new(), diagnostic: Some(error.to_string()), document_diagnostics, prefixes };
             }
         }
         let instances = candidates.into_iter().map(|instance| {
@@ -126,51 +144,70 @@ impl InstancePresentation {
                 identity: instance.iri, concept: instance.concept,
                 title: instance.entity.title, source_document: instance.source.document.clone(),
                 source_start: Some(instance.source.bytes.start), source_end: Some(instance.source.bytes.end), occurrence: 0,
-                fields: fields(&instance.entity.yaml), diagnostic: None,
+                fields: fields(&instance.entity.statements, &prefixes), diagnostic: None,
             };
             ((instance.source.document, authored), view)
         }).collect();
-        Self { instances, diagnostic: None, document_diagnostics }
+        Self { instances, diagnostic: None, document_diagnostics, prefixes }
     }
 
     pub fn same_document(document: &str, content: &str) -> Self {
         Self::collect(&[(document, content)], &OntologyModel::shipped())
     }
 
+    /// The card for the block a surface is about to show, when it is an
+    /// instance declaration: the resolved view, or an unresolved one that
+    /// keeps the identity, the fields and the reason. `None` for every other
+    /// block, a vocabulary block and a parameter panel included.
     pub fn view(&self, document: &str, info: &str, code: &str) -> Option<InstanceView> {
-        let tokens: Vec<_> = info.split_ascii_whitespace().collect();
-        if tokens.len() != 2 || !tokens[0].eq_ignore_ascii_case("yaml") || !tokens[1].contains(':')
-            || tokens[1] == "x0k:params" {
+        if !is_marker(info, GRAPH_MARKER) {
             return None;
         }
-        let mapping = serde_norway::from_str::<serde_norway::Mapping>(code).ok();
-        let authored = mapping.as_ref().and_then(|m|
-            m.get(serde_norway::Value::String("id".into())).and_then(|v| v.as_str()));
-        if let Some(view) = authored.and_then(|id| self.instances.get(&(document.to_string(), id.to_string()))) {
+        let (authored, concept, fields, unreadable) = match read_graph_block(code, &self.prefixes, 1) {
+            Ok(GraphContent::Definitions | GraphContent::Parameters) => return None,
+            Ok(GraphContent::Instance { subject, class, statements }) => (
+                compact_iri(&subject, &self.prefixes),
+                class,
+                fields(&statements, &self.prefixes),
+                None,
+            ),
+            Err(error) => (
+                "(unreadable declaration)".to_string(),
+                GRAPH_MARKER.to_string(),
+                Vec::new(),
+                Some(error.to_string()),
+            ),
+        };
+        if let Some(view) = self.instances.get(&(document.to_string(), authored.clone())) {
             return Some(InstanceView {
                 identity: view.identity.clone(), concept: view.concept.clone(), title: view.title.clone(),
                 source_document: view.source_document.clone(), source_start: view.source_start,
                 source_end: view.source_end, occurrence: 0, fields: view.fields.clone(), diagnostic: None,
             });
         }
+        let reason = self.diagnostic.clone()
+            .or_else(|| self.document_diagnostics.get(document).cloned())
+            .or(unreadable)
+            .unwrap_or_else(|| "This declaration's concept or identity is not resolved in the selected vocabulary.".to_string());
         Some(InstanceView {
-            identity: authored.unwrap_or("(missing identity)").to_string(), concept: tokens[1].to_string(),
+            identity: authored, concept,
             title: "Unresolved instance".to_string(), source_document: document.to_string(),
             source_start: None, source_end: None, occurrence: 0,
-            fields: mapping.as_ref().map(fields).unwrap_or_default(),
-            diagnostic: Some(self.diagnostic.clone().or_else(|| self.document_diagnostics.get(document).cloned()).unwrap_or_else(||
-                "This declaration's concept or identity is not resolved in the selected vocabulary.".to_string())),
+            fields,
+            diagnostic: Some(reason),
         })
     }
 }
 
-fn fields(mapping: &serde_norway::Mapping) -> Vec<(String, String)> {
-    let mut fields: Vec<_> = mapping.iter().filter_map(|(key, value)| {
-        let key = key.as_str()?;
-        if key == "id" { return None; }
-        let value = value.as_str().map(str::to_string)
-            .unwrap_or_else(|| serde_norway::to_string(value).unwrap_or_default().trim().to_string());
-        Some((key.to_string(), value))
+/// A block's statements as the card lists them: compact predicate, and the
+/// value as written — an IRI compact, a literal's lexical form — sorted.
+fn fields(statements: &[(String, Object)], prefixes: &[(String, String)]) -> Vec<(String, String)> {
+    let mut fields: Vec<_> = statements.iter().map(|(predicate, object)| {
+        let value = match object {
+            Object::Iri(iri) => compact_iri(iri, prefixes),
+            Object::Literal(literal) => literal.value.clone(),
+        };
+        (compact_iri(predicate, prefixes), value)
     }).collect();
     fields.sort();
     fields
@@ -225,7 +262,7 @@ pub fn html(view: &InstanceView, code: &str) -> String {
         html.push_str(&format!("<p class=\"instance-diagnostic\">{}</p>", escape(diagnostic)));
     }
     html.push_str(&format!("<a class=\"instance-source\" href=\"#folio-source-{anchor}\">Source declaration</a>\
-        <details id=\"folio-source-{anchor}\"><summary>Declaration</summary><pre><code class=\"language-yaml\">{}</code></pre></details></section>\n",
+        <details id=\"folio-source-{anchor}\"><summary>Declaration</summary><pre><code class=\"language-turtle\">{}</code></pre></details></section>\n",
         escape(code)));
     html
 }
@@ -259,7 +296,7 @@ mod tests {
 
     fn fixture() -> (String, String) {
         let fence = char::from(96).to_string().repeat(3);
-        let definitions = format!("# Vocabulary\n\n{fence}turtle folio:ontology\n\
+        let definitions = format!("# Vocabulary\n\n{fence}turtle folio:graph\n\
             @prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
             @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
             @prefix vann: <http://purl.org/vocab/vann/> .\n\
@@ -269,10 +306,10 @@ mod tests {
               vann:preferredNamespaceUri \"https://example.test/paper#\" .\n\
             paper:Paper a owl:Class ; rdfs:isDefinedBy <https://example.test/vocabulary> .\n\
             {fence}\n");
-        let instances = format!("---\nx0k:\n  format: folio/v1\n  id: x0k:design/example\n  type: design\n---\n\
-            # Examples\n\n## A paper\nA short paper description.\n\n\
-            {fence}yaml paper:paper\nid: paper:paper/one\nauthor: \"A <reader>\"\n{fence}\n\n\
-            ## Read the paper\nRead this document.\n\n{fence}yaml x0k:affordance\nid: x0k:affordance/read-paper\nactors: [human]\n{fence}\n");
+        let instances = format!("# Examples\n\n{fence}turtle folio:document\ndesign:example a x0k:Design .\n{fence}\n\n\
+            ## A paper\nA short paper description.\n\n\
+            {fence}turtle folio:graph\npaper:paper\\/one a paper:Paper ;\n    paper:author \"A <reader>\" .\n{fence}\n\n\
+            ## Read the paper\nRead this document.\n\n{fence}turtle folio:graph\naffordance:read-paper a x0k:Affordance ;\n    x0k:claimedFor x0k:actor\\/human .\n{fence}\n");
         (definitions, instances)
     }
 
@@ -321,26 +358,36 @@ mod tests {
         assert!(html.contains("Source declaration"));
     }
 
+    /// A document declaring one paper; `extra` is further statements,
+    /// each opening with ` ;`.
     fn paper(id: &str, extra: &str) -> String {
-        format!("# Paper\n\n~~~yaml paper:paper\nid: paper:paper/{id}\n{extra}~~~\n")
+        format!("# Paper\n\n~~~turtle folio:graph\n{}~~~\n", block("paper", id, extra))
+    }
+
+    /// The Turtle of one declaration of `class` in the `paper` vocabulary.
+    fn block(class: &str, id: &str, extra: &str) -> String {
+        let pascal = format!("{}{}", class[..1].to_uppercase(), &class[1..]);
+        format!("paper:{class}\\/{id} a paper:{pascal}{extra} .\n")
     }
 
     #[test]
     fn malformed_sibling_does_not_degrade_healthy_html_or_woven_output() {
         let (definitions, _) = fixture();
         let healthy = paper("healthy", "");
-        let bad = "# Broken\n\n~~~yaml paper:unknown\nid: paper:unknown/broken\n~~~\n";
+        let bad = format!("# Broken\n\n~~~turtle folio:graph\n{}~~~\n", block("unknown", "broken", ""));
         let context = InstancePresentation::collect(
-            &[("vocab.md", &definitions), ("healthy.md", &healthy), ("bad.md", bad)],
+            &[("vocab.md", &definitions), ("healthy.md", &healthy), ("bad.md", &bad)],
             &OntologyModel::shipped());
-        let view = context.view("healthy.md", "yaml paper:paper", "id: paper:paper/healthy\n").unwrap();
+        let healthy_block = block("paper", "healthy", "");
+        let view = context.view("healthy.md", "turtle folio:graph", &healthy_block).unwrap();
         assert_eq!(view.identity, "https://example.test/paper#paper/healthy");
         assert!(view.diagnostic.is_none());
-        assert!(!html(&view, "id: paper:paper/healthy").contains("instance-diagnostic"));
+        assert!(!html(&view, &healthy_block).contains("instance-diagnostic"));
         assert!(!gfm(&view).contains("Unresolved"));
-        let bad = context.view("bad.md", "yaml paper:unknown", "id: paper:unknown/broken\n").unwrap();
+        let broken = block("unknown", "broken", "");
+        let bad = context.view("bad.md", "turtle folio:graph", &broken).unwrap();
         assert!(bad.diagnostic.as_ref().unwrap().contains("bad.md"));
-        assert!(html(&bad, "id: paper:unknown/broken").contains("instance-diagnostic"));
+        assert!(html(&bad, &broken).contains("instance-diagnostic"));
     }
 
     #[test]
@@ -352,12 +399,12 @@ mod tests {
             &[("vocab.md", &definitions), ("a.md", &duplicate), ("b.md", &duplicate),
               ("c.md", &duplicate), ("healthy.md", &healthy)], &OntologyModel::shipped());
         for document in ["a.md", "b.md", "c.md"] {
-            let view = context.view(document, "yaml paper:paper", "id: paper:paper/shared\n").unwrap();
+            let view = context.view(document, "turtle folio:graph", &block("paper", "shared", "")).unwrap();
             let error = view.diagnostic.unwrap();
             assert!(error.contains("duplicate instance https://example.test/paper#paper/shared"), "{error}");
             for owner in ["a.md", "b.md", "c.md"] { assert!(error.contains(owner), "{error}"); }
         }
-        assert!(context.view("healthy.md", "yaml paper:paper", "id: paper:paper/healthy\n").unwrap().diagnostic.is_none());
+        assert!(context.view("healthy.md", "turtle folio:graph", &block("paper", "healthy", "")).unwrap().diagnostic.is_none());
     }
 
     #[test]
@@ -369,7 +416,7 @@ mod tests {
             &[("vocab.md", &definitions), ("one.md", &one), ("two.md", &two)],
             &OntologyModel::shipped());
         for document in ["one.md", "two.md"] {
-            let error = context.view(document, "yaml paper:paper", "id: paper:paper/shared\\n").unwrap().diagnostic.unwrap();
+            let error = context.view(document, "turtle folio:graph", &block("paper", "shared", "")).unwrap().diagnostic.unwrap();
             assert!(error.contains("one.md") && error.contains("two.md"), "{error}");
         }
     }
@@ -382,18 +429,17 @@ mod tests {
             "paper:Paper a owl:Class ; rdfs:isDefinedBy <https://example.test/vocabulary> .\n\
              paper:Other a owl:Class ; rdfs:isDefinedBy <https://example.test/vocabulary> .\n\
              paper:cites a owl:ObjectProperty ; rdfs:isDefinedBy <https://example.test/vocabulary> ; rdfs:domain paper:Paper ; rdfs:range paper:Paper .");
-        let bad = paper("bad", "edges:\n  paper:cites: [paper:other/target]\n");
-        let target = "# Target\n\n~~~yaml paper:other\nid: paper:other/target\n~~~\n";
+        let bad = paper("bad", " ;\n    paper:cites paper:other\\/target");
+        let target = format!("# Target\n\n~~~turtle folio:graph\n{}~~~\n", block("other", "target", ""));
         let healthy = paper("healthy", "");
         let context = InstancePresentation::collect(
-            &[("vocab.md", &definitions), ("bad.md", &bad), ("target.md", target),
+            &[("vocab.md", &definitions), ("bad.md", &bad), ("target.md", &target),
               ("healthy.md", &healthy)], &OntologyModel::shipped());
-        let bad = context.view("bad.md", "yaml paper:paper", "id: paper:paper/bad\n").unwrap();
+        let bad = context.view("bad.md", "turtle folio:graph", &block("paper", "bad", " ;\n    paper:cites paper:other\\/target")).unwrap();
         let error = bad.diagnostic.unwrap();
         assert!(error.contains("bad.md") && error.contains("expected"), "{error}");
-        for (document, class, id) in [("target.md", "paper:other", "paper:other/target"),
-            ("healthy.md", "paper:paper", "paper:paper/healthy")] {
-            assert!(context.view(document, &format!("yaml {class}"), &format!("id: {id}\n")).unwrap().diagnostic.is_none());
+        for (document, class, id) in [("target.md", "other", "target"), ("healthy.md", "paper", "healthy")] {
+            assert!(context.view(document, "turtle folio:graph", &block(class, id, "")).unwrap().diagnostic.is_none());
         }
     }
 
@@ -401,9 +447,9 @@ mod tests {
     fn invalid_shared_definitions_fail_closed_for_all_instances() {
         let healthy = paper("healthy", "");
         let context = InstancePresentation::collect(
-            &[("vocab.md", "~~~turtle folio:ontology\nnot valid turtle\n~~~\n"), ("healthy.md", &healthy)],
+            &[("vocab.md", "# Vocabulary\n\n~~~turtle folio:graph\nnot valid turtle\n~~~\n"), ("healthy.md", &healthy)],
             &OntologyModel::shipped());
-        assert!(context.view("healthy.md", "yaml paper:paper", "id: paper:paper/healthy\n").unwrap().diagnostic.is_some());
+        assert!(context.view("healthy.md", "turtle folio:graph", &block("paper", "healthy", "")).unwrap().diagnostic.is_some());
     }
 
     #[test]
@@ -413,7 +459,12 @@ mod tests {
         let html = weave_html_with_instances(&source, &parse_document(&source).unwrap(), "example.md", &context).unwrap().html;
         assert!(html.contains("Unresolved instance"));
         assert!(html.contains("instance-diagnostic"));
-        assert!(html.contains("paper:paper/one"));
+        // With no vocabulary the `paper:` prefix does not read, so the card
+        // carries the parser's reason and the declaration as written. The
+        // affordance's prefix is the compiled vocabulary's, so it reads and
+        // keeps its identity, unresolved.
+        assert!(html.contains("paper:paper\\/one"), "{html}");
+        assert!(html.contains("<code>x0k:affordance/read-paper</code>"), "{html}");
         assert!(html.contains("A &lt;reader&gt;"));
         assert!(html.contains("Source declaration"));
     }

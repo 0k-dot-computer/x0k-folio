@@ -1,6 +1,6 @@
 {
   "source": "implementation/icon/path.md",
-  "source_hash": "0999cfa7496696c5",
+  "source_hash": "c73c81a02cf789cb",
   "pipelines": [
     {
       "kind": "identity-tangle",

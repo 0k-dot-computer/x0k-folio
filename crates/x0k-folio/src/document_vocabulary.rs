@@ -10,8 +10,8 @@ use x0k_ontology::concept_facts::{
     RDFS_IS_DEFINED_BY, RDFS_SUB_PROPERTY_OF, STRUCTURAL_NODE_PREFIX, X0K_NS,
 };
 use x0k_ontology::load::TurtleSource;
-use crate::envelope_check::camel_form;
-use crate::inline_entity::{declaration_marker, extract_from_markdown_in, InlineEntity};
+use crate::colophon::{is_marker, predeclared_prefixes, GRAPH_MARKER};
+use crate::inline_entity::{extract_located, read_graph_block, GraphContent, InlineEntity, InlineEntityError, Object};
 
 /// The caller's stable document identity and its Markdown body.
 pub struct DocumentSource<'a> {
@@ -132,10 +132,19 @@ fn blocks(document: &DocumentSource<'_>) -> Vec<Block> {
     out
 }
 
-fn ontology_marker(info: &str) -> bool {
-    let mut tokens = info.split_ascii_whitespace();
-    tokens.next().is_some_and(|s| s.eq_ignore_ascii_case("turtle"))
-        && tokens.next() == Some("folio:ontology") && tokens.next().is_none()
+/// A graph block that declares vocabulary, read with `prefixes` in scope.
+/// A block that does not parse here is left to the instance collector, which
+/// reads it against the assembled vocabulary and reports it against its own
+/// document.
+fn declares_vocabulary(block: &Block, prefixes: &[(String, String)]) -> bool {
+    is_marker(&block.info, GRAPH_MARKER)
+        && matches!(read_graph_block(&block.text, prefixes, block.source.line + 1), Ok(GraphContent::Definitions))
+}
+
+/// `@prefix` lines for `prefixes`, set before a definition block's own text
+/// so its declarations shadow them.
+fn prefix_lines(prefixes: &[(String, String)]) -> String {
+    prefixes.iter().map(|(prefix, namespace)| format!("@prefix {prefix}: <{namespace}> .\n")).collect()
 }
 
 fn error(kind: VocabularyErrorKind, message: impl Into<String>, sources: &[BlockSource]) -> VocabularyError {
@@ -146,7 +155,7 @@ fn error(kind: VocabularyErrorKind, message: impl Into<String>, sources: &[Block
 /// `explicit` is a directory of `*.ttl` module files, read *in addition to*
 /// the set this build compiled; `without_shipped` reads that directory
 /// alone, for a caller whose set is genuinely complete. With no directory,
-/// the shipped set — a folio/v1 document is written in terms the shipped
+/// the shipped set — a folio document is written in terms the shipped
 /// modules declare, so no vocabulary at all is not a useful answer.
 ///
 /// One function because two verbs that load differently disagree about one
@@ -176,8 +185,10 @@ pub fn load_definitions(
             return Err(error(VocabularyErrorKind::Duplicate, format!("duplicate source document {}", document.id), &[]));
         }
     }
+    let base_prefixes = predeclared_prefixes(base);
+    let preamble = prefix_lines(&base_prefixes);
     let mut declarations: Vec<Block> = documents.iter().flat_map(blocks)
-        .filter(|block| ontology_marker(&block.info)).collect();
+        .filter(|block| declares_vocabulary(block, &base_prefixes)).collect();
     declarations.sort_by(|a, b| (&a.source.document, a.source.bytes.start)
         .cmp(&(&b.source.document, b.source.bytes.start)));
     let mut facts = base.facts().to_vec();
@@ -194,8 +205,9 @@ pub fn load_definitions(
     prefix_sources.insert("x0k".into(), (X0K_NS.into(), Vec::new()));
     for block in &declarations {
         let source_name = format!("{}#bytes={}", block.source.document, block.source.bytes.start);
+        let text = format!("{preamble}{}", block.text);
         let parsed = OntologyModel::parse_turtle_sources(&[TurtleSource {
-            name: Path::new(&source_name), text: &block.text,
+            name: Path::new(&source_name), text: &text,
         }]).map_err(|e| {
             let kind = match &e {
                 x0k_ontology::load::LoadError::TypedLiteral { .. } => VocabularyErrorKind::Unsupported,
@@ -259,21 +271,26 @@ pub fn collect_instances(
     documents: &[DocumentSource<'_>],
     model: &OntologyModel,
 ) -> Result<Vec<DeclaredInstance>, VocabularyError> {
-    let classes = class_index(model).map_err(|e| error(VocabularyErrorKind::Conflict, e, &[]))?;
+    let classes: BTreeSet<String> = class_index(model).map_err(|e| error(VocabularyErrorKind::Conflict, e, &[]))?
+        .into_values().collect();
     let mut instances = Vec::new();
     let mut instance_sources = BTreeMap::new();
     for document in documents {
-        let locations: Vec<_> = blocks(document).into_iter()
-            .filter(|block| declaration_marker(&block.info).is_some()).map(|block| block.source).collect();
-        let records = extract_from_markdown_in(document.body, model);
-        if records.len() != locations.len() {
-            return Err(error(VocabularyErrorKind::InvalidDeclaration, "instance extraction and source spans disagree", &locations));
-        }
-        for (record, source) in records.into_iter().zip(locations) {
-            let entity = record.map_err(|e| error(VocabularyErrorKind::InvalidDeclaration, e.to_string(), std::slice::from_ref(&source)))?;
-            let key = (model.expand(&format!("{}:", entity.uri.scheme)), entity.uri.class.clone());
-            let concept = classes.get(&key).ok_or_else(|| error(VocabularyErrorKind::UnknownTerm,
-                format!("unknown concept {}:{}", entity.uri.scheme, entity.uri.class), std::slice::from_ref(&source)))?.clone();
+        for located in extract_located(document.body, None, Some(model)) {
+            let source = BlockSource { document: document.id.to_string(), line: located.line, bytes: located.span };
+            let entity = located.result.map_err(|e| {
+                let kind = if matches!(e, InlineEntityError::InvalidTurtle { .. }) {
+                    VocabularyErrorKind::Parse
+                } else {
+                    VocabularyErrorKind::InvalidDeclaration
+                };
+                error(kind, e.to_string(), std::slice::from_ref(&source))
+            })?;
+            if !classes.contains(&entity.class_iri) {
+                let name = model.compact(&entity.class_iri).unwrap_or_else(|| entity.class_iri.clone());
+                return Err(error(VocabularyErrorKind::UnknownTerm, format!("unknown concept {name}"), std::slice::from_ref(&source)));
+            }
+            let concept = entity.class_iri.clone();
             let iri = model.expand(&entity.uri.to_string());
             if let Some(prior) = instance_sources.insert(iri.clone(), source.clone()) {
                 return Err(error(VocabularyErrorKind::Duplicate, format!("duplicate instance {iri}"), &[prior, source]));
@@ -416,51 +433,22 @@ fn class_index(model: &OntologyModel) -> Result<BTreeMap<(String, String), Strin
     }
     Ok(out)
 }
-/// Resolve a declared property from the spelling an `edges:` block uses:
-/// `<prefix>:<snake_case local>`, or a bare local, which means `x0k:`.
-///
-/// The casing rule belongs to the ontology and not to a namespace, so the
-/// camelCase term is asked for under whatever prefix was written —
-/// `jj:superseded_by` reaches `jj:supersededBy` exactly as `superseded_by`
-/// reaches `x0k:supersededBy`. This is `camel_form`, the same function
-/// `check` asks with, because a reader whose module the guide invited them
-/// to write should not find that one verb reads their document and the
-/// other drops it. A key already written as an IRI or in camelCase is
-/// matched as it came.
-pub fn resolve_property(model: &OntologyModel, key: &str) -> Option<String> {
-    let (prefix, snake) = key.split_once(':').unwrap_or(("x0k", key));
-    let spelled = model.expand(&format!("{prefix}:{}", camel_form(snake)));
-    let asked = model.expand(key);
-    model.object_properties().iter().find_map(|property| {
-        let iri = model.expand(&property.uri);
-        (iri == asked || iri == spelled).then_some(iri)
-    })
-}
-/// Resolve a selected CURIE or an explicit HTTP(S)/URN IRI.
-/// Other compact prefixes remain errors rather than becoming invented namespaces.
-pub fn resolve_reference(model: &OntologyModel, target: &str) -> Result<String, String> {
-    if target.starts_with("https:") || target.starts_with("http:") || target.starts_with("urn:") {
-        return x0k_ontology::load::is_absolute_iri(target)
-            .then(|| target.to_string()).ok_or_else(|| format!("invalid absolute IRI {target:?}"));
-    }
-    crate::entity_id::EntityId::parse_in(model, target)
-        .map(|identity| model.expand(&identity.to_string())).map_err(|error| error.to_string())
-}
+/// Validate every statement an instance makes whose object is an entity: its
+/// predicate must be a declared object property, the instance's class must
+/// be in its domain, and a target the collection declares must be in its
+/// range. Returns one relationship per such statement.
 pub fn validate_relationships(model: &OntologyModel, instances: &[DeclaredInstance]) -> Result<Vec<Relationship>, VocabularyError> {
     let mut out = Vec::new();
     let by_id: BTreeMap<_, _> = instances.iter().map(|instance| (&instance.iri, &instance.concept)).collect();
     let properties: BTreeSet<_> = model.object_properties().iter().map(|property| model.expand(&property.uri)).collect();
     for instance in instances {
-        let Some(edges) = instance.entity.yaml.get(serde_norway::Value::String("edges".into())) else { continue; };
-        let edges = edges.as_mapping().ok_or_else(|| error(VocabularyErrorKind::InvalidDeclaration, "edges must be a mapping", std::slice::from_ref(&instance.source)))?;
-        for (key, targets) in edges {
-            let predicate = key.as_str().ok_or_else(|| error(VocabularyErrorKind::InvalidDeclaration, "edge predicate must be a string", std::slice::from_ref(&instance.source)))?;
-            let predicate = resolve_property(model, predicate).unwrap_or_else(|| model.expand(predicate));
-            if !properties.contains(&predicate) {
+        for (predicate, object) in &instance.entity.statements {
+            let Object::Iri(object) = object else { continue };
+            if !properties.contains(predicate) {
                 return Err(error(VocabularyErrorKind::UnknownTerm, format!("unknown object property {predicate}"), std::slice::from_ref(&instance.source)));
             }
             let constraints = |kind: &str| -> Vec<String> { model.facts().iter().filter_map(|f| {
-                if f.entity == predicate && f.predicate == kind {
+                if &f.entity == predicate && f.predicate == kind {
                     if let OntologyValue::Entity(value) = &f.value { return Some(value.clone()); }
                 }
                 None
@@ -472,8 +460,8 @@ pub fn validate_relationships(model: &OntologyModel, instances: &[DeclaredInstan
             }
             // Resolve an existing union through the shared model; its structural
             // RDF node is not itself an allowed class. Regression: supplied_union_domain_and_range_accept_members_and_reject_outsiders.
-            let allowed_domain = model.class_references(&predicate, RDFS_DOMAIN);
-            let allowed_range = model.class_references(&predicate, RDFS_RANGE);
+            let allowed_domain = model.class_references(predicate, RDFS_DOMAIN);
+            let allowed_range = model.class_references(predicate, RDFS_RANGE);
             for (declared, allowed) in [(&domain, &allowed_domain), (&range, &allowed_range)] {
                 if !declared.is_empty() && (allowed.is_empty() || allowed.iter().any(|class| class.starts_with(STRUCTURAL_NODE_PREFIX))) {
                     return Err(error(VocabularyErrorKind::Unsupported, format!("{predicate}: unsupported class constraint"), std::slice::from_ref(&instance.source)));
@@ -482,19 +470,13 @@ pub fn validate_relationships(model: &OntologyModel, instances: &[DeclaredInstan
             if !domain.is_empty() && !allowed_domain.contains(&instance.concept) {
                 return Err(error(VocabularyErrorKind::InvalidDeclaration, format!("{predicate} does not accept {}", instance.concept), std::slice::from_ref(&instance.source)));
             }
-            let targets = targets.as_sequence().ok_or_else(|| error(VocabularyErrorKind::InvalidDeclaration, "edge targets must be a sequence", std::slice::from_ref(&instance.source)))?;
-            for target in targets {
-                let target = target.as_str().ok_or_else(|| error(VocabularyErrorKind::InvalidDeclaration, "edge target must be an identity string", std::slice::from_ref(&instance.source)))?;
-                let object = resolve_reference(model, target)
-                    .map_err(|e| error(VocabularyErrorKind::InvalidDeclaration, e, std::slice::from_ref(&instance.source)))?;
-                if let Some(actual) = by_id.get(&object) {
-                    if !range.is_empty() && !allowed_range.contains(actual) {
-                        let required = allowed_range.join(", ");
-                        return Err(error(VocabularyErrorKind::InvalidDeclaration, format!("{predicate} target {object} has type {actual}, expected {required}"), std::slice::from_ref(&instance.source)));
-                    }
+            if let Some(actual) = by_id.get(object) {
+                if !range.is_empty() && !allowed_range.contains(actual) {
+                    let required = allowed_range.join(", ");
+                    return Err(error(VocabularyErrorKind::InvalidDeclaration, format!("{predicate} target {object} has type {actual}, expected {required}"), std::slice::from_ref(&instance.source)));
                 }
-                out.push(Relationship { subject: instance.iri.clone(), predicate: predicate.clone(), object, source: instance.source.clone() });
             }
+            out.push(Relationship { subject: instance.iri.clone(), predicate: predicate.clone(), object: object.clone(), source: instance.source.clone() });
         }
     }
     Ok(out)
@@ -519,12 +501,14 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
     }
 
     fn definition(prefix: &str, namespace: &str) -> String {
-        format!("# Vocabulary\n\n```turtle folio:ontology\n{}\n```\n", ttl(prefix, namespace))
+        format!("# Vocabulary\n\n```turtle folio:graph\n{}\n```\n", ttl(prefix, namespace))
     }
 
+    /// A paper instance in a graph block; `target` is written as Turtle
+    /// (`paper:paper\/two`, `<https://…>`).
     fn instance(prefix: &str, name: &str, target: Option<&str>) -> String {
-        let edges = target.map(|target| format!("edges:\n  {prefix}:cites: [{target}]\n")).unwrap_or_default();
-        format!("## {name}\nA paper.\n\n```yaml {prefix}:paper\nid: {prefix}:paper/{name}\n{edges}```\n")
+        let edge = target.map(|target| format!(" ;\n    {prefix}:cites {target}")).unwrap_or_default();
+        format!("## {name}\nA paper.\n\n```turtle folio:graph\n{prefix}:paper\\/{name} a {prefix}:Paper{edge} .\n```\n")
     }
 
     fn load<'a>(docs: &'a [(&'a str, &'a str)]) -> Result<DocumentVocabulary, VocabularyError> {
@@ -540,13 +524,13 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
     fn a_rejected_block_names_its_line_and_not_a_rust_struct() {
         let vocabulary = definition("paper", "https://example.test/paper#");
         let body = format!("{vocabulary}{}",
-            instance("paper", "one", Some("paper:paper/two")).replace("paper:cites", "paper:shreds"));
+            instance("paper", "one", Some("paper:paper\\/two")).replace("paper:cites", "paper:shreds"));
         let error = load(&[("alpha.md", &body)]).err().unwrap();
         let rendered = error.to_string();
         assert!(!rendered.contains("BlockSource"), "{rendered}");
         let line = error.sources[0].line;
         assert!(rendered.ends_with(&format!(" at alpha.md:{line}")), "{rendered}");
-        assert!(body.lines().nth(line - 1).unwrap().starts_with("```yaml paper:paper"), "{body}");
+        assert!(body.lines().nth(line - 1).unwrap().starts_with("```turtle folio:graph"), "{body}");
     }
 
     #[test]
@@ -556,17 +540,17 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
                 "rdfs:domain [ owl:unionOf (p:Paper p:Note) ] ; rdfs:range [ owl:unionOf (p:Paper p:Note) ]")
             + "\np:Note a owl:Class ; rdfs:isDefinedBy <https://example.test/module/paper> .\np:Other a owl:Class ; rdfs:isDefinedBy <https://example.test/module/paper> .\n";
         let base = OntologyModel::parse_turtle_sources(&[TurtleSource { name: Path::new("selected.ttl"), text: &text }]).unwrap();
-        let note = instance("paper", "note-one", Some("paper:paper/target"))
-            .replace("yaml paper:paper", "yaml paper:note").replace("id: paper:paper/note-one", "id: paper:note/note-one");
-        let paper = instance("paper", "target", Some("paper:note/note-one"));
+        let note = instance("paper", "note-one", Some("paper:paper\\/target"))
+            .replace("paper:paper\\/note-one a paper:Paper", "paper:note\\/note-one a paper:Note");
+        let paper = instance("paper", "target", Some("paper:note\\/note-one"));
         let docs = [DocumentSource { id: "note.md", body: &note }, DocumentSource { id: "paper.md", body: &paper }];
         assert_eq!(load_documents(&docs, &base).unwrap().relationships.len(), 2);
-        let other = note.replace("paper:note", "paper:other");
+        let other = note.replace("paper:note\\/note-one a paper:Note", "paper:other\\/note-one a paper:Other");
         let error = load_documents(&[DocumentSource { id: "other.md", body: &other }], &base).err().unwrap();
         assert!(error.message.contains("does not accept"));
         let other_target = instance("paper", "target", None)
-            .replace("yaml paper:paper", "yaml paper:other").replace("id: paper:paper/target", "id: paper:other/target");
-        let note = note.replace("paper:paper/target", "paper:other/target");
+            .replace("paper:paper\\/target a paper:Paper", "paper:other\\/target a paper:Other");
+        let note = note.replace("paper:paper\\/target", "paper:other\\/target");
         let error = load_documents(&[DocumentSource { id: "note.md", body: &note },
             DocumentSource { id: "other.md", body: &other_target }], &base).err().unwrap();
         assert!(error.message.contains("expected"));
@@ -579,11 +563,11 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let loaded=load(&[("mixed",&body)]).unwrap();
         assert_eq!(loaded.instances.len(),1);
         assert_eq!(loaded.instances[0].concept,"https://example.test/paper#Paper");
-        let unknown=format!("{body}\n## Unknown\n\n```yaml paper:missing\nid: paper:missing/bad\n```\n");
+        let unknown=format!("{body}\n## Unknown\n\n```turtle folio:graph\npaper:missing\\/bad a paper:Missing .\n```\n");
         let error=load(&[("mixed",&unknown)]).err().unwrap();
         assert_eq!(error.kind,VocabularyErrorKind::UnknownTerm);
-        assert!(error.message.contains("paper:missing"));
-        assert!(unknown[error.sources[0].bytes.clone()].contains("yaml paper:missing"));
+        assert!(error.message.contains("paper:Missing"), "{}", error.message);
+        assert!(unknown[error.sources[0].bytes.clone()].contains("paper:missing\\/bad"));
     }
 
     #[test]
@@ -603,7 +587,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         assert!(base.facts().iter().any(|fact|fact.entity=="https://0k.computer/ontology#enabledBy"
             && fact.predicate=="https://0k.computer/ontology#targetClass"
             && matches!(&fact.value,OntologyValue::Entity(target) if target=="https://0k.computer/ontology#SoftwareModule")));
-        let source="---\nx0k:\n  format: folio/v1\n  id: x0k:design/example\n  type: design\n---\n# Example\n\n## Read a document\nRead it.\n\n```yaml x0k:affordance\nid: x0k:affordance/read\nedges:\n  enabledBy: [x0k:software-module/x0k-folio]\n```\n";
+        let source="# Example\n\n```turtle folio:document\ndesign:example a x0k:Design .\n```\n\n## Read a document\nRead it.\n\n```turtle folio:graph\naffordance:read a x0k:Affordance ;\n    x0k:enabledBy x0k:software-module\\/x0k-folio .\n```\n";
         let declarations=load_documents(
             &[DocumentSource {id:"example.md",body:source}],&base).unwrap();
         assert_eq!(declarations.relationships[0].predicate,"https://0k.computer/ontology#enabledBy");
@@ -612,7 +596,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
 
     #[test]
     fn definitions_and_instances_share_a_document_and_cross_file_order_is_irrelevant() {
-        let alpha = instance("paper", "alpha", Some("paper:paper/beta"));
+        let alpha = instance("paper", "alpha", Some("paper:paper\\/beta"));
         let beta = format!("{}{}", definition("paper", "https://example.test/paper#"),
             instance("paper", "beta", None));
         for docs in [[("alpha.md", alpha.as_str()), ("beta.md", beta.as_str())],
@@ -625,21 +609,21 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
             assert_eq!(relation.object, "https://example.test/paper#paper/beta");
             let definition = collected.definitions.iter().find(|d| d.iri.ends_with("#Paper")).unwrap();
             assert_eq!(definition.sources[0].document, "beta.md");
-            assert!(beta[definition.sources[0].bytes.clone()].contains("turtle folio:ontology"));
+            assert!(beta[definition.sources[0].bytes.clone()].contains("turtle folio:graph"));
         }
     }
 
     #[test]
-    fn external_references_preserve_iris_without_accepting_unknown_compact_prefixes() {
+    fn external_references_keep_their_iris_and_unknown_prefixes_or_relative_iris_refuse() {
         let vocabulary = definition("paper", "https://example.test/paper#");
         for target in ["https://example.org/article/42#abstract", "urn:isbn:9780000000000"] {
-            let body = format!("{vocabulary}{}", instance("paper", "one", Some(target)));
+            let body = format!("{vocabulary}{}", instance("paper", "one", Some(&format!("<{target}>"))));
             let result = load(&[("article.md", &body)]).unwrap();
             assert_eq!(result.relationships[0].object, target);
         }
-        for target in ["pape:paper/two", "https://bad IRI", "../article"] {
+        for target in ["pape:paper\\/two", "<https://bad IRI>", "<../article>"] {
             let body = format!("{vocabulary}{}", instance("paper", "one", Some(target)));
-            assert!(load(&[("article.md", &body)]).is_err());
+            assert!(load(&[("article.md", &body)]).is_err(), "{target}");
         }
     }
 
@@ -647,7 +631,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
     fn aliases_expand_to_one_identity_but_same_local_names_in_other_namespaces_stay_distinct() {
         let mut vocabulary = ttl("paper", "https://example.test/paper#");
         vocabulary.push_str("<https://example.test/module/paper> <http://purl.org/vocab/vann/preferredNamespacePrefix> \"papers\" .");
-        let one = format!("```turtle folio:ontology\n{vocabulary}\n```\n{}", instance("papers", "one", None));
+        let one = format!("```turtle folio:graph\n{vocabulary}\n```\n{}", instance("papers", "one", None));
         let two = format!("{}{}", definition("archive", "https://example.test/archive#"), instance("archive", "two", None));
         let result = load(&[("one.md", &one), ("two.md", &two)]).unwrap();
         assert_eq!(result.instances[0].concept, "https://example.test/paper#Paper");
@@ -699,7 +683,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
 
     #[test]
     fn tutorials_do_not_declare_and_typed_turtle_literals_are_refused() {
-        let tutorial = definition("paper", "https://example.test/paper#").replace("turtle folio:ontology", "turtle");
+        let tutorial = definition("paper", "https://example.test/paper#").replace("turtle folio:graph", "turtle");
         assert!(load(&[("tutorial.md", &tutorial)]).unwrap().definitions.is_empty());
         let invalid_iri = definition("paper", "https://example.test/paper#")
             .replace("vann:preferredNamespaceUri \"https://example.test/paper#\"", "vann:preferredNamespaceUri \"relative/path\"");
@@ -707,7 +691,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         assert_eq!(error.kind, VocabularyErrorKind::InvalidDeclaration);
         assert!(error.message.contains("absolute IRI"));
         let invalid_turtle = "
-```turtle folio:ontology
+```turtle folio:graph
 not turtle
 ```";
         assert_eq!(load(&[("invalid.md", invalid_turtle)]).err().unwrap().kind, VocabularyErrorKind::Parse);
@@ -773,7 +757,7 @@ not turtle
     fn colliding_kebab_names_and_wrong_relationship_ranges_are_refused() {
         let vocabulary = definition("paper", "https://example.test/paper#");
         let other = definition("archive", "https://example.test/archive#");
-        let first = format!("{vocabulary}{}", instance("paper", "one", Some("archive:paper/two")));
+        let first = format!("{vocabulary}{}", instance("paper", "one", Some("archive:paper\\/two")));
         let second = format!("{other}{}", instance("archive", "two", None));
         let error = load(&[("one.md", &first), ("two.md", &second)]).err().unwrap();
         assert!(error.message.contains("expected https://example.test/paper#Paper"));

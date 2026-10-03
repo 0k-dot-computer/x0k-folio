@@ -1,31 +1,20 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/ontology/views
-  type: implementation
-  status: draft
-  summary: How the crate root turns whichever module set is present into the class, property, and edge-predicate tables other crates check a document against.
-  concerns:
-  - ontology
-  - vocabulary
-  - codegen
-  - predicates
-  - crate-root
-  tangle:
-    crate: crates/x0k-ontology
-    root: src/lib.rs
-  edges:
-    constrained_by:
-    - x0k:architecture/state-representation
-    cites:
-    - x0k:implementation/ontology/concept-facts
-    - x0k:implementation/ontology/load
-    - x0k:implementation/ontology/module-bootstrap
-    - x0k:implementation/ontology/concept-region
-    - x0k:implementation/ontology/declaration
----
 
 # The crate root is a compatibility view
+
+```turtle folio:document
+implementation:ontology\/views a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "How the crate root turns whichever module set is present into the class, property, and edge-predicate tables other crates check a document against." ;
+    x0k:concerns "ontology", "vocabulary", "codegen", "predicates", "crate-root" ;
+    x0k:cites implementation:ontology\/concept-facts,
+        implementation:ontology\/load,
+        implementation:ontology\/module-bootstrap,
+        implementation:ontology\/concept-region,
+        implementation:ontology\/declaration ;
+    x0k:constrainedBy architecture:state-representation ;
+    folio:tangleCrate "crates/x0k-ontology" ;
+    folio:tangleRoot "src/lib.rs" .
+```
 
 `x0k-ontology` is the crate every other crate reaches for when it needs to
 spell a predicate. The authoritative vocabulary — [RDF and
@@ -58,8 +47,9 @@ loaded and never opens a file itself.
 
 ## The two spellings
 
-Snake-case is the wire and frontmatter form on folio/v1 envelopes;
-camelCase is the URI suffix in the ontology view. The map is deterministic
+The generated tables key a predicate by its snake-case form; camelCase is
+the URI suffix in the ontology view and the term a document header writes
+(`x0k:motivatedBy`). The map is deterministic
 in both directions — insert `_` before each uppercase boundary (excluding
 position 0) and lowercase — but the crate exposes only the generated table,
 so the two forms can never drift apart from the TTL they were emitted from.
@@ -95,10 +85,11 @@ so the two forms can never drift apart from the TTL they were emitted from.
 //! that does not ask for it gets the fold and its views and nothing
 //! else.
 //!
-//! Snake-case is the wire/frontmatter form on folio/v1 envelopes;
-//! camelCase is the URI suffix that appears in the ontology view. The two
-//! forms map deterministically by inserting `_` before uppercase
-//! letter boundaries (excluding position 0) and lowercasing.
+//! The generated tables key a predicate by its snake-case form;
+//! camelCase is the URI suffix that appears in the ontology view and the
+//! term a document header writes (`x0k:motivatedBy`). The two forms map
+//! deterministically by inserting `_` before uppercase letter boundaries
+//! (excluding position 0) and lowercasing.
 ```
 
 ## Two kinds of module, and only one of them always ships

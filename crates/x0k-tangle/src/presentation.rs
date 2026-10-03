@@ -268,16 +268,19 @@ fn is_html(p: &Path) -> bool {
 }
 
 /// Build `members.json`: `{ "members": { "<uri>": {title, summary, body} } }`.
-/// `title` is the member's first H1, `summary` its frontmatter `summary:` field,
+/// `title` is the member's first H1, `summary` its header's `x0k:summary`,
 /// `body` a cleaned prose excerpt of its body (the deep-doc portal text).
 pub fn build_members_json(input: &RegionInput) -> Vec<u8> {
     use serde_json::{Map, Value};
     let mut members = Map::new();
     for m in &input.members {
-        let (front, body) = split_frontmatter(&m.content);
-        let title = first_h1(&m.content).unwrap_or_else(|| m.uri.clone());
-        let summary = frontmatter_field(front, "summary").unwrap_or_default();
-        let excerpt = body_excerpt(body);
+        let body = x0k_folio::colophon::strip_header(&m.content);
+        let title = first_h1(&body).unwrap_or_else(|| m.uri.clone());
+        let summary = x0k_folio::colophon::parse_envelope(&m.content)
+            .ok()
+            .and_then(|(env, _)| env.summary)
+            .unwrap_or_default();
+        let excerpt = body_excerpt(&body);
         let mut obj = Map::new();
         obj.insert("title".into(), Value::String(title));
         obj.insert("summary".into(), Value::String(summary));
@@ -300,42 +303,6 @@ fn stub_narrative_json() -> Vec<u8> {
     serde_json::to_vec_pretty(&v).expect("stub narrative serializes")
 }
 
-/// Split a folio/v1 document into `(frontmatter, body)`. If the leading
-/// `---`-delimited envelope is absent, frontmatter is empty and the whole input
-/// is the body.
-fn split_frontmatter(content: &str) -> (&str, &str) {
-    let trimmed = content.trim_start_matches('\u{feff}');
-    if let Some(rest) = trimmed.strip_prefix("---\n") {
-        if let Some(end) = rest.find("\n---\n") {
-            let front = &rest[..end];
-            let body = &rest[end + "\n---\n".len()..];
-            return (front, body);
-        }
-        if let Some(end) = rest.find("\n---\r\n") {
-            let front = &rest[..end];
-            let body = &rest[end + "\n---\r\n".len()..];
-            return (front, body);
-        }
-    }
-    ("", content)
-}
-
-/// Pull a top-level scalar `key: value` from a frontmatter block (cheap line
-/// scan; only matches keys indented two spaces under the `x0k:` envelope, which
-/// is where wiki `summary:` lives). Strips surrounding quotes.
-fn frontmatter_field(front: &str, key: &str) -> Option<String> {
-    let needle = format!("  {key}:");
-    for line in front.lines() {
-        if let Some(rest) = line.strip_prefix(&needle) {
-            let v = rest.trim();
-            let v = v.trim_matches(|c| c == '"' || c == '\'');
-            if !v.is_empty() {
-                return Some(v.to_string());
-            }
-        }
-    }
-    None
-}
 
 /// Extract the first markdown `# ` heading from a doc (cheap line scan).
 fn first_h1(content: &str) -> Option<String> {
@@ -416,26 +383,9 @@ mod tests {
 
     fn wiki_doc(id: &str, title: &str, summary: &str, body: &str) -> String {
         format!(
-            "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: {id}\n  summary: {summary}\n---\n\n# {title}\n\n{body}\n"
+            "# {title}\n\n```turtle folio:document\n{} a x0k:Wiki ;\n    x0k:summary \"{summary}\" .\n```\n\n{body}\n",
+            id.replace('/', "\\/")
         )
-    }
-
-    #[test]
-    fn split_frontmatter_extracts_body() {
-        let c = "---\nx0k:\n  type: wiki\n---\n\n# Title\n\nBody text.\n";
-        let (front, body) = split_frontmatter(c);
-        assert!(front.contains("type: wiki"));
-        assert!(body.contains("# Title"));
-        assert!(body.contains("Body text."));
-    }
-
-    #[test]
-    fn frontmatter_summary_field_parsed() {
-        let front = "x0k:\n  format: folio/v1\n  summary: A short summary\n  type: wiki";
-        assert_eq!(
-            frontmatter_field(front, "summary").as_deref(),
-            Some("A short summary")
-        );
     }
 
     #[test]
@@ -471,6 +421,7 @@ mod tests {
         assert_eq!(a["title"], "Alpha");
         assert_eq!(a["summary"], "Summary A");
         assert!(a["body"].as_str().unwrap().contains("Prose about alpha."));
+        assert!(!a["body"].as_str().unwrap().contains("folio:document"), "the header is not prose: {a}");
         assert!(v["members"]["x0k:wiki/b"]["title"] == "Beta");
     }
 

@@ -1,41 +1,30 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/identity
-  type: implementation
-  status: draft
-  summary: The identity half of an x0k URI — scheme, class, slug, and the fragment that names a part of what the slug names — parsed and rendered by the format library itself, so a document can say who it is without a substrate underneath it.
-  concerns:
-  - folio
-  - identity
-  - uri
-  - publishing
-  - format
-  tangle:
-    crate: crates/x0k-folio
-    root: src/entity_id.rs
-  edges:
-    implements:
-    - x0k:design/publish-a-region-as-a-repository
-    cites:
-    - x0k:architecture/ontology-modules
-    - x0k:architecture/publication-projection
-    - x0k:implementation/folio/colophon
-    - x0k:implementation/folio/checking
-    - x0k:implementation/ontology/load
----
 # Who a document says it is
 
-Every folio/v1 envelope opens by naming itself:
+```turtle folio:document
+implementation:folio\/identity a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The identity half of an x0k URI — scheme, class, slug, and the fragment that names a part of what the slug names — parsed and rendered by the format library itself, so a document can say who it is without a substrate underneath it." ;
+    x0k:concerns "folio", "identity", "uri", "publishing", "format" ;
+    x0k:cites architecture:ontology-modules,
+        architecture:publication-projection,
+        implementation:folio\/colophon,
+        implementation:folio\/checking,
+        implementation:ontology\/load ;
+    x0k:implements design:publish-a-region-as-a-repository ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/entity_id.rs" .
+```
 
-```yaml
-id: x0k:design/publish-a-region-as-a-repository
+Every folio header opens by naming itself — its subject:
+
+```turtle
+design:publish-a-region-as-a-repository a x0k:Design .
 ```
 
 and every edge it declares names another entity the same way. That
 string is the whole of a document's identity, and until this module
 existed the format library could not read it. `Colophon` kept `id` as a
-`String` and left the grammar to whoever consumed the envelope — which
+`String` and left the grammar to whoever consumed the header — which
 in practice meant one consumer, the daemon, promoting the string to
 `x0k_types::EntityUri`. So a publication could ship the format and
 ship the vocabulary and still not be able to tell a well-formed id from
@@ -48,7 +37,7 @@ something. `x0k:architecture/publication-projection` §6 states the rule
 it follows: **a type crossing the publication boundary is split at its
 meaning; it is not carried whole or refused whole.** `EntityUri` has two
 halves. Its identity half is a class and an identifier — `x0k:<class>/<slug>` —
-which is folio/v1 syntax. Its `locator` half pins a URI to a content
+which is folio syntax. Its `locator` half pins a URI to a content
 state, and its variants name Loro frontiers, Automerge heads, Dialog-DB
 snapshots, jj commits, parquet manifests: the substrate's storage
 vocabulary, which cannot cross and should not. `EntityId` is the first
@@ -105,7 +94,7 @@ and disagree on how to write it back.
 //! This is `x0k_types::EntityUri` without its `locator` half. The
 //! locator pins a URI to a content state (a Loro frontier, a jj commit,
 //! an object-store hash) and belongs to the substrate that owns those
-//! states; the class and identifier are folio/v1 syntax and belong with
+//! states; the class and identifier are folio syntax and belong with
 //! the format. `x0k:architecture/publication-projection` §6 is the rule:
 //! a type crossing the publication boundary is split at its meaning.
 //!
@@ -486,7 +475,7 @@ impl fmt::Display for EntityIdError {
             Self::UnknownScheme { input, scheme } => write!(
                 f,
                 "id `{input}` uses the namespace prefix `{scheme}`, which no loaded \
-                 vocabulary module declares — a `turtle folio:ontology` block \
+                 vocabulary module declares — a `turtle folio:graph` block \
                  declares its prefix only to a scan that reads the document \
                  holding it, so scan the directory rather than the one file, or \
                  load the modules from a directory of `.ttl` files"

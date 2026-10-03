@@ -1,36 +1,24 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/cli-faces
-  type: implementation
-  status: draft
-  summary: 'The three verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, an affordance declaration read out as data, and an icon declaration checked against the profile and written bound to a publication''s palette — each proven by running the binary the repository ships.'
-  concerns:
-  - tangle
-  - cli
-  - folio
-  - vocabulary
-  - affordance
-  - publishing
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/faces.rs
-  edges:
-    implements:
-    - x0k:design/publish-a-region-as-a-repository
-    - x0k:design/icon-profile
-    - x0k:affordance/check_a_document_against_shipped_vocabulary
-    - x0k:affordance/read_declared_affordances
-    - x0k:affordance/check_an_icon_against_the_profile
-    - x0k:affordance/show_an_icon_on_a_surface
-    cites:
-    - x0k:implementation/tangle/crate
-    - x0k:implementation/folio/checking
-    - x0k:implementation/folio/inline-entities
-    - x0k:implementation/icon/crate
-    - x0k:implementation/ontology/load
----
-# The faces behind `check`, `affordances` and `icon`
+# The faces behind `check`, `affordances`, `declarations` and `icon`
+
+```turtle folio:document
+implementation:tangle\/cli-faces a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The three verbs that make a shipped affordance true from the command line: an envelope read against the vocabulary this build compiled, an affordance declaration read out as data, and an icon declaration checked against the profile and written bound to a publication's palette — each proven by running the binary the repository ships." ;
+    x0k:concerns "tangle", "cli", "folio", "vocabulary", "affordance", "publishing" ;
+    x0k:cites implementation:tangle\/crate,
+        implementation:folio\/checking,
+        implementation:folio\/inline-entities,
+        implementation:icon\/crate,
+        implementation:ontology\/load ;
+    x0k:implements design:publish-a-region-as-a-repository,
+        design:icon-profile,
+        affordance:check_a_document_against_shipped_vocabulary,
+        affordance:read_declared_affordances,
+        affordance:check_an_icon_against_the_profile,
+        affordance:show_an_icon_on_a_surface ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/faces.rs" .
+```
 
 Two of the affordances the `x0k-folio` publication ships claim a human:
 [checking a document against the vocabulary that shipped beside it](../../decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md "x0k:affordance/check_a_document_against_shipped_vocabulary"), and
@@ -47,7 +35,9 @@ shell — and a third pair, from the [icon profile](x0k:design/icon-profile):
 [checking an icon against the profile](../../decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md "x0k:affordance/check_an_icon_against_the_profile")
 and [showing it on a surface](../../decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md "x0k:affordance/show_an_icon_on_a_surface"),
 which the `icon` verb makes true for the one surface a shell can
-reach, a directory of files.
+reach, a directory of files. A fourth verb, `declarations`, is plumbing
+rather than a claim: every instance a graph block declares, of any
+class, as JSON (§ Every declaration, as data).
 
 It holds the mechanism and none of the printing. The CLI
 ([`crate.md`](crate.md) § The CLI face) calls the functions here and
@@ -60,11 +50,12 @@ because a signifier is declared where its face lives.
 <a name="chunk-doc"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#doc`</sub>
 
 ```rust {#doc}
-//! The mechanism behind the `check`, `affordances` and `icon` CLI verbs:
-//! every folio/v1 envelope under a set of paths read against a named
-//! vocabulary, every inline affordance declaration read out as a record,
-//! and every icon declaration checked against the profile and written
-//! bound. The CLI (`crate::cli`) calls these and does the printing.
+//! The mechanism behind the `check`, `affordances`, `declarations` and
+//! `icon` CLI verbs: every folio header under a set of paths read against a
+//! named vocabulary, every inline affordance declaration read out as a
+//! record, every declared instance of any class read out as data, and
+//! every icon declaration checked against the profile and written bound.
+//! The CLI (`crate::cli`) calls these and does the printing.
 ```
 
 <a name="chunk-imports"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#imports`</sub>
@@ -75,9 +66,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use x0k_folio::colophon::{is_colophon, parse_envelope, parse_envelope_in, Colophon, DocType};
+use x0k_folio::colophon::{
+    compact_iri, parse_envelope, parse_envelope_in, predeclared_prefixes, Colophon, DocType,
+    FolioError, Literal, RDF_JSON, XSD_BOOLEAN, XSD_DECIMAL, XSD_DOUBLE, XSD_INTEGER,
+};
 use x0k_folio::document_vocabulary::DocumentSource;
 use x0k_folio::envelope_check::{DanglingEdge, Defect};
+use x0k_folio::inline_entity::{extract_located, Object};
 use x0k_folio::{
     check_corpus, check_declarations, check_instances, declared_facts, document_edges,
     extract_from_markdown, CorpusReport, DeclarationReport, EntityId, InlineEntity, ICON_CLASS,
@@ -91,7 +86,7 @@ use crate::parser::{parse_document, ParsedDocument};
 ## The proving chunks
 
 A third thing a document can say about an affordance lives in neither
-the envelope nor a `yaml` block: a code fence that tangles a test may
+the header nor a graph block: a code fence that tangles a test may
 carry `proves="<affordance id>"` ([`parsing.md`](parsing.md)), which
 makes the test the evidence for the claim. All three faces here — the
 check, the `affordances` verb, and the repository projector — read that
@@ -112,8 +107,8 @@ pub struct ProvingChunk {
     /// the edge: `<document id>#<chunk>`.
     pub chunk: String,
     /// The crate-relative file the chunk tangles to: its own `file=`,
-    /// else the document's `root:`. `None` when the document declares
-    /// neither.
+    /// else the header's `folio:tangleRoot`. `None` when the document
+    /// declares neither.
     pub file: Option<PathBuf>,
     /// The affordance ids it proves, as written.
     pub proves: Vec<String>,
@@ -193,12 +188,16 @@ pub fn test_fn_sources(body: &str) -> Vec<(String, String)> {
 
 ## Which documents
 
-The literate verbs discover documents by content sniff — a `.md` that
-mentions `tangle:` — because a tangler only cares about those. These
-two verbs care about every folio/v1 document, tangling or not: a design
-document declares affordances and tangles nothing. So discovery here
-is the format's own cheap gate, `is_colophon`, which reads the
-frontmatter and nothing else. A file path is taken as given; a
+The literate verbs discover documents by content sniff — a `.md` whose
+header states a tangle target — because a tangler only cares about
+those. These verbs care about every document that carries a folio
+header, tangling or not: a design document declares affordances and
+tangles nothing. So discovery here is the format's own gate: the
+document's first fenced block is a `turtle folio:document` header, and
+its subject is not `<>`. An untyped `<>` header carries tool
+configuration and names nothing, so it counts as no header. A header
+that is there and does not parse is discovered — that is what lets the
+check report it rather than skip it. A file path is taken as given; a
 directory is walked. The result is sorted so two runs over the same
 tree print in the same order, and deduplicated because overlapping
 paths — `check docs docs/inner` — reach one file twice and the set is
@@ -209,9 +208,9 @@ collides with itself, which the vocabulary collector says out loud
 <a name="chunk-discover"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#discover`</sub>
 
 ```rust {#discover}
-/// Every `.md` under `paths` whose frontmatter claims folio/v1, sorted.
-/// A path that is a file is taken as given; a directory is walked. A
-/// file reached through two overlapping paths appears once.
+/// Every `.md` under `paths` that carries a folio header, sorted. A path
+/// that is a file is taken as given; a directory is walked. A file
+/// reached through two overlapping paths appears once.
 pub fn discover_folio_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut docs = Vec::new();
     for path in paths {
@@ -238,8 +237,15 @@ pub fn discover_folio_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 
 fn claims_folio(path: &Path) -> bool {
     std::fs::read_to_string(path)
-        .map(|content| is_colophon(&content))
+        .map(|content| carries_header(&content))
         .unwrap_or(false)
+}
+
+/// True when a document carries a folio header that names it: a
+/// `turtle folio:document` block whose subject is not `<>`. A header that
+/// does not parse still counts — it is a header, and a broken one.
+pub fn carries_header(content: &str) -> bool {
+    !matches!(parse_envelope(content), Err(FolioError::NoHeader | FolioError::Untyped))
 }
 ```
 
@@ -310,9 +316,9 @@ The affordance's text names the two outcomes, and
 says, and a **dangling edge** is a well-formed target naming no
 document in the set — the publication boundary doing its job. The
 report here adds one thing in front of the corpus report: a document
-that claims folio/v1 and does not parse as one. The affordance promises
-that the envelope is well formed, and a parse failure is that promise
-broken, so it counts as a defect and not as a document to skip.
+whose header does not parse. The affordance promises that the header is
+well formed, and a parse failure is that promise broken, so it counts as
+a defect and not as a document to skip.
 
 The check runs over the whole set at once rather than one document at
 a time, because "names no document here" is a question about the set.
@@ -332,14 +338,13 @@ answering the question, and `check_declarations` says so — a note rather
 than a defect, whose standing `--closed` then decides like any other.
 
 The vocabulary those declarations are *typed* by is a property of the
-set as well, and that is the step this function used to skip. A
-collection defines `paper:Paper` in a `turtle folio:ontology` block and
-declares papers in `yaml paper:paper` fences beside it; the block was
-live for `ingest` and dead here, so the envelope pass refused
-`paper:Paper/alpha` as an undeclared prefix with the definition in the
-same directory, and the instance pass did not exist at all. Both are
-[`check_instances`](../folio/checking.md) now, called before the first
-envelope is parsed because its extended model is what the envelopes are
+set as well. A collection defines `paper:Paper` in a `turtle folio:graph`
+block and declares papers in `turtle folio:graph` blocks beside it; the
+definitions are what `ingest` reads, so they are what the check reads
+too, or the header pass would refuse `paper:` as an undeclared prefix
+with the definition in the same directory. Both are
+[`check_instances`](../folio/checking.md), called before the first
+header is parsed because its extended model is what the headers are
 then read against. Its defects join the declaration report's and its
 dangling targets join the note list, at the same grain and with the same
 meaning.
@@ -347,7 +352,7 @@ meaning.
 And so is the fourth, which is the second outcome again from the code's
 side. A chunk's `proves=` is an edge from the chapter to an affordance,
 and one naming no affordance declared in the set is a dangling edge —
-reported beside the envelope ones, as `proves`, with the chunk's
+reported beside the header's own, as `proves`, with the chunk's
 document as its source. Expected when the set is a projection and the
 design stayed home; the thing to read when a test was renamed or a
 declaration deleted, since the edge on the chunk outlives both. A
@@ -357,12 +362,11 @@ malformed edge target is.
 <a name="chunk-vocabulary-report"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#vocabulary-report`</sub>
 
 ```rust {#vocabulary-report}
-/// What `check` found reading a set of envelopes against a vocabulary.
+/// What `check` found reading a set of headers against a vocabulary.
 #[derive(Debug, Default)]
 pub struct VocabularyReport {
-    /// Documents whose frontmatter claims folio/v1 but does not parse
-    /// as one, each with the parser's reason. A defect: the envelope is
-    /// not well formed.
+    /// Documents whose header does not parse, each with the parser's
+    /// reason. A defect: the header is not well formed.
     pub unparsed: Vec<(String, String)>,
     /// The corpus check over every document that parsed: defects, and
     /// the edges that leave the set.
@@ -377,7 +381,7 @@ pub struct VocabularyReport {
 }
 
 impl VocabularyReport {
-    /// True when every envelope parsed and the vocabulary expressed
+    /// True when every header parsed and the vocabulary expressed
     /// everything every document said. Dangling edges do not affect this.
     pub fn is_clean(&self) -> bool {
         self.unparsed.is_empty() && self.corpus.is_clean()
@@ -388,12 +392,12 @@ impl VocabularyReport {
 <a name="chunk-check-vocabulary"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#check-vocabulary`</sub>
 
 ```rust {#check-vocabulary}
-/// Read every folio/v1 document under `paths` against `model`, extended
+/// Read every folio document under `paths` against `model`, extended
 /// by the vocabulary the set itself carries. Documents are named by their
 /// path in the report.
 pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<VocabularyReport> {
     let mut unparsed = Vec::new();
-    let mut envelopes: Vec<(String, Colophon)> = Vec::new();
+    let mut headers: Vec<(String, Colophon)> = Vec::new();
     let classes: HashSet<String> =
         HashSet::from(["affordance".to_string(), "signifier".to_string()]);
     let mut entities: Vec<InlineEntity> = Vec::new();
@@ -402,10 +406,9 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
     let mut proofs: Vec<(String, String, ProvingChunk)> = Vec::new();
 
     // Read the set once and assemble its vocabulary before parsing the
-    // first envelope: a collection that defines `paper:` in a
-    // `turtle folio:ontology` block may use `paper:` in an id, and the
-    // pass that refused it had never looked. The collector is handed
-    // whole files, frontmatter included, so the line it reports in a
+    // first header: a collection that defines `paper:` in a
+    // `turtle folio:graph` block may use `paper:` in an id. The collector
+    // is handed whole files, header included, so the line it reports in a
     // diagnostic is a line of the file a reader opens.
     let mut documents: Vec<(String, String)> = Vec::new();
     for path in discover_folio_documents(paths)? {
@@ -423,31 +426,31 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
     for (name, content) in &documents {
         let name = name.clone();
         match parse_envelope_in(model, content) {
-            Ok((envelope, body)) => {
-                // A chapter's prose link is an edge — `presupposes` to a
-                // wiki page, `realizes` to an affordance — and is checked as
-                // one. The rule is a chapter's; a wiki page or a publication
-                // linking a concept page is linking.
-                let mut envelope = envelope;
-                if matches!(envelope.doc_type, DocType::Implementation) {
-                    envelope.edges = document_edges(&envelope.edges, &body);
+            Ok((header, body)) => {
+                // A chapter's prose link is an edge — `x0k:presupposes` to a
+                // wiki page, `x0k:realizes` to an affordance — and is checked
+                // as one. The rule is a chapter's; a wiki page or a
+                // publication linking a concept page is linking.
+                let mut header = header;
+                if matches!(header.doc_type, DocType::Implementation) {
+                    header.edges = document_edges(&header.edges, &body);
                 }
                 // A block the extractor refuses is the `affordances` verb's
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());
-                if envelope.tangle.is_some() {
+                if header.tangle.is_some() {
                     if let Ok(parsed) = parse_document(content) {
                         for chunk in proving_chunks(&parsed) {
-                            proofs.push((name.clone(), envelope.id.clone(), chunk));
+                            proofs.push((name.clone(), header.id.clone(), chunk));
                         }
                     }
                 }
-                envelopes.push((name, envelope));
+                headers.push((name, header));
             }
             Err(e) => unparsed.push((name, e.to_string())),
         }
     }
-    let mut corpus = check_corpus(model, envelopes.iter().map(|(name, env)| (name.as_str(), env)));
+    let mut corpus = check_corpus(model, headers.iter().map(|(name, env)| (name.as_str(), env)));
     // Every affordance and signifier is a typed instance too, so the two
     // passes read the same blocks and ask different questions of them.
     // The count is therefore the larger of the two and never their sum,
@@ -459,7 +462,7 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
     declarations.notes.extend(instances.report.notes);
     let declared: HashSet<String> = entities
         .iter()
-        .filter(|e| e.marker_class == "affordance")
+        .filter(|e| e.class == "affordance")
         .map(|e| e.uri.to_string())
         .collect();
     for (name, doc_id, chunk) in proofs {
@@ -505,13 +508,15 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
 
 ## The declarations
 
-An affordance is authored inline — a `yaml x0k:affordance` block under
-its own heading — and the extractor in
+An affordance is authored inline — a `turtle folio:graph` block stating
+`a x0k:Affordance`, under its own heading — and the extractor in
 [`inline-entities.md`](../folio/inline-entities.md) turns the block
-into an `InlineEntity` and its facts into `(predicate, value)` pairs.
+into an `InlineEntity` and its facts into `(predicate, value)` pairs,
+each predicate its compact term (`x0k:status`, `x0k:claimedFor`).
 The record this verb prints is that entity with its facts grouped by
 predicate, plus the one fact the document does not declare and the
-extractor does not mint: `defined_in`, the parent's `x0k.id`.
+extractor does not mint: `defined_in`, the id of the document whose
+header the block sits under.
 
 The extractor prefixes every fact value with its kind — `entity:` for
 an id, `string:` for a literal — so a consumer can tell a reference
@@ -553,16 +558,16 @@ impl FactValue {
 /// One affordance declaration, as the `affordances` verb prints it.
 #[derive(Debug, Clone, Serialize)]
 pub struct AffordanceRecord {
-    /// The declaration's `id:`.
+    /// The block's subject, compact.
     pub id: String,
     /// The enclosing heading's text.
     pub title: String,
     /// The prose under that heading, with the block excised.
     pub description: String,
-    /// The `x0k.id` of the document the block was authored in.
+    /// The id of the document the block was authored in.
     pub defined_in: String,
-    /// Every other declared fact, grouped by predicate in the order the
-    /// extractor emitted them.
+    /// Every other declared fact, grouped by compact predicate, values in
+    /// the order the extractor emitted them.
     pub facts: BTreeMap<String, Vec<FactValue>>,
     /// The chunks under the paths that tangle tests for it (`proves=`),
     /// in the order met. The relation the verb relays, not derives:
@@ -617,7 +622,7 @@ pub fn declared_affordances(paths: &[PathBuf]) -> Result<AffordanceReport> {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
         let name = path.display().to_string();
-        let (envelope, body) = match parse_envelope(&content) {
+        let (header, body) = match parse_envelope(&content) {
             Ok(parsed) => parsed,
             Err(e) => {
                 report.skipped.push((name, e.to_string()));
@@ -626,15 +631,15 @@ pub fn declared_affordances(paths: &[PathBuf]) -> Result<AffordanceReport> {
         };
         for extracted in extract_from_markdown(&body, &classes) {
             match extracted {
-                Ok(entity) => report.records.push(record_of(&entity, &envelope.id)),
+                Ok(entity) => report.records.push(record_of(&entity, &header.id)),
                 Err(e) => report.skipped.push((name.clone(), e.to_string())),
             }
         }
-        if envelope.tangle.is_some() {
+        if header.tangle.is_some() {
             if let Ok(parsed) = parse_document(&content) {
                 for chunk in proving_chunks(&parsed) {
                     let record = ProofRecord {
-                        chapter: envelope.id.clone(),
+                        chapter: header.id.clone(),
                         chunk: chunk.chunk,
                         tests: chunk.tests,
                     };
@@ -764,12 +769,9 @@ pub fn check_section(svgs: &[String]) -> Result<Accepted, String> {
 }
 
 /// The drawing an icon record carries: the extractor hands an
-/// `svg x0k:icon` block back under one `svg` key, as written.
+/// `svg x0k:icon` block back as written.
 pub fn icon_svg(entity: &InlineEntity) -> Option<String> {
-    match entity.yaml.get("svg") {
-        Some(serde_norway::Value::String(svg)) => Some(svg.clone()),
-        _ => None,
-    }
+    entity.svg.clone()
 }
 ```
 
@@ -804,7 +806,7 @@ pub fn declared_icons(paths: &[PathBuf]) -> Result<IconReport> {
             }
         }
         let mut sections: Vec<&str> = Vec::new();
-        for entity in entities.iter().filter(|e| e.marker_class == ICON_CLASS) {
+        for entity in entities.iter().filter(|e| e.class == ICON_CLASS) {
             if !sections.contains(&entity.title.as_str()) {
                 sections.push(&entity.title);
             }
@@ -812,11 +814,11 @@ pub fn declared_icons(paths: &[PathBuf]) -> Result<IconReport> {
         for section in sections {
             let in_section = |e: &&InlineEntity| e.title == section;
             let icons: Vec<&InlineEntity> =
-                entities.iter().filter(in_section).filter(|e| e.marker_class == ICON_CLASS).collect();
+                entities.iter().filter(in_section).filter(|e| e.class == ICON_CLASS).collect();
             let depicted = entities
                 .iter()
                 .filter(in_section)
-                .find(|e| e.marker_class != ICON_CLASS)
+                .find(|e| e.class != ICON_CLASS)
                 .unwrap_or(icons[0]);
             let svgs: Vec<String> = icons.iter().filter_map(|e| icon_svg(e)).collect();
             match check_section(&svgs) {
@@ -850,9 +852,162 @@ pub fn write_icon_files(report: &IconReport, palette: &Palette, out: &Path) -> R
 }
 ```
 
+## Every declaration, as data
+
+The `affordances` verb is one class read with an opinion — its record
+carries the parent and the proofs. Tools written in another language
+want the plain thing: every instance a `turtle folio:graph` block
+declares, of whatever class, with the statements already parsed, so
+none of them embeds a Turtle reader. `declarations` is that, and
+nothing else: one record per instance block, sorted by document and
+then by the block's line, each carrying the block's compact subject, its
+class in kebab-case, the section's heading and prose (the extractor's
+title and description), the path of the document as the walk reached
+it, and every statement grouped by compact predicate.
+
+Values keep their type rather than a tagged string: an IRI is its
+compact id, a plain string is a JSON string, an `xsd:boolean`,
+`xsd:integer`, `xsd:decimal` or `xsd:double` is a JSON boolean or
+number, and an `rdf:JSON` literal is the JSON value it holds. A lexical
+form that does not read as its datatype stays a string, because a
+record that dropped it would be the verb deciding the author was wrong.
+
+Every class is read, declared or not: the blocks are read with no class
+filter against the vocabulary `check` would use, so a class the
+vocabulary has not grown yet (`x0k:Interface`, `x0k:Prompt`) is still
+exported. `--class` narrows to the classes named. A block the extractor
+refuses is reported on stderr with its line and skipped. Every Markdown
+file under the paths is read, headed or not — a declaration is a
+section's, and nothing about it depends on the header above it.
+
+<a name="chunk-declarations"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#declarations`</sub>
+
+```rust {#declarations}
+/// One declared instance, as the `declarations` verb prints it.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeclarationRecord {
+    /// The block's subject, compact (`x0k:interface/srs-cell`).
+    pub id: String,
+    /// The class the block states, kebab-case (`interface`).
+    pub class: String,
+    /// The enclosing heading's text.
+    pub title: String,
+    /// The prose under that heading, blocks excised.
+    pub description: String,
+    /// The document's path as the walk reached it.
+    pub document: String,
+    /// Every statement other than the class, grouped by compact
+    /// predicate, values in statement order.
+    pub statements: BTreeMap<String, Vec<serde_json::Value>>,
+    /// The block's opening fence, 1-based: the sort key within a document.
+    #[serde(skip)]
+    pub line: usize,
+}
+
+/// What `declarations` found under a set of paths.
+#[derive(Debug, Default)]
+pub struct DeclarationsReport {
+    pub records: Vec<DeclarationRecord>,
+    /// Blocks the extractor refused, as `<path>:<line>` and the reason.
+    pub skipped: Vec<(String, String)>,
+}
+
+/// Every instance the graph blocks under `paths` declare, read against
+/// `model`; only those of `classes` (kebab-case) when it is not empty.
+pub fn declared_instances(
+    model: &OntologyModel,
+    paths: &[PathBuf],
+    classes: &[String],
+) -> Result<DeclarationsReport> {
+    let prefixes = predeclared_prefixes(model);
+    let mut report = DeclarationsReport::default();
+    for path in markdown_files(paths) {
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let name = path.display().to_string();
+        for located in extract_located(&content, None, Some(model)) {
+            match located.result {
+                Ok(entity) if classes.is_empty() || classes.contains(&entity.class) => {
+                    report.records.push(declaration_record(&entity, &name, &prefixes));
+                }
+                Ok(_) => {}
+                Err(e) => report.skipped.push((format!("{name}:{}", located.line), e.to_string())),
+            }
+        }
+    }
+    report
+        .records
+        .sort_by(|a, b| a.document.cmp(&b.document).then(a.line.cmp(&b.line)));
+    Ok(report)
+}
+
+fn declaration_record(
+    entity: &InlineEntity,
+    document: &str,
+    prefixes: &[(String, String)],
+) -> DeclarationRecord {
+    let mut statements: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+    for (predicate, object) in &entity.statements {
+        let value = match object {
+            Object::Iri(iri) => serde_json::Value::String(compact_iri(iri, prefixes)),
+            Object::Literal(literal) => literal_value(literal),
+        };
+        statements.entry(compact_iri(predicate, prefixes)).or_default().push(value);
+    }
+    DeclarationRecord {
+        id: entity.uri.to_string(),
+        class: entity.class.clone(),
+        title: entity.title.clone(),
+        description: entity.description.clone(),
+        document: document.to_string(),
+        statements,
+        line: entity.line,
+    }
+}
+
+/// A literal as the JSON value its datatype names; its lexical form as a
+/// string when it does not read as one.
+fn literal_value(literal: &Literal) -> serde_json::Value {
+    let lexical = literal.value.as_str();
+    let typed = match literal.datatype.as_str() {
+        RDF_JSON => serde_json::from_str(lexical).ok(),
+        XSD_BOOLEAN => lexical.parse::<bool>().ok().map(serde_json::Value::Bool),
+        XSD_INTEGER | XSD_DECIMAL | XSD_DOUBLE => {
+            serde_json::from_str::<serde_json::Number>(lexical.strip_prefix('+').unwrap_or(lexical))
+                .ok()
+                .map(serde_json::Value::Number)
+        }
+        _ => None,
+    };
+    typed.unwrap_or_else(|| serde_json::Value::String(lexical.to_string()))
+}
+
+/// Every `.md` under `paths`, sorted and once each: a file taken as
+/// given, a directory walked.
+fn markdown_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for path in paths {
+        if path.is_file() {
+            files.push(path.clone());
+        } else if path.is_dir() {
+            files.extend(
+                walkdir::WalkDir::new(path)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.into_path())
+                    .filter(|p| p.extension().is_some_and(|e| e == "md")),
+            );
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+```
+
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [vocabulary](#chunk-vocabulary) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances) · [icon-report](#chunk-icon-report) · [check-section](#chunk-check-section) · [declared-icons](#chunk-declared-icons)</sub>
+<a name="chunk-root"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [vocabulary](#chunk-vocabulary) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances) · [declarations](#chunk-declarations) · [icon-report](#chunk-icon-report) · [check-section](#chunk-check-section) · [declared-icons](#chunk-declared-icons)</sub>
 
 ```rust {#root}
 <<doc>>
@@ -875,6 +1030,8 @@ pub fn write_icon_files(report: &IconReport, palette: &Palette, out: &Path) -> R
 
 <<declared-affordances>>
 
+<<declarations>>
+
 <<icon-report>>
 
 <<check-section>>
@@ -893,15 +1050,17 @@ the proof travels with the publication.
 
 The fixtures name no shipped predicate by hand. This crate lives in
 two builds that compile different vocabulary slices, and a fixture
-that wrote `implements` would measure the module selection, not the
+that wrote `x0k:implements` would measure the module selection, not the
 face — the lesson [`checking.md`](../folio/checking.md) records. The
 well-formed fixture takes its edge predicate from the compiled slice at
-runtime; the defective one uses a term no module will ever declare.
+runtime, spelled as the header's term; the defective one uses a term no
+module will ever declare.
 
 <a name="chunk-tests-doc"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-doc`</sub>
 
 ```rust {#tests-doc file="tests/cli_faces.rs"}
-//! Pins for the `check`, `affordances` and `icon` faces of the shipped CLI
+//! Pins for the `check`, `affordances`, `declarations` and `icon` faces of
+//! the shipped CLI
 //! (`x0k:implementation/tangle/cli-faces`): the built binary is run
 //! over a temp fixture, and what it prints and how it exits is the
 //! claim.
@@ -920,26 +1079,30 @@ use tempfile::TempDir;
 <a name="chunk-tests-fixture"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-fixture`</sub>
 
 ```rust {#tests-fixture file="tests/cli_faces.rs"}
-/// A predicate this build is certain to accept, so the well-formed
-/// fixture measures the face and not the module selection.
-fn shipped_predicate() -> &'static str {
-    x0k_ontology::KNOWN_EDGE_PREDICATES
+/// A predicate this build is certain to accept, as the header writes it,
+/// so the well-formed fixture measures the face and not the module
+/// selection.
+fn shipped_predicate() -> String {
+    let snake = x0k_ontology::KNOWN_EDGE_PREDICATES
         .first()
         .copied()
-        .expect("a build whose vocabulary declares no document edge ships no document module")
+        .expect("a build whose vocabulary declares no document edge ships no document module");
+    let camel = x0k_ontology::snake_to_camel(snake).expect("every known predicate has a term");
+    format!("x0k:{camel}")
 }
 
-/// A folio/v1 design document with one edge and one affordance.
+/// A design document with one edge, one affordance and the signifier that
+/// presents it.
 fn design_doc(predicate: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/fixture\n  type: design\n  \
-         status: draft\n  edges:\n    {predicate}:\n      - x0k:design/elsewhere\n---\n\
-         # Fixture\n\n## Affordances\n\n### Frob the widget\n\nI frob a widget from here.\n\n\
-         ```yaml x0k:affordance\nid: x0k:affordance/frob_the_widget\nstatus: wip\n\
-         actors: [human]\n```\n\n### The frob verb\n\n`frob`, on the command line.\n\n\
-         ```yaml x0k:signifier\nid: x0k:signifier/frob\nedges:\n\
-         \x20 signifies: [x0k:affordance/frob_the_widget]\n\
-         \x20 presentedOn: [x0k:surface/cli]\n```\n"
+        "# Fixture\n\n```turtle folio:document\ndesign:fixture a x0k:Design ;\n    \
+         x0k:status \"draft\" ;\n    {predicate} design:elsewhere .\n```\n\n\
+         ## Affordances\n\n### Frob the widget\n\nI frob a widget from here.\n\n\
+         ```turtle folio:graph\naffordance:frob_the_widget a x0k:Affordance ;\n    \
+         x0k:status \"wip\" ;\n    x0k:claimedFor x0k:actor\\/human .\n```\n\n\
+         ### The frob verb\n\n`frob`, on the command line.\n\n\
+         ```turtle folio:graph\nsignifier:frob a x0k:Signifier ;\n    \
+         x0k:signifies affordance:frob_the_widget ;\n    x0k:presentedOn surface:cli .\n```\n"
     )
 }
 
@@ -974,7 +1137,7 @@ reader chose rather than one the binary was born with.
 #[test]
 fn check_notes_an_edge_out_of_the_set_and_passes() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
 
     let out = run(&["check"], tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -992,7 +1155,7 @@ fn check_notes_an_edge_out_of_the_set_and_passes() {
 #[test]
 fn check_names_an_undeclared_predicate_and_fails() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "docs/fixture.md", &design_doc("frobnicates"));
+    write(tmp.path(), "docs/fixture.md", &design_doc("x0k:frobnicates"));
 
     let out = run(&["check"], tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1037,8 +1200,8 @@ fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
     write(
         tmp.path(),
         "docs/brief.md",
-        "---\nx0k:\n  format: folio/v1\n  id: mycorp:brief/tender-process\n  \
-         type: brief\n  status: proposed\n---\n# A brief\n",
+        "# A brief\n\n```turtle folio:document\nmycorp:brief\\/tender-process a mycorp:Brief ;\n    \
+         x0k:status \"proposed\" .\n```\n",
     );
     let docs = tmp.path().join("docs");
 
@@ -1052,8 +1215,8 @@ fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
         "a genus and a namespace the named vocabulary declares must check clean: {stderr}"
     );
 
-    // The same document against the vocabulary this build compiled: the
-    // genus is not a class it declares, so the envelope does not parse.
+    // The same document against the vocabulary this build compiled: it
+    // knows no `mycorp:` prefix, so the header does not parse.
     let out = run(&["check"], &docs);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -1064,39 +1227,47 @@ fn check_reads_a_document_against_the_vocabulary_it_is_pointed_at() {
 }
 
 #[test]
-fn check_reports_an_envelope_that_does_not_parse() {
-    let tmp = TempDir::new().unwrap();
-    write(
-        tmp.path(),
-        "docs/broken.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/broken\n  type: nonsense\n---\n# Broken\n",
-    );
+fn check_reports_a_header_that_does_not_parse() {
+    for header in [
+        "design:broken a x0k:Nonsense .",
+        "design:broken a x0k:Design ;\n    x0k:status .",
+    ] {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "docs/broken.md",
+            &format!("# Broken\n\n```turtle folio:document\n{header}\n```\n"),
+        );
 
-    let out = run(&["check"], tmp.path());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "check passed a malformed envelope: {stderr}");
-    assert!(stderr.contains("broken.md"), "the document is named: {stderr}");
+        let out = run(&["check"], tmp.path());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "check passed a malformed header: {stderr}");
+        assert!(
+            stderr.contains("broken.md: header does not parse"),
+            "the document is named, once as a header: {stderr}"
+        );
+        assert_eq!(stderr.matches("broken.md").count(), 1, "reported once: {stderr}");
+    }
 }
 
-/// A design declaring one affordance for the given actors and no signifier.
-fn lonely_doc(actors: &str) -> String {
+/// A design declaring one affordance claimed for the given actor and no
+/// signifier.
+fn lonely_doc(actor: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/lonely\n  type: design\n  \
-         status: draft\n---\n# Lonely\n\n### Frob alone\n\nI frob, and nothing shows me how.\n\n\
-         ```yaml x0k:affordance\nid: x0k:affordance/frob_alone\nstatus: wip\n\
-         actors: [{actors}]\n```\n"
+        "# Lonely\n\n```turtle folio:document\ndesign:lonely a x0k:Design ;\n    \
+         x0k:status \"draft\" .\n```\n\n### Frob alone\n\nI frob, and nothing shows me how.\n\n\
+         ```turtle folio:graph\naffordance:frob_alone a x0k:Affordance ;\n    \
+         x0k:status \"wip\" ;\n    x0k:claimedFor x0k:actor\\/{actor} .\n```\n"
     )
 }
 
 /// A chapter declaring a signifier for some *other* affordance: enough
 /// for the set to be one where signification lives, and no answer at all
 /// for `frob_alone`.
-const SIGNIFYING_CHAPTER: &str = "---\nx0k:\n  format: folio/v1\n  \
-     id: x0k:implementation/elsewhere\n  type: implementation\n  \
-     status: draft\n---\n# Elsewhere\n\n### `frob_together`\n\n\
-     ```yaml x0k:signifier\nid: x0k:signifier/frob-together\nedges:\n  \
-     signifies:\n    - x0k:affordance/frob_together\n  presentedOn:\n    \
-     - x0k:surface/cli\n```\n";
+const SIGNIFYING_CHAPTER: &str = "# Elsewhere\n\n```turtle folio:document\n\
+     implementation:elsewhere a x0k:Implementation ;\n    x0k:status \"draft\" .\n```\n\n\
+     ### `frob_together`\n\n```turtle folio:graph\nsignifier:frob-together a x0k:Signifier ;\n    \
+     x0k:signifies affordance:frob_together ;\n    x0k:presentedOn surface:cli .\n```\n";
 
 #[test]
 fn check_names_a_human_claim_no_signifier_signifies_and_fails() {
@@ -1156,11 +1327,8 @@ fn check_passes_an_agent_only_claim_with_no_signifier() {
 ```
 
 The declaration read back as data. The assertion is on identity,
-title, and parent: the shape of the `actors:` fact is the extractor's
-to decide (it is moving from a bare `x0k:affordance/actors` string to a
-`claimedFor` entity edge), and this face relays whichever it emits.
-The test asks only that the human claim survived into the record under
-some predicate.
+title, parent, and the human claim as the extractor emits it: an
+`x0k:claimedFor` fact whose value is the actor's id.
 
 <a name="chunk-tests-affordances"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-affordances` · proves [Declare concepts and instances](../../decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md)</sub>
 
@@ -1168,7 +1336,7 @@ some predicate.
 #[test]
 fn affordances_prints_each_declaration_as_a_record() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
 
     let out = run(&["affordances"], tmp.path());
     assert!(
@@ -1192,9 +1360,10 @@ fn affordances_prints_each_declaration_as_a_record() {
             .contains("I frob a widget"),
         "the prose under the heading is the description: {record}"
     );
-    assert!(
-        record["facts"].to_string().contains("human"),
-        "the human claim reaches the record under some predicate: {record}"
+    assert_eq!(
+        record["facts"]["x0k:claimedFor"],
+        serde_json::json!([{"entity": "x0k:actor/human"}]),
+        "the human claim reaches the record: {record}"
     );
 }
 
@@ -1204,10 +1373,11 @@ fn affordances_reports_a_malformed_block_and_keeps_going() {
     write(
         tmp.path(),
         "docs/bad.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/bad\n  type: design\n---\n\
-         # Bad\n\n## Affordances\n\n### No id here\n\n```yaml x0k:affordance\nstatus: wip\n```\n",
+        "# Bad\n\n```turtle folio:document\ndesign:bad a x0k:Design .\n```\n\n\
+         ## Affordances\n\n### No class here\n\n```turtle folio:graph\n\
+         affordance:no_class x0k:status \"wip\" .\n```\n",
     );
-    write(tmp.path(), "docs/good.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/good.md", &design_doc(&shipped_predicate()));
 
     let out = run(&["affordances"], tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1218,6 +1388,71 @@ fn affordances_reports_a_malformed_block_and_keeps_going() {
     );
     let records: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(records.as_array().unwrap().len(), 1, "the good record survives");
+}
+```
+
+Every declaration, as data: an undeclared class travels as readily as
+a declared one, and each literal arrives as the JSON its datatype
+names.
+
+<a name="chunk-tests-declarations"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-declarations`</sub>
+
+```rust {#tests-declarations file="tests/cli_faces.rs"}
+/// A section declaring one instance of a class the vocabulary need not
+/// know, with a statement of every kind a value can be.
+const INTERFACE_DOC: &str = "# Cells\n\n### The SRS cell\n\nWhat the cell answers.\n\n\
+    ```turtle folio:graph\nx0k:interface\\/srs-cell a x0k:Interface ;\n    \
+    x0k:status \"wip\" ;\n    x0k:weight 3 ;\n    x0k:stable true ;\n    \
+    x0k:dependsOn affordance:frob_the_widget ;\n    \
+    x0k:config '{\"retries\":2,\"modes\":[\"a\",\"b\"]}'^^rdf:JSON .\n```\n";
+
+#[test]
+fn declarations_prints_every_instance_with_typed_values() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
+    write(tmp.path(), "docs/cells.md", INTERFACE_DOC);
+
+    let out = run(&["declarations"], tmp.path());
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let records: serde_json::Value = serde_json::from_slice(&out.stdout).expect("a JSON array");
+    let records = records.as_array().unwrap();
+    // Sorted by document: cells.md before fixture.md, and within
+    // fixture.md the affordance before the signifier.
+    let ids: Vec<&str> = records.iter().map(|r| r["id"].as_str().unwrap()).collect();
+    assert_eq!(
+        ids,
+        ["x0k:interface/srs-cell", "x0k:affordance/frob_the_widget", "x0k:signifier/frob"]
+    );
+    let cell = &records[0];
+    assert_eq!(cell["class"], "interface");
+    assert_eq!(cell["title"], "The SRS cell");
+    assert_eq!(cell["description"], "What the cell answers.");
+    assert!(cell["document"].as_str().unwrap().ends_with("cells.md"), "{cell}");
+    assert_eq!(cell["statements"]["x0k:status"], serde_json::json!(["wip"]));
+    assert_eq!(cell["statements"]["x0k:weight"], serde_json::json!([3]));
+    assert_eq!(cell["statements"]["x0k:stable"], serde_json::json!([true]));
+    assert_eq!(
+        cell["statements"]["x0k:dependsOn"],
+        serde_json::json!(["x0k:affordance/frob_the_widget"])
+    );
+    assert_eq!(
+        cell["statements"]["x0k:config"],
+        serde_json::json!([{"retries": 2, "modes": ["a", "b"]}])
+    );
+}
+
+#[test]
+fn declarations_narrows_to_the_classes_named() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
+    write(tmp.path(), "docs/cells.md", INTERFACE_DOC);
+
+    let out = run(&["declarations", "--class", "signifier", "--class", "interface"], tmp.path());
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let records: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let classes: Vec<&str> =
+        records.as_array().unwrap().iter().map(|r| r["class"].as_str().unwrap()).collect();
+    assert_eq!(classes, ["interface", "signifier"]);
 }
 ```
 
@@ -1234,9 +1469,9 @@ that fails nothing.
 /// `proves`. Nothing here tangles it: both faces read the document.
 fn proof_doc(proves: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/fixture/proof\n  \
-         type: implementation\n  status: draft\n  tangle:\n    crate: fixture\n    \
-         root: tests/proof.rs\n---\n# Proof\n\n```rust {{#root proves=\"{proves}\"}}\n\
+        "# Proof\n\n```turtle folio:document\nimplementation:fixture\\/proof a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \"fixture\" ;\n    \
+         folio:tangleRoot \"tests/proof.rs\" .\n```\n\n```rust {{#root proves=\"{proves}\"}}\n\
          #[test]\nfn the_widget_frobs() {{}}\n```\n"
     )
 }
@@ -1244,7 +1479,7 @@ fn proof_doc(proves: &str) -> String {
 #[test]
 fn affordances_relays_the_proofs_a_chunk_declares() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
     write(tmp.path(), "docs/proof.md", &proof_doc("x0k:affordance/frob_the_widget"));
 
     let out = run(&["affordances"], tmp.path());
@@ -1264,7 +1499,7 @@ fn affordances_relays_the_proofs_a_chunk_declares() {
 #[test]
 fn check_notes_a_proof_naming_no_affordance_here_and_passes() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
     write(tmp.path(), "docs/proof.md", &proof_doc("x0k:affordance/absent"));
 
     let out = run(&["check"], tmp.path());
@@ -1294,9 +1529,9 @@ const PERSON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"4.5\"
 /// The fixture design with `svg` declared as the affordance's mark,
 /// beside its block.
 fn design_doc_with_icon(svg: &str) -> String {
-    design_doc(shipped_predicate()).replace(
-        "actors: [human]\n```\n",
-        &format!("actors: [human]\n```\n\nIts mark.\n\n```svg x0k:icon\n{svg}```\n"),
+    design_doc(&shipped_predicate()).replace(
+        "x0k:claimedFor x0k:actor\\/human .\n```\n",
+        &format!("x0k:claimedFor x0k:actor\\/human .\n```\n\nIts mark.\n\n```svg x0k:icon\n{svg}```\n"),
     )
 }
 
@@ -1334,9 +1569,12 @@ colours — the same pair the repository projector writes.
 <a name="chunk-tests-icon-files"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-icon-files` · proves [Show an icon on any surface](../../decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md)</sub>
 
 ```rust {#tests-icon-files file="tests/cli_faces.rs" proves="x0k:affordance/show_an_icon_on_a_surface"}
-/// A publication document carrying the palette block in the profile's
-/// shape — the `x0k-folio` publication's own literals.
-const PUBLICATION: &str = "---\nx0k:\n  format: folio/v1\n  type: publication\n  id: x0k:publication/fixture\n  status: proposed\n  palette:\n    light: { ink: \"#111111\", line: \"#b88e44\", paper: \"#fffff8\", accent: \"#b88e44\" }\n    dark:  { ink: \"#e2e8f0\", line: \"#96b4dc\", paper: \"#1e293b\", accent: \"#96b4dc\" }\n---\n# Fixture\n";
+/// A publication document carrying the palette in the profile's shape, as
+/// the header's one `rdf:JSON` literal.
+const PUBLICATION: &str = "# Fixture\n\n```turtle folio:document\npublication:fixture a x0k:Publication ;\n    \
+    x0k:status \"proposed\" ;\n    \
+    x0k:palette '{\"light\":{\"ink\":\"#111111\",\"line\":\"#b88e44\",\"paper\":\"#fffff8\",\"accent\":\"#b88e44\"},\
+    \"dark\":{\"ink\":\"#e2e8f0\",\"line\":\"#96b4dc\",\"paper\":\"#1e293b\",\"accent\":\"#96b4dc\"}}'^^rdf:JSON .\n```\n";
 
 #[test]
 fn icon_writes_each_declaration_as_its_light_and_dark_files() {
@@ -1367,7 +1605,7 @@ fn icon_writes_each_declaration_as_its_light_and_dark_files() {
 }
 ```
 
-<a name="chunk-tests-root"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-root` · assembles [tests-doc](#chunk-tests-doc) · [tests-uses](#chunk-tests-uses) · [tests-fixture](#chunk-tests-fixture) · [tests-check](#chunk-tests-check) · [tests-affordances](#chunk-tests-affordances) · [tests-proofs](#chunk-tests-proofs) · [tests-icon](#chunk-tests-icon) · [tests-icon-files](#chunk-tests-icon-files)</sub>
+<a name="chunk-tests-root"></a><sub>[`tests/cli_faces.rs`](../../crates/x0k-tangle/tests/cli_faces.rs) · `#tests-root` · assembles [tests-doc](#chunk-tests-doc) · [tests-uses](#chunk-tests-uses) · [tests-fixture](#chunk-tests-fixture) · [tests-check](#chunk-tests-check) · [tests-affordances](#chunk-tests-affordances) · [tests-declarations](#chunk-tests-declarations) · [tests-proofs](#chunk-tests-proofs) · [tests-icon](#chunk-tests-icon) · [tests-icon-files](#chunk-tests-icon-files)</sub>
 
 ```rust {#tests-root file="tests/cli_faces.rs"}
 <<tests-doc>>
@@ -1379,6 +1617,8 @@ fn icon_writes_each_declaration_as_its_light_and_dark_files() {
 <<tests-check>>
 
 <<tests-affordances>>
+
+<<tests-declarations>>
 
 <<tests-proofs>>
 

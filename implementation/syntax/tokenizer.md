@@ -1,28 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/syntax/tokenizer
-  type: implementation
-  status: draft
-  summary: Source text to a flat list of (byte range, kind) spans and nothing further, so a native presenter and a web presenter share one classification and disagree only about presentation.
-  concerns:
-  - syntax-highlighting
-  - tree-sitter
-  - tokens
-  - presentation
-  - rendering
-  tangle:
-    crate: crates/x0k-syntax
-    root: src/lib.rs
-  edges:
-    implements:
-    - x0k:design/literate-programming
-    cites:
-    - x0k:implementation/tangle/weave
-    - x0k:design/representation-axes
----
 
 # Tokens are not colors
+
+```turtle folio:document
+implementation:syntax\/tokenizer a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Source text to a flat list of (byte range, kind) spans and nothing further, so a native presenter and a web presenter share one classification and disagree only about presentation." ;
+    x0k:concerns "syntax-highlighting", "tree-sitter", "tokens", "presentation", "rendering" ;
+    x0k:cites implementation:tangle\/weave,
+        design:representation-axes ;
+    x0k:implements design:literate-programming ;
+    folio:tangleCrate "crates/x0k-syntax" ;
+    folio:tangleRoot "src/lib.rs" .
+```
 
 Every surface that shows code — the native editor, the woven HTML a tangle
 produces, the web app — wants syntax highlighting, and each has its own idea

@@ -1,6 +1,6 @@
 {
   "source": "implementation/icon/bind.md",
-  "source_hash": "2a4b72cbe15e608d",
+  "source_hash": "a846abe11d870a06",
   "pipelines": [
     {
       "kind": "identity-tangle",

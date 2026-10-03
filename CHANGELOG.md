@@ -24,6 +24,148 @@ are exactly the crates whose numbers moved in it, and each heading names
 the number. Reading a crate's version as "how recent is this bundle" will
 mislead you — read the release it is listed under instead.
 
+## 0.3.0 — 2026-10-03
+
+On GitHub as
+[v0.3.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.3.0):
+a binary per platform, `install.sh`, the source closure, and one
+`SHA256SUMS`.
+
+A document's header is Turtle now. It is the first fenced block of the
+Markdown, marked `turtle folio:document`, placed directly under the
+document's `# ` title; its one subject is the document, `a` names its class,
+and every other statement is written in the vocabulary's own terms —
+`x0k:status`, `x0k:refinedBy`, `folio:tangleRoot` — with `x0k:`, `folio:`,
+the standard prefixes and one prefix per class (`design:`, `wiki:`, …)
+predeclared. What the header states is what `check` reads and what `ingest`
+stores, with no second spelling between them. Everything else a document
+asserts is a `turtle folio:graph` block. This changes how every crate below
+reads a document, and a caller's code can break against each of them — each
+section says where — so all six move their minor number. `x0k-icon` 0.2.0
+and `x0k-syntax` 0.1.0 did not change.
+
+To move a document across, rewrite its header; the terms map one to one.
+`id:` is the header's subject (`x0k:design/retry-budget` is
+`design:retry-budget`), `type: design` is `a x0k:Design`, `status:`,
+`summary:` and `concerns:` are `x0k:status`, `x0k:summary` and
+`x0k:concerns`, an edge key such as `refined_by:` is the vocabulary's own
+`x0k:refinedBy` (yours keep your prefix: `bs:supersededBy`), `tangle:`'s
+`crate` and `root` are `folio:tangleCrate` and `folio:tangleRoot`, and any
+other key `foo_bar:` is the literal `x0k:fooBar`. An affordance, a signifier
+or a paper moves the same way into a graph block of its own, under the
+heading that was already its title.
+
+### x0k-folio 0.2.0
+
+- **The header is Turtle, and there is one kind of graph block.** The
+  parser (`parse_envelope`) reads the `turtle folio:document` block, holding
+  it to one subject, one class and no blank nodes; `turtle folio:graph` blocks
+  replace both earlier carriers, the typed YAML blocks that declared an
+  instance and the Turtle ontology block that declared vocabulary. A graph
+  block that types OWL terms declares vocabulary; any other states one
+  instance, whose section heading is its title and whose prose is its
+  description. A collection's own prefix, from its module's
+  `vann:preferredNamespacePrefix`, is predeclared in every graph block that
+  collection loads.
+- **A `---` frontmatter block no longer types a document.** It is the host's
+  — a site generator's `title:` or route — and folio reads only its
+  `title:`. A file whose only metadata is there has no header
+  (`FolioError::NoHeader`). Every header names its document: one that only
+  tangles is `a x0k:Implementation` with an id like any other, and
+  `read_tool_config` reads its tangle configuration.
+- **`Colophon::edges` is keyed by the compact term** — `"x0k:motivatedBy"`,
+  not the snake-case key — and every other literal statement lands in the new
+  `properties` map under its term, so a struct literal of `Colophon` no longer
+  compiles. `FolioError` has new variants (`NoHeader`, `Untyped`, `Turtle`,
+  `Subjects`, `BlankNode`, `Class`, `InvalidValue`, `Repeated`) in place of
+  `NoFrontmatter`, `NotColophon`, `InvalidYaml`, `MissingField` and
+  `WrongFormat`.
+- `render_header` and `render_document` write a header;
+  `replace_body`, `find_header`, `host_frontmatter`, `strip_header`,
+  `place_header`, `is_colophon` and `read_tool_config` read and splice one.
+  `render_envelope`, `yaml_scalar`, `split_frontmatter` and the format-version
+  constant are gone, and `transclusion::split_body` returns the body.
+- `InlineEntity` carries `class`, `class_iri` and `statements` in place of
+  its marker class and YAML map; `declared_facts` keys each fact by its
+  compact term (`x0k:claimedFor`, `x0k:signifies`), and `prose_edges` and
+  `document_edges` by `x0k:presupposes` and `x0k:realizes`.
+- A params block is a `turtle folio:graph` block whose subjects are each a
+  `folio:Parameter`; `inline_entity::read_parameters` reads it into
+  `Parameter`s in the block's order, and the inline-entity extractor passes
+  over it.
+- With the `plugins` feature, the projection plugin and materializer are
+  named `folio/v2`.
+
+### x0k-fact-projection 0.2.0
+
+- **The class is an `rdf:type`.** `project_envelope` states a document's
+  class as an `rdf:type` to the class entity instead of an `x0k:docType`
+  text, and projects no `x0k:originalId`: `envelope_predicates::DOC_TYPE` and
+  `ORIGINAL_ID` are gone, `CLASS` is new, and `ColophonView` gained `class`
+  (`"x0k:Design"`). The materialization terms are
+  `x0k:folio/loroDocId`, `x0k:folio/documentRevisionId` and
+  `x0k:folio/contentHash`.
+
+### x0k-folio-ingest 0.2.0
+
+- **Built on `x0k-fact-projection` 0.2.0.** `FactSink`, `AsyncFactSink`,
+  `MemorySink` and `fact_cell_key` hand out that crate's `FactEntry`, so a
+  caller's code written against the earlier `FactEntry` moves with it.
+  What a batch stores is what `x0k-fact-projection` projects; nothing else
+  in the crate changed.
+
+### x0k-ontology 0.3.0
+
+- The `document` module declares every term a header states:
+  `x0k:subtype`, `x0k:updatedBy`, `x0k:createdAt` and `x0k:updatedAt`, and
+  the tool configuration `folio:tangleCrate`, `folio:tangleRoot`,
+  `folio:tangleRoots`, `folio:pipelines`, `folio:transcludes`,
+  `folio:loroDocId`, `folio:documentRevisionId` and `folio:contentHash`. It
+  no longer declares `x0k:docType` or `x0k:originalId`.
+
+### x0k-tangle 0.3.0
+
+- **`check` reads headers.** A document is typed when its first fenced block
+  is a `turtle folio:document` header; a header that does not parse, a prefix
+  nothing declares, or a class the vocabulary does not declare is a defect
+  naming the line. Graph blocks are checked as instances, their literal
+  statements as fields, exactly as the typed blocks were.
+- **Edges are keyed by compact term** everywhere a document's edges come
+  back: `check`'s dangling-edge notes, `index`'s `edges` map and the
+  `affordances` JSON name `x0k:refinedBy`, `x0k:claimedFor`,
+  `bs:supersededBy` — the term the header wrote.
+- `tangle` reads `folio:tangleCrate`, `folio:tangleRoot`, `folio:tangleRoots`
+  and `folio:pipelines` from the header.
+- **`--require-envelope` is now `--require-header`**, with no alias: `check`
+  counts the Markdown that carried no header (`1 markdown file carried no
+  header`), and `--require-header` makes such a file a defect.
+
+### x0k-folio-cli 0.3.0
+
+- **`ingest` projects every header statement as written**: the class as an
+  `rdf:type`, each edge under its term, each literal by its datatype, the tool
+  configuration under `folio:`, and `x0k:bodyFormat` as `"markdown"` when the
+  header states none. `x0k:docType` and `x0k:originalId` are no longer
+  projected, so a query written against them returns nothing; ask for
+  `rdf:type`, or the id itself. Run `rebuild` over a database an earlier
+  release built.
+- `--named status` reads each document's class from its `rdf:type`, and
+  `--named edges` and `--named mentions` label each row with the compact
+  term that carried it (`x0k:supersededBy`).
+- The papers example is three documents with Turtle headers: the vocabulary
+  in one graph block, each paper in a graph block of its own.
+
+### Guides
+
+- The README, `AGENTS.md` and `guides/INTEGRATING.md` teach the Turtle
+  header: where it goes, the predeclared prefixes, the class, and edges
+  written as the vocabulary's terms.
+- The guide's field-to-predicate table is gone; *What a header becomes* says
+  the rule instead — every statement is a fact as written.
+- Declaring a capability shows the affordance and the signifier as graph
+  blocks, and adopting the tangle shows `folio:tangleCrate` and
+  `folio:tangleRoot`.
+
 ## 0.2.0 — 2026-09-26
 
 On GitHub as

@@ -1,19 +1,14 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/dialog
-  type: implementation
-  status: draft
-  summary: Source-owned projections in a caller-selected local Dialog database.
-  tangle:
-    crate: crates/x0k-folio-dialog
-    root: src/lib.rs
-  edges:
-    motivated_by:
-    - x0k:architecture/folio-backends
-    - x0k:intent/c5ccd003-77d6-4b0d-8824-649f6221c259
----
 # A local database for document facts
+
+```turtle folio:document
+implementation:folio\/dialog a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Source-owned projections in a caller-selected local Dialog database." ;
+    x0k:motivatedBy architecture:folio-backends,
+        intent:c5ccd003-77d6-4b0d-8824-649f6221c259 ;
+    folio:tangleCrate "crates/x0k-folio-dialog" ;
+    folio:tangleRoot "src/lib.rs" .
+```
 
 This standalone adapter opens a directory the caller selects. A single worker
 owns the database and runtime. It admits eight queued requests, rejects excess
@@ -403,8 +398,8 @@ repository = "https://github.com/0k-dot-computer/x0k-folio"
 readme = "../../README.md"
 keywords = ["literate-programming", "tangle", "markdown", "documentation"]
 [dependencies]
-x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.1.1" }
-x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.1" }
+x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.2.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.2.0" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

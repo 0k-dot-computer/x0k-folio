@@ -1,28 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/reverse-stitch
-  type: implementation
-  status: draft
-  summary: 'Lifting an edited generated file back through the sidecar''s line ranges into a patch against its document. Exported and tested but unwired: nothing in the tree calls it today.'
-  concerns:
-  - tangle
-  - stitch
-  - reverse-tangle
-  - sidecar
-  - chunks
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/stitch.rs
-  edges:
-    implements:
-    - x0k:design/literate-programming
-    cites:
-    - x0k:implementation/tangle/source-sync
-    - x0k:implementation/tangle/identity-pipeline
----
 
 # Reading an edited output back through the sidecar
+
+```turtle folio:document
+implementation:tangle\/reverse-stitch a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Lifting an edited generated file back through the sidecar's line ranges into a patch against its document. Exported and tested but unwired: nothing in the tree calls it today." ;
+    x0k:concerns "tangle", "stitch", "reverse-tangle", "sidecar", "chunks" ;
+    x0k:cites implementation:tangle\/source-sync,
+        implementation:tangle\/identity-pipeline ;
+    x0k:implements design:literate-programming ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/stitch.rs" .
+```
 
 When someone edits a generated `.rs` file directly — against the rule, but
 it happens — the tangle map sidecar still knows which output lines came from

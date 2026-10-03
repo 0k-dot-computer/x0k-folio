@@ -1,29 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/canonical-patch
-  type: implementation
-  status: draft
-  summary: The structural-address patch grammar editors speak instead of byte offsets, so one editing intent is true of a markdown body and an HTML body alike and cannot smuggle non-canonical markup past normalization.
-  concerns:
-  - folio
-  - editing
-  - patches
-  - markdown
-  - html
-  - canonicalization
-  tangle:
-    crate: crates/x0k-folio
-    root: src/canonical_patch.rs
-  edges:
-    implements:
-    - x0k:design/body-format-isomorphism
-    cites:
-    - x0k:implementation/folio/colophon
-    - x0k:implementation/folio/structural
-    - x0k:implementation/folio/html-canonical
----
 # Canonical patches: one grammar, two dialects
+
+```turtle folio:document
+implementation:folio\/canonical-patch a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The structural-address patch grammar editors speak instead of byte offsets, so one editing intent is true of a markdown body and an HTML body alike and cannot smuggle non-canonical markup past normalization." ;
+    x0k:concerns "folio", "editing", "patches", "markdown", "html", "canonicalization" ;
+    x0k:cites implementation:folio\/colophon,
+        implementation:folio\/structural,
+        implementation:folio\/html-canonical ;
+    x0k:implements design:body-format-isomorphism ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/canonical_patch.rs" .
+```
 
 A folio body is stored as markdown or as HTML (`body_format` in the
 envelope — [`colophon.md`](colophon.md)), and the design
@@ -108,7 +96,7 @@ use std::ops::Range;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag};
 use serde::{Deserialize, Serialize};
 
-use crate::colophon::{parse_envelope, BODY_FORMAT_HTML, BODY_FORMAT_MARKDOWN};
+use crate::colophon::{parse_envelope, replace_body, BODY_FORMAT_HTML, BODY_FORMAT_MARKDOWN};
 use crate::html_canonical::{apply_canonical_patches, normalize_html};
 use crate::FenceInfo;
 ```
@@ -259,7 +247,7 @@ impl fmt::Display for CanonicalPatchError {
             Self::InvalidMarkdownReplacement(message) => {
                 write!(f, "invalid markdown visible-text replacement: {message}")
             }
-            Self::InvalidFolio(message) => write!(f, "invalid folio/v1 document: {message}"),
+            Self::InvalidFolio(message) => write!(f, "invalid folio document: {message}"),
         }
     }
 }
@@ -294,34 +282,28 @@ pub fn apply_body_patches(
 }
 ```
 
-A whole folio document is envelope plus body, and the envelope's
-formatting is not part of the edit grammar: patches start at the body
-root, and the envelope bytes are copied through untouched. The one
-assumption made explicit is that the body is a suffix of the file —
-`parse_envelope` returns the body as such, and the length subtraction
-that recovers its start is checked rather than trusted.
+A whole folio document is header plus body, and the header's formatting is
+not part of the edit grammar: patches start at the body root, and the header
+bytes are copied through untouched. The body is the document with its header
+lifted out, and [`replace_body`](colophon.md) puts the header back where the
+placement rule says — after the body's leading title, or at the top — which
+is where it was, byte for byte.
 
 <a name="chunk-patch-folio-document"></a><sub>[`src/canonical_patch.rs`](../../crates/x0k-folio/src/canonical_patch.rs) · `#patch-folio-document`</sub>
 
 ```rust {#patch-folio-document}
-/// Apply canonical body patches to a complete folio/v1 document.
+/// Apply canonical body patches to a complete folio document.
 ///
-/// The envelope is preserved byte-for-byte. Patch coordinates start at the
-/// body root, so envelope formatting never becomes part of the edit grammar.
+/// The header is preserved byte-for-byte. Patch coordinates start at the
+/// body root, so header formatting never becomes part of the edit grammar.
 pub fn apply_folio_patches(
     content: &str,
     patches: &[CanonicalPatch],
 ) -> Result<String, CanonicalPatchError> {
     let (envelope, body) = parse_envelope(content)
         .map_err(|error| CanonicalPatchError::InvalidFolio(error.to_string()))?;
-    let body_start = content.len().checked_sub(body.len()).ok_or_else(|| {
-        CanonicalPatchError::InvalidFolio("body is not a file suffix".to_string())
-    })?;
     let patched = apply_body_patches(&body, &envelope.body_format, patches)?;
-    let mut output = String::with_capacity(body_start + patched.len());
-    output.push_str(&content[..body_start]);
-    output.push_str(&patched);
-    Ok(output)
+    Ok(replace_body(content, &patched))
 }
 ```
 
@@ -355,14 +337,7 @@ pub fn canonicalize_folio_content(content: &str) -> String {
     if envelope.body_format != BODY_FORMAT_HTML {
         return content.to_string();
     }
-    let Some(body_start) = content.len().checked_sub(body.len()) else {
-        return content.to_string();
-    };
-    let normalized = normalize_html(&body);
-    let mut output = String::with_capacity(body_start + normalized.len());
-    output.push_str(&content[..body_start]);
-    output.push_str(&normalized);
-    output
+    replace_body(content, &normalize_html(&body))
 }
 ```
 
@@ -370,7 +345,7 @@ The compatibility path is where the bypass would live, so it gets the
 stricter rule. If the edited value parses as folio, it is canonicalized
 like any other. If it does not, what matters is what it was *before*:
 a value that was a valid folio document may not escape canonicalization
-by corrupting its own envelope — that is an error back to the editor —
+by corrupting its own header — that is an error back to the editor —
 while a generic non-folio document keeps its pass-through behavior,
 including the case where an edit first turns it into a valid folio
 document (that edit canonicalizes, by the first arm).
@@ -380,8 +355,8 @@ document (that edit canonicalizes, by the first arm).
 ```rust {#canonicalize-edited-content}
 /// Canonicalize the result of a source-level compatibility edit.
 ///
-/// A value that was folio/v1 before the edit may not escape canonicalization
-/// by corrupting its envelope. Generic non-folio documents retain the bridge's
+/// A value that was a folio document before the edit may not escape
+/// canonicalization by corrupting its header. Generic non-folio documents retain the bridge's
 /// existing pass-through behavior, including when an edit first turns one into
 /// a valid folio document.
 pub fn canonicalize_edited_folio_content(
@@ -392,7 +367,7 @@ pub fn canonicalize_edited_folio_content(
     match parse_envelope(edited) {
         Ok(_) => Ok(canonicalize_folio_content(edited)),
         Err(error) if previous_was_folio => Err(CanonicalPatchError::InvalidFolio(format!(
-            "source edit broke the envelope: {error}"
+            "source edit broke the header: {error}"
         ))),
         Err(_) => Ok(edited.to_string()),
     }
@@ -1237,31 +1212,25 @@ use x0k_folio::{
 ```
 
 The fixtures are whole documents rather than bare bodies. The dialect is a
-fact about the envelope, so handing the module a body alone would test a
+fact the header states, so handing the module a body alone would test a
 dispatch that never happens in the running system:
 
 <a name="chunk-patch-grammar-documents"></a><sub>[`tests/patch_grammar.rs`](../../crates/x0k-folio/tests/patch_grammar.rs) · `#patch-grammar-documents`</sub>
 
-```rust {#patch-grammar-documents file="tests/patch_grammar.rs"}
-const MARKDOWN_DOC: &str = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/patch-markdown
-  type: wiki
----
+````rust {#patch-grammar-documents file="tests/patch_grammar.rs"}
+const MARKDOWN_DOC: &str = r#"```turtle folio:document
+wiki:patch-markdown a x0k:Wiki .
+```
 A **shared**[source](https://old.example).
 "#;
 
-const HTML_DOC: &str = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/patch-html
-  type: design
-  body_format: html
----
+const HTML_DOC: &str = r#"```turtle folio:document
+design:patch-html a x0k:Design ;
+    x0k:bodyFormat "html" .
+```
 <p>A <strong>shared</strong><a href="https://old.example">source</a>.</p>
 "#;
-```
+````
 
 One patch list serves both, and it is deliberately in the wrong order —
 text first, attribute second. Both projections sort it back, applying
@@ -1343,7 +1312,7 @@ hands back a whole edited HTML body is exactly the bypass byte splices would
 have allowed: the raw result here carries a `<script>` and out-of-order
 attributes. The canonicalizing entry point strips the one and sorts the
 other before the edit becomes a document, and the result is a fixed point.
-An edit that breaks the envelope is not repaired — it is refused, because a
+An edit that breaks the header is not repaired — it is refused, because a
 document the parser cannot read is not an edit the merge engine can reason
 about.
 
@@ -1365,8 +1334,8 @@ fn bridge_style_source_edit_cannot_bypass_html_normalization() {
     assert!(canonical.contains(r#"<p a-first="1" z-last="2">"#));
     assert_eq!(canonical, canonicalize_folio_content(&canonical));
 
-    let broken_envelope = raw_bridge_result.replacen("---", "--", 1);
-    assert!(canonicalize_edited_folio_content(HTML_DOC, &broken_envelope).is_err());
+    let broken_header = raw_bridge_result.replacen("folio:document", "folio:documen", 1);
+    assert!(canonicalize_edited_folio_content(HTML_DOC, &broken_header).is_err());
 }
 ```
 

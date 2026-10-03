@@ -1,26 +1,16 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/chunk-refs
-  type: implementation
-  status: draft
-  summary: Why the line-based reference scan is not enough for a substrate that quotes itself, and the tree-sitter pass that drops matches sitting inside string literals, raw strings and comments.
-  concerns:
-  - tangle
-  - literate
-  - chunk-refs
-  - tree-sitter
-  - lang-aware
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/chunk_refs.rs
-  edges:
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/chunk
-    - x0k:implementation/tangle/resolution
----
 # Language-aware chunk reference extraction
+
+```turtle folio:document
+implementation:tangle\/chunk-refs a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Why the line-based reference scan is not enough for a substrate that quotes itself, and the tree-sitter pass that drops matches sitting inside string literals, raw strings and comments." ;
+    x0k:concerns "tangle", "literate", "chunk-refs", "tree-sitter", "lang-aware" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/chunk,
+        implementation:tangle\/resolution ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/chunk_refs.rs" .
+```
 
 `chunk.rs` defines a line-based `find_chunk_refs` that hunts for
 lines whose trimmed content is exactly `<<name>>`. The rule is

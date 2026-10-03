@@ -1,26 +1,17 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/chunk
-  type: implementation
-  status: draft
-  summary: The in-memory types the parser produces, the resolver consumes and the weaver renders, kept free of traversal logic so every other module can share them without acquiring dependencies.
-  concerns:
-  - tangle
-  - literate
-  - chunks
-  - data-shape
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/chunk.rs
-  edges:
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/resolution
-    - x0k:implementation/tangle/chunk-refs
-    - x0k:implementation/tangle/pipeline
----
 # The chunk shape
+
+```turtle folio:document
+implementation:tangle\/chunk a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The in-memory types the parser produces, the resolver consumes and the weaver renders, kept free of traversal logic so every other module can share them without acquiring dependencies." ;
+    x0k:concerns "tangle", "literate", "chunks", "data-shape" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/resolution,
+        implementation:tangle\/chunk-refs,
+        implementation:tangle\/pipeline ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/chunk.rs" .
+```
 
 `chunk.rs` defines what a "chunk" is in the [literate substrate](../../background/literate-programming.md "x0k:wiki/literate-programming") — the
 in-memory shape that the parser produces, the resolver consumes, and

@@ -11,6 +11,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use x0k_folio::colophon::{expand_compact, parse_envelope, shipped_prefixes, turtle_name, DocType};
 use x0k_tangle::region_repo::{project_publication_repo_with, ProofOutcome, ProofTarget, Proofs};
 use x0k_tangle::{tangle_document, PipelineRegistry, RepoProjectOptions};
 
@@ -32,7 +33,7 @@ const DESIGN_REL: &str = "decisions/design/corpus/demo-design.md";
 const DESIGN_ID: &str = "x0k:design/demo-design";
 const SHIPPABLE: &str = "read-a-line-out-of-a-document";
 
-const DOC: &str = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/demo/colophon\n  type: implementation\n  status: draft\n  summary: The demo crate's one exported function, and where it trims.\n  tangle:\n    crate: demo-crate\n    root: src/lib.rs\n---\n# The demo colophon\n\n```rust {#root}\n/// First line of `s`, trimmed.\npub fn parse_line(s: &str) -> &str {\n    s.lines().next().unwrap_or(\"\").trim()\n}\n```\n";
+const DOC: &str = "# The demo colophon\n\n```turtle folio:document\nimplementation:demo\\/colophon a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"The demo crate's one exported function, and where it trims.\" ;\n    folio:tangleCrate \"demo-crate\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {#root}\n/// First line of `s`, trimmed.\npub fn parse_line(s: &str) -> &str {\n    s.lines().next().unwrap_or(\"\").trim()\n}\n```\n";
 
 /// A publication doc publishing `demo-crate` plus `modules`, with
 /// `demo-crate` as the entry point (so the stamped version is its
@@ -41,7 +42,7 @@ fn publication(crates: &[&str], modules: &[&str], entry_point: bool) -> String {
     publication_full(crates, modules, entry_point, &[], &[])
 }
 
-/// As [`publication`], with an `excludes:` edge carrying `excludes` verbatim
+/// As [`publication`], with an `x0k:excludes` edge carrying `excludes` verbatim
 /// (whole URIs, so a test can name a document, a module, or nonsense).
 fn publication_excluding(
     crates: &[&str],
@@ -58,10 +59,28 @@ fn publication_publishing(crates: &[&str], documents: &[&str]) -> String {
     publication_full(crates, &[], true, &[], documents)
 }
 
-/// The publication's `palette:` block, in the icon profile's shape — the
-/// `x0k-folio` publication's own literals, so the fixture's icons are
+/// The publication's `x0k:palette` statement, in the icon profile's shape —
+/// the `x0k-folio` publication's own literals, so the fixture's icons are
 /// bound the way the real ones are.
-const PALETTE: &str = "  palette:\n    light: { ink: \"#111111\", line: \"#b88e44\", paper: \"#fffff8\", accent: \"#b88e44\" }\n    dark:  { ink: \"#e2e8f0\", line: \"#96b4dc\", paper: \"#1e293b\", accent: \"#96b4dc\" }\n";
+const PALETTE: &str = "    x0k:palette '{\"light\":{\"ink\":\"#111111\",\"line\":\"#b88e44\",\"paper\":\"#fffff8\",\"accent\":\"#b88e44\"},\"dark\":{\"ink\":\"#e2e8f0\",\"line\":\"#96b4dc\",\"paper\":\"#1e293b\",\"accent\":\"#96b4dc\"}}'^^rdf:JSON ;\n";
+
+/// The statement that closes the fixture publication's header. A test that
+/// adds a statement puts it ahead of this line ([`with_statements`]).
+const HEADER_LAST: &str = "    folio:tangleRoot \"README.md\" .\n";
+
+/// `doc` with `statements` — whole `    predicate object ;` lines — added to
+/// its header.
+fn with_statements(doc: &str, statements: &str) -> String {
+    doc.replacen(HEADER_LAST, &format!("{statements}{HEADER_LAST}"), 1)
+}
+
+/// A compact id (`x0k:software-module/demo-crate`) as a header's Turtle
+/// spells it; a fragment's `#` is written `%23`, since the IRI already
+/// holds its own.
+fn turtle_id(id: &str) -> String {
+    let id = id.replacen('#', "%23", 1);
+    turtle_name(&expand_compact(&id, shipped_prefixes()), shipped_prefixes())
+}
 
 fn publication_full(
     crates: &[&str],
@@ -70,32 +89,25 @@ fn publication_full(
     excludes: &[&str],
     documents: &[&str],
 ) -> String {
-    let mut publishes = String::new();
-    for c in crates {
-        publishes.push_str(&format!("      - x0k:software-module/{c}\n"));
+    let publishes: Vec<String> = crates
+        .iter()
+        .map(|c| turtle_id(&format!("x0k:software-module/{c}")))
+        .chain(modules.iter().map(|m| turtle_id(&format!("x0k:ontology-module/{m}"))))
+        .chain(documents.iter().map(|d| turtle_id(d)))
+        .collect();
+    let mut statements = String::new();
+    if !publishes.is_empty() {
+        statements.push_str(&format!("    x0k:publishes {} ;\n", publishes.join(", ")));
     }
-    for m in modules {
-        publishes.push_str(&format!("      - x0k:ontology-module/{m}\n"));
+    if !excludes.is_empty() {
+        let excluded: Vec<String> = excludes.iter().map(|e| turtle_id(e)).collect();
+        statements.push_str(&format!("    x0k:excludes {} ;\n", excluded.join(", ")));
     }
-    for d in documents {
-        publishes.push_str(&format!("      - {d}\n"));
+    if entry_point {
+        statements.push_str("    x0k:entryPoint x0k:software-module\\/demo-crate ;\n");
     }
-    let entry = if entry_point {
-        "    entryPoint:\n      - x0k:software-module/demo-crate\n"
-    } else {
-        ""
-    };
-    let excluded = if excludes.is_empty() {
-        String::new()
-    } else {
-        let mut b = String::from("    excludes:\n");
-        for e in excludes {
-            b.push_str(&format!("      - {e}\n"));
-        }
-        b
-    };
     format!(
-        "---\nx0k:\n  format: folio/v1\n  type: publication\n  id: x0k:publication/demo\n  status: proposed\n  license: MIT\n  copyright: Demo Authors\n  edges:\n    publishes:\n{publishes}{excluded}{entry}  tangle:\n    root: README.md\n{PALETTE}---\n# Demo\n\n```markdown {{#readme}}\n# Demo\n\nA demo publication.\n\n## What is here\n\n<!-- x0k:contents -->\n\n## Afterwards\n\nText after the contents.\n```\n"
+        "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n{statements}{PALETTE}{HEADER_LAST}```\n\n```markdown {{#readme}}\n# Demo\n\nA demo publication.\n\n## What is here\n\n<!-- x0k:contents -->\n\n## Afterwards\n\nText after the contents.\n```\n"
     )
 }
 
@@ -125,7 +137,10 @@ fn workspace(modules: &[&str], entry_point: bool) -> tempfile::TempDir {
     // document severance has something to take out without emptying the crate.
     std::fs::write(
         ws.join(EXTRA_REL),
-        format!("---\nx0k:\n  format: folio/v1\n  id: {EXTRA_ID}\n  type: implementation\n  status: draft\n  summary: A second chapter, so a document severance has something to take out.\n  tangle:\n    crate: demo-crate\n    root: src/extra.rs\n---\n# The extra chapter\n\n```rust {{#root}}\n/// Length of `s`.\npub fn measure(s: &str) -> usize {{\n    s.len()\n}}\n```\n"),
+        format!(
+            "# The extra chapter\n\n```turtle folio:document\n{} a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"A second chapter, so a document severance has something to take out.\" ;\n    folio:tangleCrate \"demo-crate\" ;\n    folio:tangleRoot \"src/extra.rs\" .\n```\n\n```rust {{#root}}\n/// Length of `s`.\npub fn measure(s: &str) -> usize {{\n    s.len()\n}}\n```\n",
+            turtle_id(EXTRA_ID)
+        ),
     )
     .unwrap();
     tangle_document(&ws.join(EXTRA_REL), ws, &PipelineRegistry::default()).expect("tangle extra");
@@ -197,7 +212,7 @@ fn declare_marks(ws: &Path) {
     std::fs::write(
         ws.join("decisions/design/corpus/publish-a-region-as-a-repository.md"),
         format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/publish-a-region-as-a-repository\n  type: design\n  status: proposed\n---\n# Publishing\n\n## Affordance status\n\n### proven\n\n{}### declared\n\n{}### claimed\n\n{}",
+            "# Publishing\n\n```turtle folio:document\ndesign:publish-a-region-as-a-repository a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\n## Affordance status\n\n### proven\n\n{}### declared\n\n{}### claimed\n\n{}",
             icon(PROVEN_ICON),
             icon(DECLARED_ICON),
             icon(CLAIMED_ICON)
@@ -208,7 +223,7 @@ fn declare_marks(ws: &Path) {
     std::fs::write(
         ws.join("knowledge/implementation/tangle/region-repo.md"),
         format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/tangle/region-repo\n  type: implementation\n  status: draft\n  summary: The chapter that derives what a test did.\n---\n# The projector\n\n#### passed\n\n{}#### failed\n\n{}#### not run\n\n{}",
+            "# The projector\n\n```turtle folio:document\nimplementation:tangle\\/region-repo a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"The chapter that derives what a test did.\" .\n```\n\n#### passed\n\n{}#### failed\n\n{}#### not run\n\n{}",
             icon(PASSED_ICON),
             icon(FAILED_ICON),
             icon(NOT_RUN_ICON)
@@ -223,15 +238,15 @@ fn declare_marks(ws: &Path) {
 /// affordance fences read as themselves.
 fn demo_design() -> String {
     let mut d = String::new();
-    d.push_str("---\nx0k:\n  format: folio/v1\n  id: x0k:design/demo-design\n  type: design\n  status: proposed\n---\n");
-    d.push_str("# The demo design\n\nContext this repository has no use for.\n\n");
+    d.push_str("# The demo design\n\n```turtle folio:document\ndesign:demo-design a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\n");
+    d.push_str("Context this repository has no use for.\n\n");
     d.push_str("### Affordances\n\n");
     d.push_str("### Read a line out of a document\n\nI read the first line, and the shipped crate is what lets me.\n\n");
-    d.push_str("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\nstatus: wip\nactors: [human]\nedges:\n  enabledBy:\n    - x0k:software-module/demo-crate\n```\n\n");
+    d.push_str("```turtle folio:graph\naffordance:read_a_line a x0k:Affordance ;\n    x0k:status \"wip\" ;\n    x0k:claimedFor x0k:actor\\/human ;\n    x0k:enabledBy x0k:software-module\\/demo-crate .\n```\n\n");
     d.push_str("Its mark: a document with its block sliding out.\n\n");
     d.push_str(&icon(TANGLE_ICON));
     d.push_str("### Run the whole fleet\n\nI do a thing this bundle cannot do.\n\n");
-    d.push_str("```yaml x0k:affordance\nid: x0k:affordance/run_the_whole_fleet\nstatus: wip\nedges:\n  enabledBy:\n    - x0k:software-module/unshipped-crate\n```\n");
+    d.push_str("```turtle folio:graph\naffordance:run_the_whole_fleet a x0k:Affordance ;\n    x0k:status \"wip\" ;\n    x0k:enabledBy x0k:software-module\\/unshipped-crate .\n```\n");
     d
 }
 
@@ -321,7 +336,7 @@ fn with_affordances_marker(publication: &str) -> String {
 fn declare_signifier(ws: &Path) {
     std::fs::write(
         ws.join("knowledge/implementation/demo/verbs.md"),
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/demo/verbs\n  type: implementation\n  status: draft\n  summary: The demo crate's one verb, and the cue that reaches it.\n---\n# The demo verbs\n\n## demo-line\n\nPrints the first line of a file.\n\n```yaml x0k:signifier\nid: x0k:signifier/demo-line\nedges:\n  signifies:\n    - x0k:affordance/read_a_line\n  presentedOn:\n    - x0k:surface/cli\n```\n",
+        "# The demo verbs\n\n```turtle folio:document\nimplementation:demo\\/verbs a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"The demo crate's one verb, and the cue that reaches it.\" .\n```\n\n## demo-line\n\nPrints the first line of a file.\n\n```turtle folio:graph\nsignifier:demo-line a x0k:Signifier ;\n    x0k:signifies affordance:read_a_line ;\n    x0k:presentedOn surface:cli .\n```\n",
     )
     .unwrap();
 }
@@ -371,6 +386,9 @@ fn a_closed_selection_projects_each_module_stamped_and_otherwise_verbatim() {
     // (path order, with no reading order authored), then the modules, each
     // described by its own module fact's `rdfs:comment`.
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
+    // The README is the publication's readme chunk, never its header.
+    assert!(!readme.contains("```turtle folio:document"), "{readme}");
+    assert!(!readme.contains("x0k:Publication"), "{readme}");
     let expected = "\
 ## What is here
 
@@ -675,11 +693,7 @@ fn a_document_under_publishes_is_refused() {
     let ws = workspace(&[], true);
     std::fs::write(
         ws.path().join(PUB_REL),
-        publication(&["demo-crate", "x0k:implementation/demo/extra"], &[], true)
-            .replace(
-                "x0k:software-module/x0k:implementation/demo/extra",
-                "x0k:implementation/demo/extra",
-            ),
+        publication_publishing(&["demo-crate"], &["x0k:implementation/demo/extra"]),
     )
     .unwrap();
     let err = project_err(ws.path());
@@ -722,17 +736,19 @@ fn a_named_section_crosses_as_a_document_and_the_rest_of_its_design_does_not() {
     let rel = format!("decisions/design/corpus/demo-design/{SHIPPABLE}.md");
     let text = std::fs::read_to_string(out.path().join(&rel)).expect("the section shipped");
 
-    // A fragment carrying no envelope is not a folio document.
-    assert!(text.contains(&format!("id: {reference}")), "{text}");
-    assert!(text.contains("type: design"), "{text}");
-    assert!(text.contains("status: proposed"), "{text}");
-    assert!(
-        text.contains(&format!("transcludes:\n      - {DESIGN_ID}")),
+    // A fragment carrying no header is not a folio document.
+    let (header, _) = parse_envelope(&text).expect("the section carries a header");
+    assert_eq!(header.id, reference.replacen('#', "%23", 1), "the anchor is percent-encoded: {text}");
+    assert_eq!(header.doc_type, DocType::Design, "{text}");
+    assert_eq!(header.status.map(|s| s.as_str()), Some("proposed"), "{text}");
+    assert_eq!(
+        header.edges.get("x0k:transcludes"),
+        Some(&vec![DESIGN_ID.to_string()]),
         "the edge naming the document it was cut from: {text}"
     );
     // The section itself, heading and all, with its affordance declaration.
     assert!(text.contains("### Read a line out of a document"), "{text}");
-    assert!(text.contains("x0k:affordance/read_a_line"), "{text}");
+    assert!(text.contains("affordance:read_a_line a x0k:Affordance"), "{text}");
 
     // The sibling affordance names a crate this publication does not ship,
     // and section granularity is exactly what keeps it out.
@@ -771,9 +787,9 @@ fn a_document_named_without_an_anchor_crosses_whole() {
 
     let text = std::fs::read_to_string(out.path().join(DESIGN_REL)).expect("the design shipped");
     let design = demo_design();
-    let prose = &design[..design.find("```yaml x0k:affordance").unwrap()];
+    let prose = &design[..design.find("```turtle folio:graph").unwrap()];
     assert!(text.starts_with(prose), "the design's prose crosses as written:\n{text}");
-    assert!(text.contains("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\n"), "the declaration stays as written: {text}");
+    assert!(text.contains("```turtle folio:graph\naffordance:read_a_line a x0k:Affordance ;\n"), "the declaration stays as written: {text}");
     assert!(text.contains("</picture> *"), "the evidence is woven under the declaration: {text}");
     assert_eq!(report.documents.get(DESIGN_ID), Some(&DESIGN_REL.to_string()));
 }
@@ -1002,7 +1018,7 @@ fn a_document_without_a_summary_is_refused_naming_it() {
     let doc = std::fs::read_to_string(ws.path().join(EXTRA_REL)).unwrap();
     let stripped: String = doc
         .lines()
-        .filter(|l| !l.starts_with("  summary:"))
+        .filter(|l| !l.starts_with("    x0k:summary"))
         .map(|l| format!("{l}\n"))
         .collect();
     std::fs::write(ws.path().join(EXTRA_REL), stripped).unwrap();
@@ -1092,7 +1108,7 @@ fn a_claim_on_both_actors_gets_both_marks_and_an_unreached_face_a_dash() {
     let design = std::fs::read_to_string(ws.path().join(DESIGN_REL)).unwrap();
     std::fs::write(
         ws.path().join(DESIGN_REL),
-        design.replace("actors: [human]", "actors: [human, ai_agent]"),
+        design.replace("x0k:claimedFor x0k:actor\\/human ;", "x0k:claimedFor x0k:actor\\/human, x0k:actor\\/ai_agent ;"),
     )
     .unwrap();
     let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
@@ -1165,7 +1181,8 @@ fn declare_proof(ws: &Path, proves: &str) {
     std::fs::write(
         ws.join(PROOF_REL),
         format!(
-            "---\nx0k:\n  format: folio/v1\n  id: {PROOF_ID}\n  type: implementation\n  status: draft\n  summary: The test that proves a line is read.\n  tangle:\n    crate: demo-crate\n    root: tests/proof.rs\n---\n# Proving the demo\n\nReads [First lines]({CONCEPT_ID}) to [read a line]({proves}).\n\n```rust {{#root proves=\"{proves}\"}}\n#[test]\nfn a_line_is_read() {{\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}}\n```\n"
+            "# Proving the demo\n\n```turtle folio:document\n{} a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"The test that proves a line is read.\" ;\n    folio:tangleCrate \"demo-crate\" ;\n    folio:tangleRoot \"tests/proof.rs\" .\n```\n\nReads [First lines]({CONCEPT_ID}) to [read a line]({proves}).\n\n```rust {{#root proves=\"{proves}\"}}\n#[test]\nfn a_line_is_read() {{\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}}\n```\n",
+            turtle_id(PROOF_ID)
         ),
     )
     .unwrap();
@@ -1178,7 +1195,8 @@ fn write_concept(ws: &Path) {
     std::fs::write(
         ws.join(CONCEPT_REL),
         format!(
-            "---\nx0k:\n  format: folio/v1\n  id: {CONCEPT_ID}\n  type: wiki\n  status: draft\n  summary: What the first line of a text is.\n---\n# First lines\n\nThe first line is the text up to its first newline.\n\n```yaml x0k:prompt\nid: x0k:prompt/first-lines-definition\ntype: qa\nq: What is the first line?\na: The text up to the first newline.\n```\n"
+            "# First lines\n\n```turtle folio:document\n{} a x0k:Wiki ;\n    x0k:status \"draft\" ;\n    x0k:summary \"What the first line of a text is.\" .\n```\n\nThe first line is the text up to its first newline.\n\n```turtle folio:graph\nx0k:prompt\\/first-lines-definition a x0k:Prompt ;\n    x0k:subtype \"qa\" ;\n    x0k:q \"What is the first line?\" ;\n    x0k:a \"The text up to the first newline.\" .\n```\n",
+            turtle_id(CONCEPT_ID)
         ),
     )
     .unwrap();
@@ -1349,7 +1367,7 @@ Two chapters, and the test that proves them.
     assert!(readme.contains(expected), "the group rests on the page, linked at its title:\n{readme}");
 
     let page = std::fs::read_to_string(out.path().join(CONCEPT_REL)).expect("the concept page crossed");
-    assert!(page.contains("```yaml x0k:prompt\nid: x0k:prompt/first-lines-definition\n"), "the review card travels verbatim: {page}");
+    assert!(page.contains("```turtle folio:graph\nx0k:prompt\\/first-lines-definition a x0k:Prompt ;\n"), "the review card travels verbatim: {page}");
     assert_eq!(report.documents.get(CONCEPT_ID).map(String::as_str), Some(CONCEPT_REL));
     let prov: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
@@ -1449,7 +1467,7 @@ fn the_affordance_page_carries_its_evidence() {
     let page = std::fs::read_to_string(out.path().join(SHIPPABLE_PAGE)).unwrap();
     let expected = "```\n\n<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/human-dark.svg\"><img alt=\"Human\" src=\"../../../../affordances/human-light.svg\" height=\"20\"></picture> <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/proven-dark.svg\"><img alt=\"proven\" src=\"../../../../affordances/proven-light.svg\" height=\"16\"></picture> *proven* · for a person\n\n*realized in* [Proving the demo](../../../../knowledge/implementation/demo/proof.md)\n\n*proven by* each test below, as its chapter tangles it and as it ran at projection.\n\n<details><summary><code>a_line_is_read</code> · <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/passed-dark.svg\"><img alt=\"passed\" src=\"../../../../affordances/passed-light.svg\" height=\"16\"></picture> passed · <a href=\"../../../../knowledge/implementation/demo/proof.md#chunk-root\">#root</a> in Proving the demo</summary>\n\n```rust\n#[test]\nfn a_line_is_read() {\n    assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");\n}\n```\n\n</details>\n";
     assert!(page.contains(expected), "the evidence under the declaration:\n{page}");
-    assert!(page.contains("```yaml x0k:affordance\nid: x0k:affordance/read_a_line\n"), "the declaration stays as written: {page}");
+    assert!(page.contains("```turtle folio:graph\naffordance:read_a_line a x0k:Affordance ;\n"), "the declaration stays as written: {page}");
     let readme = std::fs::read_to_string(out.path().join("README.md")).unwrap();
     assert!(!readme.contains("a_line_is_read"), "the test is on the page, not the README: {readme}");
 }
@@ -1481,7 +1499,7 @@ fn a_publication_whose_rows_show_marks_needs_a_palette() {
     let doc = publication_publishing(&["demo-crate"], &[reference.as_str()]).replace(PALETTE, "");
     std::fs::write(ws.path().join(PUB_REL), doc).unwrap();
     let err = project_err(ws.path());
-    assert!(err.contains("no `palette:`"), "{err}");
+    assert!(err.contains("no `x0k:palette`"), "{err}");
 
     // A publication that names no affordance shows no mark, and asks for none.
     let ws = workspace(&[], true);
@@ -1508,20 +1526,21 @@ fn write_binary(ws: &Path, bin: &str) {
 const REPOSITORY: &str = "https://github.com/demo-org/demo-repo";
 
 /// Two targets on two platforms, one wrapper, one command whose name is not
-/// its binary's — which is the case `bin:` exists for.
-const PREBUILT: &str = "    targets:\n      - x86_64-unknown-linux-musl\n      - aarch64-apple-darwin\n    npm:\n      package: \"@demo/tool\"\n      bin:\n        tool: demo-tool\n";
+/// its binary's — which is the case `bin` exists for.
+const PREBUILT: &str = r#"{"targets": ["x86_64-unknown-linux-musl", "aarch64-apple-darwin"], "npm": {"package": "@demo/tool", "bin": {"tool": "demo-tool"}}}"#;
 
-/// Rewrite the fixture publication's envelope to carry `repository:` and a
-/// `prebuilt:` block, and give the crate a binary to release.
+/// Rewrite the fixture publication's header to carry `x0k:repository` and a
+/// `x0k:prebuilt` statement — `prebuilt` is its JSON — and give the crate a
+/// binary to release.
 fn declare_prebuilt(ws: &Path, repository: Option<&str>, prebuilt: &str) {
     write_binary(ws, "demo-tool");
     let doc = std::fs::read_to_string(ws.join(PUB_REL)).unwrap();
     let repo = repository
-        .map(|r| format!("  repository: {r}\n"))
+        .map(|r| format!("    x0k:repository \"{r}\" ;\n"))
         .unwrap_or_default();
     std::fs::write(
         ws.join(PUB_REL),
-        doc.replace("  tangle:\n", &format!("{repo}  prebuilt:\n{prebuilt}  tangle:\n")),
+        with_statements(&doc, &format!("{repo}    x0k:prebuilt '{prebuilt}'^^rdf:JSON ;\n")),
     )
     .unwrap();
 }
@@ -1744,63 +1763,60 @@ fn the_lane_never_enters_the_repositorys_own_ci() {
 
 #[test]
 fn a_declaration_that_could_not_produce_an_installable_release_refuses() {
-    let npm = "    npm:\n      package: \"@demo/tool\"\n";
     for (prebuilt, repository, needle) in [
         (
-            "    targets:\n      - x86_64-unknown-freebsd\n".to_string(),
+            r#"{"targets": ["x86_64-unknown-freebsd"]}"#,
             Some(REPOSITORY),
             "no release row",
         ),
         (
-            "    targets:\n      - x86_64-unknown-linux-gnu\n      - x86_64-unknown-linux-musl\n"
-                .to_string(),
+            r#"{"targets": ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]}"#,
             Some(REPOSITORY),
             "cannot choose between",
         ),
         (
-            format!("    targets:\n      - x86_64-apple-darwin\n{npm}"),
+            r#"{"targets": ["x86_64-apple-darwin"], "npm": {"package": "@demo/tool"}}"#,
             None,
-            "needs the publication's `repository:`",
+            "needs the publication's `x0k:repository`",
         ),
         (
-            format!("    targets:\n      - x86_64-apple-darwin\n{npm}"),
+            r#"{"targets": ["x86_64-apple-darwin"], "npm": {"package": "@demo/tool"}}"#,
             Some("https://example.com/demo"),
             "is not a `https://github.com/<owner>/<repo>` project",
         ),
         (
-            format!("    targets:\n      - x86_64-apple-darwin\n{npm}      bin:\n        tool: not-a-binary\n"),
+            r#"{"targets": ["x86_64-apple-darwin"], "npm": {"package": "@demo/tool", "bin": {"tool": "not-a-binary"}}}"#,
             Some(REPOSITORY),
             "which no `entryPoint` crate",
         ),
         (
-            "    tarjets:\n      - x86_64-apple-darwin\n".to_string(),
+            r#"{"tarjets": ["x86_64-apple-darwin"]}"#,
             Some(REPOSITORY),
             "does not read",
         ),
         (
-            "    targets: []\n".to_string(),
+            r#"{"targets": []}"#,
             Some(REPOSITORY),
-            "declares no `targets:`",
+            "declares no `targets`",
         ),
         (
-            "    targets:\n      - x86_64-pc-windows-msvc\n    installer: {}\n".to_string(),
+            r#"{"targets": ["x86_64-pc-windows-msvc"], "installer": {}}"#,
             Some(REPOSITORY),
             "needs a target a POSIX shell runs on",
         ),
         (
-            "    targets:\n      - x86_64-apple-darwin\n    installer: {}\n".to_string(),
+            r#"{"targets": ["x86_64-apple-darwin"], "installer": {}}"#,
             None,
-            "`prebuilt.installer:` needs the publication's `repository:`",
+            "`x0k:prebuilt` `installer` needs the publication's `x0k:repository`",
         ),
         (
-            "    targets:\n      - x86_64-apple-darwin\n    installer:\n      envPrefix: my-tool\n"
-                .to_string(),
+            r#"{"targets": ["x86_64-apple-darwin"], "installer": {"envPrefix": "my-tool"}}"#,
             Some(REPOSITORY),
             "not a portable variable name",
         ),
     ] {
         let ws = workspace(&[], true);
-        declare_prebuilt(ws.path(), repository, &prebuilt);
+        declare_prebuilt(ws.path(), repository, prebuilt);
         let err = project_err(ws.path());
         assert!(err.contains(needle), "expected `{needle}` in:\n{err}");
     }
@@ -1854,7 +1870,7 @@ fn the_wrapper_resolves_every_declared_platform_offline() {
 
 /// Three targets, one of them Windows, and an installer with no wrapper:
 /// the third lane on its own.
-const PREBUILT_INSTALLER: &str = "    targets:\n      - x86_64-unknown-linux-musl\n      - aarch64-apple-darwin\n      - x86_64-pc-windows-msvc\n    installer:\n      envPrefix: DEMO_TOOL\n";
+const PREBUILT_INSTALLER: &str = r#"{"targets": ["x86_64-unknown-linux-musl", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"], "installer": {"envPrefix": "DEMO_TOOL"}}"#;
 
 #[test]
 fn an_installer_declaration_emits_install_sh_and_the_step_that_attaches_it() {
@@ -2024,9 +2040,11 @@ fn contents_map_cannot_have_two_authored_homes() {
 #[test]
 fn overlay_contents_marker_is_not_a_publication_map() {
     let ws = workspace(&[], true);
-    let original = publication_publishing(&["demo-crate"], &[])
-        .replace("  tangle:", "  overlay: [CONTRIBUTING.md]\n  tangle:")
-        .replace("<!-- x0k:contents -->", "");
+    let original = with_statements(
+        &publication_publishing(&["demo-crate"], &[]),
+        "    x0k:overlay \"CONTRIBUTING.md\" ;\n",
+    )
+    .replace("<!-- x0k:contents -->", "");
     let doc = format!("{original}\n```markdown {{#contributing file=\"CONTRIBUTING.md\"}}\n<!-- x0k:contents -->\n```\n");
     std::fs::write(ws.path().join(PUB_REL), doc).unwrap();
     let out = tempfile::tempdir().unwrap();
@@ -2092,7 +2110,7 @@ fn moved_workspace() -> tempfile::TempDir {
     std::fs::rename(root.join("helper-crate"), root.join("substrate/components/support")).unwrap();
     for rel in [DOC_REL, EXTRA_REL] {
         let text = std::fs::read_to_string(root.join(rel)).unwrap();
-        std::fs::write(root.join(rel), text.replace("crate: demo-crate", "crate: substrate/components/entry")).unwrap();
+        std::fs::write(root.join(rel), text.replace("folio:tangleCrate \"demo-crate\"", "folio:tangleCrate \"substrate/components/entry\"")).unwrap();
         tangle_document(&root.join(rel), root, &PipelineRegistry::default()).unwrap();
     }
     let manifest = root.join("substrate/components/entry/Cargo.toml");
@@ -2361,7 +2379,7 @@ fn organized_layout_retangles_and_preserves_canonical_source_mapping() {
     let ws = workspace(&[], true);
     let publication_path = ws.path().join(PUB_REL);
     let text = std::fs::read_to_string(&publication_path).unwrap();
-    std::fs::write(&publication_path, text.replacen("x0k:\n", "x0k:\n  repositoryLayout: organized\n", 1)).unwrap();
+    std::fs::write(&publication_path, with_statements(&text, "    x0k:repositoryLayout \"organized\" ;\n")).unwrap();
     let out = tempfile::tempdir().unwrap();
     let report = project(ws.path(), out.path()).unwrap();
     let root = out.path();

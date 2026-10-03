@@ -1,15 +1,13 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:wiki/paper-beta
-  type: wiki
----
 # Beta
+
+```turtle folio:document
+wiki:paper-beta a x0k:Wiki .
+```
 
 A paper about keeping definitions beside examples.
 
-```yaml paper:paper
-id: paper:paper/beta
-reviewed: true
-pages: 12
+```turtle folio:graph
+paper:paper\/beta a paper:Paper ;
+    paper:reviewed true ;
+    paper:pages 12 .
 ```

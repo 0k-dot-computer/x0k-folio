@@ -1,13 +1,8 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:design/publish-a-region-as-a-repository#declare-concepts-and-instances
-  type: design
-  status: proposed
-  edges:
-    transcludes:
-      - x0k:design/publish-a-region-as-a-repository
----
+```turtle folio:document
+design:publish-a-region-as-a-repository%23declare-concepts-and-instances a x0k:Design ;
+    x0k:status "proposed" ;
+    x0k:transcludes design:publish-a-region-as-a-repository .
+```
 
 ### Declare concepts and instances
 
@@ -21,29 +16,30 @@ presented according to their concept, publication surface, and theme.
 An affordance is one example: its instance says what a person or tool can
 do, who can use it, and which software provides it.
 
-<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/read_declared_affordances" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md"><strong>Affordance</strong> · Declare concepts and instances · <code>https://0k.computer/ontology#affordance/read_declared_affordances</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1"></a>
+<a name="folio-instance-78306b3a6166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1"></a><sub data-instance-iri="x0k:affordance/read_declared_affordances" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/read_declared_affordances</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1">source declaration</a> · the graph block at line 21 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md:19</sub><a name="folio-source-78306b3a6166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1"></a>
 
-```yaml x0k:affordance
-id: x0k:affordance/read_declared_affordances
-actors: [human, ai_agent]
-edges:
-  enabledBy:
-    - x0k:software-module/x0k-folio
+```turtle folio:graph
+@prefix actor: <https://0k.computer/ontology#actor/> .
+@prefix software-module: <https://0k.computer/ontology#software-module/> .
+affordance:read_declared_affordances a x0k:Affordance ;
+    x0k:claimedFor actor:human,
+        actor:ai_agent ;
+    x0k:enabledBy software-module:x0k-folio .
 ```
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/actor-dark.svg"><img alt="Actor" src="../../../../assets/icons/actor-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/proven-dark.svg"><img alt="proven" src="../../../../assets/icons/proven-light.svg" height="16"></picture> *proven* · for a person, an agent · reachable through `cli` `x0k-tangle affordances`, `sdk` `extract_from_markdown`
 
-*realized in* [Entities authored inside prose](../../../../implementation/folio/inline-entities.md) · [The faces behind `check`, `affordances` and `icon`](../../../../implementation/tangle/cli-faces.md) · [x0k-tangle: the crate and its CLI](../../../../implementation/tangle/crate.md)
+*realized in* [Entities authored inside prose](../../../../implementation/folio/inline-entities.md) · [The faces behind `check`, `affordances`, `declarations` and `icon`](../../../../implementation/tangle/cli-faces.md) · [x0k-tangle: the crate and its CLI](../../../../implementation/tangle/crate.md)
 
 *proven by* each test below, as its chapter tangles it and as it ran at projection.
 
-<details><summary><code>affordances_prints_each_declaration_as_a_record</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-affordances">#tests-affordances</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>affordances_prints_each_declaration_as_a_record</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-affordances">#tests-affordances</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust
 #[test]
 fn affordances_prints_each_declaration_as_a_record() {
     let tmp = TempDir::new().unwrap();
-    write(tmp.path(), "docs/fixture.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
 
     let out = run(&["affordances"], tmp.path());
     assert!(
@@ -67,16 +63,17 @@ fn affordances_prints_each_declaration_as_a_record() {
             .contains("I frob a widget"),
         "the prose under the heading is the description: {record}"
     );
-    assert!(
-        record["facts"].to_string().contains("human"),
-        "the human claim reaches the record under some predicate: {record}"
+    assert_eq!(
+        record["facts"]["x0k:claimedFor"],
+        serde_json::json!([{"entity": "x0k:actor/human"}]),
+        "the human claim reaches the record: {record}"
     );
 }
 ```
 
 </details>
 
-<details><summary><code>affordances_reports_a_malformed_block_and_keeps_going</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-affordances">#tests-affordances</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>affordances_reports_a_malformed_block_and_keeps_going</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-affordances">#tests-affordances</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ````rust
 #[test]
@@ -85,10 +82,11 @@ fn affordances_reports_a_malformed_block_and_keeps_going() {
     write(
         tmp.path(),
         "docs/bad.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/bad\n  type: design\n---\n\
-         # Bad\n\n## Affordances\n\n### No id here\n\n```yaml x0k:affordance\nstatus: wip\n```\n",
+        "# Bad\n\n```turtle folio:document\ndesign:bad a x0k:Design .\n```\n\n\
+         ## Affordances\n\n### No class here\n\n```turtle folio:graph\n\
+         affordance:no_class x0k:status \"wip\" .\n```\n",
     );
-    write(tmp.path(), "docs/good.md", &design_doc(shipped_predicate()));
+    write(tmp.path(), "docs/good.md", &design_doc(&shipped_predicate()));
 
     let out = run(&["affordances"], tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);

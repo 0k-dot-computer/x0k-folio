@@ -1,27 +1,16 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/fact-projection/fact
-  type: implementation
-  status: draft
-  summary: The substrate-neutral fact tuple, and the projection of a folio/v1 envelope into a batch of them — typed, ordered, and deliberately uncaused.
-  concerns:
-  - facts
-  - projection
-  - envelope
-  - substrate
-  - typing
-  tangle:
-    crate: crates/x0k-fact-projection
-    root: src/fact.rs
-  edges:
-    implements:
-    - x0k:architecture/state-representation
-    cites:
-    - x0k:architecture/filesystem-graph-materialization
----
 
 # What a fact is, before any substrate has it
+
+```turtle folio:document
+implementation:fact-projection\/fact a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The substrate-neutral fact tuple, and the projection of a folio header into a batch of them — typed, ordered, and deliberately uncaused." ;
+    x0k:concerns "facts", "projection", "envelope", "substrate", "typing" ;
+    x0k:cites architecture:filesystem-graph-materialization ;
+    x0k:implements architecture:state-representation ;
+    folio:tangleCrate "crates/x0k-fact-projection" ;
+    folio:tangleRoot "src/fact.rs" .
+```
 
 Every substrate in this system stores facts differently. Dialog-DB writes
 them as artifacts with a `string:`/`entity:` text encoding; the entry spine
@@ -210,109 +199,83 @@ impl FactEntry {
 }
 ```
 
-## Projection is a document's envelope, ordered
+## Projection is a document's header, ordered
 
 <a name="chunk-predicates"></a><sub>[`src/fact.rs`](../../crates/x0k-fact-projection/src/fact.rs) · `#predicates`</sub>
 
 ```rust {#predicates}
-/// The one spelling of every envelope-level scalar a folio document
-/// asserts about itself. Moved here from the folio ingester (which
-/// re-exports them) so every substrate that materializes envelope facts
-/// shares one term per field, and imported by the Dialog-DB ingest in
-/// `x0k:implementation/folio/document-source` for the same reason: a
-/// constant two crates read cannot drift, and two string literals did.
+/// The one spelling of every header term a folio document states about
+/// itself that a substrate projects. Imported by the Dialog-DB ingest in
+/// `x0k:implementation/folio/document-source` too: a constant two crates
+/// read cannot drift, and two string literals did.
 ///
-/// The scalars take the IRI `ontology/modules/document.ttl` declares,
-/// under one rule a reader can check with `grep` — an envelope field's
-/// predicate is `x0k:<field>`. The `folio/` prefix stays for
-/// **provenance**: facts about the projection rather than about the
-/// document. `folio/sourcePath` says which file this was read from;
-/// the three materialization pointers say where the document's
-/// materialized copy lives and what it hashed to. Neither is something
-/// the author asserts, and neither is an envelope field in the sense
-/// the rule is about.
+/// Each is the term the header itself writes — `x0k:status`,
+/// `folio:loroDocId` — compact, because this crate holds no ontology and
+/// leaves expansion to the write site. The class is `rdf:type`, spelled as
+/// its full IRI because no module compacts the RDF namespace.
 pub mod envelope_predicates {
+    pub const CLASS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
     pub const STATUS: &str = "x0k:status";
-    pub const DOC_TYPE: &str = "x0k:docType";
     pub const SUBTYPE: &str = "x0k:subtype";
     pub const BODY_FORMAT: &str = "x0k:bodyFormat";
     pub const CONCERNS: &str = "x0k:concerns";
     pub const SUMMARY: &str = "x0k:summary";
-    pub const ORIGINAL_ID: &str = "x0k:originalId";
-    pub const MATERIALIZATION_LORO_DOC: &str = "x0k:folio/materializationLoroDocId";
-    pub const MATERIALIZATION_REVISION: &str = "x0k:folio/materializationDocumentRevisionId";
-    pub const MATERIALIZATION_CONTENT_HASH: &str = "x0k:folio/materializationContentHash";
+    pub const MATERIALIZATION_LORO_DOC: &str = "x0k:folio/loroDocId";
+    pub const MATERIALIZATION_REVISION: &str = "x0k:folio/documentRevisionId";
+    pub const MATERIALIZATION_CONTENT_HASH: &str = "x0k:folio/contentHash";
 }
 ```
 
-Four of those ten are not yet words the vocabulary knows. `x0k:subtype`
-and the three `folio/materialization*` terms have no declaration in
-`document.ttl`, so the `grep` the rule promises answers for `status` and
-`docType` and comes up empty for them. That is a gap in the vocabulary,
-not in the spelling: a module file is an `@generated` materialization of
-the concept region (`corpora/x0k/ontology/AGENTS.md`), so declaring a term
-is a write through the fact surface and a `x0k_concept_facts materialize`
-run, which is its own unit. Naming the terms correctly first is what makes
-the gap visible.
+`project_envelope` below asserts the class and five of these, because
+`ColophonView` carries no summary — the Dialog-DB ingest
+(`x0k:implementation/folio/document-source`) projects every statement a
+header makes, the summary among them. That is a difference in *which facts*
+the two projectors emit, not in what they call them.
 
-Two more are terms this crate names and does not emit. `project_envelope`
-below asserts five of the seven envelope scalars, because `ColophonView`
-carries no summary and no compact original id — the Dialog-DB ingest
-(`x0k:implementation/folio/document-source`) reads both off the parsed
-envelope and asserts them. That is a difference in *which facts* the two
-projectors emit, not in what they call them, and it is the one difference
-this module cannot hide: naming the terms here is what keeps the second
-projector from minting a spelling of its own for them.
-
-Facts already on a spine under the old `x0k:folio/…` spelling are **re-framed,
-not refolded**. There is no read-side remap for these terms, deliberately:
-grove's rename map (`x0k-grove/src/data/grove_db_predicate_renames.toml`)
-carries the envelope scalars under `[coverage]` rather than `[renames]`, and
-the ontology-drift lint keeps them there — a fact's stored spelling is what it
-is, and a fold that quietly accepted two of them would make the next
-divergence invisible. What retires the old terms is the ingester's own write:
-each ingest of a document opens a region barrier at `facts/<entity>` ahead of
-its leaves, and the barrier prunes everything older under that region out of
-the current view. The barrier only fires for a document the ingester re-reads,
-and the ingester skips any file whose content hash matches its state — so this
-change alone moves nothing. Clearing the ingester's state file is what makes
-it walk the corpus again. Until that happens a spine holds the old terms and a
-reader on the new ones sees zero rows: the same failure this change exists to
-remove, arriving from the other side.
+Facts already on a spine under an older spelling are **re-framed, not
+refolded**: a fact's stored spelling is what it is, and what retires an old
+term is the ingester's own write — each ingest of a document opens a region
+barrier at `facts/<entity>` ahead of its leaves, pruning everything older
+under that region out of the current view. The barrier only fires for a
+document the ingester re-reads, and the ingester skips any file whose content
+hash matches its state; clearing the ingester's state file is what makes it
+walk the corpus again.
 
 <a name="chunk-view"></a><sub>[`src/fact.rs`](../../crates/x0k-fact-projection/src/fact.rs) · `#view`</sub>
 
 ```rust {#view}
-/// A folio/v1 envelope viewed substrate-neutrally.
+/// A folio header viewed substrate-neutrally.
 ///
 /// The daemon's `Folio` type (which carries `EntityUri`, ontology
 /// lookups, and the parsed body) is not wasm-clean, so the ingester builds
 /// this view from it: plain strings, edge predicates already resolved to
 /// their ontology (camelCase) spelling, edges in the parser's iteration
-/// order. `project_envelope` then owns *which facts an envelope yields*
+/// order. `project_envelope` then owns *which facts a header yields*
 /// and their typing — the part that must agree across substrates.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ColophonView {
-    /// The doc's URI identity (frontmatter `id`), e.g. `x0k:design/foo`.
+    /// The doc's URI identity (the header's subject), e.g. `x0k:design/foo`.
     pub uri: String,
-    /// Envelope `status`, in its canonical string form (`proposed`, …).
+    /// `x0k:status`, in its canonical string form (`proposed`, …).
     pub status: String,
-    /// Envelope `type`, in its canonical string form (`design`, `wiki`, …).
+    /// The genus name (`design`, `wiki`, …), which a tenant dispatches on.
     pub doc_type: String,
-    /// Optional envelope `subtype`.
+    /// The class the header states, compact (`x0k:Design`); projected as
+    /// `rdf:type`. Empty projects no class.
+    pub class: String,
+    /// Optional `x0k:subtype`.
     pub subtype: Option<String>,
     /// Canonical body format flag (`markdown` or `html`).
     pub body_format: String,
-    /// Envelope `concerns`, in declaration order.
+    /// `x0k:concerns`, in statement order.
     pub concerns: Vec<String>,
     /// Materialization pointers (only present when populated).
     pub materialization_loro_doc_id: Option<String>,
     pub materialization_document_revision_id: Option<String>,
     pub materialization_content_hash: Option<String>,
-    /// Known edges: `(resolved predicate, target URIs)`, in the parser's
-    /// iteration order. Predicate resolution (snake_case → ontology
-    /// camelCase, with verbatim fallback) happens at the view-construction
-    /// site, which holds the ontology tables.
+    /// Known edges: `(predicate, target URIs)`, in the parser's iteration
+    /// order. A predicate in the shared namespace is spelled by its local
+    /// name (`motivatedBy`); the view-construction site decides that.
     pub edges: Vec<(String, Vec<String>)>,
     /// Unknown-predicate edges, preserved verbatim (forward-compat).
     pub unknown_edges: Vec<(String, Vec<String>)>,
@@ -333,10 +296,10 @@ an older node.
 <a name="chunk-project"></a><sub>[`src/fact.rs`](../../crates/x0k-fact-projection/src/fact.rs) · `#project`</sub>
 
 ```rust {#project}
-/// Project a folio/v1 envelope into substrate-neutral facts.
+/// Project a folio header into substrate-neutral facts.
 ///
-/// Lifted from the folio ingester's `envelope_facts`. Emission order is
-/// preserved exactly: status, doc type, subtype, body format, concerns,
+/// Emission order is preserved exactly: status, class, subtype, body
+/// format, concerns,
 /// materialization fields, known edges, unknown edges. Scalars become
 /// [`FactValue::Text`]; edge targets become [`FactValue::EntityRef`] —
 /// the typing the Dialog-DB writer encodes as `string:`/`entity:` and a
@@ -350,17 +313,19 @@ pub fn project_envelope(view: &ColophonView) -> Vec<FactEntry> {
     let mut out: Vec<FactEntry> = Vec::new();
     let uri = view.uri.as_str();
 
-    // Envelope scalars
+    // Header scalars
     out.push(FactEntry::new(
         uri,
         envelope_predicates::STATUS,
         FactValue::Text(view.status.clone()),
     ));
-    out.push(FactEntry::new(
-        uri,
-        envelope_predicates::DOC_TYPE,
-        FactValue::Text(view.doc_type.clone()),
-    ));
+    if !view.class.is_empty() {
+        out.push(FactEntry::new(
+            uri,
+            envelope_predicates::CLASS,
+            FactValue::EntityRef(view.class.clone()),
+        ));
+    }
     if let Some(s) = &view.subtype {
         out.push(FactEntry::new(
             uri,
@@ -422,7 +387,7 @@ pub fn project_envelope(view: &ColophonView) -> Vec<FactEntry> {
 
 Two things about that function are contracts rather than implementation.
 
-**Emission order is preserved exactly** — status, doc type, subtype, body
+**Emission order is preserved exactly** — status, class, subtype, body
 format, concerns, materialization fields, known edges, then unknown edges. A
 caller that diffs two projections of the same document is comparing
 sequences, so a reordering here would read as every fact having changed.
@@ -469,7 +434,7 @@ pub trait DocFactSource: Send + Sync {
     /// Extra facts this document asserts, in the tenant's vocabulary.
     ///
     /// `view` carries the envelope (URI, doc type, resolved edges); `body`
-    /// is the document text below the frontmatter.
+    /// is the document's body, its header lifted out.
     fn doc_facts(&self, view: &ColophonView, body: &str) -> Vec<FactEntry>;
 }
 ```
@@ -485,8 +450,8 @@ tenant recognises its own by `view.doc_type` rather than by being routed.
 <a name="chunk-module-doc"></a><sub>[`src/fact.rs`](../../crates/x0k-fact-projection/src/fact.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
-//! The substrate-neutral fact tuple, and the projection of a folio/v1
-//! envelope into one.
+//! The substrate-neutral fact tuple, and the projection of a folio
+//! header into one.
 //!
 //! A fact is `(entity URI, predicate, typed value, optional cause)` — the
 //! shape facts have *between* substrates, before a Dialog-DB cache writer
@@ -508,6 +473,7 @@ mod tests {
             uri: "x0k:design/example".to_string(),
             status: "proposed".to_string(),
             doc_type: "design".to_string(),
+            class: "x0k:Design".to_string(),
             subtype: Some("ux".to_string()),
             body_format: "markdown".to_string(),
             concerns: vec!["a".to_string(), "b".to_string()],
@@ -542,7 +508,7 @@ mod tests {
         let entity = |s: &str| FactValue::EntityRef(s.to_string());
         let expected_values = [
             (envelope_predicates::STATUS, text("proposed")),
-            (envelope_predicates::DOC_TYPE, text("design")),
+            (envelope_predicates::CLASS, entity("x0k:Design")),
             (envelope_predicates::SUBTYPE, text("ux")),
             (envelope_predicates::BODY_FORMAT, text("markdown")),
             (envelope_predicates::CONCERNS, text("a")),

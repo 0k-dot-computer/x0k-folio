@@ -85,15 +85,15 @@ async fn invalid_source_keeps_last_good_but_non_document_retracts() {
     let view = MemorySink::default();
     let stores = Mutex::new(vec![Backend::new("memory", view.clone())]);
     std::fs::write(&file, "urn:paper=Readable").unwrap();
-    lifecycle::apply_path_change(&Lines, &file, &state, &stores).unwrap();
+    lifecycle::apply_path_change(&Lines, &file, &state, &stores).await.unwrap();
     let before = view.facts();
     std::fs::write(&file, "invalid").unwrap();
-    assert!(lifecycle::apply_path_change(&Lines, &file, &state, &stores).is_err());
+    assert!(lifecycle::apply_path_change(&Lines, &file, &state, &stores).await.is_err());
     let (_, ingested, _) = lifecycle::reconcile(&mut Lines, root.path(), &state, &stores, None).await.unwrap();
     assert_eq!(ingested, 0);
     assert_eq!(view.facts(), before);
     std::fs::write(&file, "").unwrap();
-    lifecycle::apply_path_change(&Lines, &file, &state, &stores).unwrap();
+    lifecycle::apply_path_change(&Lines, &file, &state, &stores).await.unwrap();
     assert!(view.facts().is_empty());
 }
 #[tokio::test]
@@ -108,7 +108,7 @@ async fn ambiguous_backend_names_cannot_write_checkpoints_or_facts() {
         let b = MemorySink::default();
         let stores = Mutex::new(vec![Backend::new(names[0], a.clone()), Backend::new(names[1], b.clone())]);
         assert!(lifecycle::reconcile(&mut Lines, root.path(), &state, &stores, None).await.is_err());
-        assert!(lifecycle::apply_path_change(&Lines, &file, &state, &stores).is_err());
+        assert!(lifecycle::apply_path_change(&Lines, &file, &state, &stores).await.is_err());
         assert!(!x0k_folio_ingest::checkpoint::source_directory(&state).exists());
         assert!(a.facts().is_empty() && b.facts().is_empty());
     }
@@ -147,8 +147,8 @@ async fn source_revision_changes_replay_unchanged_bytes_at_source_boundary() {
     let unique: std::collections::BTreeSet<_> = calls.lock().unwrap().iter().cloned().collect();
     assert_eq!(unique.len(), 2);
 }
-#[test]
-fn blocked_backend_does_not_own_registry_or_hold_healthy_delivery() {
+#[tokio::test]
+async fn blocked_backend_does_not_own_registry_or_hold_healthy_delivery() {
     use std::sync::Condvar;
     struct Blocked { entered: std::sync::mpsc::Sender<()>, gate: Arc<(Mutex<bool>, Condvar)> }
     impl FactSink for Blocked {
@@ -174,7 +174,9 @@ fn blocked_backend_does_not_own_registry_or_hold_healthy_delivery() {
     let projection = Lines.project(Path::new("a.txt"),b"urn:example=value","revision").unwrap().unwrap();
     let shared = backends.clone();
     let operation = std::thread::spawn(move || {
-        lifecycle::deliver(&mut Default::default(),&path,"source",&shared,Some(&projection)).unwrap();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async move {
+            lifecycle::deliver(&mut Default::default(),&path,"source",&shared,Some(&projection)).await.unwrap();
+        });
     });
     waiting.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
     let deadline = std::time::Instant::now()+std::time::Duration::from_millis(200);
@@ -214,7 +216,7 @@ async fn timed_out_backend_stays_pending_while_next_source_reaches_healthy_sink(
         let backends = Mutex::new(list);
         for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B")] {
             let path=root.path().join(name); std::fs::write(&path,text).unwrap();
-            lifecycle::apply_path_change(&Lines,&path,&state_path,&backends).unwrap();
+            lifecycle::apply_path_change(&Lines,&path,&state_path,&backends).await.unwrap();
         }
         let pending = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
         assert_eq!(healthy.facts().len(),2);
@@ -259,7 +261,7 @@ async fn a_backend_slower_than_any_grace_still_acknowledges_every_source_when_wa
     ]);
     for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B"),("c.txt","urn:c=C")] {
         let path=root.path().join(name); std::fs::write(&path,text).unwrap();
-        lifecycle::apply_path_change(&Lines,&path,&state_path,&bounded).unwrap();
+        lifecycle::apply_path_change(&Lines,&path,&state_path,&bounded).await.unwrap();
     }
     let abandoned = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
     assert!(abandoned.files.values().all(|file| !file.acked_by.contains("slow")),
@@ -276,7 +278,7 @@ async fn a_backend_slower_than_any_grace_still_acknowledges_every_source_when_wa
     ]);
     for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B"),("c.txt","urn:c=C")] {
         let path=root.path().join(name); std::fs::write(&path,text).unwrap();
-        lifecycle::apply_path_change(&Lines,&path,&state_path,&waiting).unwrap();
+        lifecycle::apply_path_change(&Lines,&path,&state_path,&waiting).await.unwrap();
     }
     let settled = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
     assert_eq!(settled.files.len(), 3);
@@ -335,8 +337,8 @@ async fn identity_failure_and_loss_do_not_reuse_acks_and_new_store_replays_only_
         assert_eq!(state.recovery[source.to_str().unwrap()].revisions["replaceable"].incarnation.as_deref(),Some("new-store"));
     }
 }
-#[test]
-fn blocked_identity_reserves_time_for_healthy_source_acknowledgement() {
+#[tokio::test]
+async fn blocked_identity_reserves_time_for_healthy_source_acknowledgement() {
     struct BlockedIdentity(std::sync::mpsc::Receiver<()>);
     impl FactSink for BlockedIdentity {
         fn incarnation(&mut self)->Result<Option<String>> {
@@ -357,7 +359,7 @@ fn blocked_identity_reserves_time_for_healthy_source_acknowledgement() {
         let mut state=lifecycle::IngesterState::default();
         for source in ["urn:first","urn:second"] {
             let desired=Lines.project(Path::new("source.txt"),format!("{source}=value").as_bytes(),"revision").unwrap().unwrap();
-            lifecycle::deliver(&mut state,&scratch.path().join("state"),source,&backends,Some(&desired)).unwrap();
+            lifecycle::deliver(&mut state,&scratch.path().join("state"),source,&backends,Some(&desired)).await.unwrap();
             assert_eq!(state.files[source].acked_by.iter().cloned().collect::<Vec<_>>(),vec!["healthy"]);
         }
         assert_eq!(healthy.facts().len(),2);

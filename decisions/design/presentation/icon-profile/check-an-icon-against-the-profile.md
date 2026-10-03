@@ -1,13 +1,8 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:design/icon-profile#check-an-icon-against-the-profile
-  type: design
-  status: accepted
-  edges:
-    transcludes:
-      - x0k:design/icon-profile
----
+```turtle folio:document
+design:icon-profile%23check-an-icon-against-the-profile a x0k:Design ;
+    x0k:status "accepted" ;
+    x0k:transcludes design:icon-profile .
+```
 
 ### Check an icon against the profile
 
@@ -17,22 +12,22 @@ An author, or the composing loop, hands a drawing to the checker and is
 told it is accepted or which rule it broke and where — never handed back
 a silently altered drawing.
 
-<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/check_an_icon_against_the_profile" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md"><strong>Affordance</strong> · Check an icon against the profile · <code>https://0k.computer/ontology#affordance/check_an_icon_against_the_profile</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1"></a>
+<a name="folio-instance-78306b3a6166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1"></a><sub data-instance-iri="x0k:affordance/check_an_icon_against_the_profile" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/check_an_icon_against_the_profile</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1">source declaration</a> · the graph block at line 18 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md:15</sub><a name="folio-source-78306b3a6166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1"></a>
 
-```yaml x0k:affordance
-id: x0k:affordance/check_an_icon_against_the_profile
-status: wip
-actors: [human, ai_agent]
-edges:
-  enabledBy:
-    - x0k:software-module/x0k-icon
-  requires:
-    - x0k:affordance/declare_an_icon
+```turtle folio:graph
+@prefix actor: <https://0k.computer/ontology#actor/> .
+@prefix software-module: <https://0k.computer/ontology#software-module/> .
+affordance:check_an_icon_against_the_profile a x0k:Affordance ;
+    x0k:status "wip" ;
+    x0k:claimedFor actor:human,
+        actor:ai_agent ;
+    x0k:enabledBy software-module:x0k-icon ;
+    x0k:requires affordance:declare_an_icon .
 ```
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/actor-dark.svg"><img alt="Actor" src="../../../../assets/icons/actor-light.svg" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/proven-dark.svg"><img alt="proven" src="../../../../assets/icons/proven-light.svg" height="16"></picture> *proven* · for a person, an agent · reachable through `cli` `x0k-tangle icon`, `sdk` `check`
 
-*realized in* [x0k-icon: the crate](../../../../implementation/icon/crate.md) · [The checker](../../../../implementation/icon/validate.md) · [The faces behind `check`, `affordances` and `icon`](../../../../implementation/tangle/cli-faces.md) · [x0k-tangle: the crate and its CLI](../../../../implementation/tangle/crate.md)
+*realized in* [x0k-icon: the crate](../../../../implementation/icon/crate.md) · [The checker](../../../../implementation/icon/validate.md) · [The faces behind `check`, `affordances`, `declarations` and `icon`](../../../../implementation/tangle/cli-faces.md) · [x0k-tangle: the crate and its CLI](../../../../implementation/tangle/crate.md)
 
 *proven by* each test below, as its chapter tangles it and as it ran at projection.
 
@@ -212,7 +207,7 @@ fn a_second_icon_on_one_grid_is_refused_by_rule_15() {
 
 </details>
 
-<details><summary><code>icon_accepts_a_declaration_in_the_profile</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-icon">#tests-icon</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>icon_accepts_a_declaration_in_the_profile</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-icon">#tests-icon</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust
 #[test]
@@ -229,7 +224,7 @@ fn icon_accepts_a_declaration_in_the_profile() {
 
 </details>
 
-<details><summary><code>icon_refuses_a_drawing_by_rule_naming_the_element_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-icon">#tests-icon</a> in The faces behind `check`, `affordances` and `icon`</summary>
+<details><summary><code>icon_refuses_a_drawing_by_rule_naming_the_element_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-icon">#tests-icon</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust
 #[test]

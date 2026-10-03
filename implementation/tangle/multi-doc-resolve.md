@@ -1,34 +1,23 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/multi-doc-resolve
-  type: implementation
-  status: draft
-  summary: Lifting expansion from one document to a corpus indexed by envelope id, so `<<uri::chunk>>` transcludes a chunk defined elsewhere without a second implementation of the expansion walk.
-  concerns:
-  - tangle
-  - literate
-  - resolve
-  - transclusion
-  - cross-document
-  - cycle-detection
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/multi_doc_resolve.rs
-  edges:
-    cites:
-    - x0k:implementation/tangle/protocol
-    - x0k:implementation/tangle/chunk
-    - x0k:implementation/tangle/chunk-refs
-    - x0k:implementation/tangle/parsing
-    - x0k:implementation/tangle/resolution
----
 # Cross-document chunk transclusion
+
+```turtle folio:document
+implementation:tangle\/multi-doc-resolve a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Lifting expansion from one document to a corpus indexed by envelope id, so `<<uri::chunk>>` transcludes a chunk defined elsewhere without a second implementation of the expansion walk." ;
+    x0k:concerns "tangle", "literate", "resolve", "transclusion", "cross-document", "cycle-detection" ;
+    x0k:cites implementation:tangle\/protocol,
+        implementation:tangle\/chunk,
+        implementation:tangle\/chunk-refs,
+        implementation:tangle\/parsing,
+        implementation:tangle\/resolution ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/multi_doc_resolve.rs" .
+```
 
 Within-document resolution ([`resolution.md`](resolution.md)) expands
 `<<chunk>>` refs against one parsed document. This module lifts that to
-a **corpus**: a set of parsed documents indexed by their frontmatter
-`id:` URI, so a chunk in one doc can transclude a chunk defined in
+a **corpus**: a set of parsed documents indexed by the subject of
+their header, so a chunk in one doc can transclude a chunk defined in
 another via `<<uri::chunk>>` — [dependency
 resolution](x0k:wiki/dependency-resolution) whose edges cross document
 boundaries.
@@ -70,7 +59,7 @@ borrowed map to the documents it points at.
 <a name="chunk-corpus-type"></a><sub>[`src/multi_doc_resolve.rs`](../../crates/x0k-tangle/src/multi_doc_resolve.rs) · `#corpus-type`</sub>
 
 ```rust {#corpus-type}
-/// A set of parsed documents indexed by their frontmatter `id:` URI.
+/// A set of parsed documents indexed by the subject of their header.
 /// `<<uri::chunk>>` refs resolve the document by URI, then the chunk
 /// within it.
 pub struct Corpus<'a> {
@@ -81,15 +70,15 @@ pub struct Corpus<'a> {
 ## Building and querying
 
 `from_docs` indexes an iterator of parsed documents by their `id`,
-skipping any document with no `id:` URI (it can't be a cross-doc
+skipping any document without a typed header (it can't be a cross-doc
 target). `doc` is the single lookup the resolver needs.
 
 <a name="chunk-corpus-impl"></a><sub>[`src/multi_doc_resolve.rs`](../../crates/x0k-tangle/src/multi_doc_resolve.rs) · `#corpus-impl`</sub>
 
 ```rust {#corpus-impl}
 impl<'a> Corpus<'a> {
-    /// Index the given documents by their `id:` URI. Documents without
-    /// an `id` are skipped — they can never be a cross-doc target.
+    /// Index the given documents by their header's subject. Documents
+    /// without one are skipped — they can never be a cross-doc target.
     pub fn from_docs(docs: impl IntoIterator<Item = &'a ParsedDocument>) -> Self {
         let mut map = HashMap::new();
         for doc in docs {
@@ -100,7 +89,7 @@ impl<'a> Corpus<'a> {
         Corpus { docs: map }
     }
 
-    /// Look up a document by its `id:` URI.
+    /// Look up a document by its id.
     pub fn doc(&self, uri: &str) -> Option<&'a ParsedDocument> {
         self.docs.get(uri).copied()
     }
@@ -168,12 +157,12 @@ mod tests {
 
     fn doc_a() -> ParsedDocument {
         parse_document(
-            r#"---
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-a
-  type: implementation
----
+            r#"# Doc A
+
+```turtle folio:document
+implementation:tangle\/doc-a a x0k:Implementation .
+```
+
 ```rust {#greeting}
 println!("hello from A");
 ```
@@ -186,12 +175,12 @@ println!("hello from A");
     fn transcludes_chunk_from_another_doc() {
         let a = doc_a();
         let b = parse_document(
-            r#"---
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-b
-  type: implementation
----
+            r#"# Doc B
+
+```turtle folio:document
+implementation:tangle\/doc-b a x0k:Implementation .
+```
+
 ```rust {#main}
 fn main() {
     <<x0k:implementation/tangle/doc-a::greeting>>
@@ -213,12 +202,12 @@ fn main() {
     fn cross_doc_preserves_indent() {
         let a = doc_a();
         let b = parse_document(
-            r#"---
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-b
-  type: implementation
----
+            r#"# Doc B
+
+```turtle folio:document
+implementation:tangle\/doc-b a x0k:Implementation .
+```
+
 ```rust {#main}
 fn main() {
     <<x0k:implementation/tangle/doc-a::greeting>>
@@ -241,12 +230,12 @@ fn main() {
         // c -> b -> a, all across document boundaries.
         let a = doc_a();
         let b = parse_document(
-            r#"---
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-b
-  type: implementation
----
+            r#"# Doc B
+
+```turtle folio:document
+implementation:tangle\/doc-b a x0k:Implementation .
+```
+
 ```rust {#wrapper}
 {
     <<x0k:implementation/tangle/doc-a::greeting>>
@@ -256,12 +245,12 @@ x0k:
         )
         .unwrap();
         let c = parse_document(
-            r#"---
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-c
-  type: implementation
----
+            r#"# Doc C
+
+```turtle folio:document
+implementation:tangle\/doc-c a x0k:Implementation .
+```
+
 ```rust {#main}
 fn main()
     <<x0k:implementation/tangle/doc-b::wrapper>>
@@ -284,12 +273,12 @@ fn main()
     fn cross_doc_cycle_errors() {
         // doc-x::a -> doc-y::b -> doc-x::a — a cycle across the boundary.
         let x = parse_document(
-            r#"---
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-x
-  type: implementation
----
+            r#"# Doc X
+
+```turtle folio:document
+implementation:tangle\/doc-x a x0k:Implementation .
+```
+
 ```rust {#a}
 <<x0k:implementation/tangle/doc-y::b>>
 ```
@@ -297,12 +286,12 @@ x0k:
         )
         .unwrap();
         let y = parse_document(
-            r#"---
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-y
-  type: implementation
----
+            r#"# Doc Y
+
+```turtle folio:document
+implementation:tangle\/doc-y a x0k:Implementation .
+```
+
 ```rust {#b}
 <<x0k:implementation/tangle/doc-x::a>>
 ```
@@ -319,12 +308,12 @@ x0k:
     #[test]
     fn unknown_target_doc_errors() {
         let b = parse_document(
-            r#"---
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-b
-  type: implementation
----
+            r#"# Doc B
+
+```turtle folio:document
+implementation:tangle\/doc-b a x0k:Implementation .
+```
+
 ```rust {#main}
 <<x0k:implementation/tangle/does-not-exist::nope>>
 ```

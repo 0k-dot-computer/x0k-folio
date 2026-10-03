@@ -12,7 +12,7 @@
 //! about it.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[path = "src/concept_facts.rs"]
 #[allow(dead_code)]
@@ -29,8 +29,6 @@ fn main() {
     let modules_dir = load::shipped_modules_dir(&manifest);
     let shapes_dir = load::shapes_dir_for(&modules_dir);
 
-    println!("cargo:rerun-if-changed={}", modules_dir.display());
-    println!("cargo:rerun-if-changed={}", shapes_dir.display());
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/concept_facts.rs");
     println!("cargo:rerun-if-changed=src/load.rs");
@@ -39,7 +37,7 @@ fn main() {
         .unwrap_or_else(|error| panic!("{error}"));
     let shape_paths = load::shape_file_paths(&shapes_dir);
     for path in module_paths.iter().chain(shape_paths.iter()) {
-        println!("cargo:rerun-if-changed={}", path.display());
+        println!("cargo:rerun-if-changed={}", package_relative(&manifest, path).display());
     }
 
     let model = OntologyModel::load_files(&module_paths, &shape_paths)
@@ -50,6 +48,17 @@ fn main() {
     let out_path = out_dir.join("generated.rs");
     std::fs::write(&out_path, out)
         .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+}
+
+fn package_relative(manifest: &Path, path: &Path) -> PathBuf {
+    for (up, ancestor) in manifest.ancestors().enumerate() {
+        if let Ok(rest) = path.strip_prefix(ancestor) {
+            let mut relative: PathBuf = std::iter::repeat_n("..", up).collect();
+            relative.push(rest);
+            return relative;
+        }
+    }
+    path.to_path_buf()
 }
 
 fn emit_generated(model: &OntologyModel, module_paths: &[PathBuf], shape_paths: &[PathBuf]) -> String {
@@ -91,12 +100,7 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
          pub const MODULE_FILES: &[(&str, &str)] = &[\n",
     );
     for path in module_paths {
-        let absolute = path.canonicalize().unwrap_or_else(|e| panic!("canonicalize {}: {e}", path.display()));
-        out.push_str(&format!(
-            "    ({:?}, include_str!({:?})),\n",
-            load::module_file_name(path),
-            absolute.to_string_lossy()
-        ));
+        out.push_str(&format!("    ({:?}, {:?}),\n", load::module_file_name(path), file_text(path)));
     }
     out.push_str("];\n\n");
 
@@ -106,12 +110,7 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
          pub const SHAPE_FILES: &[(&str, &str)] = &[\n",
     );
     for path in shape_paths {
-        let absolute = path.canonicalize().unwrap_or_else(|e| panic!("canonicalize {}: {e}", path.display()));
-        out.push_str(&format!(
-            "    ({:?}, include_str!({:?})),\n",
-            load::module_file_name(path),
-            absolute.to_string_lossy()
-        ));
+        out.push_str(&format!("    ({:?}, {:?}),\n", load::module_file_name(path), file_text(path)));
     }
     out.push_str("];\n\n");
 
@@ -141,6 +140,10 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
         ));
     }
     out.push_str("];\n\n");
+}
+
+fn file_text(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 fn emit_module(out: &mut String, model: &OntologyModel, module: &ModuleRecord) {

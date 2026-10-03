@@ -15,14 +15,14 @@ use tempfile::TempDir;
 const JS_SOURCE: &str =
     "export function createHorizonRemap(scale) {\n  return (u) => u * scale;\n}\n";
 
-/// A folio/v1 document with a chunk whose `<<ref>>` names nothing, and
-/// no `tangle:` block — the reference-only shape an adopter writes
+/// A document with a chunk whose `<<ref>>` names nothing, and no tangle
+/// target in its header — the reference-only shape an adopter writes
 /// first. `{id}` distinguishes copies.
 fn broken_reference_doc(id: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/{id}\n  \
-         type: implementation\n  status: draft\n  summary: A document with a \
-         broken chunk reference and nowhere to write.\n---\n# Doc\n\n\
+        "# Doc\n\n```turtle folio:document\nimplementation:{id} a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    x0k:summary \"A document with a broken chunk reference \
+         and nowhere to write.\" .\n```\n\n\
          ```rust {{#root file=\"src/lib.rs\"}}\nfn f() {{\n    <<nope>>\n}}\n```\n"
     )
 }
@@ -163,9 +163,9 @@ fn sync_passes_a_document_with_nothing_to_fill() {
     write(
         tmp.path(),
         "doc.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/fixture\n  \
-         type: implementation\n  status: draft\n  tangle:\n    crate: fixture\n    \
-         root: src/lib.rs\n---\n# Doc\n\n```rust {#root}\nfn f() {}\n```\n",
+        "# Doc\n\n```turtle folio:document\nimplementation:fixture a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \"fixture\" ;\n    \
+         folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {#root}\nfn f() {}\n```\n",
     );
 
     let out = sync(tmp.path());
@@ -376,28 +376,50 @@ fn check_counts_the_source_references_that_did_not_resolve() {
     );
 }
 
-/// A Markdown file with no envelope is skipped — that is what makes
+/// A Markdown file with no folio header is skipped — that is what makes
 /// adoption incremental — and the count is what keeps skipping it from
-/// being silent. `--require-envelope` is the reader saying every file
-/// under these paths is supposed to be typed (Backstage, 2026-09-23).
+/// being silent. An untyped `<>` header names no document, so it counts
+/// the same. `--require-header` is the reader saying every file under
+/// these paths is supposed to be typed.
 #[test]
 fn check_counts_the_markdown_it_walked_past_and_can_be_told_to_refuse_it() {
     let tmp = TempDir::new().unwrap();
     write(
         tmp.path(),
         "typed.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/typed\n  type: design\n  \
-         status: draft\n---\n# Typed\n",
+        "# Typed\n\n```turtle folio:document\ndesign:typed a x0k:Design ;\n    \
+         x0k:status \"draft\" .\n```\n",
     );
-    write(tmp.path(), "untyped.md", "# Untyped\n\nNo envelope here.\n");
+    write(tmp.path(), "untyped.md", "# Untyped\n\nNo header here.\n");
+    write(
+        tmp.path(),
+        "tool-only.md",
+        "# Tool only\n\n```turtle folio:document\n<> folio:tangleCrate \"x\" .\n```\n",
+    );
 
     let out = check_in(tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "an untyped file is not a defect: {stderr}");
     assert!(
-        stderr.contains("1 envelope(s) read against the vocabulary")
-            && stderr.contains("1 markdown file carried no envelope"),
+        stderr.contains("1 header(s) read against the vocabulary")
+            && stderr.contains("2 markdown files carried no header"),
         "the line says what it read and what it walked past: {stderr}"
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .arg("check")
+        .arg(tmp.path())
+        .arg("--workspace")
+        .arg(tmp.path())
+        .arg("--require-header")
+        .output()
+        .expect("the x0k-tangle binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "--require-header let it through: {stderr}");
+    assert!(
+        stderr.contains("untyped.md: carries no folio header")
+            && stderr.contains("tool-only.md: carries no folio header"),
+        "the defect names the files: {stderr}"
     );
 
     let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
@@ -408,11 +430,9 @@ fn check_counts_the_markdown_it_walked_past_and_can_be_told_to_refuse_it() {
         .arg("--require-envelope")
         .output()
         .expect("the x0k-tangle binary runs");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "--require-envelope let it through: {stderr}");
     assert!(
-        stderr.contains("untyped.md: carries no folio/v1 envelope"),
-        "the defect names the file: {stderr}"
+        !out.status.success(),
+        "only --require-header names this refusal; another spelling is an unknown flag"
     );
 }
 
@@ -425,9 +445,9 @@ fn tangle_names_its_outputs_the_way_the_reader_named_the_workspace() {
     write(
         tmp.path(),
         "docs/ratelimit.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/ratelimit\n  \
-         type: implementation\n  status: draft\n  tangle:\n    \
-         crate: crates/ratelimit\n    root: src/bucket.rs\n---\n# Bucket\n\n\
+        "# Bucket\n\n```turtle folio:document\nimplementation:ratelimit a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \"crates/ratelimit\" ;\n    \
+         folio:tangleRoot \"src/bucket.rs\" .\n```\n\n\
          ```rust {#root}\npub fn take() {}\n```\n",
     );
 
@@ -575,11 +595,13 @@ fn check_catches_the_stale_body_sync_left_behind() {
 
 /// A predicate this build is certain to accept, so the fixture measures
 /// the note and not the module selection.
-fn shipped_predicate() -> &'static str {
-    x0k_ontology::KNOWN_EDGE_PREDICATES
+fn shipped_predicate() -> String {
+    let snake = x0k_ontology::KNOWN_EDGE_PREDICATES
         .first()
         .copied()
-        .expect("a build whose vocabulary declares no document edge ships no document module")
+        .expect("a build whose vocabulary declares no document edge ships no document module");
+    let camel = x0k_ontology::snake_to_camel(snake).expect("every known predicate has a term");
+    format!("x0k:{camel}")
 }
 
 #[test]
@@ -589,8 +611,8 @@ fn the_dangling_edge_note_claims_only_what_is_true_of_any_tree() {
         tmp.path(),
         "docs/fixture.md",
         &format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/fixture\n  type: design\n  \
-             status: draft\n  edges:\n    {}:\n      - x0k:design/elsewhere\n---\n# Fixture\n",
+            "# Fixture\n\n```turtle folio:document\ndesign:fixture a x0k:Design ;\n    \
+             x0k:status \"draft\" ;\n    {} design:elsewhere .\n```\n",
             shipped_predicate()
         ),
     );
@@ -615,8 +637,8 @@ fn closed_makes_an_edge_that_leaves_the_set_fail_the_run() {
         tmp.path(),
         "docs/fixture.md",
         &format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:design/fixture\n  type: design\n  \
-             status: draft\n  edges:\n    {}:\n      - x0k:design/elsewhere\n---\n# Fixture\n",
+            "# Fixture\n\n```turtle folio:document\ndesign:fixture a x0k:Design ;\n    \
+             x0k:status \"draft\" ;\n    {} design:elsewhere .\n```\n",
             shipped_predicate()
         ),
     );
@@ -643,10 +665,10 @@ fn a_declared_edge_that_leaves_the_set_fails_the_run_under_closed_too() {
     write(
         tmp.path(),
         "docs/fixture.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/fixture\n  type: wiki\n  \
-         status: draft\n---\n# Fixture\n\n```yaml x0k:affordance\nid: \
-         x0k:affordance/do_the_thing\nedges:\n  enabledBy:\n    - \
-         x0k:software-module/elsewhere\n```\n",
+        "# Fixture\n\n```turtle folio:document\nwiki:fixture a x0k:Wiki ;\n    \
+         x0k:status \"draft\" .\n```\n\n```turtle folio:graph\n\
+         affordance:do_the_thing a x0k:Affordance ;\n    \
+         x0k:enabledBy x0k:software-module\\/elsewhere .\n```\n",
     );
 
     let open = run(&["check"], tmp.path());
@@ -699,8 +721,8 @@ fn check_says_it_checked_nothing_rather_than_asserting_a_pass() {
     write(
         tmp.path(),
         "docs/prose.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/prose\n  type: design\n  \
-         status: draft\n---\n# Prose\n\nNo chunks here.\n",
+        "# Prose\n\n```turtle folio:document\ndesign:prose a x0k:Design ;\n    \
+         x0k:status \"draft\" .\n```\n\nNo chunks here.\n",
     );
 
     let out = run(&["check"], &tmp.path().join("docs"));
@@ -727,16 +749,16 @@ fn check_warns_when_the_frontmatter_title_and_the_h1_disagree_and_exits_the_same
     write(
         agree.path(),
         "docs/a.md",
-        "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\nx0k:\n  format: folio/v1\n  \
-         id: x0k:architecture/adr013\n  type: architecture\n---\n\n\
-         # ADR013: Proper use of *HTTP* fetching libraries.\n",
+        "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\n---\n\
+         # ADR013: Proper use of *HTTP* fetching libraries.\n\n\
+         ```turtle folio:document\narchitecture:adr013 a x0k:Architecture .\n```\n",
     );
     let disagree = TempDir::new().unwrap();
     write(
         disagree.path(),
         "docs/c.md",
-        "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\nx0k:\n  format: folio/v1\n  \
-         id: x0k:architecture/adrz\n  type: architecture\n---\n\n# Body H1 Different\n\nText.\n",
+        "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\n---\n# Body H1 Different\n\n\
+         ```turtle folio:document\narchitecture:adrz a x0k:Architecture .\n```\n\nText.\n",
     );
 
     for flags in [&["check"][..], &["check", "--closed"][..]] {
@@ -773,8 +795,8 @@ fn check_warns_when_the_frontmatter_title_and_the_h1_disagree_and_exits_the_same
 #[test]
 fn check_fails_two_documents_that_declare_one_id() {
     let tmp = TempDir::new().unwrap();
-    let doc = "---\nx0k:\n  format: folio/v1\n  id: x0k:design/collision\n  \
-               type: design\n  status: draft\n---\n# Copy\n";
+    let doc = "# Copy\n\n```turtle folio:document\ndesign:collision a x0k:Design ;\n    \
+               x0k:status \"draft\" .\n```\n";
     write(tmp.path(), "docs/a.md", doc);
     write(tmp.path(), "docs/b.md", doc);
 
@@ -800,8 +822,8 @@ fn check_does_not_see_one_document_twice_through_overlapping_paths() {
     write(
         tmp.path(),
         "docs/inner/d.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:design/once\n  type: design\n  \
-         status: draft\n---\n# Once\n",
+        "# Once\n\n```turtle folio:document\ndesign:once a x0k:Design ;\n    \
+         x0k:status \"draft\" .\n```\n",
     );
 
     let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
@@ -842,12 +864,11 @@ fn tangle_refuses_a_document_that_names_nowhere_to_write() {
 
 /// The shape the integration guide tells an existing codebase to write
 /// first: chunks that mirror symbols out of code the document does not
-/// own, and no `tangle:` block, because there is nothing to write.
+/// own, and no tangle target, because there is nothing to write.
 fn mirror_only_doc() -> String {
-    "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/mirror\n  \
-     type: implementation\n  status: draft\n  summary: A document that \
-     mirrors code it does not own.\n---\n# Doc\n\n\
-     ```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n"
+    "# Doc\n\n```turtle folio:document\nimplementation:mirror a x0k:Implementation ;\n    \
+     x0k:status \"draft\" ;\n    x0k:summary \"A document that mirrors code it does not own.\" .\n\
+     ```\n\n```javascript {#remap from=\"remap.js\" symbol=\"createHorizonRemap\"}\n```\n"
         .to_string()
 }
 
@@ -915,9 +936,9 @@ fn tangle_writes_a_document_that_names_a_target() {
     write(
         tmp.path(),
         "docs/d.md",
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/writes\n  \
-         type: implementation\n  status: draft\n  tangle:\n    crate: .\n    \
-         root: src/lib.rs\n---\n# Doc\n\n```rust {#root}\npub fn f() {}\n```\n",
+        "# Doc\n\n```turtle folio:document\nimplementation:writes a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \".\" ;\n    \
+         folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {#root}\npub fn f() {}\n```\n",
     );
 
     let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
@@ -939,9 +960,9 @@ fn tangle_writes_a_document_that_names_a_target() {
 /// generation of it from the next.
 fn tangling_doc(body: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/guard\n  \
-         type: implementation\n  status: draft\n  tangle:\n    crate: .\n    \
-         root: src/lib.rs\n---\n# Doc\n\n```rust {{#root}}\npub fn {body}() {{}}\n```\n"
+        "# Doc\n\n```turtle folio:document\nimplementation:guard a x0k:Implementation ;\n    \
+         x0k:status \"draft\" ;\n    folio:tangleCrate \".\" ;\n    \
+         folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {{#root}}\npub fn {body}() {{}}\n```\n"
     )
 }
 

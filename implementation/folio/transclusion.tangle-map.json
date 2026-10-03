@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/transclusion.md",
-  "source_hash": "39774355240bc072",
+  "source_hash": "1bb1e6ee0ff24b2a",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-folio/src/transclusion.rs",
-          "hash": "a89a6d9d6fd31d08"
+          "hash": "22d6bdecf0a5e4d0"
         }
       ]
     }

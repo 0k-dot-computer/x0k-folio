@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/document-vocabulary.md",
-  "source_hash": "8ee85d701c0896c8",
+  "source_hash": "af4134408b8b069b",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-folio/src/document_vocabulary.rs",
-          "hash": "9465a2a0346dd4d0"
+          "hash": "b71645ddcbed667a"
         }
       ]
     }

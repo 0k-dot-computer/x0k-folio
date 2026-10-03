@@ -1,31 +1,19 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/ontology/module-bootstrap
-  type: implementation
-  status: draft
-  summary: The build script that loads the checked vocabulary modules through the library's own loader and emits the constant tables the crate root re-exports — so a consumer gets a linked table without folding anything.
-  concerns:
-  - ontology
-  - vocabulary
-  - bootstrap
-  - turtle
-  - build-script
-  - codegen
-  tangle:
-    crate: crates/x0k-ontology
-    root: build.rs
-  edges:
-    constrained_by:
-    - x0k:architecture/state-representation
-    cites:
-    - x0k:architecture/ontology-modules
-    - x0k:implementation/ontology/concept-facts
-    - x0k:implementation/ontology/load
-    - x0k:implementation/ontology/views
----
 
 # The vocabulary, folded once, at build time
+
+```turtle folio:document
+implementation:ontology\/module-bootstrap a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The build script that loads the checked vocabulary modules through the library's own loader and emits the constant tables the crate root re-exports — so a consumer gets a linked table without folding anything." ;
+    x0k:concerns "ontology", "vocabulary", "bootstrap", "turtle", "build-script", "codegen" ;
+    x0k:cites architecture:ontology-modules,
+        implementation:ontology\/concept-facts,
+        implementation:ontology\/load,
+        implementation:ontology\/views ;
+    x0k:constrainedBy architecture:state-representation ;
+    folio:tangleCrate "crates/x0k-ontology" ;
+    folio:tangleRoot "build.rs" .
+```
 
 Nearly every crate in the tree spells an ontology predicate at some point,
 and most of them want the answer as a `&[&str]` and a `match`. That is the whole
@@ -88,7 +76,7 @@ script uses a proper subset of what each offers.
 
 ```rust {#imports}
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 ```
 
 <a name="chunk-concept-facts-by-path"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#concept-facts-by-path`</sub>
@@ -140,23 +128,35 @@ let modules_dir = load::shipped_modules_dir(&manifest);
 let shapes_dir = load::shapes_dir_for(&modules_dir);
 ```
 
-The rerun declarations name the directories *and* every file in them. A
-directory alone would miss an edit to a file already present; the files alone
-would miss a module being added:
+The rerun declarations name every file the script reads, and no directory.
+Cargo judges a watched path by its mtime, even under checksum freshness, and a
+directory's mtime moves whenever an entry in it is created: a tree whose files
+arrive with their content unchanged (a checkout beside a seeded target, a
+frozen build) would rerun the script, and every crate above x0k-ontology would
+recompile. A module is never added alone, because the set's declared modules
+and its files must agree (the check below): adding one edits a module file
+already watched, and the rerun that edit causes finds the new file. A shape
+file added for an existing module, with nothing else changed, is not seen
+until a watched file changes.
 
 <a name="chunk-declare-reruns"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#declare-reruns`</sub>
 
 ```rust {#declare-reruns}
-println!("cargo:rerun-if-changed={}", modules_dir.display());
-println!("cargo:rerun-if-changed={}", shapes_dir.display());
 println!("cargo:rerun-if-changed=build.rs");
 println!("cargo:rerun-if-changed=src/concept_facts.rs");
 println!("cargo:rerun-if-changed=src/load.rs");
 ```
 
 The file lists are the script's own because it needs them twice over: once to
-declare the reruns, and once to `include_str!` each file's bytes into the
-emitted tables.
+declare the reruns, and once to embed each file's bytes in the emitted tables.
+Each rerun names its file relative to the package root. The loader hands back
+absolute paths, and the modules live outside the package (one level up the
+monorepo), where Cargo keeps an absolute path as it is: the build script's
+fingerprint would then name the tree that ran it. A target seeded from
+another checkout carries that fingerprint, and there it names the other
+checkout's files, so the script reran in every seeded tree and 43 units above
+it recompiled. A relative path Cargo joins to the package root of whichever
+tree it is judging.
 
 <a name="chunk-collect-module-paths"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#collect-module-paths`</sub>
 
@@ -165,7 +165,25 @@ let module_paths = load::module_file_paths(&modules_dir)
     .unwrap_or_else(|error| panic!("{error}"));
 let shape_paths = load::shape_file_paths(&shapes_dir);
 for path in module_paths.iter().chain(shape_paths.iter()) {
-    println!("cargo:rerun-if-changed={}", path.display());
+    println!("cargo:rerun-if-changed={}", package_relative(&manifest, path).display());
+}
+```
+
+The relative path climbs from the package root to the nearest ancestor that
+holds the file, then descends.
+
+<a name="chunk-package-relative"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#package-relative`</sub>
+
+```rust {#package-relative}
+fn package_relative(manifest: &Path, path: &Path) -> PathBuf {
+    for (up, ancestor) in manifest.ancestors().enumerate() {
+        if let Ok(rest) = path.strip_prefix(ancestor) {
+            let mut relative: PathBuf = std::iter::repeat_n("..", up).collect();
+            relative.push(rest);
+            return relative;
+        }
+    }
+    path.to_path_buf()
 }
 ```
 
@@ -226,9 +244,11 @@ fn emit_generated(model: &OntologyModel, module_paths: &[PathBuf], shape_paths: 
 ```
 
 Two of these carry a decision worth naming. `MODULE_FILES` — and `SHAPE_FILES`
-beside it, on the same terms — embeds each file's text by `include_str!` at its
-canonicalized absolute path, so the compiled crate carries the exact bytes it
-was built from and a consumer can compare them against the tree. And `MODULE_TABLES` exists so that code can walk
+beside it, on the same terms — embeds each file's text as a string literal, so
+the compiled crate carries the exact bytes it was built from and a consumer can
+compare them against the tree. A literal, and not an `include_str!` of the
+file: the macro would put the file's absolute path in the crate's dependency
+list, which, like the reruns above, would name the tree that compiled it. And `MODULE_TABLES` exists so that code can walk
 the shipped set without naming a member: which modules a build ships is a
 per-publication choice, and nothing compiled in may assume a particular one
 beyond `core`.
@@ -252,12 +272,7 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
          pub const MODULE_FILES: &[(&str, &str)] = &[\n",
     );
     for path in module_paths {
-        let absolute = path.canonicalize().unwrap_or_else(|e| panic!("canonicalize {}: {e}", path.display()));
-        out.push_str(&format!(
-            "    ({:?}, include_str!({:?})),\n",
-            load::module_file_name(path),
-            absolute.to_string_lossy()
-        ));
+        out.push_str(&format!("    ({:?}, {:?}),\n", load::module_file_name(path), file_text(path)));
     }
     out.push_str("];\n\n");
 
@@ -267,12 +282,7 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
          pub const SHAPE_FILES: &[(&str, &str)] = &[\n",
     );
     for path in shape_paths {
-        let absolute = path.canonicalize().unwrap_or_else(|e| panic!("canonicalize {}: {e}", path.display()));
-        out.push_str(&format!(
-            "    ({:?}, include_str!({:?})),\n",
-            load::module_file_name(path),
-            absolute.to_string_lossy()
-        ));
+        out.push_str(&format!("    ({:?}, {:?}),\n", load::module_file_name(path), file_text(path)));
     }
     out.push_str("];\n\n");
 
@@ -307,6 +317,14 @@ fn emit_module_set(out: &mut String, modules: &[ModuleRecord], module_paths: &[P
 
 Each module's own tables are emitted whether or not they are empty, so
 `MODULE_TABLES` can name every field of every member uniformly:
+
+<a name="chunk-file-text"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#file-text`</sub>
+
+```rust {#file-text}
+fn file_text(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+```
 
 <a name="chunk-emit-module"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#emit-module`</sub>
 
@@ -607,7 +625,7 @@ fn emit_role_expansion(out: &mut String, model: &OntologyModel) {
 
 ## Composing the file
 
-<a name="chunk-root"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [main](#chunk-main) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [emit-module](#chunk-emit-module) · [emit-module-terms](#chunk-emit-module-terms) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes) · [emit-role-expansion](#chunk-emit-role-expansion)</sub>
+<a name="chunk-root"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [concept-facts-by-path](#chunk-concept-facts-by-path) · [main](#chunk-main) · [package-relative](#chunk-package-relative) · [emit-generated](#chunk-emit-generated) · [emit-module-set](#chunk-emit-module-set) · [file-text](#chunk-file-text) · [emit-module](#chunk-emit-module) · [emit-module-terms](#chunk-emit-module-terms) · [emit-bootstrap-facts](#chunk-emit-bootstrap-facts) · [emit-classes](#chunk-emit-classes) · [emit-role-expansion](#chunk-emit-role-expansion)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -618,9 +636,13 @@ fn emit_role_expansion(out: &mut String, model: &OntologyModel) {
 
 <<main>>
 
+<<package-relative>>
+
 <<emit-generated>>
 
 <<emit-module-set>>
+
+<<file-text>>
 
 <<emit-module>>
 

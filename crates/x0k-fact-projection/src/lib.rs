@@ -10,7 +10,7 @@
 //!   the shape facts have *between* substrates — before a Dialog-DB cache
 //!   writer applies its `string:`/`entity:` text encoding, and before the
 //!   entry spine wraps facts in entry payloads.
-//! - `project_envelope` — projects a folio/v1 envelope (viewed
+//! - `project_envelope` — projects a folio document's header (viewed
 //!   through the neutral `ColophonView`) into typed facts. Lifted
 //!   from the folio ingester's `envelope_facts`; the Dialog-DB value
 //!   encoding deliberately did NOT move here — it stays at the Dialog-DB

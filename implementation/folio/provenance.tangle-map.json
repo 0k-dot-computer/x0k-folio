@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/provenance.md",
-  "source_hash": "3f60a1d7441f14f8",
+  "source_hash": "3b219196ee69f0a1",
   "pipelines": [
     {
       "kind": "identity-tangle",

@@ -1006,7 +1006,12 @@ mod refinement_tests {
         if model.modules().iter().any(|module| module.iri == TIME_MODULE_IRI) {
             assert_eq!(
                 model.time_roles(),
-                set(&[DUE, PLANNED, "https://0k.computer/ontology/time#unavailable"]),
+                set(&[
+                    DUE,
+                    "https://0k.computer/ontology/time#occurred",
+                    PLANNED,
+                    "https://0k.computer/ontology/time#unavailable",
+                ]),
             );
         } else {
             assert!(model.time_roles().is_empty());

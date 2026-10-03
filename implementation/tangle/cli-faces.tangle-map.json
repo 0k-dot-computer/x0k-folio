@@ -1,6 +1,6 @@
 {
   "source": "implementation/tangle/cli-faces.md",
-  "source_hash": "15775b287f30d9ee",
+  "source_hash": "7e020802f3e62bc0",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,11 +9,11 @@
       "outputs": [
         {
           "path": "crates/x0k-tangle/src/faces.rs",
-          "hash": "a1ab5a706a01a906"
+          "hash": "d8e29b8b80e8b502"
         },
         {
           "path": "crates/x0k-tangle/tests/cli_faces.rs",
-          "hash": "9e85fd6658d8c116"
+          "hash": "8188b9b91f2c7754"
         }
       ]
     }

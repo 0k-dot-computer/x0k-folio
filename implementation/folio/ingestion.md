@@ -1,33 +1,20 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/ingestion
-  type: implementation
-  status: draft
-  summary: A standalone ingestion engine with host-supplied document projection, named backend ports, and per-source durable recovery.
-  concerns:
-  - folio
-  - backends
-  - fact-plane
-  - entry-spine
-  - fan-out
-  - delivery
-  tangle:
-    crate: crates/x0k-folio-ingest
-    root: src/backend.rs
-  edges:
-    implements:
-    - x0k:design/publish-a-region-as-a-repository
-    motivated_by:
-    - x0k:architecture/folio-backends
-    - x0k:intent/c5ccd003-77d6-4b0d-8824-649f6221c259
-    cites:
-    - x0k:implementation/ontology/concept-region
-    - x0k:implementation/entry-spine/spine
-    - x0k:architecture/state-representation
-    - x0k:architecture/applications-are-tenants
----
 # Document ingestion without a substrate
+
+```turtle folio:document
+implementation:folio\/ingestion a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "A standalone ingestion engine with host-supplied document projection, named backend ports, and per-source durable recovery." ;
+    x0k:concerns "folio", "backends", "fact-plane", "entry-spine", "fan-out", "delivery" ;
+    x0k:cites implementation:ontology\/concept-region,
+        implementation:entry-spine\/spine,
+        architecture:state-representation,
+        architecture:applications-are-tenants ;
+    x0k:implements design:publish-a-region-as-a-repository ;
+    x0k:motivatedBy architecture:folio-backends,
+        intent:c5ccd003-77d6-4b0d-8824-649f6221c259 ;
+    folio:tangleCrate "crates/x0k-folio-ingest" ;
+    folio:tangleRoot "src/backend.rs" .
+```
 
 This package is standalone document tooling. It owns filesystem checkpoint
 I/O and coordinates database adapters; requiring a cell or an x0k process
@@ -203,6 +190,13 @@ pub trait QueryEngine: Send {
 }
 ```
 
+A synchronous sink owns a dedicated thread; an async sink owns a Tokio actor.
+Both admit one operation at a time. Awaited delivery receives its answer on
+a one-shot channel, so it does not spend a blocking-pool worker waiting for
+another worker. Checkpoint file I/O runs on blocking workers, with the
+possible-effect record durable before any source operation is submitted.
+The synchronous compatibility face refuses async sinks before submission.
+
 A backend is the named bundle of the three. The name is what the state
 file acknowledges against and what every fan-out event carries, so two
 backends in one list may not share one:
@@ -210,6 +204,16 @@ backends in one list may not share one:
 <a name="chunk-backend"></a><sub>[`src/backend.rs`](../../crates/x0k-folio-ingest/src/backend.rs) · `#backend`</sub>
 
 ```rust {#backend}
+/// Explicit async source sink; synchronous callers never drive its effects.
+pub type SinkFuture<'a,T> = std::pin::Pin<Box<dyn std::future::Future<Output=Result<T>>+Send+'a>>;
+pub trait AsyncFactSink: Send {
+    fn incarnation(&mut self)->SinkFuture<'_,Option<String>>;
+    fn replace_source<'a>(&'a mut self,source:&'a str,batches:&'a FactBatches,
+        prior:&'a [FactEntry],cause:&'a str)->SinkFuture<'a,usize>;
+    fn facts_caused_by<'a>(&'a mut self,cause:&'a str)->SinkFuture<'a,Option<Vec<FactEntry>>>;
+    fn retains_history(&self)->bool;
+}
+
 /// A named backend: a required sink and its optional listener and engine.
 pub struct Backend {
     pub name: String,
@@ -228,6 +232,11 @@ impl Backend {
         let worker = crate::delivery::Worker::new(Box::new(sink));
         Self { name: name.into(), sink: Box::new(worker.clone()), worker,
             grace: Some(std::time::Duration::from_millis(250)), notifier: None, query: None }
+    }
+    pub fn new_async(name:impl Into<String>,sink:impl AsyncFactSink+'static)->Self {
+        let worker=crate::delivery::Worker::new_async(Box::new(sink));
+        Self {name:name.into(),sink:Box::new(worker.clone()),worker,
+            grace:Some(std::time::Duration::from_millis(250)),notifier:None,query:None}
     }
     /// Access the worker-backed sink without replacing its delivery identity.
     pub fn sink(&self) -> &dyn FactSink { self.sink.as_ref() }
@@ -750,7 +759,7 @@ not a claim of fresh results or a complete freshness/status interface.
 ```toml {#ingest-manifest file="Cargo.toml"}
 [package]
 name = "x0k-folio-ingest"
-version = "0.1.1"
+version = "0.2.0"
 edition = { workspace = true }
 license = "MIT"
 description = "Standalone document ingestion and independent backend recovery"
@@ -760,7 +769,7 @@ readme = "../../README.md"
 keywords = ["literate-programming", "tangle", "markdown", "documentation"]
 
 [dependencies]
-x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.1.1" }
+x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.2.0" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -794,7 +803,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathChangeEvent {
-    /// `path` still exists and parsed as folio/v1.
+    /// `path` still exists and parsed as a folio document.
     Upserted(PathBuf),
     /// `path` no longer exists on disk.
     Removed(PathBuf),
@@ -827,7 +836,19 @@ use tracing::{info, trace, warn};
 use x0k_fact_projection::{FactEntry};
 use x0k_fact_projection::payload::{file_content_cause, file_deleted_cause, FactPayload};
 use crate::backend::{self, Backend, FactBatches, backend_names};
-use crate::checkpoint::{load_state, write_source_state};
+use crate::checkpoint::write_source_state;
+
+async fn load_state(path:&Path)->Result<IngesterState> {
+    let path=path.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::checkpoint::load_state(&path)).await?
+}
+async fn persist_source(path:&Path,key:&str,state:&IngesterState)->Result<()> {
+    let mut snapshot=IngesterState::default();
+    if let Some(file)=state.files.get(key) {snapshot.files.insert(key.into(),file.clone());}
+    if let Some(recovery)=state.recovery.get(key) {snapshot.recovery.insert(key.into(),recovery.clone());}
+    let path=path.to_path_buf();let key=key.to_string();
+    tokio::task::spawn_blocking(move || write_source_state(&path,&key,&snapshot)).await?
+}
 ```
 
 Discovery and projection remain explicit host policies; the engine retains their distinction between a non-document and a rejected document.
@@ -845,7 +866,7 @@ pub struct DocumentProjection {
 
 /// None means a non-document; Err preserves its last-good projection.
 /// Discovery must cover the complete source set owned by this checkpoint.
-pub trait DocumentSource: Send {
+pub trait DocumentSource: Send + Sync {
     /// Read a discovered source; virtual sources may override filesystem I/O.
     fn read(&self, path: &Path) -> Result<Vec<u8>> { Ok(std::fs::read(path)?) }
 
@@ -969,10 +990,15 @@ fn longest_grace(registry: &[Backend]) -> Option<std::time::Duration> {
         backend.grace.map(|grace| longest.max(grace))
     })
 }
-fn probe_incarnations(sinks: &[(String, crate::delivery::Worker)], deadline: Option<std::time::Instant>)
+async fn probe_incarnations(sinks: &[(String, crate::delivery::Worker)], deadline: Option<std::time::Instant>)
     -> BTreeMap<String, Result<Option<String>>> {
-    let submitted: Vec<_> = sinks.iter().map(|(name,worker)| (name.clone(),worker.start_identity())).collect();
-    submitted.into_iter().map(|(name,ticket)| (name,ticket.and_then(|ticket|ticket.identity_until(deadline)))).collect()
+    let submitted: Vec<_> = sinks.iter().map(|(name,worker)| (name.clone(),worker.identity_awaitable())).collect();
+    let mut answers=BTreeMap::new();
+    for (name,ticket) in submitted {
+        let result=match ticket {Ok(ticket)=>ticket.identity_async(deadline).await,Err(error)=>Err(error)};
+        answers.insert(name,result);
+    }
+    answers
 }
 fn bind_incarnation(revision: &mut BackendRevision, value: &Result<Option<String>>,
     acked: &mut BTreeSet<String>, name: &str) -> bool {
@@ -999,7 +1025,7 @@ fn bind_incarnation(revision: &mut BackendRevision, value: &Result<Option<String
 }
 /// Persist possible effects before delivering them; failed backends keep their
 /// own prior facts. Regression: recovery_survives_backend_outage_and_restart.
-pub fn deliver(
+pub async fn deliver(
     state: &mut IngesterState,
     state_path: &Path,
     path_key: &str,
@@ -1029,7 +1055,7 @@ let (sinks, grace) = {
         longest_grace(&registry))
 };
 let delivery_started = std::time::Instant::now();
-let identities = probe_incarnations(&sinks, grace.map(|grace| delivery_started + grace / 3));
+let identities = probe_incarnations(&sinks, grace.map(|grace| delivery_started + grace / 3)).await;
 let prior = state.files.get(path_key).cloned();
 if prior.is_none() && desired.is_none() {
     return Ok(0);
@@ -1108,7 +1134,7 @@ for sink in &sinks {
     let revision = &recovery.revisions[&sink.0];
     if revision.facts.is_none() {
         let cause = file_content_cause(revision.applied_hash.as_deref().unwrap_or_default());
-        pending_reads.insert(sink.0.clone(), sink.1.start_read(&cause));
+        pending_reads.insert(sink.0.clone(), sink.1.read_awaitable(&cause));
     }
 }
 let read_wait_started = delivery_started;
@@ -1118,8 +1144,9 @@ for sink in sinks.iter() {
     if !available.contains(&sink.0) { continue; }
     let revision = recovery.revisions.get_mut(&sink.0).unwrap();
     if revision.facts.is_none() {
-        let recovered = pending_reads.remove(&sink.0).unwrap()
-            .and_then(|ticket| ticket.facts_until(read_deadline));
+        let recovered = match pending_reads.remove(&sink.0).unwrap() {
+            Ok(ticket)=>ticket.facts_async(read_deadline).await,Err(error)=>Err(error),
+        };
         match recovered {
             Ok(Some(facts)) => {
                 revision.facts = Some(facts.iter().map(|f| FactPayload::from_fact(f).to_bytes()).collect());
@@ -1157,7 +1184,7 @@ state.files.insert(path_key.to_string(), IngestedFile {
     acked_by: acked.clone(),
 });
 // No sink call is permitted before this durable write succeeds.
-write_source_state(state_path, path_key, state)?;
+persist_source(state_path, path_key, state).await?;
 ```
 
 Only complete backend success narrows its possible facts to the new projection. Its siblings retain independent obligations.
@@ -1177,12 +1204,12 @@ which is the smallest record that would have named the culprit.
 let mut submitted = Vec::new();
 for sink in &sinks {
     let Some(possible) = ready.remove(&sink.0) else { continue };
-    submitted.push((sink.0.clone(),sink.1.source(path_key,&batches,possible,&cause)));
+    submitted.push((sink.0.clone(),sink.1.source_awaitable(path_key,&batches,possible,&cause)));
 }
 let deadline = completion_grace.map(|grace| std::time::Instant::now() + grace);
 for (name, ticket) in submitted {
     let delivery = std::time::Instant::now();
-    let result = ticket.and_then(|ticket| ticket.count_until(deadline));
+    let result = match ticket {Ok(ticket)=>ticket.count_async(deadline).await,Err(error)=>Err(error)};
     let elapsed_ms = delivery.elapsed().as_millis() as u64;
     match &result {
         Ok(facts) => info!(path = %path_key, backend = %name, facts = *facts,
@@ -1211,7 +1238,7 @@ if deleted && known.is_subset(&acked) {
     state.files.remove(path_key);
     state.recovery.remove(path_key);
 }
-write_source_state(state_path, path_key, state)?;
+persist_source(state_path, path_key, state).await?;
 Ok(footprint)
 ```
 
@@ -1230,13 +1257,13 @@ pub async fn reconcile(
     validate_backend_names(&lock_backends(backends))?;
     let paths = source.discover(repo_root)?;
     let names = backend_names(&lock_backends(backends));
-    let mut state = load_state(state_path)?;
+    let mut state = load_state(state_path).await?;
     let (identity_sinks, identity_grace) = {
         let registry=lock_backends(backends);
         (registry.iter().map(|b|(b.name.clone(),b.worker.clone())).collect::<Vec<_>>(),
             longest_grace(&registry))
     };
-    let identities=probe_incarnations(&identity_sinks,identity_grace.map(|grace| std::time::Instant::now()+grace));
+    let identities=probe_incarnations(&identity_sinks,identity_grace.map(|grace| std::time::Instant::now()+grace)).await;
     let mut ingested = 0usize;
     let mut total_facts = 0usize;
     let mut seen_paths: HashSet<String> = HashSet::new();
@@ -1265,7 +1292,7 @@ pub async fn reconcile(
                 }
             }
             if before != (record.clone(),file.clone()) {
-                write_source_state(state_path,&path_key,&state)?;
+                persist_source(state_path,&path_key,&state).await?;
             }
         }
         let bytes = match source.read(path) {
@@ -1299,7 +1326,7 @@ pub async fn reconcile(
             }
         };
         let facts_written = deliver(
-            &mut state, state_path, &path_key, backends, projection.as_ref())?;
+            &mut state, state_path, &path_key, backends, projection.as_ref()).await?;
         if projection.is_none() { continue; }
         total_facts += facts_written;
         ingested += 1;
@@ -1319,7 +1346,7 @@ pub async fn reconcile(
         .cloned()
         .collect();
     for key in gone {
-        deliver(&mut state, state_path, &key, backends, None)?;
+        deliver(&mut state, state_path, &key, backends, None).await?;
     }
     Ok((paths.len(), ingested, total_facts))
 }
@@ -1331,7 +1358,7 @@ An individual event uses the same projection and delivery functions, so the watc
 
 ```rust {#apply-source-event file="src/lifecycle.rs"}
 /// Apply one source event using the same checkpoint and delivery protocol.
-pub fn apply_path_change(
+pub async fn apply_path_change(
     source: &dyn DocumentSource,
     path: &Path,
     state_path: &Path,
@@ -1339,15 +1366,15 @@ pub fn apply_path_change(
 ) -> Result<usize> {
     validate_backend_names(&lock_backends(backends))?;
     if !source.accepts(path) { return Ok(0); }
-    let mut state = load_state(state_path)?;
+    let mut state = load_state(state_path).await?;
     let key = path.to_string_lossy().to_string();
     if !path.exists() {
-        return deliver(&mut state, state_path, &key, backends, None);
+        return deliver(&mut state, state_path, &key, backends, None).await;
     }
     let bytes = source.read(path)?;
     let hash = source.revision_hash(&bytes);
     let projection = source.project(path, &bytes, &hash)?;
-    deliver(&mut state, state_path, &key, backends, projection.as_ref())
+    deliver(&mut state, state_path, &key, backends, projection.as_ref()).await
 }
 ```
 
@@ -1478,15 +1505,15 @@ async fn invalid_source_keeps_last_good_but_non_document_retracts() {
     let view = MemorySink::default();
     let stores = Mutex::new(vec![Backend::new("memory", view.clone())]);
     std::fs::write(&file, "urn:paper=Readable").unwrap();
-    lifecycle::apply_path_change(&Lines, &file, &state, &stores).unwrap();
+    lifecycle::apply_path_change(&Lines, &file, &state, &stores).await.unwrap();
     let before = view.facts();
     std::fs::write(&file, "invalid").unwrap();
-    assert!(lifecycle::apply_path_change(&Lines, &file, &state, &stores).is_err());
+    assert!(lifecycle::apply_path_change(&Lines, &file, &state, &stores).await.is_err());
     let (_, ingested, _) = lifecycle::reconcile(&mut Lines, root.path(), &state, &stores, None).await.unwrap();
     assert_eq!(ingested, 0);
     assert_eq!(view.facts(), before);
     std::fs::write(&file, "").unwrap();
-    lifecycle::apply_path_change(&Lines, &file, &state, &stores).unwrap();
+    lifecycle::apply_path_change(&Lines, &file, &state, &stores).await.unwrap();
     assert!(view.facts().is_empty());
 }
 ```
@@ -1511,7 +1538,7 @@ async fn ambiguous_backend_names_cannot_write_checkpoints_or_facts() {
         let b = MemorySink::default();
         let stores = Mutex::new(vec![Backend::new(names[0], a.clone()), Backend::new(names[1], b.clone())]);
         assert!(lifecycle::reconcile(&mut Lines, root.path(), &state, &stores, None).await.is_err());
-        assert!(lifecycle::apply_path_change(&Lines, &file, &state, &stores).is_err());
+        assert!(lifecycle::apply_path_change(&Lines, &file, &state, &stores).await.is_err());
         assert!(!x0k_folio_ingest::checkpoint::source_directory(&state).exists());
         assert!(a.facts().is_empty() && b.facts().is_empty());
     }
@@ -1574,8 +1601,8 @@ so a regression fails without leaving a permanently blocked test thread.
 <a name="chunk-independent-delivery-regression"></a><sub>[`tests/standalone.rs`](../../crates/x0k-folio-ingest/tests/standalone.rs) · `#independent-delivery-regression`</sub>
 
 ```rust {#independent-delivery-regression file="tests/standalone.rs"}
-#[test]
-fn blocked_backend_does_not_own_registry_or_hold_healthy_delivery() {
+#[tokio::test]
+async fn blocked_backend_does_not_own_registry_or_hold_healthy_delivery() {
     use std::sync::Condvar;
     struct Blocked { entered: std::sync::mpsc::Sender<()>, gate: Arc<(Mutex<bool>, Condvar)> }
     impl FactSink for Blocked {
@@ -1601,7 +1628,9 @@ fn blocked_backend_does_not_own_registry_or_hold_healthy_delivery() {
     let projection = Lines.project(Path::new("a.txt"),b"urn:example=value","revision").unwrap().unwrap();
     let shared = backends.clone();
     let operation = std::thread::spawn(move || {
-        lifecycle::deliver(&mut Default::default(),&path,"source",&shared,Some(&projection)).unwrap();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async move {
+            lifecycle::deliver(&mut Default::default(),&path,"source",&shared,Some(&projection)).await.unwrap();
+        });
     });
     waiting.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
     let deadline = std::time::Instant::now()+std::time::Duration::from_millis(200);
@@ -1618,130 +1647,189 @@ fn blocked_backend_does_not_own_registry_or_hold_healthy_delivery() {
 
 ## Worker ownership and completion
 
-One thread owns each sink and admits at most one in-flight operation. A busy
+One thread owns each blocking sink; one async task owns each async sink.
+Each admits at most one in-flight operation. A busy
 sink retains its unacknowledged source in the durable journal; subsequent
-sources can still reach healthy workers. All source effects are submitted before
+sources can still reach healthy workers. The lifecycle awaits responses and persists checkpoints on blocking workers.
+A synchronous sink call refuses an async backend before submitting anything.
+All source effects are submitted before
 the coordinator waits, using one completion deadline. Late acknowledgements are
 not applied to newer revisions; the next reconciliation replays safely.
 
 <a name="chunk-backend-worker"></a><sub>[`src/delivery.rs`](../../crates/x0k-folio-ingest/src/delivery.rs) · `#backend-worker`</sub>
 
 ```rust {#backend-worker file="src/delivery.rs"}
-use std::{sync::{Arc, mpsc, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
-use anyhow::{Result, anyhow};
+use std::{sync::{Arc,mpsc,atomic::{AtomicBool,Ordering}},time::{Duration,Instant}};
+use anyhow::{Result,anyhow};
 use x0k_fact_projection::FactEntry;
-use crate::backend::{FactBatches, FactSink};
+use crate::backend::{FactBatches,FactSink,AsyncFactSink};
 
 enum Operation {
-    Source(String, FactBatches, Vec<FactEntry>, String),
-    Replace(String, Vec<FactEntry>, String),
-    Retract(Vec<FactEntry>, String),
-    Read(String),
-    Identity,
+    Source(String,FactBatches,Vec<FactEntry>,String),
+    Replace(String,Vec<FactEntry>,String), Retract(Vec<FactEntry>,String),
+    Read(String), Identity,
 }
-enum Reply { Count(usize), Facts(Option<Vec<FactEntry>>), Identity(Option<String>) }
-struct Request { operation: Operation, response: mpsc::SyncSender<Result<Reply>> }
-/// One fixed worker and one in-flight operation; busy work never queues history.
+pub(crate) enum Reply {Count(usize),Facts(Option<Vec<FactEntry>>),Identity(Option<String>)}
+enum Response {
+    Blocking(mpsc::SyncSender<Result<Reply>>),
+    Async(tokio::sync::oneshot::Sender<Result<Reply>>),
+}
+impl Response {
+    fn send(self,reply:Result<Reply>) {
+        match self {Self::Blocking(tx)=>{let _=tx.send(reply);},Self::Async(tx)=>{let _=tx.send(reply);}}
+    }
+}
+struct Request {operation:Operation,response:Response}
 #[derive(Clone)]
-pub(crate) struct Worker {
-    sender: mpsc::SyncSender<Request>,
-    busy: Arc<AtomicBool>,
-    history: bool,
+enum Sender {Blocking(mpsc::SyncSender<Request>),Async(tokio::sync::mpsc::Sender<Request>)}
+/// One admitted operation per backend; cancellation leaves the actor responsible for completion.
+#[derive(Clone)]
+pub(crate) struct Worker {sender:Sender,busy:Arc<AtomicBool>,history:bool}
+pub(crate) enum Ticket {
+    Blocking(mpsc::Receiver<Result<Reply>>),
+    Async(tokio::sync::oneshot::Receiver<Result<Reply>>),
 }
-pub(crate) struct Ticket(mpsc::Receiver<Result<Reply>>);
 impl Ticket {
-    /// One reply, waited for until `deadline` — or until it arrives, when
-    /// there is no deadline. `recv` rather than some very distant instant,
-    /// because "no clock is watching this" is what a batch verb means and a
-    /// far-future `Instant` is arithmetic that can overflow.
-    fn receive(self, deadline: Option<Instant>, pending: &'static str) -> Result<Reply> {
+    fn receive(self,deadline:Option<Instant>,pending:&'static str)->Result<Reply> {
+        let Self::Blocking(receiver)=self else {return Err(anyhow!("async backend requires awaited delivery"));};
         match deadline {
-            Some(deadline) => self.0.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .map_err(|_| anyhow!(pending))?,
-            None => self.0.recv().map_err(|_| anyhow!(pending))?,
+            Some(at)=>receiver.recv_timeout(at.saturating_duration_since(Instant::now())).map_err(|_|anyhow!(pending))?,
+            None=>receiver.recv().map_err(|_|anyhow!(pending))?,
         }
     }
-    pub(crate) fn identity_until(self, deadline: Option<Instant>) -> Result<Option<String>> {
-        match self.receive(deadline, "backend identity pending")? {
-            Reply::Identity(identity) => Ok(identity),
-            _ => Err(anyhow!("unexpected backend response")),
+    async fn receive_async(self,deadline:Option<Instant>,pending:&'static str)->Result<Reply> {
+        match self {
+            Self::Blocking(_)=>tokio::task::spawn_blocking(move || self.receive(deadline,pending)).await?,
+            Self::Async(receiver)=>match deadline {
+                Some(at)=>tokio::time::timeout_at(at.into(),receiver).await
+                    .map_err(|_|anyhow!(pending))?.map_err(|_|anyhow!(pending))?,
+                None=>receiver.await.map_err(|_|anyhow!(pending))?,
+            },
         }
     }
-
-    pub(crate) fn facts_until(self, deadline: Option<Instant>) -> Result<Option<Vec<FactEntry>>> {
-        match self.receive(deadline, "backend read pending")? {
-            Reply::Facts(facts) => Ok(facts),
-            _ => Err(anyhow!("unexpected backend response")),
+    pub(crate) fn identity_until(self,deadline:Option<Instant>)->Result<Option<String>> {
+        match self.receive(deadline,"backend identity pending")? {
+            Reply::Identity(value)=>Ok(value),_=>Err(anyhow!("unexpected backend response")),
         }
     }
-    pub(crate) fn count_until(self, deadline: Option<Instant>) -> Result<usize> {
-        match self.receive(deadline, "backend completion pending")? {
-            Reply::Count(count) => Ok(count),
-            _ => Err(anyhow!("unexpected backend response")),
+    pub(crate) fn facts_until(self,deadline:Option<Instant>)->Result<Option<Vec<FactEntry>>> {
+        match self.receive(deadline,"backend read pending")? {
+            Reply::Facts(value)=>Ok(value),_=>Err(anyhow!("unexpected backend response")),
+        }
+    }
+    pub(crate) fn count_until(self,deadline:Option<Instant>)->Result<usize> {
+        match self.receive(deadline,"backend completion pending")? {
+            Reply::Count(value)=>Ok(value),_=>Err(anyhow!("unexpected backend response")),
+        }
+    }
+    pub(crate) async fn identity_async(self,deadline:Option<Instant>)->Result<Option<String>> {
+        match self.receive_async(deadline,"backend identity pending").await? {
+            Reply::Identity(value)=>Ok(value),_=>Err(anyhow!("unexpected backend response")),
+        }
+    }
+    pub(crate) async fn facts_async(self,deadline:Option<Instant>)->Result<Option<Vec<FactEntry>>> {
+        match self.receive_async(deadline,"backend read pending").await? {
+            Reply::Facts(value)=>Ok(value),_=>Err(anyhow!("unexpected backend response")),
+        }
+    }
+    pub(crate) async fn count_async(self,deadline:Option<Instant>)->Result<usize> {
+        match self.receive_async(deadline,"backend completion pending").await? {
+            Reply::Count(value)=>Ok(value),_=>Err(anyhow!("unexpected backend response")),
         }
     }
 }
 impl Worker {
-    pub(crate) fn new(mut sink: Box<dyn FactSink>) -> Self {
-        let history = sink.retains_history();
-        let (sender, receiver) = mpsc::sync_channel::<Request>(1);
-        let busy = Arc::new(AtomicBool::new(false));
-        let running = busy.clone();
-        // A failed spawn drops receiver; every submission then fails closed.
-        let _ = std::thread::Builder::new().name("folio-backend".into()).spawn(move || {
-            while let Ok(request) = receiver.recv() {
-                let result = match request.operation {
-                    Operation::Source(source,batches,prior,cause) => sink.replace_source(&source,&batches,&prior,&cause).map(Reply::Count),
-                    Operation::Replace(entity,facts,cause) => sink.replace(&entity,&facts,&cause).map(Reply::Count),
-                    Operation::Retract(facts,cause) => sink.retract(&facts,&cause).map(Reply::Count),
-                    Operation::Identity => sink.incarnation().map(Reply::Identity),
-                    Operation::Read(cause) => sink.facts_caused_by(&cause).map(Reply::Facts),
+    pub(crate) fn new(mut sink:Box<dyn FactSink>)->Self {
+        let history=sink.retains_history();
+        let (sender,receiver)=mpsc::sync_channel::<Request>(1);
+        let busy=Arc::new(AtomicBool::new(false));let running=busy.clone();
+        let _=std::thread::Builder::new().name("folio-backend".into()).spawn(move || {
+            while let Ok(request)=receiver.recv() {
+                let result=match request.operation {
+                    Operation::Source(s,b,p,c)=>sink.replace_source(&s,&b,&p,&c).map(Reply::Count),
+                    Operation::Replace(e,f,c)=>sink.replace(&e,&f,&c).map(Reply::Count),
+                    Operation::Retract(f,c)=>sink.retract(&f,&c).map(Reply::Count),
+                    Operation::Identity=>sink.incarnation().map(Reply::Identity),
+                    Operation::Read(c)=>sink.facts_caused_by(&c).map(Reply::Facts),
                 };
-                running.store(false,Ordering::Release);
-                let _ = request.response.send(result);
+                running.store(false,Ordering::Release);request.response.send(result);
             }
         });
-        Self { sender,busy,history }
+        Self {sender:Sender::Blocking(sender),busy,history}
     }
-    fn submit(&self, operation: Operation) -> Result<Ticket> {
+    pub(crate) fn new_async(mut sink:Box<dyn AsyncFactSink>)->Self {
+        let history=sink.retains_history();
+        let (sender,mut receiver)=tokio::sync::mpsc::channel::<Request>(1);
+        let busy=Arc::new(AtomicBool::new(false));let running=busy.clone();
+        tokio::spawn(async move {
+            while let Some(request)=receiver.recv().await {
+                let result=match request.operation {
+                    Operation::Source(s,b,p,c)=>sink.replace_source(&s,&b,&p,&c).await.map(Reply::Count),
+                    Operation::Identity=>sink.incarnation().await.map(Reply::Identity),
+                    Operation::Read(c)=>sink.facts_caused_by(&c).await.map(Reply::Facts),
+                    _=>Err(anyhow!("async source sink requires source replacement")),
+                };
+                running.store(false,Ordering::Release);request.response.send(result);
+            }
+        });
+        Self {sender:Sender::Async(sender),busy,history}
+    }
+    fn synchronous(&self)->Result<()> {
+        anyhow::ensure!(matches!(self.sender,Sender::Blocking(_)),"async backend requires awaited delivery");
+        Ok(())
+    }
+    fn submit(&self,operation:Operation,awaitable:bool)->Result<Ticket> {
         anyhow::ensure!(self.busy.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_ok(),
             "backend still busy; source remains pending");
-        let (response, receiver) = mpsc::sync_channel(1);
-        if self.sender.try_send(Request { operation,response }).is_err() {
-            self.busy.store(false,Ordering::Release);
-            return Err(anyhow!("backend worker unavailable"));
-        }
-        Ok(Ticket(receiver))
+        let (response,ticket)=if awaitable {
+            let (tx,rx)=tokio::sync::oneshot::channel();
+            (Response::Async(tx),Ticket::Async(rx))
+        } else {
+            let (tx,rx)=mpsc::sync_channel(1);
+            (Response::Blocking(tx),Ticket::Blocking(rx))
+        };
+        let request=Request {operation,response};
+        let result=match &self.sender {
+            Sender::Blocking(sender)=>sender.try_send(request).map_err(|_|anyhow!("backend worker unavailable")),
+            Sender::Async(sender)=>sender.try_send(request).map_err(|_|anyhow!("backend worker unavailable")),
+        }.map(|_|ticket);
+        if result.is_err() {self.busy.store(false,Ordering::Release);}
+        result
     }
-    pub(crate) fn source(&self, source:&str,batches:&FactBatches,prior:Vec<FactEntry>,cause:&str) -> Result<Ticket> {
-        self.submit(Operation::Source(source.into(),batches.clone(),prior,cause.into()))
+    pub(crate) fn source(&self,source:&str,batches:&FactBatches,prior:Vec<FactEntry>,cause:&str)->Result<Ticket> {
+        self.submit(Operation::Source(source.into(),batches.clone(),prior,cause.into()),false)
     }
-    pub(crate) fn start_identity(&self) -> Result<Ticket> { self.submit(Operation::Identity) }
-    pub(crate) fn start_read(&self,cause:&str) -> Result<Ticket> { self.submit(Operation::Read(cause.into())) }
-    pub(crate) fn read(&self,cause:&str,grace:Duration) -> Result<Option<Vec<FactEntry>>> {
-        let ticket = self.submit(Operation::Read(cause.into()))?;
-        match ticket.0.recv_timeout(grace).map_err(|_| anyhow!("backend read pending"))?? {
-            Reply::Facts(facts) => Ok(facts),
-            _ => Err(anyhow!("unexpected backend response")),
-        }
+    pub(crate) fn source_awaitable(&self,source:&str,batches:&FactBatches,prior:Vec<FactEntry>,cause:&str)->Result<Ticket> {
+        self.submit(Operation::Source(source.into(),batches.clone(),prior,cause.into()),true)
+    }
+    pub(crate) fn identity_awaitable(&self)->Result<Ticket>{self.submit(Operation::Identity,true)}
+    pub(crate) fn read_awaitable(&self,cause:&str)->Result<Ticket>{self.submit(Operation::Read(cause.into()),true)}
+    pub(crate) fn start_identity(&self)->Result<Ticket>{self.submit(Operation::Identity,false)}
+    pub(crate) fn start_read(&self,cause:&str)->Result<Ticket>{self.submit(Operation::Read(cause.into()),false)}
+    pub(crate) fn read(&self,cause:&str,grace:Duration)->Result<Option<Vec<FactEntry>>> {
+        self.synchronous()?;
+        self.start_read(cause)?.facts_until(Some(Instant::now()+grace))
     }
 }
 impl FactSink for Worker {
-    fn incarnation(&mut self) -> Result<Option<String>> {
+    fn incarnation(&mut self)->Result<Option<String>> {
+        self.synchronous()?;
         self.start_identity()?.identity_until(Some(Instant::now()+Duration::from_secs(30)))
     }
-
-    fn replace_source(&mut self,source:&str,batches:&FactBatches,prior:&[FactEntry],cause:&str) -> Result<usize> {
+    fn replace_source(&mut self,source:&str,batches:&FactBatches,prior:&[FactEntry],cause:&str)->Result<usize> {
+        self.synchronous()?;
         self.source(source,batches,prior.to_vec(),cause)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
-    fn replace(&mut self,entity:&str,facts:&[FactEntry],cause:&str) -> Result<usize> {
-        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()))?.count_until(Some(Instant::now()+Duration::from_secs(30)))
+    fn replace(&mut self,entity:&str,facts:&[FactEntry],cause:&str)->Result<usize> {
+        self.synchronous()?;
+        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()),false)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
-    fn retract(&mut self,facts:&[FactEntry],cause:&str) -> Result<usize> {
-        self.submit(Operation::Retract(facts.into(),cause.into()))?.count_until(Some(Instant::now()+Duration::from_secs(30)))
+    fn retract(&mut self,facts:&[FactEntry],cause:&str)->Result<usize> {
+        self.synchronous()?;
+        self.submit(Operation::Retract(facts.into(),cause.into()),false)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
     }
-    fn facts_caused_by(&self,cause:&str) -> Result<Option<Vec<FactEntry>>> { self.read(cause,Duration::from_secs(30)) }
-    fn retains_history(&self) -> bool { self.history }
+    fn facts_caused_by(&self,cause:&str)->Result<Option<Vec<FactEntry>>>{self.read(cause,Duration::from_secs(30))}
+    fn retains_history(&self)->bool{self.history}
 }
 ```
 
@@ -1775,7 +1863,7 @@ async fn timed_out_backend_stays_pending_while_next_source_reaches_healthy_sink(
         let backends = Mutex::new(list);
         for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B")] {
             let path=root.path().join(name); std::fs::write(&path,text).unwrap();
-            lifecycle::apply_path_change(&Lines,&path,&state_path,&backends).unwrap();
+            lifecycle::apply_path_change(&Lines,&path,&state_path,&backends).await.unwrap();
         }
         let pending = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
         assert_eq!(healthy.facts().len(),2);
@@ -1832,7 +1920,7 @@ async fn a_backend_slower_than_any_grace_still_acknowledges_every_source_when_wa
     ]);
     for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B"),("c.txt","urn:c=C")] {
         let path=root.path().join(name); std::fs::write(&path,text).unwrap();
-        lifecycle::apply_path_change(&Lines,&path,&state_path,&bounded).unwrap();
+        lifecycle::apply_path_change(&Lines,&path,&state_path,&bounded).await.unwrap();
     }
     let abandoned = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
     assert!(abandoned.files.values().all(|file| !file.acked_by.contains("slow")),
@@ -1849,7 +1937,7 @@ async fn a_backend_slower_than_any_grace_still_acknowledges_every_source_when_wa
     ]);
     for (name,text) in [("a.txt","urn:a=A"),("b.txt","urn:b=B"),("c.txt","urn:c=C")] {
         let path=root.path().join(name); std::fs::write(&path,text).unwrap();
-        lifecycle::apply_path_change(&Lines,&path,&state_path,&waiting).unwrap();
+        lifecycle::apply_path_change(&Lines,&path,&state_path,&waiting).await.unwrap();
     }
     let settled = x0k_folio_ingest::checkpoint::load_state(&state_path).unwrap();
     assert_eq!(settled.files.len(), 3);
@@ -1925,8 +2013,8 @@ async fn identity_failure_and_loss_do_not_reuse_acks_and_new_store_replays_only_
         assert_eq!(state.recovery[source.to_str().unwrap()].revisions["replaceable"].incarnation.as_deref(),Some("new-store"));
     }
 }
-#[test]
-fn blocked_identity_reserves_time_for_healthy_source_acknowledgement() {
+#[tokio::test]
+async fn blocked_identity_reserves_time_for_healthy_source_acknowledgement() {
     struct BlockedIdentity(std::sync::mpsc::Receiver<()>);
     impl FactSink for BlockedIdentity {
         fn incarnation(&mut self)->Result<Option<String>> {
@@ -1947,7 +2035,7 @@ fn blocked_identity_reserves_time_for_healthy_source_acknowledgement() {
         let mut state=lifecycle::IngesterState::default();
         for source in ["urn:first","urn:second"] {
             let desired=Lines.project(Path::new("source.txt"),format!("{source}=value").as_bytes(),"revision").unwrap().unwrap();
-            lifecycle::deliver(&mut state,&scratch.path().join("state"),source,&backends,Some(&desired)).unwrap();
+            lifecycle::deliver(&mut state,&scratch.path().join("state"),source,&backends,Some(&desired)).await.unwrap();
             assert_eq!(state.files[source].acked_by.iter().cloned().collect::<Vec<_>>(),vec!["healthy"]);
         }
         assert_eq!(healthy.facts().len(),2);

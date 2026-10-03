@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathChangeEvent {
-    /// `path` still exists and parsed as folio/v1.
+    /// `path` still exists and parsed as a folio document.
     Upserted(PathBuf),
     /// `path` no longer exists on disk.
     Removed(PathBuf),

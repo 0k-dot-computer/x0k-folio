@@ -211,7 +211,7 @@ fn read_provenance(clone: &Path) -> Result<Provenance> {
     serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
-/// Find the publication doc whose `id:` is `uri` under
+/// Find the publication doc whose header subject is `uri` under
 /// the corpus's publications directory.
 fn find_publication_doc(workspace: &Path, layout: &CorpusLayout, uri: &str) -> Result<PathBuf> {
     let dir = workspace.join(layout.class_dir("publication"));
@@ -291,7 +291,7 @@ fn published_crates(pub_doc: &Path) -> Result<Vec<String>> {
     let (env, _) = parse_envelope(&text).map_err(|e| anyhow!("parsing publication: {e:?}"))?;
     Ok(env
         .edges
-        .get("publishes")
+        .get("x0k:publishes")
         .into_iter()
         .flatten()
         .filter_map(|u| u.strip_prefix("x0k:software-module/"))
@@ -784,7 +784,7 @@ mod tests {
 
     #[test]
     fn touched_chunks_names_the_innermost_chunk() {
-        let doc = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/t/d\n  type: implementation\n  tangle:\n    crate: c\n    root: src/lib.rs\n---\n\n```rust {#inner}\nfn inner() -> u8 { 1 }\n```\n\n```rust {#root}\nfn outer() {}\n<<inner>>\n```\n";
+        let doc = "```turtle folio:document\nimplementation:t\\/d a x0k:Implementation ;\n    folio:tangleCrate \"c\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n\n```rust {#inner}\nfn inner() -> u8 { 1 }\n```\n\n```rust {#root}\nfn outer() {}\n<<inner>>\n```\n";
         let old = "// @generated\nfn outer() {}\nfn inner() -> u8 { 1 }\n";
         let new = "// @generated\nfn outer() {}\nfn inner() -> u8 { 2 }\n";
         assert_eq!(touched_chunks(doc, old, new), vec!["inner".to_string()]);

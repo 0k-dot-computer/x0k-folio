@@ -1,29 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/icon/emit
-  type: implementation
-  status: draft
-  summary: One writer for every textual form of an icon — the normalized declaration, a standalone SVG file per scheme, inline SVG over CSS variables, and a symbol sprite of many — deterministic to the byte, with a fixed attribute order and one way to write a number, so that a declaration round-trips and two builds agree.
-  concerns:
-  - icons
-  - svg
-  - emit
-  - publishing
-  - sprite
-  tangle:
-    crate: crates/x0k-icon
-    root: src/emit.rs
-  edges:
-    implements:
-    - x0k:design/icon-profile
-    cites:
-    - x0k:architecture/entity-iconography
-    - x0k:implementation/icon/bind
-    - x0k:implementation/icon/validate
-    - x0k:implementation/tangle/region-repo
----
 # Writing an icon out
+
+```turtle folio:document
+implementation:icon\/emit a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "One writer for every textual form of an icon — the normalized declaration, a standalone SVG file per scheme, inline SVG over CSS variables, and a symbol sprite of many — deterministic to the byte, with a fixed attribute order and one way to write a number, so that a declaration round-trips and two builds agree." ;
+    x0k:concerns "icons", "svg", "emit", "publishing", "sprite" ;
+    x0k:cites architecture:entity-iconography,
+        implementation:icon\/bind,
+        implementation:icon\/validate,
+        implementation:tangle\/region-repo ;
+    x0k:implements design:icon-profile ;
+    folio:tangleCrate "crates/x0k-icon" ;
+    folio:tangleRoot "src/emit.rs" .
+```
 
 One declaration, one reader, five forms. The
 [profile](x0k:design/icon-profile) lists what each surface consumes — a
@@ -229,14 +218,11 @@ the two files and writes them beside the page. Its rustdoc is the cue.
 
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d69636f6e2d66696c6573-1"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-icon-files" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/icon/emit.md"><strong>Signifier</strong> · The forms · <code>https://0k.computer/ontology#signifier/x0k-icon-files</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d69636f6e2d66696c6573-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d69636f6e2d66696c6573-1"></a>
 
-```yaml x0k:signifier
-id: x0k:signifier/x0k-icon-files
-cue: files
-edges:
-  signifies:
-    - x0k:affordance/show_an_icon_on_a_surface
-  presentedOn:
-    - x0k:surface/sdk
+```turtle folio:graph
+signifier:x0k-icon-files a x0k:Signifier ;
+    x0k:cue "files" ;
+    x0k:signifies affordance:show_an_icon_on_a_surface ;
+    x0k:presentedOn surface:sdk .
 ```
 
 A page that draws many icons — the ontology plate with its forty-two

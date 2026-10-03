@@ -1,30 +1,18 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/doc-index
-  type: implementation
-  status: draft
-  summary: The one-pass walk that emits a serializable index of a corpus — envelope fields, tangle target, mtime, and per-chunk coordinates — so a sidebar or a figure can render a chunk without re-parsing its document.
-  concerns:
-  - tangle
-  - index
-  - chunks
-  - source-refs
-  - authoring-ui
-  - figures
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/index.rs
-  edges:
-    implements:
-    - x0k:design/literate-programming
-    cites:
-    - x0k:implementation/tangle/parsing
-    - x0k:implementation/tangle/source-refs
-    - x0k:implementation/folio/colophon
----
 
 # An index is the document seen from outside
+
+```turtle folio:document
+implementation:tangle\/doc-index a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The one-pass walk that emits a serializable index of a corpus — envelope fields, tangle target, mtime, and per-chunk coordinates — so a sidebar or a figure can render a chunk without re-parsing its document." ;
+    x0k:concerns "tangle", "index", "chunks", "source-refs", "authoring-ui", "figures" ;
+    x0k:cites implementation:tangle\/parsing,
+        implementation:tangle\/source-refs,
+        implementation:folio\/colophon ;
+    x0k:implements design:literate-programming ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/index.rs" .
+```
 
 The authoring UI's sidebar, a worked figure that binds to a document's real
 code, and any tool that wants to list the [literate
@@ -32,8 +20,8 @@ corpus](../../background/literate-programming.md "x0k:wiki/literate-programming"
 question: what documents are here, and what chunks do they carry? Parsing
 every document on every ask is too slow for a sidebar and too coupled for a
 figure. So `x0k-tangle index` walks a set of paths once and emits a
-serializable `DocIndex`: one `DocEntry` per folio/v1 document with its
-envelope fields, its tangle target, its modification time, and a
+serializable `DocIndex`: one `DocEntry` per document whose header names it,
+with its header's fields, its tangle target, its modification time, and a
 `ChunkSummary` per chunk carrying enough coordinates that a consumer can
 render the chunk's code without re-parsing the document.
 
@@ -61,9 +49,14 @@ the band stays correct when `machine.rs` gains a preamble.
 use crate::parser::parse_document;
 use crate::source_ref::{extract_symbol_in, list_symbols_in, SymbolLanguage};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use x0k_folio::colophon::{
+    find_header, header_literals, host_frontmatter, parse_envelope_in, parse_turtle,
+    predeclared_prefixes, strip_header, turtle_name, FolioError,
+};
+use x0k_ontology::concept_facts::OntologyModel;
 ```
 
 ## The shape
@@ -77,7 +70,34 @@ in-place editing on.
 
 `title` and `summary` are the two strings a list row is built out of — the
 name of the entry and the line under it — so both are always present, empty
-when the document offers nothing to fill them. A consumer that had to
+when the document offers nothing to fill them.
+
+The keys are the header's, spelled the way the header's own reader spells
+them. `id` is the header's subject, compact (`x0k:design/retry-budget`);
+`doc_type` is the genus its class names, in kebab-case (`design`,
+`implementation`); `status`, `summary`, `concerns` and `body_format` are
+`x0k:status`, `x0k:summary`, `x0k:concerns` and `x0k:bodyFormat`. `edges`
+is `Colophon.edges` as it stands: every statement whose object is an IRI,
+keyed by the predicate's **compact term** — `"x0k:cites"`,
+`"x0k:motivatedBy"`, `"x0k:publishes"` — with compact targets, so a key in
+the index is the term an author typed in the header and the term a
+consumer finds in the vocabulary.
+
+`properties` is the header's other half: every statement whose object is a
+literal, keyed by the predicate **as the header spells it** under the
+predeclared prefixes — `"x0k:status"`, `"x0k:summary"`, `"x0k:confidence"`,
+`"x0k:confidentiality"`, `"folio:tangleCrate"`, `"folio:tangleRoots"` — each
+mapped to its values in statement order, as their lexical forms. Every
+value is a JSON string: a number or a boolean is the text the header wrote,
+and an `rdf:JSON` literal is its JSON text, unparsed, so a consumer that
+wants the structure parses that one string. Nothing is filtered or typed:
+the fields above that a literal also fills (`status`, `summary`,
+`concerns`, `body_format`) appear here too, as written, and a tool term
+(`folio:`) is listed beside the vocabulary's. It is what a script reads a
+header term from instead of matching Turtle lines, so it is filled from
+the Turtle itself and not from the typed reading: a header the vocabulary
+refuses still lists its literals, and only one whose Turtle does not parse
+lists none. A consumer that had to
 distinguish "absent" from "empty" here would be asking a question the corpus
 cannot answer: a document with no summary and a document whose summary is the
 empty string are the same document.
@@ -95,9 +115,10 @@ pub struct DocEntry {
     pub id: String,
     pub path: String,
     pub title: String,
-    /// The envelope's `summary` — the line a reader is offered under the
+    /// The header's `x0k:summary` — the line a reader is offered under the
     /// title. Empty when the document declares none.
     pub summary: String,
+    /// The genus the header's class names, kebab-case (`design`).
     pub doc_type: String,
     pub status: String,
     /// Body format dispatch flag: `"markdown"` (default) or `"html"`. The
@@ -105,7 +126,13 @@ pub struct DocEntry {
     /// read-only today).
     pub body_format: String,
     pub concerns: Vec<String>,
+    /// The header's edges, keyed by compact predicate (`x0k:cites`), each
+    /// target a compact id.
     pub edges: BTreeMap<String, Vec<String>>,
+    /// The header's literal statements, keyed by the predicate as the header
+    /// spells it (`x0k:confidence`, `folio:tangleCrate`), each value its
+    /// lexical form — an `rdf:JSON` literal as its JSON text.
+    pub properties: BTreeMap<String, Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tangle_crate: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -174,17 +201,19 @@ pub struct SpanMapEntry {
 A path is either a markdown file or a directory to walk. `AGENTS.md` and
 `CLAUDE.md` are skipped by name — they are guidance, not corpus — and the
 result is sorted by document id so the index is stable across filesystem
-order.
+order. Headers are read against the vocabulary this build ships, built
+once per walk, so a class a shipped module declares is a genus here too.
 
 <a name="chunk-build-index"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#build-index`</sub>
 
 ```rust {#build-index}
 pub fn build_index(paths: &[PathBuf], workspace_root: &Path) -> Result<DocIndex> {
     let mut docs = Vec::new();
+    let model = OntologyModel::shipped();
 
     for path in paths {
         if path.is_file() && path.extension().is_some_and(|e| e == "md") {
-            if let Some(entry) = index_file(path, workspace_root)? {
+            if let Some(entry) = index_file(path, workspace_root, &model)? {
                 docs.push(entry);
             }
         } else if path.is_dir() {
@@ -198,7 +227,7 @@ pub fn build_index(paths: &[PathBuf], workspace_root: &Path) -> Result<DocIndex>
                         .file_name()
                         .is_some_and(|n| n == "AGENTS.md" || n == "CLAUDE.md")
                 {
-                    if let Some(doc_entry) = index_file(p, workspace_root)? {
+                    if let Some(doc_entry) = index_file(p, workspace_root, &model)? {
                         docs.push(doc_entry);
                     }
                 }
@@ -213,10 +242,12 @@ pub fn build_index(paths: &[PathBuf], workspace_root: &Path) -> Result<DocIndex>
 
 ## Indexing one file
 
-A file is a document if it opens with `---` and mentions `folio/v1`; a
-document the parser rejects is skipped rather than failing the whole index.
-The mtime is best-effort. The envelope fields come from a line scanner
-rather than a YAML parser (below), and the chunk summaries carry the
+A file is a document if its header names it: a `turtle folio:document`
+block whose subject is the document's id. A file with no header, or with an
+untyped `<>` header that carries tool configuration and no identity, is not
+listed; a document the parser rejects is skipped rather than failing the
+whole index. The mtime is best-effort. The header fields come from the
+shared header parser (below), and the chunk summaries carry the
 coordinates the carried example shows: a `from=` symbol is re-extracted from
 its source file *with the grammar its fence declares*, to recover the
 authoritative body, start line, and span map; when re-extraction is
@@ -235,12 +266,12 @@ its span map and nothing else — the index still builds.
 <a name="chunk-index-file"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#index-file`</sub>
 
 ```rust {#index-file}
-fn index_file(path: &Path, workspace_root: &Path) -> Result<Option<DocEntry>> {
+fn index_file(path: &Path, workspace_root: &Path, model: &OntologyModel) -> Result<Option<DocEntry>> {
     let content = std::fs::read_to_string(path)?;
 
-    if !content.starts_with("---") || !content.contains("folio/v1") {
+    let Some(header) = header_fields(&content, model) else {
         return Ok(None);
-    }
+    };
 
     // Source-file mtime in µs since the Unix epoch, used by the sidebar to
     // sort most-recently-edited first. Best-effort: any failure leaves the
@@ -261,10 +292,6 @@ fn index_file(path: &Path, workspace_root: &Path) -> Result<Option<DocEntry>> {
         .unwrap_or(path)
         .to_string_lossy()
         .to_string();
-
-    // One read of the `x0k:` block; every envelope field below comes out
-    // of it.
-    let envelope = envelope_fields(&content);
 
     // The last fallback is this caller's to supply: an entry always has a
     // file, so a document that names itself nowhere is listed under its stem.
@@ -343,15 +370,16 @@ fn index_file(path: &Path, workspace_root: &Path) -> Result<Option<DocEntry>> {
     }
 
     Ok(Some(DocEntry {
-        id: envelope.id,
+        id: header.id,
         path: rel_path,
         title,
-        summary: envelope.summary,
-        doc_type: envelope.doc_type,
-        status: envelope.status,
-        body_format: envelope.body_format,
-        concerns: envelope.concerns,
-        edges: envelope.edges,
+        summary: header.summary,
+        doc_type: header.doc_type,
+        status: header.status,
+        body_format: header.body_format,
+        concerns: header.concerns,
+        edges: header.edges,
+        properties: header_properties(&content, model),
         tangle_crate: parsed.tangle_crate,
         tangle_root: parsed.tangle_root.map(|p| p.display().to_string()),
         modified_us,
@@ -393,126 +421,92 @@ fn build_span_map(body: &str, lang: SymbolLanguage) -> Option<Vec<SpanMapEntry>>
 }
 ```
 
-## Reading the envelope
+## Reading the header
 
-The index reads the `x0k:` block with `serde_norway` — the same YAML parser
-`x0k_folio::colophon::parse_envelope` reads it with, and the one `ingest`
-projects from — into a struct whose every field is optional and whose
-unknown keys are ignored. That is the whole difference between this reader
-and the typed one: it agrees with them about what the YAML *says* and asks
-nothing about what it means. A `type:` naming a class no vocabulary
-declares, a `status:` outside the six — `check` refuses both and the index
-carries both, because an index over a working corpus describes what is
-there rather than judging it.
+The index reads the header with `x0k_folio::colophon::parse_envelope_in` —
+the parser `check` reads it with — and copies the typed values out as the
+strings a JSON row carries. Sharing the parser is what stops the two verbs
+describing the same file differently: an edge `check` sees is an edge the
+index lists, under the same compact term.
 
-It did not always agree about what the YAML says. Until this reader the
-index scanned the frontmatter line by line, and two ordinary spellings fell
-through the scan. A flow sequence under `edges:` —
-`refined_by: [x0k:design/block]` — produced `"edges": {}`, silently: the
-document went into the index looking like one with no edges at all while
-`check` and `ingest` both saw the edge. And a quoted scalar kept its
-quotes, so `id: "x0k:design/quoted"` was indexed as `"\"x0k:design/quoted\""`
-and matched nothing a consumer could type (both jj, 2026-09-23). Each is a
-property of YAML a line scanner has to re-implement one spelling at a time,
-and the scanner was always going to be a spelling behind.
+What the index does not share is the refusal. A header whose class the
+vocabulary does not declare, or whose `x0k:status` is outside the six, is
+refused by `check`, and `check` says so; the index still lists the document,
+with every header field empty, because an index over a working corpus
+describes what is there rather than judging it, and a sidebar that drops a
+page while its author is mid-edit is worse than one a verb disagrees with.
+A header whose Turtle does not parse at all is a different case: the
+tangler's own parser refuses it (it cannot say where the document goes),
+and the index skips the document with it.
 
-The scanner stays, one rung down, for the envelopes the parser refuses. A
-summary with a stray `: ` in it is not well-formed YAML — eleven of x0k's
-own documents are in that state as this is written — and `check` says so,
-which is `check`'s job. The index's job is to still show you the document,
-so when the parse fails the line scan answers instead: worse, tolerant, and
-reached only where the typed verbs have already refused. Nothing that
-`check` accepts is read by it.
+<a name="chunk-header-fields"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#header-fields`</sub>
 
-<a name="chunk-envelope-fields"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#envelope-fields`</sub>
-
-```rust {#envelope-fields}
-/// The envelope fields an index entry is built from.
-///
-/// Every field is optional, which is what lets this share a parser with
-/// the typed envelope without sharing its refusals: `type` here is the
-/// string the author wrote, not a genus.
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct EnvelopeFields {
+```rust {#header-fields}
+/// The header fields an index entry is built from: the typed header's own
+/// values, spelled as strings.
+#[derive(Default)]
+struct HeaderFields {
     id: String,
-    #[serde(rename = "type")]
     doc_type: String,
     status: String,
     summary: String,
     concerns: Vec<String>,
     edges: BTreeMap<String, Vec<String>>,
-    /// Body format dispatch flag. Defaulted by [`envelope_fields`] rather
-    /// than here, so an absent and an empty `body_format:` read alike.
     body_format: String,
 }
 
-#[derive(Deserialize)]
-struct EnvelopeRoot {
-    x0k: Option<EnvelopeFields>,
-}
-
-/// Read the `x0k:` block out of a document's frontmatter, by parser where
-/// the frontmatter is YAML and by line scan where it is not.
-fn envelope_fields(content: &str) -> EnvelopeFields {
-    let scanned = || scan_envelope_fields(content);
-    let (Some(frontmatter), _) = split_frontmatter(content) else {
-        return scanned();
-    };
-    let parsed = serde_norway::from_str::<EnvelopeRoot>(frontmatter)
-        .ok()
-        .and_then(|root| root.x0k);
-    match parsed {
-        Some(mut fields) => {
-            if fields.body_format.is_empty() {
-                fields.body_format = "markdown".to_string();
-            }
-            fields
-        }
-        None => scanned(),
+/// Read a document's header against `model`. `None` when the document is
+/// not listed: it has no header, or an untyped `<>` header that names
+/// nothing. A typed header the vocabulary refuses still lists its document,
+/// with every field empty and the body format at its default.
+fn header_fields(content: &str, model: &OntologyModel) -> Option<HeaderFields> {
+    match parse_envelope_in(model, content) {
+        Ok((env, _)) => Some(HeaderFields {
+            id: env.id,
+            doc_type: env.doc_type.as_str().to_string(),
+            status: env.status.map(|s| s.as_str().to_string()).unwrap_or_default(),
+            summary: env.summary.unwrap_or_default(),
+            concerns: env.concerns,
+            edges: env.edges,
+            body_format: env.body_format,
+        }),
+        Err(FolioError::NoHeader | FolioError::Untyped) => None,
+        Err(_) => Some(HeaderFields {
+            body_format: x0k_folio::colophon::BODY_FORMAT_MARKDOWN.to_string(),
+            ..HeaderFields::default()
+        }),
     }
 }
 ```
 
-The scanner below is what the index used to read every envelope with, and
-what it now reads only the malformed ones with. It tracks two list
-contexts, `concerns:` and `edges:`, leaves the edges context at the first
-non-indented non-comment key, and accepts both list spellings in each.
-`summary:` gets a third context, because it is the one envelope field
-written as a paragraph: a corpus writes it inline most of the time, quoted
-about half the time, and occasionally as a `>-` folded block whose text is
-on the lines below. The scanner joins those continuation lines with spaces,
-which is what folding means, and stops at the next key at the summary's own
-indentation.
+The literals are read off the header's Turtle with the parser every other
+reader uses, under the prefixes the typed reading predeclares, and each
+predicate is written back the way an author writes it, so the key a script
+asks for is the term it would have matched.
 
-<a name="chunk-extract-body-format"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#extract-body-format`</sub>
+<a name="chunk-header-properties"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#header-properties`</sub>
 
-```rust {#extract-body-format}
-/// Scan the frontmatter for `body_format:`, defaulting to `"markdown"` when
-/// absent (matches `x0k_folio::colophon::normalize_body_format`). The line
-/// scanner's half of [`envelope_fields`]; the parser reads the field off
-/// the envelope directly.
-fn extract_body_format(content: &str) -> String {
-    let mut in_frontmatter = false;
-    for line in content.lines() {
-        if line.trim() == "---" {
-            if in_frontmatter {
-                break;
-            }
-            in_frontmatter = true;
-            continue;
-        }
-        if !in_frontmatter {
-            continue;
-        }
-        if let Some(val) = line.trim().strip_prefix("body_format:") {
-            let v = val.trim();
-            if !v.is_empty() {
-                return v.to_string();
-            }
+```rust {#header-properties}
+/// Every literal statement the header makes: predicate as the header spells
+/// it under `model`'s predeclared prefixes, to the lexical forms in statement
+/// order. Empty when the document has no header or its Turtle does not parse.
+fn header_properties(content: &str, model: &OntologyModel) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let Some(header) = find_header(content) else {
+        return out;
+    };
+    let prefixes = predeclared_prefixes(model);
+    let Ok(triples) = parse_turtle(&header.text, &prefixes, header.line + 1) else {
+        return out;
+    };
+    for triple in &triples {
+        if let oxrdf::Term::Literal(literal) = &triple.object {
+            out.entry(turtle_name(triple.predicate.as_str(), &prefixes))
+                .or_default()
+                .push(literal.value().to_string());
         }
     }
-    "markdown".to_string()
+    out
 }
 ```
 
@@ -557,25 +551,34 @@ Backstage docs tree). An index row is a name seen from outside, so it takes
 the record. Asking for the heading first ranked the presentation above it,
 which an evaluator reported in two successive rounds as surprising for
 anyone whose H1 is a section heading (Backstage re-evaluations, 2026-09-23).
-None of x0k's own documents is affected by the change: of
-1,427 folio/v1 envelopes in this corpus, none carries a host `title:`
-(2026-09-25), so every one of them is still named by its `# `.
+None of x0k's own documents carries a host `title:`, so every one of them
+is named by its `# `.
 
-So the resolution walks five sources in the order a reader would, and the
+So the resolution walks six sources in the order a reader would, and the
 document says which one it took by which one is non-empty:
 
 1. the host frontmatter's own top-level `title:`, which is where Docusaurus
-   and MkDocs keep the name — the record, when there is one;
+   and MkDocs keep the name — the record, when there is one
+   (`colophon::host_frontmatter` finds the block; that key is the one thing
+   the index reads from host frontmatter);
 2. the body's first `# ` heading, outside every fence;
-3. an opening `<h1>`, for the documents whose `body_format` is `html` and
-   whose heading is therefore a tag rather than a hash — two of x0k's own
-   design documents, which indexed as `""` for the same reason the ADRs did;
+3. an opening `<h1>`, for the documents whose `x0k:bodyFormat` is `"html"`
+   and whose heading is therefore a tag rather than a hash — two of x0k's
+   own design documents, which indexed as `""` for the same reason the ADRs
+   did;
 4. a heading of *any* level that the body **opens** with — the first
    non-blank line — for a page written under a `##`;
-5. the envelope's own `summary`, which is the document describing itself
+5. the header's own `x0k:summary`, which is the document describing itself
    and is never about a part of it;
 6. the filename stem — always available, never wrong about identity even
    when it is ugly.
+
+The body every heading is looked for in is the document with its host
+frontmatter and its header lifted out (`colophon::strip_header`). The header
+sits after the `# ` line or, when the body opens any other way, at the very
+top, where it would otherwise be the first non-blank line and hide the
+heading a page opens with at 4. Lifting it out leaves exactly the body the
+author wrote, so where the header sits never changes what a page is called.
 
 The resolver stops at 5 and returns `None`, because the fallback at 6 is not
 the same fallback for every caller: `index` has a path to take a stem from,
@@ -584,8 +587,10 @@ and `weave` has only the document's id.
 A summary is a sentence where a title wants a phrase, so 5 is a demotion,
 not a discovery — it is there because the alternative it replaced was a
 section name asserting itself as the page's, and a document's own sentence
-about itself is at least about the whole document. A corpus that dislikes
-the sentence has the fix in its own hands: give the page an `# ` heading.
+about itself is at least about the whole document. It is read with
+`colophon::header_literals`, so a header the vocabulary refuses still lends
+its summary, as it lends the index its row. A corpus that dislikes the
+sentence has the fix in its own hands: give the page an `# ` heading.
 
 <a name="chunk-document-title"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#document-title`</sub>
 
@@ -593,26 +598,28 @@ the sentence has the fix in its own hands: give the page an `# ` heading.
 /// A document's title, resolved the way a reader would ask for it: the host
 /// frontmatter's `title:` (the record), then the body's first `# ` heading,
 /// then an opening `<h1>` for an HTML body, then a heading the body opens
-/// with, then the envelope's `summary`. Fenced regions are skipped — a `#`
+/// with, then the header's `x0k:summary`. The body is the document with its
+/// host frontmatter and header lifted out. Fenced regions are skipped — a `#`
 /// comment inside an example names nothing — and a heading below prose names
 /// its section rather than the page. `None` when the document offers no name
 /// at all, leaving the last fallback (a filename stem, a document id) to the
 /// caller that has one.
 pub fn document_title(content: &str) -> Option<String> {
-    let (frontmatter, body) = split_frontmatter(content);
-    if let Some(host) = frontmatter.and_then(host_frontmatter_title) {
+    if let Some(host) = host_frontmatter_title(content) {
         return Some(host);
     }
-    if let Some(h1) = first_level_one_heading(body) {
+    let body = strip_header(content);
+    if let Some(h1) = first_level_one_heading(&body) {
         return Some(h1);
     }
-    if let Some(opening) = opening_heading(body) {
+    if let Some(opening) = opening_heading(&body) {
         return Some(opening);
     }
-    // The envelope parser, not a second reader of `summary:` — that key has
-    // three spellings and one of them is a folded block.
-    let summary = envelope_fields(content).summary;
-    (!summary.is_empty()).then_some(summary)
+    header_literals(content, "x0k:summary")
+        .ok()?
+        .into_iter()
+        .map(|literal| literal.value)
+        .find(|summary| !summary.is_empty())
 }
 ```
 
@@ -656,9 +663,9 @@ either is not a title.
 <a name="chunk-first-html-h1"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#first-html-h1`</sub>
 
 ```rust {#first-html-h1}
-/// The text of the first `<h1>` in an HTML body. Bodies with
-/// `body_format: html` carry their heading as a tag, so the hash scanner
-/// finds nothing in them at all.
+/// The text of the first `<h1>` in an HTML body. Bodies whose
+/// `x0k:bodyFormat` is `"html"` carry their heading as a tag, so the hash
+/// scanner finds nothing in them at all.
 fn first_html_h1(body: &str) -> Option<String> {
     let open = body.find("<h1")?;
     let after_tag = body[open..].find('>')? + open + 1;
@@ -712,20 +719,17 @@ fn first_heading(body: &str, accept: impl Fn(usize) -> bool) -> Option<String> {
 }
 ```
 
-The host's `title:` is the one at column zero. Everything the envelope owns
-lives indented under `x0k:`, so indentation is what separates "the site's
-name for this page" from any key nested inside a block — and the envelope has
-no `title` of its own to be confused with.
+The host's `title:` is the one at column zero. Anything indented belongs to
+a nested block of the host's own, and is not the page's name.
 
 <a name="chunk-host-frontmatter-title"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#host-frontmatter-title`</sub>
 
 ```rust {#host-frontmatter-title}
 /// The host frontmatter's own `title:` — the top-level key, at column zero,
-/// which is where Docusaurus and MkDocs keep a page's name. Anything indented
-/// belongs to a nested block (the `x0k:` envelope among them) and is not the
-/// host's.
-fn host_frontmatter_title(frontmatter: &str) -> Option<String> {
-    frontmatter
+/// which is where Docusaurus and MkDocs keep a page's name.
+fn host_frontmatter_title(content: &str) -> Option<String> {
+    let range = host_frontmatter(content)?;
+    content[range]
         .lines()
         .filter(|line| !line.starts_with([' ', '\t']))
         .find_map(|line| line.strip_prefix("title:"))
@@ -734,31 +738,12 @@ fn host_frontmatter_title(frontmatter: &str) -> Option<String> {
 }
 ```
 
-<a name="chunk-split-frontmatter"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#split-frontmatter`</sub>
-
-```rust {#split-frontmatter}
-/// Split a document into its frontmatter (without the `---` fences) and its
-/// body. A file that does not open with `---`, or never closes it, is all
-/// body.
-fn split_frontmatter(content: &str) -> (Option<&str>, &str) {
-    let Some(rest) = content.strip_prefix("---") else {
-        return (None, content);
-    };
-    let Some(end) = rest.find("\n---") else {
-        return (None, content);
-    };
-    let body = rest[end + 4..].trim_start_matches(['\r', '\n']);
-    (Some(&rest[..end]), body)
-}
-```
-
 <a name="chunk-unquote-scalar"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#unquote-scalar`</sub>
 
 ```rust {#unquote-scalar}
-/// A YAML scalar as the line scanner sees it: trimmed, and stripped of one
-/// matched pair of surrounding quotes. Enough for the values a title or a
-/// summary is written as; the typed parser
-/// (`x0k_folio::colophon::parse_envelope`) is the one that owns YAML.
+/// A host frontmatter scalar as the title reader sees it: trimmed, and
+/// stripped of one matched pair of surrounding quotes. Enough for the values
+/// a site generator's `title:` is written as.
 fn unquote_scalar(value: &str) -> String {
     let value = value.trim();
     for quote in ['"', '\''] {
@@ -767,155 +752,6 @@ fn unquote_scalar(value: &str) -> String {
         }
     }
     value.to_string()
-}
-```
-
-<a name="chunk-scan-envelope-fields"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#scan-envelope-fields`</sub>
-
-```rust {#scan-envelope-fields}
-/// The envelope as a line scan sees it. Reached only for frontmatter
-/// `serde_norway` refuses: it is behind the parser on every YAML spelling
-/// and always will be, and it is still better than an index that goes
-/// blank on a document mid-edit.
-fn scan_envelope_fields(content: &str) -> EnvelopeFields {
-    /// The predicate in `predicate: [a, b]`, or None when the line is not
-    /// that. Split at the last colon before the bracket, because the key may
-    /// carry a module prefix and the values are ids full of colons.
-    fn inline_edge_key(line: &str) -> Option<String> {
-        let open = line.find('[')?;
-        line.ends_with(']')
-            .then(|| line[..open].rfind(':'))
-            .flatten()
-            .map(|colon| line[..colon].trim().to_string())
-            .filter(|predicate| !predicate.is_empty())
-    }
-
-    let mut id = String::new();
-    let mut doc_type = String::new();
-    let mut status = String::new();
-    let mut summary = String::new();
-    let mut concerns = Vec::new();
-    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-    let mut in_frontmatter = false;
-    let mut in_edges = false;
-    let mut in_concerns = false;
-    let mut summary_block: Option<usize> = None;
-    let mut current_predicate = String::new();
-
-    for line in content.lines() {
-        if line.trim() == "---" {
-            if in_frontmatter {
-                break;
-            }
-            in_frontmatter = true;
-            continue;
-        }
-        if !in_frontmatter {
-            continue;
-        }
-
-        let trimmed = line.trim();
-        let indent = line.len() - line.trim_start().len();
-
-        // A folded `summary: >-` runs until the next key at its own
-        // indentation; its continuation lines join with spaces, which is what
-        // folding means.
-        if let Some(opened_at) = summary_block {
-            if trimmed.is_empty() || indent > opened_at {
-                if !trimmed.is_empty() {
-                    if !summary.is_empty() {
-                        summary.push(' ');
-                    }
-                    summary.push_str(trimmed);
-                }
-                continue;
-            }
-            summary_block = None;
-        }
-
-        if let Some(val) = trimmed.strip_prefix("summary:") {
-            in_edges = false;
-            in_concerns = false;
-            let val = val.trim();
-            if val.starts_with('>') || val.starts_with('|') {
-                summary_block = Some(indent);
-                summary.clear();
-            } else {
-                summary = unquote_scalar(val);
-            }
-        } else if let Some(val) = trimmed.strip_prefix("id:") {
-            id = val.trim().to_string();
-            in_edges = false;
-            in_concerns = false;
-        } else if let Some(val) = trimmed.strip_prefix("type:") {
-            doc_type = val.trim().to_string();
-            in_edges = false;
-            in_concerns = false;
-        } else if let Some(val) = trimmed.strip_prefix("status:") {
-            status = val.trim().to_string();
-            in_edges = false;
-            in_concerns = false;
-        } else if trimmed.starts_with("concerns:") {
-            in_concerns = true;
-            in_edges = false;
-            // Inline array: concerns: [a, b, c]
-            if let Some(arr) = trimmed.strip_prefix("concerns:") {
-                let arr = arr.trim();
-                if arr.starts_with('[') && arr.ends_with(']') {
-                    concerns = arr[1..arr.len() - 1]
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    in_concerns = false;
-                }
-            }
-        } else if trimmed == "edges:" {
-            in_edges = true;
-            in_concerns = false;
-        } else if in_concerns && trimmed.starts_with("- ") {
-            concerns.push(trimmed[2..].trim().to_string());
-        } else if in_edges {
-            if let Some(item) = trimmed.strip_prefix("- ") {
-                let val = item.trim().to_string();
-                edges
-                    .entry(current_predicate.clone())
-                    .or_default()
-                    .push(val);
-            } else if let Some(predicate) = inline_edge_key(trimmed) {
-                // `cites: [a, b]`. The key ends at the last colon before the
-                // bracket: a prefixed predicate has one inside the key and
-                // every `x0k:` target has one inside a value.
-                let open = trimmed.find('[').unwrap_or(trimmed.len());
-                let values = trimmed[open..].trim_matches(['[', ']'].as_slice());
-                edges.entry(predicate).or_default().extend(
-                    values
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty()),
-                );
-            } else if trimmed.ends_with(':') && !trimmed.starts_with('-') {
-                current_predicate = trimmed.trim_end_matches(':').trim().to_string();
-            } else if !trimmed.is_empty()
-                && !trimmed.starts_with('#')
-                && !line.starts_with("    ")
-                && !line.starts_with("\t\t")
-            {
-                in_edges = false;
-            }
-        }
-    }
-
-    EnvelopeFields {
-        id,
-        doc_type,
-        status,
-        summary,
-        concerns,
-        edges,
-        body_format: extract_body_format(content),
-    }
 }
 ```
 
@@ -965,9 +801,8 @@ pub struct TitleDisagreement {
 /// heading and they still differ once both are reduced by
 /// `comparable_title`; `None` when they agree or either one is absent.
 pub fn title_disagreement(content: &str) -> Option<TitleDisagreement> {
-    let (frontmatter, body) = split_frontmatter(content);
-    let frontmatter = frontmatter.and_then(host_frontmatter_title)?;
-    let heading = first_level_one_heading(body)?;
+    let frontmatter = host_frontmatter_title(content)?;
+    let heading = first_level_one_heading(&strip_header(content))?;
     (comparable_title(&frontmatter) != comparable_title(&heading))
         .then_some(TitleDisagreement { frontmatter, heading })
 }
@@ -991,20 +826,29 @@ fn comparable_title(title: &str) -> String {
 
 ## Tests
 
+The header tests read a typed header into its row and pin the two ways a
+file is left out or kept in: an untyped `<>` header is not listed, and a
+header the vocabulary refuses is listed with its fields empty.
+
 The title tests are the sources in order, each written as the corpus that
 actually produced it: an x0k document with an `# ` heading, a Docusaurus ADR
-whose name is in the host frontmatter and whose body opens at `## Context`, a
-page that opens with `##` and quotes a `#` comment inside a fence three
-hundred lines down, an MkDocs page whose `##` arrives after prose and which
-must therefore *not* be named by it, and a generated table with no heading at
-all. All but the first were wrong once — the fenced-comment case presented a
-Python comment as the name of a page, and the prose-then-`##` case presented
-a section as one — so each names the evaluation that found it.
-
-The precedence test is the evaluator's own file, a host `title:` over a
-different `# `, and the three disagreement tests are the rule's three cases:
-two spellings of one name are silent, two names are reported by both
+whose name is in the host frontmatter and whose body opens at `## Context`,
+an HTML body whose heading is a tag, a page that opens with `##` and quotes a
+`#` comment inside a fence, an MkDocs page whose `##` arrives after prose and
+which must therefore *not* be named by it, and a generated table with no
+heading at all, named by its summary. The fenced-comment case once presented
+a Python comment as the name of a page, and the prose-then-`##` case once
+presented a section as one. One more test asks every source at once and
+takes them away one at a time, which pins the order itself, and a header
+placed at the top of a body that opens at `##` is shown not to hide that
+heading. The precedence test is an evaluator's own file, a host `title:`
+over a different `# `, and the three disagreement tests are the rule's three
+cases: two spellings of one name are silent, two names are reported by both
 strings, and one name has nothing to disagree with.
+
+The properties test reads a header's literals into the index row: tool
+terms beside vocabulary terms, numbers and `rdf:JSON` as the text written,
+and a refused header still listing what it says.
 
 The last three tests each write a source file and a document into a fresh
 temp directory. The first asserts the carried example: source coordinates on
@@ -1021,140 +865,58 @@ coordinates, and an index that still builds.
 mod tests {
     use super::*;
 
-    #[test]
-    fn extract_fields_basic() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/test
-  type: design
-  status: proposed
-  concerns: [ui, lod]
-  edges:
-    cites:
-      - x0k:wiki/foo
-      - x0k:wiki/bar
----
-# Test Document
+    fn fields(content: &str) -> Option<HeaderFields> {
+        header_fields(content, &OntologyModel::shipped())
+    }
 
-Body here.
-"#;
-        let fields = envelope_fields(content);
+    #[test]
+    fn a_typed_header_fills_the_row() {
+        let content = "# Test Document\n\n```turtle folio:document\ndesign:test a x0k:Design ;\n    \
+            x0k:status \"proposed\" ;\n    x0k:concerns \"ui\", \"lod\" ;\n    \
+            x0k:cites wiki:foo, wiki:bar ;\n    x0k:refinedBy design:block .\n```\n\nBody here.\n";
+        let fields = fields(content).expect("a typed header is listed");
         assert_eq!(fields.id, "x0k:design/test");
         assert_eq!(fields.doc_type, "design");
         assert_eq!(fields.status, "proposed");
         assert_eq!(fields.summary, "");
         assert_eq!(fields.concerns, vec!["ui", "lod"]);
-        assert_eq!(fields.edges["cites"], vec!["x0k:wiki/foo", "x0k:wiki/bar"]);
+        // Keyed by the compact term, the way the header spells it.
+        assert_eq!(fields.edges["x0k:cites"], vec!["x0k:wiki/foo", "x0k:wiki/bar"]);
+        assert_eq!(fields.edges["x0k:refinedBy"], vec!["x0k:design/block"]);
         assert_eq!(fields.body_format, "markdown");
     }
 
-    /// A quoted id is a quoted id in YAML and a bare one to every consumer.
-    /// The line scanner kept the quote characters, so `index` emitted an id
-    /// nothing could match while `check` accepted the document and `ingest`
-    /// projected it correctly (jj, 2026-09-23).
     #[test]
-    fn quoted_scalars_index_without_their_quotes() {
-        let content = "---\nx0k:\n  format: folio/v1\n  id: \"x0k:design/quoted\"\n  \
-            type: \"design\"\n  status: 'proposed'\n  concerns:\n    - \"x0k:concept/a\"\n  \
-            edges:\n    refined_by:\n      - \"x0k:design/block\"\n---\n# Quoted\n";
-        let fields = envelope_fields(content);
-        assert_eq!(fields.id, "x0k:design/quoted");
-        assert_eq!(fields.doc_type, "design");
-        assert_eq!(fields.status, "proposed");
-        assert_eq!(fields.concerns, vec!["x0k:concept/a"]);
-        assert_eq!(fields.edges["refined_by"], vec!["x0k:design/block"]);
+    fn an_untyped_header_or_none_is_not_listed() {
+        assert!(fields("# Plain\n\nNo header here.\n").is_none());
+        let untyped = "# Page\n\n```turtle folio:document\n<> folio:tangleCrate \"x\" ;\n    \
+            folio:tangleRoot \"src/lib.rs\" .\n```\n";
+        assert!(fields(untyped).is_none());
     }
 
-    /// `index` refuses nothing: a genus and a status no vocabulary declares
-    /// are carried as written, because an index describes the corpus and
-    /// `check` judges it. Sharing a parser with the typed envelope must not
-    /// import its refusals (Backstage, 2026-09-23).
+    /// `index` refuses nothing a working corpus is in the middle of: a
+    /// status outside the six is refused by `check` and still listed here,
+    /// with nothing typed to say about it.
     #[test]
-    fn a_genus_and_status_outside_the_shipped_sets_are_carried_as_written() {
-        let content = "---\nx0k:\n  format: folio/v1\n  id: bs:architecture/adr013\n  \
-            type: adr\n  status: ratified\n---\n# ADR013\n";
-        let fields = envelope_fields(content);
-        assert_eq!(fields.doc_type, "adr");
-        assert_eq!(fields.status, "ratified");
-    }
-
-    /// A summary carrying a bare `: ` is not well-formed YAML, and eleven of
-    /// x0k's own documents are written that way. `check` refuses them; the
-    /// index still lists them, off the line scanner, because a sidebar that
-    /// empties itself mid-edit is worse than one a verb disagrees with.
-    #[test]
-    fn an_envelope_the_parser_refuses_falls_back_to_the_line_scan() {
-        let content = "---\nx0k:\n  format: folio/v1\n  id: x0k:wiki/unison\n  type: wiki\n  \
-            summary: Written for one purpose: the codec's third mode.\n  \
-            edges:\n    cites:\n      - x0k:wiki/gallowglass\n---\n# Unison\n";
-        assert!(serde_norway::from_str::<EnvelopeRoot>(
-            split_frontmatter(content).0.unwrap()).is_err(),
-            "the fixture has to be YAML the parser refuses, or this proves nothing");
-        let fields = envelope_fields(content);
-        assert_eq!(fields.id, "x0k:wiki/unison");
-        assert_eq!(fields.edges["cites"], vec!["x0k:wiki/gallowglass"]);
+    fn a_header_the_vocabulary_refuses_is_listed_empty() {
+        let content = "# ADR013\n\n```turtle folio:document\narchitecture:adr013 a x0k:Architecture ;\n    \
+            x0k:status \"ratified\" .\n```\n";
+        let fields = fields(content).expect("a refused header still lists its document");
+        assert_eq!(fields.id, "");
+        assert_eq!(fields.status, "");
         assert_eq!(fields.body_format, "markdown");
-    }
-
-    /// An envelope the typed parser accepts and indexes as having no edges
-    /// at all is the worst kind of disagreement: nothing fails. This spelling
-    /// ingested clean and produced `"edges": {}` until the index learned to
-    /// read YAML with a YAML parser (2026-09-23, folio evaluation; the guide
-    /// had blamed the vocabulary, but `cites` was dropped as readily as `bs:`).
-    #[test]
-    fn inline_edge_arrays_index_the_same_as_dashed_ones() {
-        let document = |edges: &str| format!("---\nx0k:\n  format: folio/v1\n  \
-            id: x0k:design/test\n  type: design\n{edges}---\n# Test\n");
-        let inline = document(
-            "  edges:\n    cites: [x0k:design/two, x0k:design/three]\n    \
-             bs:superseded_by: [x0k:design/four]\n");
-        let dashed = document(
-            "  edges:\n    cites:\n      - x0k:design/two\n      - x0k:design/three\n    \
-             bs:superseded_by:\n      - x0k:design/four\n");
-        let edges = |content: &str| envelope_fields(content).edges;
-        assert_eq!(edges(&inline), edges(&dashed));
-        assert_eq!(edges(&inline)["cites"], vec!["x0k:design/two", "x0k:design/three"]);
-        // The key is everything before the last colon outside the brackets.
-        assert_eq!(edges(&inline)["bs:superseded_by"], vec!["x0k:design/four"]);
-        assert!(edges(&document("  edges:\n    cites: []\n"))["cites"].is_empty());
-    }
-
-    #[test]
-    fn summary_is_read_quoted_plain_and_folded() {
-        // The three spellings a corpus writes a summary in. The folded block
-        // is rare (two documents in x0k's own corpus) and the one the line
-        // scanner underneath this reader returns empty.
-        let quoted = "---\nx0k:\n  summary: \"ADR013: [superseded] fetching\"\n  status: superseded\n---\n";
-        assert_eq!(
-            envelope_fields(quoted).summary,
-            "ADR013: [superseded] fetching"
-        );
-
-        let plain = "---\nx0k:\n  summary: Smart mode finds the best match.\n---\n";
-        assert_eq!(
-            envelope_fields(plain).summary,
-            "Smart mode finds the best match."
-        );
-
-        let folded = "---\nx0k:\n  summary: >-\n    A germ is a picture\n    with provenance.\n  status: draft\n---\n";
-        let fields = envelope_fields(folded);
-        assert_eq!(fields.summary, "A germ is a picture with provenance.");
-        assert_eq!(fields.status, "draft", "the folded block ends at the next key");
     }
 
     #[test]
     fn title_takes_the_body_h1_when_the_host_names_nothing() {
-        let content = "---\nx0k:\n  format: folio/v1\n---\n# My Title\n\nBody.";
+        let content = "# My Title\n\n```turtle folio:document\ndesign:t a x0k:Design .\n```\n\nBody.";
         assert_eq!(document_title(content).as_deref(), Some("My Title"));
     }
 
     #[test]
     fn the_host_title_outranks_a_body_h1() {
-        // The record over the presentation. Reported with this exact file
-        // (`titletest/c.md`) in two Backstage re-evaluations, 2026-09-23:
-        // `index` named it by the H1.
-        let content = "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\nx0k:\n  format: folio/v1\n  id: x0k:architecture/adrz\n  type: architecture\n---\n\n# Body H1 Different\n\nText.\n";
+        // The record over the presentation: a Backstage evaluator's own file.
+        let content = "---\nid: adrs-adrZ\ntitle: 'ADRZ: Frontmatter wins?'\n---\n\n# Body H1 Different\n\nText.\n";
         assert_eq!(
             document_title(content).as_deref(),
             Some("ADRZ: Frontmatter wins?")
@@ -1162,14 +924,20 @@ Body here.
     }
 
     #[test]
+    fn only_the_host_title_at_column_zero_is_read() {
+        let content = "---\nnav:\n  title: Nested\n---\n\nProse with no heading.\n";
+        assert_eq!(document_title(content), None);
+    }
+
+    #[test]
     fn a_host_title_and_an_h1_that_differ_only_in_typesetting_agree() {
-        let content = "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\nx0k:\n  format: folio/v1\n---\n\n#   adr013: Proper use of *HTTP*   fetching `libraries`.  \n\nText.\n";
+        let content = "---\ntitle: 'ADR013: Proper use of HTTP fetching libraries'\n---\n\n#   adr013: Proper use of *HTTP*   fetching `libraries`.  \n\nText.\n";
         assert_eq!(title_disagreement(content), None);
     }
 
     #[test]
     fn a_host_title_and_an_h1_that_differ_in_words_disagree_by_name() {
-        let content = "---\ntitle: Url Reader Service\nx0k:\n  format: folio/v1\n---\n\n# URL Readers\n\nText.\n";
+        let content = "---\ntitle: Url Reader Service\n---\n\n# URL Readers\n\nText.\n";
         assert_eq!(
             title_disagreement(content),
             Some(TitleDisagreement {
@@ -1182,27 +950,18 @@ Body here.
     #[test]
     fn a_document_with_one_name_has_nothing_to_disagree_with() {
         // Host title over a body that opens at `##`: the Docusaurus shape.
-        let host_only = "---\ntitle: Some Page\nx0k:\n  format: folio/v1\n---\n\n## Context\n";
+        let host_only = "---\ntitle: Some Page\n---\n\n## Context\n";
         assert_eq!(title_disagreement(host_only), None);
         // An H1 and no host title: every x0k document.
-        let h1_only = "---\nx0k:\n  format: folio/v1\n---\n# Some Other Page\n";
+        let h1_only = "# Some Other Page\n\n```turtle folio:document\ndesign:o a x0k:Design .\n```\n";
         assert_eq!(title_disagreement(h1_only), None);
-    }
-
-    #[test]
-    fn title_reads_an_html_body_s_opening_h1() {
-        // `body_format: html` documents carry their heading as a tag; the hash
-        // scanner finds nothing in them. Two of x0k's own design decisions.
-        let content = "---\nx0k:\n  format: folio/v1\n  body_format: html\n---\n\n<h1>Files surface</h1>\n\n<p>A library you already know how to use.</p>\n";
-        assert_eq!(document_title(content).as_deref(), Some("Files surface"));
     }
 
     #[test]
     fn title_falls_back_to_host_frontmatter_when_the_body_opens_at_h2() {
         // The Docusaurus/MkDocs shape: the name is a host frontmatter key and
-        // the body starts at `## Context`. Fifteen real ADRs indexed as `""`
-        // before this (Backstage evaluation, 2026-09-22).
-        let content = "---\nid: adrs-adr013\ntitle: 'ADR013: [superseded] Proper use of HTTP fetching libraries'\nx0k:\n  format: folio/v1\n  type: architecture\n---\n\n## Context\n\nUsing multiple HTTP packages…\n";
+        // the body starts at `## Context`.
+        let content = "---\nid: adrs-adr013\ntitle: 'ADR013: [superseded] Proper use of HTTP fetching libraries'\n---\n\n## Context\n\nUsing multiple HTTP packages…\n";
         assert_eq!(
             document_title(content).as_deref(),
             Some("ADR013: [superseded] Proper use of HTTP fetching libraries")
@@ -1210,11 +969,21 @@ Body here.
     }
 
     #[test]
+    fn title_reads_an_html_body_s_opening_h1() {
+        // `x0k:bodyFormat "html"` documents carry their heading as a tag; the
+        // hash scanner finds nothing in them. Two of x0k's own design
+        // decisions.
+        let content = "```turtle folio:document\ndesign:files-surface a x0k:Design ;\n    x0k:bodyFormat \"html\" .\n```\n\n<h1>Files surface</h1>\n\n<p>A library you already know how to use.</p>\n";
+        assert_eq!(document_title(content).as_deref(), Some("Files surface"));
+    }
+
+    #[test]
     fn title_takes_a_heading_the_body_opens_with_and_skips_fenced_regions() {
         // A `#` comment inside an example is a quotation, not a name. This
         // page indexed as "return None if the discriminator value isn't found"
         // — a Python comment 342 lines in (pydantic evaluation, 2026-09-22).
-        let content = "---\nx0k:\n  format: folio/v1\n---\n## Union Modes\n\nUnions are fundamentally different.\n\n```python\n# return None if the discriminator value isn't found\nreturn None\n```\n\n### Left to Right Mode\n";
+        // The header sits at the top, ahead of the `##`, and does not hide it.
+        let content = "```turtle folio:document\nwiki:union-modes a x0k:Wiki .\n```\n## Union Modes\n\nUnions are fundamentally different.\n\n```python\n# return None if the discriminator value isn't found\nreturn None\n```\n\n### Left to Right Mode\n";
         assert_eq!(document_title(content).as_deref(), Some("Union Modes"));
     }
 
@@ -1226,7 +995,7 @@ Body here.
         // where the blank it replaced was merely absent (pydantic re-
         // evaluation, 2026-09-22). With no summary either, the resolver
         // declines and `index` falls back to the stem.
-        let content = "---\nx0k:\n  format: folio/v1\n---\nUnions are fundamentally different.\n\n## Union Modes\n\n### Left to Right Mode\n";
+        let content = "```turtle folio:document\nwiki:union-modes a x0k:Wiki .\n```\nUnions are fundamentally different.\n\n## Union Modes\n\n### Left to Right Mode\n";
         assert_eq!(document_title(content), None);
     }
 
@@ -1235,9 +1004,15 @@ Body here.
         // A generated reference table: no headings, no host `title:`. What it
         // does have is a sentence about itself, which is at least about the
         // whole of it.
-        let content = "---\nx0k:\n  format: folio/v1\n  summary: What Pydantic converts to what.\n---\n| Field | Type |\n| --- | --- |\n| a | int |\n";
+        let content = "```turtle folio:document\nwiki:conversion-table a x0k:Wiki ;\n    x0k:summary \"What Pydantic converts to what.\" .\n```\n| Field | Type |\n| --- | --- |\n| a | int |\n";
         assert_eq!(
             document_title(content).as_deref(),
+            Some("What Pydantic converts to what.")
+        );
+        // A header the vocabulary refuses still lends its summary.
+        let refused = content.replace(" ;\n    x0k:summary", " ;\n    x0k:status \"ratified\" ;\n    x0k:summary");
+        assert_eq!(
+            document_title(&refused).as_deref(),
             Some("What Pydantic converts to what.")
         );
     }
@@ -1246,8 +1021,52 @@ Body here.
     fn a_document_with_no_heading_and_no_summary_has_no_title_of_its_own() {
         // Nothing in the file names it. The resolver declines and `index`
         // lists it under its filename stem.
-        let content = "---\nx0k:\n  format: folio/v1\n---\n| Field | Type |\n| --- | --- |\n| a | int |\n";
+        let content = "```turtle folio:document\nwiki:conversion-table a x0k:Wiki .\n```\n| Field | Type |\n| --- | --- |\n| a | int |\n";
         assert_eq!(document_title(content), None);
+    }
+
+    /// The order itself: every source present, then each taken away in turn,
+    /// so the next one down answers.
+    #[test]
+    fn the_title_sources_answer_in_order() {
+        let header = "```turtle folio:document\nwiki:order a x0k:Wiki ;\n    x0k:summary \"The summary.\" .\n```\n";
+        let host = "---\ntitle: The record\n---\n";
+        let opening = "## The opening heading\n\n";
+        let hash = "# The hash heading\n\n";
+        let tag = "<h1>The tag heading</h1>\n\n";
+        let prose = "Prose.\n";
+
+        let all = format!("{host}{header}{opening}{hash}{tag}{prose}");
+        assert_eq!(document_title(&all).as_deref(), Some("The record"));
+        let no_host = format!("{header}{opening}{hash}{tag}{prose}");
+        assert_eq!(document_title(&no_host).as_deref(), Some("The hash heading"));
+        let no_hash = format!("{header}{opening}{tag}{prose}");
+        assert_eq!(document_title(&no_hash).as_deref(), Some("The tag heading"));
+        let no_tag = format!("{header}{opening}{prose}");
+        assert_eq!(document_title(&no_tag).as_deref(), Some("The opening heading"));
+        let no_opening = format!("{header}{prose}");
+        assert_eq!(document_title(&no_opening).as_deref(), Some("The summary."));
+        let nothing = format!("```turtle folio:document\nwiki:order a x0k:Wiki .\n```\n{prose}");
+        assert_eq!(document_title(&nothing), None);
+    }
+
+    #[test]
+    fn the_index_carries_every_literal_the_header_states() {
+        let model = OntologyModel::shipped();
+        let content = "# Germ\n\n```turtle folio:document\nwiki:germ a x0k:Wiki ;\n    x0k:status \"draft\" ;\n    x0k:summary \"A germ.\" ;\n    x0k:concerns \"a\", \"b\" ;\n    x0k:confidence \"sketch\" ;\n    x0k:cites wiki:other ;\n    folio:tangleCrate \"substrate/cells/germ\" ;\n    folio:tangleRoots '{\"rust\":\"src/lib.rs\"}'^^rdf:JSON .\n```\n\nBody.\n";
+        let properties = header_properties(content, &model);
+        let strings = |values: &[&str]| values.iter().map(|v| v.to_string()).collect::<Vec<_>>();
+        assert_eq!(properties["x0k:status"], strings(&["draft"]));
+        assert_eq!(properties["x0k:summary"], strings(&["A germ."]));
+        assert_eq!(properties["x0k:concerns"], strings(&["a", "b"]), "statement order");
+        assert_eq!(properties["x0k:confidence"], strings(&["sketch"]));
+        assert_eq!(properties["folio:tangleCrate"], strings(&["substrate/cells/germ"]));
+        assert_eq!(properties["folio:tangleRoots"], strings(&["{\"rust\":\"src/lib.rs\"}"]), "JSON as its text");
+        assert!(!properties.contains_key("x0k:cites"), "an IRI object is an edge, not a property");
+
+        let refused = content.replace("\"draft\"", "\"ratified\"");
+        assert_eq!(header_properties(&refused, &model)["x0k:status"], strings(&["ratified"]));
+        assert!(header_properties("# Plain\n\nNo header.\n", &model).is_empty());
     }
 
     #[test]
@@ -1263,7 +1082,7 @@ Body here.
         let doc_path = dir.join("conversion_table.md");
         std::fs::write(
             &doc_path,
-            "---\nx0k:\n  format: folio/v1\n  id: pyd:concept/conversion-table\n  type: wiki\n  status: stable\n---\n| Field | Type |\n",
+            "```turtle folio:document\nwiki:conversion-table a x0k:Wiki ;\n    x0k:status \"stable\" .\n```\n| Field | Type |\n",
         )
         .unwrap();
 
@@ -1271,6 +1090,7 @@ Body here.
         let entry = &index.docs[0];
         assert_eq!(entry.title, "conversion_table");
         assert_eq!(entry.summary, "");
+        assert_eq!(entry.properties["x0k:status"], vec!["stable".to_string()]);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1315,7 +1135,7 @@ impl Shelf {
         std::fs::write(dir.join(src_rel), source).unwrap();
 
         let doc = format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/test/doc\n  type: implementation\n  status: draft\n---\n# Test Doc\n\n```rust {{#verdict from=\"{src_rel}\" symbol=\"classify_range\"}}\n```\n\n```rust {{#shelf from=\"{src_rel}\" symbol=\"Shelf\"}}\n```\n"
+            "# Test Doc\n\n```turtle folio:document\nimplementation:test\\/doc a x0k:Implementation ;\n    x0k:status \"draft\" .\n```\n\n```rust {{#verdict from=\"{src_rel}\" symbol=\"classify_range\"}}\n```\n\n```rust {{#shelf from=\"{src_rel}\" symbol=\"Shelf\"}}\n```\n"
         );
         let doc_path = dir.join("doc.md");
         std::fs::write(&doc_path, doc).unwrap();
@@ -1391,7 +1211,7 @@ class Widget {
         std::fs::write(dir.join(src_rel), source).unwrap();
 
         let doc = format!(
-            "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/test/js\n  type: implementation\n  status: draft\n---\n# Test Doc\n\n```js {{#widget from=\"{src_rel}\" symbol=\"Widget\"}}\n```\n"
+            "# Test Doc\n\n```turtle folio:document\nimplementation:test\\/js a x0k:Implementation ;\n    x0k:status \"draft\" .\n```\n\n```js {{#widget from=\"{src_rel}\" symbol=\"Widget\"}}\n```\n"
         );
         let doc_path = dir.join("doc.md");
         std::fs::write(&doc_path, doc).unwrap();
@@ -1440,7 +1260,7 @@ class Widget {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
 
-        let doc = "---\nx0k:\n  format: folio/v1\n  id: x0k:implementation/test/toml\n  type: implementation\n  status: draft\n---\n# Test Doc\n\n```toml {#pkg from=\"Cargo.toml\" symbol=\"package\"}\n```\n";
+        let doc = "# Test Doc\n\n```turtle folio:document\nimplementation:test\\/toml a x0k:Implementation ;\n    x0k:status \"draft\" .\n```\n\n```toml {#pkg from=\"Cargo.toml\" symbol=\"package\"}\n```\n";
         let doc_path = dir.join("doc.md");
         std::fs::write(&doc_path, doc).unwrap();
 
@@ -1462,7 +1282,7 @@ class Widget {
 
 ## The file
 
-<a name="chunk-root"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [doc-index](#chunk-doc-index) · [chunk-summary](#chunk-chunk-summary) · [build-index](#chunk-build-index) · [index-file](#chunk-index-file) · [build-span-map](#chunk-build-span-map) · [extract-body-format](#chunk-extract-body-format) · [document-title](#chunk-document-title) · [first-level-one-heading](#chunk-first-level-one-heading) · [title-disagreement](#chunk-title-disagreement) · [first-heading](#chunk-first-heading) · [first-html-h1](#chunk-first-html-h1) · [host-frontmatter-title](#chunk-host-frontmatter-title) · [split-frontmatter](#chunk-split-frontmatter) · [unquote-scalar](#chunk-unquote-scalar) · [envelope-fields](#chunk-envelope-fields) · [scan-envelope-fields](#chunk-scan-envelope-fields) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/index.rs`](../../crates/x0k-tangle/src/index.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [doc-index](#chunk-doc-index) · [chunk-summary](#chunk-chunk-summary) · [build-index](#chunk-build-index) · [index-file](#chunk-index-file) · [build-span-map](#chunk-build-span-map) · [header-fields](#chunk-header-fields) · [header-properties](#chunk-header-properties) · [document-title](#chunk-document-title) · [first-level-one-heading](#chunk-first-level-one-heading) · [opening-heading](#chunk-opening-heading) · [first-html-h1](#chunk-first-html-h1) · [first-heading](#chunk-first-heading) · [title-disagreement](#chunk-title-disagreement) · [host-frontmatter-title](#chunk-host-frontmatter-title) · [unquote-scalar](#chunk-unquote-scalar) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -1477,35 +1297,33 @@ class Widget {
 
 <<build-span-map>>
 
-<<extract-body-format>>
+<<header-fields>>
+
+<<header-properties>>
 
 <<document-title>>
 
 <<first-level-one-heading>>
 
-<<title-disagreement>>
-
-<<first-heading>>
+<<opening-heading>>
 
 <<first-html-h1>>
 
+<<first-heading>>
+
+<<title-disagreement>>
+
 <<host-frontmatter-title>>
 
-<<split-frontmatter>>
-
 <<unquote-scalar>>
-
-<<envelope-fields>>
-
-<<scan-envelope-fields>>
 
 <<tests>>
 ```
 
 The index is a projection of the corpus and nothing more — it holds no
-state a re-walk cannot rebuild — which is why the tolerant reader is
-acceptable here where it would not be in the envelope validator: an index
-that is wrong about one document's `status` costs a sidebar row, and the
+state a re-walk cannot rebuild — which is why listing a refused header is
+acceptable here where it would not be in the header check: an index that
+says nothing about one document's `status` costs a sidebar row, and the
 next walk corrects it. Tolerant is about meaning, though, and never about
 syntax — sharing `check`'s parser is what stops the two verbs describing
 the same file differently.

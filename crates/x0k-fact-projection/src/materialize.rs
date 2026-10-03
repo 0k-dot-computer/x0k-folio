@@ -284,7 +284,7 @@ impl std::error::Error for MaterializeError {}
 /// where and how their graph lands on disk.
 pub trait Materializer: Send + Sync {
     /// Stable identifier, for diagnostics and registry validation
-    /// (today: `"folio/v1"`). Several class entries may share a name while
+    /// (today: `"folio/v2"`). Several class entries may share a name while
     /// carrying different placements.
     fn name(&self) -> &str;
 

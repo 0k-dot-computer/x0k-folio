@@ -1,29 +1,19 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/tangle/region-weave
-  type: implementation
-  status: draft
-  summary: Region weaving as pure post-processing over the single-document weaver — cross-document links, the site nav, the URI-to-file map — computed without reading or writing a file, which is what makes every rule testable with strings.
-  concerns:
-  - tangle
-  - publication
-  - weave
-  - region
-  tangle:
-    crate: crates/x0k-tangle
-    root: src/region_weave.rs
-  edges:
-    implements:
-    - x0k:design/author-and-publish-the-same-surface
-    cites:
-    - x0k:implementation/tangle/region-project
-    - x0k:implementation/tangle/atlas
-    - x0k:implementation/tangle/presentation
-    - x0k:implementation/folio/transclusion
----
 
 # Region weave: many documents, one artifact, no I/O
+
+```turtle folio:document
+implementation:tangle\/region-weave a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "Region weaving as pure post-processing over the single-document weaver — cross-document links, the site nav, the URI-to-file map — computed without reading or writing a file, which is what makes every rule testable with strings." ;
+    x0k:concerns "tangle", "publication", "weave", "region" ;
+    x0k:cites implementation:tangle\/region-project,
+        implementation:tangle\/atlas,
+        implementation:tangle\/presentation,
+        implementation:folio\/transclusion ;
+    x0k:implements design:author-and-publish-the-same-surface ;
+    folio:tangleCrate "crates/x0k-tangle" ;
+    folio:tangleRoot "src/region_weave.rs" .
+```
 
 The single-document weaver turns one [literate
 doc](../../background/literate-programming.md "x0k:wiki/literate-programming") into one standalone HTML page. A publication is many documents that link to each other, and a reader
@@ -112,7 +102,7 @@ resolved too, but the weaver never opens it.
 pub struct RegionMember {
     /// The member's entity URI, exactly as authored (`x0k:design/foo`).
     pub uri: String,
-    /// Full source markdown of the member's decision doc (frontmatter + body).
+    /// Full source markdown of the member's decision doc (header + body).
     pub content: String,
     /// The member's workspace-relative source path, e.g.
     /// `decisions/design/foo.md`. Used as a second link-match key so an
@@ -280,14 +270,14 @@ let mut media_refs: BTreeSet<String> = BTreeSet::new();
 let mut transclusion_warnings: Vec<String> = Vec::new();
 
 // Transclusion source: every member, keyed by URI. A spine member's
-// `transcludes:` / inline `x0k:transclude` references resolve against
+// `folio:transcludes` / inline `x0k:transclude` references resolve against
 // the region's own membership (intra-region targets only).
 let transclude_source = RegionDocSource::new(input);
 ```
 
 Each member is transcluded, wikilink-rewritten, parsed and woven in that
 order, because transclusion arrives as markdown and the weaver must see a
-complete folio/v1 file. Media refs are harvested from the source rather than
+complete document, header and all. Media refs are harvested from the source rather than
 the woven HTML, so the harvest runs even when the `motifs` feature is off.
 
 <a name="chunk-weave-first-pass"></a><sub>[`src/region_weave.rs`](../../crates/x0k-tangle/src/region_weave.rs) · `#weave-first-pass`</sub>
@@ -318,9 +308,9 @@ for m in &input.members {
     for w in &resolved.warnings {
         transclusion_warnings.push(format!("{}: {:?}", m.uri, w));
     }
-    // Splice the resolved body back behind the member's frontmatter so
-    // the weaver still sees a complete folio/v1 file.
-    let transcluded_content = reassemble_with_body(&m.content, &resolved.body);
+    // Place the resolved body back under the member's header so the
+    // weaver still sees a complete document.
+    let transcluded_content = x0k_folio::colophon::replace_body(&m.content, &resolved.body);
     // Pre-process `[[slug]]` wikilinks BEFORE weaving: in-region → a
     // markdown link `[title](x0k:wiki/slug)` (later rewritten to the local
     // `.html` by `rewrite_cross_doc_links`); out-of-region → plain text.
@@ -401,7 +391,7 @@ Ok(RegionWeaveOutput {
 
 ## Transclusion within the region
 
-A member's `transcludes:` references resolve against the region's own
+A member's `folio:transcludes` references resolve against the region's own
 membership: the region is the document source. Out-of-region targets return
 `None` and degrade to a link with a warning.
 
@@ -410,7 +400,7 @@ membership: the region is the document source. Out-of-region targets return
 ```rust {#region-doc-source}
 /// A [`x0k_folio::transclusion::DocSource`] backed by a region's
 /// members. Maps a folio URI to that member's **body markdown**
-/// (frontmatter stripped), so transclusion references resolve against the
+/// (header lifted out), so transclusion references resolve against the
 /// region's own membership. Only intra-region targets
 /// resolve; an out-of-region reference returns `None` and degrades to a
 /// link (recorded as a warning).
@@ -422,8 +412,8 @@ impl RegionDocSource {
     fn new(input: &RegionInput) -> Self {
         let mut by_uri = HashMap::new();
         for m in &input.members {
-            // Store the FULL file content; `DocSource::body` strips the
-            // frontmatter via the shared `split_body` so the inlined
+            // Store the FULL file content; `DocSource::body` lifts the
+            // header out via the shared `split_body` so the inlined
             // markdown matches what the renderer sees.
             by_uri.insert(m.uri.clone(), m.content.clone());
         }
@@ -435,7 +425,7 @@ impl x0k_folio::transclusion::DocSource for RegionDocSource {
     fn body(&self, uri: &str) -> Option<String> {
         self.by_uri
             .get(uri)
-            .map(|c| x0k_folio::transclusion::split_body(c).1.to_string())
+            .map(|c| x0k_folio::transclusion::split_body(c))
     }
 }
 ```
@@ -473,33 +463,10 @@ fn scan_media_refs(text: &str) -> Vec<String> {
 }
 ```
 
-After transclusion, the resolved body is spliced back behind the member's
-own frontmatter.
-
-<a name="chunk-reassemble"></a><sub>[`src/region_weave.rs`](../../crates/x0k-tangle/src/region_weave.rs) · `#reassemble`</sub>
-
-```rust {#reassemble}
-/// Reassemble a folio/v1 file from its original frontmatter and a
-/// (transclusion-resolved) body. Preserves the `---`-delimited envelope
-/// byte-for-byte; only the body region is replaced. If the input has no
-/// frontmatter, returns the resolved body alone.
-fn reassemble_with_body(original: &str, new_body: &str) -> String {
-    match x0k_folio::transclusion::split_body(original) {
-        (Some(yaml), _) => {
-            let mut out = String::with_capacity(yaml.len() + new_body.len() + 16);
-            out.push_str("---");
-            out.push_str(yaml);
-            out.push_str("\n---\n");
-            out.push_str(new_body);
-            if !new_body.ends_with('\n') {
-                out.push('\n');
-            }
-            out
-        }
-        (None, _) => new_body.to_string(),
-    }
-}
-```
+After transclusion, the resolved body is placed back under the member's own
+header with `x0k_folio::colophon::replace_body`, which keeps the header
+byte-for-byte and puts it where the placement rule says — the inverse of
+the `strip_header` that produced the body.
 
 ## Wikilinks
 
@@ -556,8 +523,8 @@ and this chapter names that rather than hiding it.
 <a name="chunk-first-h1"></a><sub>[`src/region_weave.rs`](../../crates/x0k-tangle/src/region_weave.rs) · `#first-h1`</sub>
 
 ```rust {#first-h1}
-/// Extract the first markdown `# ` heading from a doc's body (cheap line scan).
-/// Skips the frontmatter envelope. Returns `None` if no H1 is present.
+/// Extract the first markdown `# ` heading from a doc (cheap line scan).
+/// Returns `None` if no H1 is present.
 fn first_h1(content: &str) -> Option<String> {
     for line in content.lines() {
         let t = line.trim_start();
@@ -1151,11 +1118,11 @@ mod tests {
         }
     }
 
-    /// A minimal folio/v1 member body. The weaver only needs the markdown
-    /// body; frontmatter is split off by `weave_html`'s `split_body`.
+    /// A minimal member document. The weaver only needs the markdown
+    /// body; `weave_html` lifts the header out.
     fn doc(title: &str, body: &str) -> String {
         format!(
-            "---\nx0k:\n  format: folio/v1\n  type: design\n  id: x0k:design/x\n---\n\n# {title}\n\n{body}\n"
+            "# {title}\n\n```turtle folio:document\ndesign:x a x0k:Design .\n```\n\n{body}\n"
         )
     }
 
@@ -1390,7 +1357,7 @@ mod tests {
     fn wikilink_resolves_end_to_end_to_local_html() {
         // An in-region `[[slug]]` becomes a markdown link, then the cross-doc
         // rewrite turns the `x0k:wiki/slug` href into the member's local file.
-        let entry = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/lineage\n  subtype: index\n  summary: x\n  edges:\n    cites:\n      - x0k:wiki/hypercard\n---\n\n# Lineage\n\nSee [[hypercard]].\n".to_string();
+        let entry = "# Lineage\n\n```turtle folio:document\nwiki:lineage a x0k:Wiki ;\n    x0k:subtype \"index\" ;\n    x0k:summary \"x\" ;\n    x0k:cites wiki:hypercard .\n```\n\nSee [[hypercard]].\n".to_string();
         let card = doc("HyperCard", "Body.");
         let input = RegionInput {
             entry_point_uri: "x0k:wiki/lineage".to_string(),
@@ -1424,11 +1391,11 @@ mod tests {
     }
 
     #[test]
-    fn wiki_frontmatter_with_extra_fields_weaves() {
-        // Wiki frontmatter carries extra fields (subtype, summary, edges.cites).
+    fn a_wiki_header_with_extra_fields_weaves() {
+        // A wiki header carries extra terms (subtype, summary, cites).
         // Confirm parse_document + weave_html tolerate them.
-        let content = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/x\n  subtype: node\n  summary: a short summary\n  updated_by: agent\n  created_at: 2026-06-05\n  concerns: [lineage]\n  edges:\n    cites:\n      - x0k:wiki/y\n---\n\n# X Page\n\nProse with a [[y]] link.\n";
-        let parsed = parse_document(content).expect("wiki frontmatter should parse");
+        let content = "# X Page\n\n```turtle folio:document\nwiki:x a x0k:Wiki ;\n    x0k:subtype \"node\" ;\n    x0k:summary \"a short summary\" ;\n    x0k:updatedBy \"agent\" ;\n    x0k:createdAt \"2026-06-05\" ;\n    x0k:concerns \"lineage\" ;\n    x0k:cites wiki:y .\n```\n\nProse with a [[y]] link.\n";
+        let parsed = parse_document(content).expect("a wiki header should parse");
         let out = weave_html(content, &parsed).expect("wiki page should weave");
         assert!(out.html.starts_with("<!DOCTYPE html>"));
         assert_eq!(out.title.as_deref(), Some("X Page"));
@@ -1562,8 +1529,8 @@ against the crate's public surface.
 ```
 
 The fixtures are deliberately minimal folio documents built by `format!`
-rather than fixture files, because the region layer cares about frontmatter
-`id` and links and nothing else. An empty atlas stands in wherever a
+rather than fixture files, because the region layer cares about the header's
+id and links and nothing else. An empty atlas stands in wherever a
 hand-built `RegionWeaveOutput` is needed — the validator inspects pages, never
 the atlas, so filling one in would be furniture.
 
@@ -1599,16 +1566,23 @@ fn empty_atlas() -> x0k_tangle::Atlas {
 <a name="chunk-region-tests-fixtures"></a><sub>[`tests/region_weave.rs`](../../crates/x0k-tangle/tests/region_weave.rs) · `#region-tests-fixtures`</sub>
 
 ```rust {#region-tests-fixtures file="tests/region_weave.rs"}
-/// A minimal folio/v1 design doc body (frontmatter split off by the weaver).
+/// A compact `x0k:` id as a Turtle term: its `/` escaped.
+fn term(id: &str) -> String {
+    id.replace('/', "\\/")
+}
+
+/// A minimal design document (the weaver lifts the header out).
 fn design_doc(id: &str, title: &str, body: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  type: design\n  id: {id}\n  status: proposed\n---\n\n# {title}\n\n{body}\n"
+        "# {title}\n\n```turtle folio:document\n{} a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\n{body}\n",
+        term(id)
     )
 }
 
 fn architecture_doc(id: &str, title: &str, body: &str) -> String {
     format!(
-        "---\nx0k:\n  format: folio/v1\n  type: architecture\n  id: {id}\n  status: proposed\n---\n\n# {title}\n\n{body}\n"
+        "# {title}\n\n```turtle folio:document\n{} a x0k:Architecture ;\n    x0k:status \"proposed\" .\n```\n\n{body}\n",
+        term(id)
     )
 }
 
@@ -1799,19 +1773,13 @@ fn project_publication_writes_navigable_artifact_to_disk() {
     .unwrap();
 
     // The publication doc demarcating the region.
-    let publication = "---\n\
-        x0k:\n\
-        \x20\x20format: folio/v1\n\
-        \x20\x20type: publication\n\
-        \x20\x20id: x0k:publication/sample-region\n\
-        \x20\x20status: proposed\n\
-        \x20\x20edges:\n\
-        \x20\x20\x20\x20publishes:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:design/author\n\
-        \x20\x20\x20\x20\x20\x20- x0k:architecture/web-first\n\
-        \x20\x20\x20\x20entryPoint:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:design/author\n\
-        ---\n\n# Sample Region\n\nA demonstration publication.\n";
+    let publication = "# Sample Region\n\n\
+        ```turtle folio:document\n\
+        publication:sample-region a x0k:Publication ;\n\
+        \x20   x0k:status \"proposed\" ;\n\
+        \x20   x0k:publishes design:author, architecture:web-first ;\n\
+        \x20   x0k:entryPoint design:author .\n\
+        ```\n\nA demonstration publication.\n";
     let pub_path = pub_dir.join("sample-region.md");
     fs::write(&pub_path, publication).unwrap();
 
@@ -1905,16 +1873,12 @@ fn single_member_publication_defaults_entry() {
     )
     .unwrap();
 
-    let publication = "---\n\
-        x0k:\n\
-        \x20\x20format: folio/v1\n\
-        \x20\x20type: publication\n\
-        \x20\x20id: x0k:publication/solo-pub\n\
-        \x20\x20status: proposed\n\
-        \x20\x20edges:\n\
-        \x20\x20\x20\x20publishes:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:design/solo\n\
-        ---\n\n# Solo Pub\n";
+    let publication = "# Solo Pub\n\n\
+        ```turtle folio:document\n\
+        publication:solo-pub a x0k:Publication ;\n\
+        \x20   x0k:status \"proposed\" ;\n\
+        \x20   x0k:publishes design:solo .\n\
+        ```\n";
     let pub_path = pub_dir.join("solo-pub.md");
     fs::write(&pub_path, publication).unwrap();
 
@@ -1960,30 +1924,24 @@ fn self_booting_artifact_bundles_wasm_data_shell_and_fallback() {
     )
     .unwrap();
 
-    // Two wiki members with a frontmatter summary + body (deep-doc portal text).
+    // Two wiki members with a header summary + body (deep-doc portal text).
     for (slug, title) in [("alpha", "Alpha Page"), ("beta", "Beta Page")] {
         fs::write(
             wiki_dir.join(format!("{slug}.md")),
             format!(
-                "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/{slug}\n  summary: Summary of {title}\n---\n\n# {title}\n\nReal prose body for {title}.\n"
+                "# {title}\n\n```turtle folio:document\nwiki:{slug} a x0k:Wiki ;\n    x0k:summary \"Summary of {title}\" .\n```\n\nReal prose body for {title}.\n"
             ),
         )
         .unwrap();
     }
 
-    let publication = "---\n\
-        x0k:\n\
-        \x20\x20format: folio/v1\n\
-        \x20\x20type: publication\n\
-        \x20\x20id: x0k:publication/lineage-mini\n\
-        \x20\x20status: proposed\n\
-        \x20\x20edges:\n\
-        \x20\x20\x20\x20publishes:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:wiki/alpha\n\
-        \x20\x20\x20\x20\x20\x20- x0k:wiki/beta\n\
-        \x20\x20\x20\x20entryPoint:\n\
-        \x20\x20\x20\x20\x20\x20- x0k:wiki/alpha\n\
-        ---\n\n# Lineage Mini\n";
+    let publication = "# Lineage Mini\n\n\
+        ```turtle folio:document\n\
+        publication:lineage-mini a x0k:Publication ;\n\
+        \x20   x0k:status \"proposed\" ;\n\
+        \x20   x0k:publishes wiki:alpha, wiki:beta ;\n\
+        \x20   x0k:entryPoint wiki:alpha .\n\
+        ```\n";
     let pub_path = pub_dir.join("lineage-mini.md");
     fs::write(&pub_path, publication).unwrap();
 
@@ -2052,7 +2010,7 @@ fn self_booting_artifact_bundles_wasm_data_shell_and_fallback() {
 ### Transclusion across the region
 
 A spine document composes sections out of its neighbours — by an inline
-`x0k:transclude` fence or by a `transcludes:` sequence in its frontmatter — and
+`x0k:transclude` fence or by `folio:transcludes` statements in its header — and
 the region weaver has to resolve those at the same seam where it resolves
 links. Both spellings land in one woven page with both sections inlined, and
 the sections that were *not* named stay where they were:
@@ -2062,10 +2020,10 @@ the sections that were *not* named stay where they were:
 ```rust {#region-tests-transclude-two-briefs file="tests/region_weave.rs"}
 #[test]
 fn spine_transcludes_two_briefs_into_one_woven_page() {
-    let design_a = "---\nx0k:\n  format: folio/v1\n  type: design\n  id: x0k:design/alpha\n  status: proposed\n---\n\n# Alpha\n\nlead\n\n## Brief\n\nAlpha's brief paragraph.\n\n## Purpose\n\nAlpha purpose (must NOT be inlined).\n";
-    let design_b = "---\nx0k:\n  format: folio/v1\n  type: design\n  id: x0k:design/beta\n  status: proposed\n---\n\n# Beta\n\nlead\n\n## Brief\n\nBeta's brief paragraph.\n\n## Purpose\n\nBeta purpose (must NOT be inlined).\n";
-    // Spine: inline fence pulls alpha#brief; frontmatter pulls beta#brief.
-    let spine = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/spine\n  status: stable\n  transcludes:\n    - x0k:design/beta#brief\n---\n\n# Spine\n\nConnective prose before.\n\n```x0k:transclude {ref=\"x0k:design/alpha#brief\"}\n```\n\nConnective prose after.\n";
+    let design_a = "# Alpha\n\n```turtle folio:document\ndesign:alpha a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\nlead\n\n## Brief\n\nAlpha's brief paragraph.\n\n## Purpose\n\nAlpha purpose (must NOT be inlined).\n";
+    let design_b = "# Beta\n\n```turtle folio:document\ndesign:beta a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\nlead\n\n## Brief\n\nBeta's brief paragraph.\n\n## Purpose\n\nBeta purpose (must NOT be inlined).\n";
+    // Spine: inline fence pulls alpha#brief; the header pulls beta#brief.
+    let spine = "# Spine\n\n```turtle folio:document\nwiki:spine a x0k:Wiki ;\n    x0k:status \"stable\" ;\n    folio:transcludes \"x0k:design/beta#brief\" .\n```\n\nConnective prose before.\n\n```x0k:transclude {ref=\"x0k:design/alpha#brief\"}\n```\n\nConnective prose after.\n";
 
     let input = RegionInput {
         entry_point_uri: "x0k:wiki/spine".to_string(),
@@ -2105,7 +2063,7 @@ fn spine_transcludes_two_briefs_into_one_woven_page() {
     );
     assert!(
         index.contains("Beta's brief paragraph."),
-        "frontmatter transclusion of beta#brief not inlined"
+        "header transclusion of beta#brief not inlined"
     );
     // The spine's own connective prose surrounds them.
     assert!(index.contains("Connective prose before."));
@@ -2145,8 +2103,8 @@ re-render.
 fn edit_through_to_source_is_reflected_when_spine_reresolves() {
     use x0k_folio::transclusion::{replace_section, split_body};
 
-    let source_before = "---\nx0k:\n  format: folio/v1\n  type: design\n  id: x0k:design/source\n  status: proposed\n---\n\n# Source\n\n## Brief\n\noriginal source brief.\n\n## Purpose\n\npurpose stays put.\n";
-    let spine = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/spine\n  status: stable\n---\n\n# Spine\n\nSpine connective prose.\n\n```x0k:transclude {ref=\"x0k:design/source#brief\"}\n```\n";
+    let source_before = "# Source\n\n```turtle folio:document\ndesign:source a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\n## Brief\n\noriginal source brief.\n\n## Purpose\n\npurpose stays put.\n";
+    let spine = "# Spine\n\n```turtle folio:document\nwiki:spine a x0k:Wiki ;\n    x0k:status \"stable\" .\n```\n\nSpine connective prose.\n\n```x0k:transclude {ref=\"x0k:design/source#brief\"}\n```\n";
 
     let weave = |source_content: &str| {
         let input = RegionInput {
@@ -2183,9 +2141,11 @@ fn edit_through_to_source_is_reflected_when_spine_reresolves() {
 
     // Apply the edit-through to the SOURCE body's `#brief` section — the
     // exact transform `DocumentViewer::save_transclusion_edit` performs.
-    let (yaml, body) = split_body(source_before);
-    let new_body = replace_section(body, "brief", "## Brief\n\nEDITED source brief.\n").unwrap();
-    let source_after = format!("---{}\n---\n{new_body}", yaml.unwrap());
+    let body = split_body(source_before);
+    let new_body = replace_section(&body, "brief", "## Brief\n\nEDITED source brief.\n").unwrap();
+    let source_after = x0k_folio::colophon::replace_body(source_before, &new_body);
+    // The header is kept byte-for-byte.
+    assert!(source_after.contains("```turtle folio:document\ndesign:source a x0k:Design ;"));
     // The source's other section is preserved by the edit.
     assert!(source_after.contains("purpose stays put."));
     assert!(source_after.contains("EDITED source brief."));
@@ -2218,7 +2178,7 @@ page, the author gets told:
 ```rust {#region-tests-self-transclusion file="tests/region_weave.rs"}
 #[test]
 fn spine_self_transclusion_degrades_to_link_with_warning() {
-    let spine = "---\nx0k:\n  format: folio/v1\n  type: wiki\n  id: x0k:wiki/loop\n  status: stable\n---\n\n# Loop\n\n```x0k:transclude {ref=\"x0k:wiki/loop\"}\n```\n";
+    let spine = "# Loop\n\n```turtle folio:document\nwiki:loop a x0k:Wiki ;\n    x0k:status \"stable\" .\n```\n\n```x0k:transclude {ref=\"x0k:wiki/loop\"}\n```\n";
     let input = RegionInput {
         entry_point_uri: "x0k:wiki/loop".to_string(),
         members: vec![RegionMember {
@@ -2271,7 +2231,7 @@ fn spine_self_transclusion_degrades_to_link_with_warning() {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/region_weave.rs`](../../crates/x0k-tangle/src/region_weave.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [region-member](#chunk-region-member) · [artifact-file](#chunk-artifact-file) · [region-weave-output](#chunk-region-weave-output) · [weave-region](#chunk-weave-region) · [region-doc-source](#chunk-region-doc-source) · [scan-media-refs](#chunk-scan-media-refs) · [reassemble](#chunk-reassemble) · [entry-file](#chunk-entry-file) · [wiki-title-map](#chunk-wiki-title-map) · [first-h1](#chunk-first-h1) · [rewrite-wikilinks](#chunk-rewrite-wikilinks) · [uri-to-path](#chunk-uri-to-path) · [nav-entry](#chunk-nav-entry) · [rewrite-cross-doc-links](#chunk-rewrite-cross-doc-links) · [site-nav](#chunk-site-nav) · [validate](#chunk-validate) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/region_weave.rs`](../../crates/x0k-tangle/src/region_weave.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [region-member](#chunk-region-member) · [artifact-file](#chunk-artifact-file) · [region-weave-output](#chunk-region-weave-output) · [weave-region](#chunk-weave-region) · [region-doc-source](#chunk-region-doc-source) · [scan-media-refs](#chunk-scan-media-refs) · [entry-file](#chunk-entry-file) · [wiki-title-map](#chunk-wiki-title-map) · [first-h1](#chunk-first-h1) · [rewrite-wikilinks](#chunk-rewrite-wikilinks) · [uri-to-path](#chunk-uri-to-path) · [nav-entry](#chunk-nav-entry) · [rewrite-cross-doc-links](#chunk-rewrite-cross-doc-links) · [site-nav](#chunk-site-nav) · [validate](#chunk-validate) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -2289,8 +2249,6 @@ fn spine_self_transclusion_degrades_to_link_with_warning() {
 <<region-doc-source>>
 
 <<scan-media-refs>>
-
-<<reassemble>>
 
 <<entry-file>>
 

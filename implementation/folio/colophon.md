@@ -1,151 +1,460 @@
----
-x0k:
-  format: folio/v1
-  id: x0k:implementation/folio/colophon
-  type: implementation
-  status: draft
-  summary: The envelope's single parser and renderer, permissive about keys it does not own and closed about the keywords it does, consumed by every crate that touches a folio file.
-  concerns:
-  - folio
-  - envelope
-  - frontmatter
-  - parsing
-  - yaml
-  tangle:
-    crate: crates/x0k-folio
-    root: src/colophon.rs
-  edges:
-    implements:
-    - x0k:design/knowledge-kinds-and-citations
-    cites:
-    - x0k:architecture/filesystem-graph-materialization
-    - x0k:implementation/folio/format
-    - x0k:implementation/tangle/parsing
----
-# The colophon: one envelope, one parser, one renderer
+# The colophon: one header, one parser, one renderer
 
-Every folio/v1 document in the corpus — a wiki page, a design decision, a
-publication manifest, this very file — opens with the same `--- ... ---`
-YAML block. That block is the document's **colophon**: its identity
-(`id:`), its genus (`type:`), its lifecycle (`status:`), and its place in
-the graph (`edges:`). Before this module existed the envelope had grown
-several parsers — the wiki crate, the daemon, the tangler each read the
-YAML their own way — and "what is a valid folio file" had no single
-answer. This module is that answer: exactly one parser
-([`parse_envelope`](#parse-envelope)) and one renderer
-([`render_envelope`](#render-envelope)) for the shape, consumed by every
-crate that touches a folio file.
-
-Our carried example throughout the folio chapters is a real envelope, the
-publication manifest at `decisions/publications/x0k-folio.md`
-— the document that publishes this crate to the public internet:
-
-```yaml
-x0k:
-  format: folio/v1
-  type: publication
-  id: x0k:publication/x0k-folio
-  status: proposed
-  edges:
-    publishes:
-      - x0k:software-module/x0k-folio
-      - x0k:software-module/x0k-tangle
-  license: MIT OR Apache-2.0
+```turtle folio:document
+implementation:folio\/colophon a x0k:Implementation ;
+    x0k:status "draft" ;
+    x0k:summary "The document header's single parser and renderer — a Turtle block whose one subject is the document, read with the vocabulary's own terms and consumed by every crate that touches a folio file." ;
+    x0k:concerns "folio", "header", "turtle", "parsing" ;
+    x0k:cites architecture:filesystem-graph-materialization,
+        implementation:folio\/format,
+        implementation:tangle\/parsing ;
+    x0k:implements design:knowledge-kinds-and-citations ;
+    folio:tangleCrate "crates/x0k-folio" ;
+    folio:tangleRoot "src/colophon.rs" .
 ```
+
+A folio document is Markdown whose graph content is written in one data
+language, Turtle. The document says who it is in its **header**: the first
+fenced block of the body, marked `turtle folio:document`, whose one subject
+is the document itself — its id, its class, its lifecycle and its edges,
+written as the vocabulary's own terms (`x0k:architecture/filesystem-graph-materialization`
+§4). That block is the document's **colophon**. This module is its only
+parser ([`parse_envelope`](#parse-envelope)) and its only renderer
+([`render_header`](#render-header)), consumed by every crate that touches a
+folio file, so "what is a typed document" has one answer.
+
+Our carried example throughout the folio chapters is a real header, the
+publication manifest at `publications/x0k-folio/x0k-folio.md` — the document
+that publishes this crate to the public internet:
+
+````markdown
+# x0k-folio
+
+```turtle folio:document
+publication:x0k-folio a x0k:Publication ;
+    x0k:status "proposed" ;
+    x0k:publishes software-module:x0k-folio,
+        software-module:x0k-tangle ;
+    x0k:license "MIT OR Apache-2.0" .
+```
+
+The prose begins here.
+````
 
 Parsing it yields a typed [`Colophon`](#colophon-type): `doc_type` is
 `DocType::Publication`, `status` is `Some(Status::Proposed)`, and
-`edges["publishes"]` carries the module URIs. The `license:` key is worth
-pausing on: it is not a field this parser knows. The envelope tolerates
-unknown keys (serde ignores wire fields with no target), so consumers with
-domain-specific needs — the repository projector reads `license:` with its
-own scan — can extend the envelope without a lockstep change here. That
-tolerance is a deliberate one-way valve: unknown *keys* pass silently, but
-unknown *values* for the keys we do own (`type:`, `status:`) fail loudly.
+`edges["x0k:publishes"]` carries the module ids. The `x0k:license` statement
+is worth pausing on: it is not a term this parser reads for itself. It lands
+in `properties`, keyed by the term, so a consumer with a domain need — the
+repository projector reads `x0k:license` — takes it from there without a
+lockstep change here. Unknown *terms* pass; an unknown *value* for a term this
+parser owns (`x0k:status`, the class) fails loudly.
 
 ## The contract
 
-The parser's scope is deliberately narrow:
+- **In scope:** finding the header, parsing its Turtle with the predeclared
+  prefixes, promoting its statements to the typed header, finding the body
+  around it, and rendering a header back to a block.
+- **Out of scope:** predicate validation against a vocabulary (`check` and
+  the ingest do that), `EntityUri` promotion of targets, and anything that
+  reads the body's own content.
 
-- **In scope:** splitting a file into YAML + body, deserializing the
-  `x0k:` block to the typed envelope, and rendering an envelope back to
-  canonical YAML.
-- **Out of scope:** edge-predicate validation (the daemon's job),
-  `EntityUri` parsing of edge targets, and wiki-specific body extraction.
-
-The out-of-scope list is why edge targets and the document `id` stay
-`String` here. Promoting them to `EntityUri` would drag URI validation
-rules into every consumer of the shared parser, and each consumer wants a
-different strictness — the daemon's typed wrapper enforces predicate
-vocabularies, the tangler just needs `tangle.crate`. Keep the shared layer
-permissive; promote in the consumer.
-
-The module performs no IO. It takes strings and returns strings and typed
-values; where a file comes from and what happens to the rendered YAML is
-entirely the caller's business.
+Ids and edge targets stay `String` in their compact spelling
+(`x0k:design/retry-budget`) — the spelling every consumer already keys by —
+and the strictness each consumer wants is promoted in the consumer. The
+module performs no IO: strings in, strings and typed values out.
 
 <a name="chunk-module-doc"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
-//! Canonical folio/v1 frontmatter envelope: shared parser + renderer.
+//! The folio document header: its one parser and its one renderer.
 //!
-//! This module owns the YAML envelope shape that wiki pages and decision
-//! documents share. Daemon and wiki crates consume from here so the
-//! `--- ... ---` block has exactly one parser and one renderer in the
-//! workspace. Edge targets and ids stay `String` — each consumer decides
-//! how strict to be; the daemon's typed wrapper promotes to `EntityUri`.
-//!
-//! The split between file authority and database authority that this
-//! envelope serves is set out in an internal architecture decision
-//! (`filesystem-graph-materialization`); this module needs none of it
-//! to parse or render.
+//! A typed document's header is the first fenced block of its Markdown,
+//! marked `turtle folio:document`. Its single subject is the document; its
+//! statements are the document's class, lifecycle, edges and tool
+//! configuration, written in the vocabulary's own terms. Daemon, wiki,
+//! tangler and checker consume from here, so the header has exactly one
+//! parser and one renderer in the workspace. Ids and edge targets stay
+//! `String` in their compact spelling — each consumer decides how strict to
+//! be.
 
-use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::ops::Range;
+use std::sync::OnceLock;
 
-use x0k_ontology::concept_facts::{camel_to_kebab, OntologyModel};
+use oxrdf::{NamedOrBlankNode, Term};
+use oxttl::TurtleParser;
+use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+use serde::Deserialize;
+
+use x0k_ontology::concept_facts::{camel_to_kebab, OntologyModel, OntologyValue, OWL_CLASS, RDF_TYPE, X0K_NS};
 ```
 
-## Format tokens
+## Markers and namespaces
 
-The wire token `folio/v1` is what makes a frontmatter block a colophon
-rather than arbitrary YAML — [`is_colophon`](#is-colophon) gates on it and
-[`parse_envelope`](#parse-envelope) rejects anything else. Alongside it
-live the recognized body formats. A folio body is markdown unless the
-envelope says otherwise; HTML is the one opt-in alternative:
+Two info strings belong to the format. The header is `turtle folio:document`;
+every other block the document asserts graph content in is `turtle
+folio:graph` ([`document-vocabulary.md`](document-vocabulary.md)). A fence
+carrying anything else — a `turtle` example, a `yaml` snippet — is prose.
+
+`folio:` is the namespace of folio's own terms: the provenance a projection
+records (`folio:sourcePath`) and the tool configuration a document carries
+(`folio:tangleCrate`). It is the shared namespace's `folio/` part, so every
+`x0k:folio/…` term the fact plane has always held keeps its IRI.
+
+<a name="chunk-markers"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#markers`</sub>
+
+```rust {#markers}
+/// The marker of a document's header: the first fenced block, info string
+/// `turtle folio:document`.
+pub const HEADER_MARKER: &str = "folio:document";
+
+/// The marker of every other graph block: `turtle folio:graph`.
+pub const GRAPH_MARKER: &str = "folio:graph";
+
+/// Folio's own terms — projection provenance and tool configuration.
+pub const FOLIO_NS: &str = "https://0k.computer/ontology#folio/";
+
+pub const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+pub const RDFS_NS: &str = "http://www.w3.org/2000/01/rdf-schema#";
+pub const OWL_NS: &str = "http://www.w3.org/2002/07/owl#";
+pub const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema#";
+pub const VANN_NS: &str = "http://purl.org/vocab/vann/";
+
+/// The datatype of a structured value — a JSON document in a literal.
+pub const RDF_JSON: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#JSON";
+pub const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
+pub const XSD_BOOLEAN: &str = "http://www.w3.org/2001/XMLSchema#boolean";
+pub const XSD_INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
+pub const XSD_DECIMAL: &str = "http://www.w3.org/2001/XMLSchema#decimal";
+pub const XSD_DOUBLE: &str = "http://www.w3.org/2001/XMLSchema#double";
+
+/// What `<>` — the document itself — resolves to while a block parses.
+/// A header whose subject is `<>` names no identity in the shared
+/// namespace: an untyped document carrying tool configuration only. Any
+/// other IRI that resolves under the same reserved host was written
+/// relative, and is refused.
+const SELF_IRI: &str = "https://folio.invalid/this-document";
+const RELATIVE_BASE: &str = "https://folio.invalid/";
+
+/// True when a fence's info string is `turtle <marker>`: the language
+/// `turtle` in any case, the marker as written, and after it nothing but an
+/// attribute list (`{source="…"}`).
+pub fn is_marker(info: &str, marker: &str) -> bool {
+    let mut tokens = info.split_ascii_whitespace();
+    tokens.next().is_some_and(|language| language.eq_ignore_ascii_case("turtle"))
+        && tokens.next() == Some(marker)
+        && tokens.next().is_none_or(|attributes| attributes.starts_with('{'))
+}
+```
+
+## Predeclared prefixes
+
+A header must be writable without a line of `@prefix` boilerplate, and it must
+not invent a naming scheme to get there. Identifiers keep the shared namespace
+(`provenance` §7): `x0k:design/retry-budget` has always denoted
+`https://0k.computer/ontology#design/retry-budget`, and it still does. What
+this format decides is only its spelling in a document, and the spelling
+comes from the classes themselves: **every class the vocabulary declares in
+the shared namespace predeclares a prefix, the kebab-case of the class's local
+name, naming that class's part of the namespace.** `x0k:Design` gives
+`design:`, `x0k:SoftwareModule` gives `software-module:`, `x0k:OpenQuestion`
+gives `open-question:` — the same kebab-case the id grammar
+([`identity.md`](identity.md)) has always used for an id's class segment, so
+`design:retry-budget` is the IRI `x0k:design/retry-budget` denotes.
+
+The list is derived, never typed: it is read off the vocabulary the parse
+runs against (`OntologyModel::shipped()` by default), so a class added to a
+module is a prefix the next build admits. Alongside the class prefixes the
+table holds the vocabulary's own `x0k:`, the standard `rdf:`, `rdfs:`,
+`owl:`, `xsd:` and `vann:`, folio's `folio:`, the prefix of each of the ten
+genera folio names (they are classes under any vocabulary, so a collection
+read with no base vocabulary still writes `wiki:`), and every prefix a loaded
+module declares for its own namespace (`vann:preferredNamespacePrefix` —
+`paracosm:`, a reader's `paper:`). A module's own prefix wins over a
+class prefix of the same spelling, because the module named it; a document's
+own `@prefix` line shadows any predeclared one, so a project's `design:`
+never collides with ours.
+
+An id whose class segment names no class — `x0k:paracosm/fossil-record`,
+`x0k:test/…` — keeps the base prefix and escapes its separators
+(`x0k:paracosm\/fossil-record`). An id with more than one path segment under
+its class escapes each further separator, as Turtle requires
+(`implementation:folio\/colophon`).
+
+<a name="chunk-prefixes"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#prefixes`</sub>
+
+```rust {#prefixes}
+/// The prefixes every graph block may use without declaring them, as
+/// `(prefix, namespace)`, read off `model`: the fixed set, every module's own
+/// prefix, then one per class of the shared namespace — the kebab-case of the
+/// class's local name, naming `x0k:<kebab>/`. Sorted by prefix; a later
+/// source never replaces an earlier one's prefix.
+pub fn predeclared_prefixes(model: &OntologyModel) -> Vec<(String, String)> {
+    let mut table: BTreeMap<String, String> = BTreeMap::new();
+    for (prefix, namespace) in [
+        ("x0k", X0K_NS),
+        ("rdf", RDF_NS),
+        ("rdfs", RDFS_NS),
+        ("owl", OWL_NS),
+        ("xsd", XSD_NS),
+        ("vann", VANN_NS),
+        ("folio", FOLIO_NS),
+    ] {
+        table.insert(prefix.to_string(), namespace.to_string());
+    }
+    for (prefix, namespace) in model.extension_namespaces() {
+        table.entry(prefix).or_insert(namespace);
+    }
+    // The ten genera are classes even under a vocabulary that declares none
+    // of them, so a collection read with no base vocabulary still spells
+    // `wiki:paper-alpha`.
+    for genus in DocType::NAMED {
+        table.entry(genus.to_string()).or_insert_with(|| format!("{X0K_NS}{genus}/"));
+    }
+    // One pass over the facts rather than `model.classes()`, which compacts
+    // every class through the module table and is too slow to ask per
+    // document.
+    let owl_class = OntologyValue::Entity(OWL_CLASS.to_string());
+    for fact in model.facts() {
+        if fact.predicate != RDF_TYPE || fact.value != owl_class {
+            continue;
+        }
+        let Some(local) = fact.entity.strip_prefix(X0K_NS) else { continue };
+        if local.is_empty() || local.contains('/') {
+            continue;
+        }
+        let prefix = camel_to_kebab(local);
+        let namespace = format!("{X0K_NS}{prefix}/");
+        table.entry(prefix).or_insert(namespace);
+    }
+    table.into_iter().collect()
+}
+
+/// The table for the vocabulary this build compiled, computed once.
+pub fn shipped_prefixes() -> &'static [(String, String)] {
+    static TABLE: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    TABLE.get_or_init(|| predeclared_prefixes(&OntologyModel::shipped()))
+}
+```
+
+Reading a statement back into the strings consumers key by is the inverse
+direction, and it is deliberately coarser: an IRI in the shared namespace is
+`x0k:` plus the rest (`x0k:design/retry-budget`, `x0k:motivatedBy`), an IRI in
+a module's namespace is that module's prefix plus the rest, and anything else
+stays the IRI it is. The class prefixes are spelling for authors, not a
+second identity for readers.
+
+<a name="chunk-compact"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#compact`</sub>
+
+```rust {#compact}
+/// The compact string a consumer keys by: `x0k:<rest>` in the shared
+/// namespace, `<module prefix>:<rest>` in a module's, the IRI otherwise.
+pub fn compact_iri(iri: &str, prefixes: &[(String, String)]) -> String {
+    if let Some(rest) = iri.strip_prefix(X0K_NS) {
+        return format!("x0k:{rest}");
+    }
+    prefixes
+        .iter()
+        .filter(|(_, namespace)| !namespace.starts_with(X0K_NS) && iri.starts_with(namespace.as_str()))
+        .filter(|(_, namespace)| ![RDF_NS, RDFS_NS, OWL_NS, XSD_NS, VANN_NS].contains(&namespace.as_str()))
+        .max_by_key(|(_, namespace)| namespace.len())
+        .map(|(prefix, namespace)| format!("{prefix}:{}", &iri[namespace.len()..]))
+        .unwrap_or_else(|| iri.to_string())
+}
+
+/// The inverse of [`compact_iri`] for a compact id or term: `x0k:` and a
+/// module prefix expand; an absolute IRI or an unknown prefix is returned as
+/// it came.
+pub fn expand_compact(compact: &str, prefixes: &[(String, String)]) -> String {
+    if let Some(rest) = compact.strip_prefix("x0k:") {
+        return format!("{X0K_NS}{rest}");
+    }
+    if let Some((prefix, rest)) = compact.split_once(':') {
+        if let Some((_, namespace)) = prefixes.iter().find(|(p, _)| p == prefix) {
+            if !namespace.starts_with(X0K_NS) {
+                return format!("{namespace}{rest}");
+            }
+        }
+    }
+    compact.to_string()
+}
+```
+
+## Writing a term
+
+The renderer, and the one-shot conversion that wrote every header in the
+corpus, spell an IRI as a prefixed name wherever Turtle can, and as `<…>`
+where it cannot. The prefix chosen is the longest predeclared namespace that
+holds the IRI, so a design is `design:…`, a vocabulary term `x0k:…` and a
+provenance term `folio:…`. The local part is escaped by the grammar's own
+rules: `/`, and the other reserved punctuation, take a backslash; a `.` or
+`-` that would open or a `.` that would close the name takes one too; a
+character no local name can hold at all — a space, a quote, `<` — sends the
+whole IRI back to its bracketed form.
+
+<a name="chunk-turtle-name"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#turtle-name`</sub>
+
+```rust {#turtle-name}
+/// The Turtle spelling of `iri` under `prefixes`: the longest namespace that
+/// holds it and a local part escaped per the grammar, or `<iri>`.
+pub fn turtle_name(iri: &str, prefixes: &[(String, String)]) -> String {
+    let best = prefixes
+        .iter()
+        .filter(|(_, namespace)| iri.starts_with(namespace.as_str()))
+        .filter_map(|(prefix, namespace)| {
+            escape_local(&iri[namespace.len()..]).map(|local| (namespace.len(), format!("{prefix}:{local}")))
+        })
+        .max_by_key(|(length, _)| *length);
+    match best {
+        Some((_, name)) => name,
+        None => format!("<{iri}>"),
+    }
+}
+
+fn is_pn_chars_base(c: char) -> bool {
+    matches!(c,
+        'A'..='Z' | 'a'..='z'
+        | '\u{00C0}'..='\u{00D6}' | '\u{00D8}'..='\u{00F6}' | '\u{00F8}'..='\u{02FF}'
+        | '\u{0370}'..='\u{037D}' | '\u{037F}'..='\u{1FFF}' | '\u{200C}'..='\u{200D}'
+        | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}'
+        | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' | '\u{10000}'..='\u{EFFFF}')
+}
+
+/// A local name as Turtle's `PN_LOCAL` spells it, or `None` when a character
+/// cannot appear in one even escaped.
+fn escape_local(local: &str) -> Option<String> {
+    const ESCAPABLE: &str = "_~.-!$&'()*+,;=/?#@%";
+    let chars: Vec<char> = local.chars().collect();
+    let mut out = String::with_capacity(local.len() + 4);
+    for (index, &c) in chars.iter().enumerate() {
+        let first = index == 0;
+        let last = index + 1 == chars.len();
+        let plain = is_pn_chars_base(c)
+            || c == '_'
+            || c == ':'
+            || c.is_ascii_digit()
+            || (!first && (c == '-' || c == '\u{00B7}'
+                || ('\u{0300}'..='\u{036F}').contains(&c)
+                || ('\u{203F}'..='\u{2040}').contains(&c)))
+            || (c == '.' && !first && !last);
+        let escaped = c == '%'
+            && chars.get(index + 1).is_some_and(char::is_ascii_hexdigit)
+            && chars.get(index + 2).is_some_and(char::is_ascii_hexdigit);
+        if plain || escaped {
+            out.push(c);
+        } else if c == '#' {
+            // A section anchor: an IRI holds one fragment, so a second `#`
+            // is written percent-encoded.
+            out.push_str("%23");
+        } else if ESCAPABLE.contains(c) {
+            out.push('\\');
+            out.push(c);
+        } else {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// A string literal: short form, or the long form when the value holds a
+/// line break. Backslashes and quotes are escaped in both.
+pub fn turtle_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    let long = value.contains('\n');
+    out.push_str(if long { "\"\"\"" } else { "\"" });
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' if long => out.push('\n'),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c == '\u{7F}' => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push_str(if long { "\"\"\"" } else { "\"" });
+    out
+}
+
+/// A literal as it is written: a plain string, a bare boolean or number
+/// when its lexical form is Turtle's own, a JSON document single-quoted so
+/// its double quotes need no escape, anything else typed by its datatype.
+pub fn turtle_literal(literal: &Literal, prefixes: &[(String, String)]) -> String {
+    let lexical = literal.value.as_str();
+    match literal.datatype.as_str() {
+        XSD_STRING => turtle_string(lexical),
+        XSD_BOOLEAN if lexical == "true" || lexical == "false" => lexical.to_string(),
+        XSD_INTEGER if is_turtle_integer(lexical) => lexical.to_string(),
+        XSD_DECIMAL if is_turtle_decimal(lexical) => lexical.to_string(),
+        RDF_JSON if !lexical.contains('\n') => {
+            let mut out = String::from("'");
+            for c in lexical.chars() {
+                match c {
+                    '\\' => out.push_str("\\\\"),
+                    '\'' => out.push_str("\\'"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    c => out.push(c),
+                }
+            }
+            out.push_str("'^^");
+            out.push_str(&turtle_name(RDF_JSON, prefixes));
+            out
+        }
+        datatype => format!("{}^^{}", turtle_string(lexical), turtle_name(datatype, prefixes)),
+    }
+}
+
+fn is_turtle_integer(lexical: &str) -> bool {
+    let digits = lexical.strip_prefix(['+', '-']).unwrap_or(lexical);
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+fn is_turtle_decimal(lexical: &str) -> bool {
+    let unsigned = lexical.strip_prefix(['+', '-']).unwrap_or(lexical);
+    match unsigned.split_once('.') {
+        Some((whole, fraction)) => {
+            whole.chars().all(|c| c.is_ascii_digit())
+                && !fraction.is_empty()
+                && fraction.chars().all(|c| c.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+```
+
+## Body formats
+
+A folio body is Markdown unless the header says `x0k:bodyFormat "html"`, the
+one opt-in alternative. The term is the vocabulary's own
+(`document.ttl` declares `x0k:bodyFormat`), because what dialect a body is
+written in is a fact about the document rather than a tool's setting. An
+unknown value is the forward-compatible case — a newer writer may know a
+format this build does not — so it warns and falls back rather than making
+old software unable to open the document:
 
 <a name="chunk-format-tokens"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#format-tokens`</sub>
 
 ```rust {#format-tokens}
-/// Frontmatter format token authoritative for this parser.
-pub const FORMAT_FOLIO_V1: &str = "folio/v1";
-
-/// Default `body_format` when the envelope omits the field. Every legacy
-/// decision body is markdown.
+/// The body format when the header states none.
 pub const BODY_FORMAT_MARKDOWN: &str = "markdown";
 
-/// HTML body format. Authored as opt-in; renderer dispatches on this value.
+/// HTML body format. Opt-in; the renderer dispatches on this value.
 pub const BODY_FORMAT_HTML: &str = "html";
 
-/// Recognized `body_format` values. Unknown values warn and fall back to
-/// `markdown` per the `unknown_edges` forward-compat pattern.
+/// Recognized `x0k:bodyFormat` values.
 pub const KNOWN_BODY_FORMATS: &[&str] = &[BODY_FORMAT_MARKDOWN, BODY_FORMAT_HTML];
 ```
-
-An unknown `body_format` is the forward-compat case: a newer peer may have
-written a format this build doesn't know. Erroring would make old software
-unable to *open* new documents, which is worse than rendering them as
-markdown; so the policy is warn-and-fall-back, centralized here so callers
-don't each reinvent it:
 
 <a name="chunk-normalize-body-format"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#normalize-body-format`</sub>
 
 ```rust {#normalize-body-format}
-/// Normalize the parsed-or-omitted body format string. Returns the canonical
-/// value (`"markdown"` or `"html"`); for unrecognized values it emits a
-/// `tracing::warn` and returns `"markdown"`. Centralizes the warn-and-fall-back
-/// behaviour so callers don't reimplement the policy.
+/// Normalize the stated-or-absent body format. Returns `"markdown"` or
+/// `"html"`; an unrecognized value warns and returns `"markdown"`.
 pub fn normalize_body_format(raw: Option<&str>) -> String {
     match raw {
         None => BODY_FORMAT_MARKDOWN.to_string(),
@@ -154,7 +463,7 @@ pub fn normalize_body_format(raw: Option<&str>) -> String {
         Some(other) => {
             tracing::warn!(
                 body_format = %other,
-                "unknown `x0k.body_format` value; falling back to `markdown` (forward-compat)"
+                "unknown `x0k:bodyFormat` value; falling back to `markdown` (forward-compat)"
             );
             BODY_FORMAT_MARKDOWN.to_string()
         }
@@ -164,42 +473,27 @@ pub fn normalize_body_format(raw: Option<&str>) -> String {
 
 ## The genus: DocType
 
-`type:` names the document's genus per `ontology/`, and for a long time
-this enum was the only thing that knew which genera exist. That made
-adding one a code change in a published library — a strong claim to make
-about a vocabulary whose whole architecture is that extending it is an
-assertion rather than a migration (`x0k:architecture/ontology-modules`).
-A reader with their own module could declare a class and still not use it
-as a `type:`.
+A header's class is its genus, stated with `a`: `a x0k:Design`. For a long
+time the set of genera was only what an enum here knew, which made adding one
+a code change in a published library — a strong claim about a vocabulary
+whose architecture is that extending it is an assertion
+(`x0k:architecture/ontology-modules`). So the set has two halves. The ten
+variants below are the genera this crate knows by name: everything
+downstream (review workflow, storage authority, URI namespace) dispatches on
+them. `Declared` is the other half — a class a loaded vocabulary declares
+that this crate has no variant for, carried by the kebab-case of its local
+name. Our publication manifest is `DocType::Publication`; this page is
+`DocType::Implementation`; `a mycorp:Brief` in a reader's corpus is
+`DocType::Declared("brief")` when their module declares the class, and a
+refusal when it does not.
 
-So the set has two halves. The ten variants below are the genera this
-crate knows by name: everything downstream (review workflow, storage
-authority, URI namespace) dispatches on them, so each keeps its own
-variant and its own `match` arm. `Declared` is the other half — a genus a
-loaded vocabulary declares that this crate has no variant for, carrying
-the keyword as written. Our carried publication manifest parses to
-`DocType::Publication`; this literate page parses to
-`DocType::Implementation`; a `type: brief` in a reader's own corpus parses
-to `DocType::Declared("brief")` when their module declares a `Brief` class
-and fails to parse when it does not.
-
-The one variant with a payload is what costs `Copy`. A genus name is a
-`String` because it comes from a file at run time, and a `&'static str`
-would mean leaking one per unknown keyword a parser ever sees.
-
-The hard part is what counts as a genus, and the honest answer is wider
-than we would like. The vocabulary marks no class as one: `Design`,
-`Seed` and `Affordance` carry no fact `Place` and `Profile` do not, and
-the ten this crate names are spread across three modules with three
-different shapes — five subclass `Decision`, `Wiki` subclasses
-`Knowledge`, and `Manuscript`, `Seed`, `Intent` and `Affordance`
-subclass nothing. So the question a model can actually answer is
-"do you declare a class of this name", and that is the question asked.
-It admits `type: place`, which is not a document genus in any sense a
-reader would recognize. Narrowing it means the vocabulary declaring
-which of its classes are genera — a fact, not a rule in this file — and
-until it does, minting a marker here would put the answer in the wrong
-place.
+The one variant with a payload is what costs `Copy`. The hard part is what
+counts as a genus, and the honest answer is wider than we would like: the
+vocabulary marks no class as one, so the question a model can answer is "do
+you declare this class", and that is the question asked. It admits `a
+paracosm:Place`, which is not a document genus in any sense a reader would
+recognize; narrowing it means the vocabulary declaring which of its classes
+are genera — a fact, not a rule in this file.
 
 <a name="chunk-doc-type"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#doc-type`</sub>
 
@@ -208,7 +502,7 @@ place.
 /// architecture / publication) live here directly — for those, `DocType` IS
 /// the decision subtype because each has its own review workflow. Knowledge
 /// genus types (Wiki today) carry their page-kind in the optional
-/// `subtype` field on the parsed envelope.
+/// `subtype` field on the parsed header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocType {
     Commitment,
@@ -217,62 +511,52 @@ pub enum DocType {
     Publication,
     /// Authored long-form content — an author's *corpus* of composed works,
     /// independent of whether any Publication makes them public. File-canonical
-    /// and reviewed through version control (authorship and editorial control
-    /// matter), distinct from the database-canonical, dialog-produced Wiki
-    /// (reference knowledge) and from Decisions (choices). A Publication is a thin manifest that *selects*
-    /// manuscripts to publish; the manuscript exists in the corpus regardless.
-    /// Lives under `manuscripts/<work>/<part>.md`; addressed as
-    /// `x0k:manuscript/<work>/<part>`.
+    /// and reviewed through version control, distinct from the
+    /// database-canonical Wiki and from Decisions. Lives under
+    /// `manuscripts/<work>/<part>.md`; addressed as `x0k:manuscript/<work>/<part>`.
     Manuscript,
     Wiki,
-    /// Literate-implementation documents under `knowledge/implementation/`.
-    /// Tangle into real crates; implement one or more upstream designs or
-    /// affordances. Addressed as `x0k:implementation/<dir>/<slug>`.
+    /// Literate-implementation documents. Tangle into real crates; implement
+    /// one or more upstream designs or affordances. Addressed as
+    /// `x0k:implementation/<dir>/<slug>`.
     Implementation,
-    /// The curated document half of a Seed — a captured idea in the
-    /// planning graph. Each planning entity is split in two: an authored,
-    /// file-canonical half (title, description prose, icon recipe, curated
-    /// frontmatter edges) materialized under `seeds/<id>.md`, and a
-    /// dynamic half (status, timestamps, queue position) that lives only
-    /// as database facts and never enters the file. The two are joined by
-    /// URI (`x0k:seed/<id>`); the daemon that materializes documents owns
-    /// the per-field split.
+    /// The curated document half of a Seed — a captured idea in the planning
+    /// graph: an authored, file-canonical half materialized under
+    /// `seeds/<id>.md` and a dynamic half that lives only as database facts.
+    /// Joined by URI (`x0k:seed/<id>`).
     Seed,
     /// An Intent's curated document half. `intents/<id>.md`, addressed
-    /// `x0k:intent/<id>`. Curated DAG edges (`depends_on`,
-    /// `refined_from`, `child_of`) live in frontmatter; execution
-    /// status/config stay FACT-only.
+    /// `x0k:intent/<id>`. Curated DAG edges live in the header; execution
+    /// status and config stay facts only.
     Intent,
     /// An Affordance's curated document half. `affordances/<id>.md`,
-    /// addressed `x0k:affordance/<id>`. Title + description are the
-    /// curated body; per-context status claims stay FACT-only.
+    /// addressed `x0k:affordance/<id>`.
     Affordance,
-    /// A genus a loaded vocabulary declares that this crate has no variant
-    /// for, holding the `type:` keyword as written. Produced only by
-    /// [`DocType::declared_in`]; nothing dispatches on it, because nothing
-    /// compiled in knows what it means.
+    /// A class a loaded vocabulary declares that this crate has no variant
+    /// for, named by the kebab-case of its local name. Nothing dispatches on
+    /// it, because nothing compiled in knows what it means.
     Declared(String),
 }
 ```
 
-The string round-trip is hand-written rather than derived from serde
-because the same names appear in contexts serde never sees (URI segments,
-query filters), and a match statement the compiler exhaustiveness-checks
-is the cheapest way to keep the two directions in lockstep.
-
-The inward half is an inherent `from_str` returning `Option`, not
-`FromStr`. Clippy flags the name for exactly that reason, and the allow
-is a decision rather than a silencing: an unknown genus is *absence*,
-not a failure with a story to tell, so there is no error type worth
-minting, and every caller in the corpus writes
-`.and_then(DocType::from_str)` or `.ok_or_else(…)` over the `Option`.
-`FromStr` would force `Result<Self, E>` on all of them for a `()`-shaped
-error. `Status::from_str` below is the same call:
+The name round-trip is hand-written because the same names appear where no
+parser runs (URI segments, query filters), and a `match` the compiler checks
+for exhaustiveness keeps the directions in lockstep. `from_str` returns
+`Option`: an unknown genus is absence, not a failure with a story to tell.
+The class IRI is the name's other face — `design` is `x0k:Design` — and it is
+what the renderer writes after `a`.
 
 <a name="chunk-doc-type-strings"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#doc-type-strings`</sub>
 
 ```rust {#doc-type-strings}
 impl DocType {
+    /// The ten genera this crate names, by name. Each is a class whatever
+    /// vocabulary a reader loads, because folio itself dispatches on it.
+    pub const NAMED: [&'static str; 10] = [
+        "commitment", "design", "architecture", "publication", "manuscript",
+        "wiki", "implementation", "seed", "intent", "affordance",
+    ];
+
     pub fn as_str(&self) -> &str {
         match self {
             DocType::Commitment => "commitment",
@@ -289,9 +573,8 @@ impl DocType {
         }
     }
 
-    /// Parse a genus name. `None` for an unrecognized one: an unknown
-    /// genus is absence, not an error with anything to say, so this is
-    /// deliberately not `FromStr` — see the prose above.
+    /// Parse a genus name. `None` for an unrecognized one: an unknown genus
+    /// is absence, not an error with anything to say.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
@@ -309,28 +592,50 @@ impl DocType {
         })
     }
 
-    /// Parse a genus name against a vocabulary: one of the ten this crate
-    /// names, or any other class `model` declares, kept as
-    /// [`DocType::Declared`].
-    ///
-    /// The vocabulary carries no genus marker — a class is a class, and
-    /// `Design`, `Seed` and `Affordance` are marked no differently from
-    /// `Place` — so what this asks is whether the model declares a class of
-    /// that name at all. Narrowing it would mean minting a marker the
-    /// corpus does not have.
-    pub fn declared_in(model: &OntologyModel, s: &str) -> Option<Self> {
-        if let Some(known) = Self::from_str(s) {
-            return Some(known);
-        }
-        model
-            .class_names()
-            .contains(s)
-            .then(|| DocType::Declared(s.to_string()))
+    /// The class this genus names in the shared namespace: `design` is
+    /// `https://0k.computer/ontology#Design`. A declared genus is spelled
+    /// back into the shared namespace too, which is what a renderer writing
+    /// x0k's own documents wants.
+    pub fn class_iri(&self) -> String {
+        let pascal: String = self
+            .as_str()
+            .split('-')
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                    None => String::new(),
+                }
+            })
+            .collect();
+        format!("{X0K_NS}{pascal}")
     }
 
-    /// The genus names `model` admits beyond the ten this crate names, as a
-    /// `type:` keyword spells them. This is what a refusal shows a reader
-    /// whose own module declares the class they meant.
+    /// The genus a header's class names. A class in the shared namespace
+    /// that is one of the ten is that variant; any class `model` declares is
+    /// [`DocType::Declared`]; anything else is refused with the names `model`
+    /// admits beyond the ten.
+    pub fn of_class(class_iri: &str, model: Option<&OntologyModel>) -> Result<Self, Vec<String>> {
+        let local = class_iri.rsplit(['#', '/', ':']).next().unwrap_or(class_iri);
+        let kebab = camel_to_kebab(local);
+        if class_iri.strip_prefix(X0K_NS) == Some(local) {
+            if let Some(known) = Self::from_str(&kebab) {
+                return Ok(known);
+            }
+        }
+        let Some(model) = model else {
+            return Err(Vec::new());
+        };
+        let declared = model.classes().iter().any(|class| model.expand(&class.uri) == class_iri);
+        if declared {
+            return Ok(DocType::Declared(kebab));
+        }
+        Err(Self::declared_beyond_named(model))
+    }
+
+    /// The genus names `model` admits beyond the ten this crate names. This
+    /// is what a refusal shows a reader whose own module declares the class
+    /// they meant.
     pub fn declared_beyond_named(model: &OntologyModel) -> Vec<String> {
         model
             .class_names()
@@ -344,10 +649,9 @@ impl DocType {
 ## Lifecycle: Status
 
 One enum serves two lifecycles — decisions move `proposed → accepted →
-superseded`, knowledge pages move `draft → stable → stale`. Merging them
-into one type means the shared parser doesn't need to know the genus
-before it can read the status; which values are *legal* for a given genus
-is (like predicate vocabularies) the consumer's rule to enforce.
+superseded`, knowledge pages move `draft → stable → stale` — so the parser
+need not know the genus before it reads `x0k:status`. Which values are legal
+for which genus is the consumer's rule.
 
 <a name="chunk-status"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#status`</sub>
 
@@ -376,8 +680,7 @@ impl Status {
         }
     }
 
-    /// Parse a status name. `None` for an unrecognized one; not `FromStr`
-    /// for the same reason [`DocType::from_str`] is not.
+    /// Parse a status name. `None` for an unrecognized one.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
@@ -393,20 +696,30 @@ impl Status {
 }
 ```
 
-## Optional blocks: materialization, tangle, pipelines
+## Tool configuration: tangle, pipelines, materialization
 
-Three optional sub-blocks ride the envelope, each the keyhole for one
-subsystem. `materialization:` points a projected file back at the Loro
-document it is a window onto; `tangle:` marks a literate document whose
-code chunks project into a crate (this page carries one); `pipelines:`
-declares codegen passes over named chunks.
+Three kinds of statement are configuration a tool reads rather than facts a
+reader queries, and each is a `folio:` term so nothing about a document is
+written in a second syntax:
+
+| Statement | Read by | Value |
+|---|---|---|
+| `folio:tangleCrate` | the tangler | the crate directory, a string |
+| `folio:tangleRoot` | the tangler | the default output file, relative to the crate |
+| `folio:tangleRoots` | the tangler | a language → output file map, as an `rdf:JSON` object |
+| `folio:pipelines` | the tangler | the codegen passes, as an `rdf:JSON` array of `{kind, input \| inputs, config}` |
+| `folio:loroDocId`, `folio:documentRevisionId`, `folio:contentHash` | the projection | the Loro document a file is a window onto |
+
+The structured two are one JSON literal each rather than a nest of blank
+nodes: a header has one subject, and a pipeline's `config` is a payload the
+plugin deserializes itself, which JSON already is. They are still facts once
+ingested, as every header statement is.
 
 <a name="chunk-materialization"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#materialization`</sub>
 
 ```rust {#materialization}
-/// Optional materialization metadata block — pointers to the Loro doc and
-/// last revision the file was projected from. Absent on file-authority docs
-/// that have not yet been ingested.
+/// Pointers from a projected file back to the Loro document and revision it
+/// was projected from. Absent on file-authority documents.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Materialization {
     /// Identifier of the Loro document this file is a projection of.
@@ -418,146 +731,138 @@ pub struct Materialization {
 }
 ```
 
-`TangleConfig` mirrors what the tangler's own frontmatter walk extracts
-(see [`tangle/parsing.md`](../tangle/parsing.md)) — the crate, the default
-output file, and the per-language `roots:` map for bilingual documents:
-
 <a name="chunk-tangle-config"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#tangle-config`</sub>
 
 ```rust {#tangle-config}
-/// Optional tangle configuration — when present, the document participates
-/// in literate programming: named code chunks in the markdown body can be
-/// tangled into compilable source files.
+/// Tangle configuration — when present, the document's named code chunks
+/// tangle into compilable source files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TangleConfig {
-    /// Workspace crate this document tangles into (e.g. `"x0k-vcs"`).
+    /// Workspace crate this document tangles into (`folio:tangleCrate`).
     pub crate_name: Option<String>,
-    /// Default output file relative to the crate directory.
+    /// Default output file relative to the crate directory (`folio:tangleRoot`).
     pub root: Option<String>,
-    /// Per-language output roots (fence language → path) for bilingual
-    /// docs that tangle one prose body to multiple substrates (e.g.
-    /// `rust:` and `gallowglass:`). Sorted map; empty when absent.
+    /// Per-language output roots (fence language → path) for documents that
+    /// tangle one prose body to several substrates (`folio:tangleRoots`).
     pub roots: BTreeMap<String, String>,
 }
 ```
 
-A pipeline declaration names a transformer plugin, the chunks it consumes,
-and an untyped config payload the plugin deserializes itself. The wire
-format has a shorthand (`input: tokens`) and a long form (`inputs: {name:
-chunk}`); the shorthand normalizes at parse time to a single entry under
-the `"default"` key, so plugins see one shape:
+A pipeline names a transformer plugin, the chunks it consumes and the config
+payload the plugin deserializes itself. `input` is the shorthand for one
+input and normalizes to a single `"default"` entry, so plugins see one shape:
 
 <a name="chunk-pipeline-decl"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#pipeline-decl`</sub>
 
 ````rust {#pipeline-decl}
-/// Declaration of one pipeline pass for a literate document. A pipeline
-/// names a transformer (`kind`) registered against a `PipelineRegistry`,
-/// the input chunks it consumes (keyed by the plugin's parameter name →
-/// chunk name in this document), and the plugin-deserialized `config`
-/// payload.
+/// One pipeline pass for a literate document: a transformer (`kind`), the
+/// chunks it consumes (plugin parameter name → chunk name), and the
+/// plugin-deserialized `config` payload.
 ///
-/// Wire format supports two shorthand forms (normalized at parse time):
+/// The header states the list as one `folio:pipelines` JSON array:
 ///
-/// ```yaml
-/// # shorthand: single input plugin
-/// pipelines:
-///   - kind: theme-codegen
-///     input: tokens                          # bare chunk name
-///     config: { name: pansophia, scheme: single }
-///
-/// # long form: explicit name → chunk map
-/// pipelines:
-///   - kind: theme-codegen
-///     inputs: { tokens: tokens-chunk }
-///     config: { ... }
+/// ```turtle
+/// folio:pipelines '[{"kind":"theme-codegen","input":"tokens","config":{"name":"pansophia"}}]'^^rdf:JSON
 /// ```
 ///
-/// The shorthand `input: tokens` is normalized to
-/// `inputs: { "default": "tokens" }`. Plugins that take a single input
-/// look up `inputs["default"]`; multi-input plugins always use the long
-/// form and pick their own keys.
+/// `input: "tokens"` normalizes to `inputs: {"default": "tokens"}`; a
+/// multi-input plugin uses `inputs` and picks its own keys.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PipelineDecl {
     /// Identifier of the transformer plugin (`"theme-codegen"`, etc).
     pub kind: String,
     /// Map from plugin-param name → chunk name in this document.
-    /// Shorthand `input: <name>` normalizes to a single entry under the
-    /// `"default"` key.
     pub inputs: HashMap<String, String>,
-    /// Plugin-specific configuration payload, passed through as a typed
-    /// JSON value (deserialized into the plugin's own typed config in
-    /// `transform`).
+    /// Plugin-specific configuration payload.
     pub config: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct WirePipeline {
+    kind: String,
+    #[serde(default)]
+    input: Option<String>,
+    #[serde(default)]
+    inputs: Option<HashMap<String, String>>,
+    #[serde(default)]
+    config: serde_json::Value,
 }
 ````
 
 ## Errors a caller can act on
 
-The error enum is typed at the level of the caller's decision, not the
-parser's internals. The distinction that matters most is the first two
-variants: `NoFrontmatter` and `NotColophon` mean "this is not a folio/v1
-file — skip it", while everything after means "this file *claims* to be
-folio/v1 and is broken — surface it". A directory walk over a mixed tree
-leans on exactly that split.
+The distinction that matters most is the first two variants. `NoHeader` and
+`Untyped` mean "this is not a typed document — skip it": the first fenced
+block is not a header, or the header names the document itself (`<>`) and no
+identity, carrying tool configuration only. Everything after means "this file
+has a header and it is broken — surface it", and a directory walk over a mixed
+tree leans on exactly that split.
 
-`InvalidType` carries a second field, and it is there because the message
-without it lies. The accept set for `type:` is not the ten keywords this
-crate names: under a loaded vocabulary it is those ten *plus every class the
-modules declare*, spelled as the kebab-case of the class's local name. A
-message that enumerates only the ten tells a reader with their own module
-that their genus is impossible, and the only way past it is to guess
-spellings — which is what a reader of the public guide did, trying
-`ConceptPage`, `concept_page` and `conceptpage` before reaching
-`concept-page`. So the refusal carries the names the run actually admits,
-and when the keyword differs from an admitted class only by casing it says
-so instead of listing.
+`InvalidType` carries a second field because the message without it lies:
+under a loaded vocabulary the accept set is the ten *plus every class the
+modules declare*, and a message enumerating only the ten tells a reader with
+their own module that their genus is impossible.
 
 <a name="chunk-folio-error"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#folio-error`</sub>
 
 ```rust {#folio-error}
-/// Errors typed at the level a caller can act on: missing envelope means
-/// "not a folio/v1 file"; malformed envelope means "claims to be
-/// folio/v1 but isn't, surface it".
-#[derive(Debug)]
+/// Errors typed at the level a caller can act on: `NoHeader` and `Untyped`
+/// mean "not a typed document"; every other variant means "has a header that
+/// is broken — surface it".
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolioError {
-    NoFrontmatter,
-    NotColophon,
-    InvalidYaml(String),
-    MissingField { field: &'static str },
-    WrongFormat { got: String },
+    /// The document's first fenced block is not `turtle folio:document`.
+    NoHeader,
+    /// The header's subject is the document itself (`<>`): tool
+    /// configuration, no identity.
+    Untyped,
+    /// The header's Turtle does not parse; `line` is the line in the file.
+    Turtle { line: usize, reason: String },
+    /// A header states exactly one subject.
+    Subjects { found: Vec<String> },
+    /// A header holds no blank nodes.
+    BlankNode,
+    /// A header states exactly one class; `found` is how many it stated.
+    Class { found: usize },
     /// `declared` holds the genus names the vocabulary this parse ran
-    /// against admits beyond the ten named above — empty for
-    /// [`parse_envelope`], which runs against no vocabulary at all.
+    /// against admits beyond the ten — empty for [`parse_envelope`].
     InvalidType { got: String, declared: Vec<String> },
     InvalidStatus { got: String },
+    /// A term this parser reads carries a value it cannot use.
+    InvalidValue { predicate: String, reason: String },
+    /// A single-valued term stated twice.
+    Repeated { predicate: String },
 }
 
 impl std::fmt::Display for FolioError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NoFrontmatter => f.write_str("file has no frontmatter block"),
-            Self::NotColophon => {
-                f.write_str("frontmatter is not folio/v1 (no `x0k.format: folio/v1`)")
+            Self::NoHeader => f.write_str(
+                "the document's first fenced block is not a `turtle folio:document` header",
+            ),
+            Self::Untyped => f.write_str(
+                "the header's subject is the document itself (`<>`): no id, no class",
+            ),
+            Self::Turtle { line, reason } => {
+                write!(f, "the header at line {line} is not Turtle: {reason}")
             }
-            Self::InvalidYaml(msg) => write!(f, "frontmatter YAML is malformed: {msg}"),
-            Self::MissingField { field } => write!(f, "required field `x0k.{field}` is missing"),
-            Self::WrongFormat { got } => {
-                write!(f, "`x0k.format` must be `folio/v1`, got `{got}`")
-            }
+            Self::Subjects { found } => write!(
+                f,
+                "a header states exactly one subject, the document; found {}",
+                found.join(", ")
+            ),
+            Self::BlankNode => f.write_str("a header holds no blank nodes"),
+            Self::Class { found } => write!(
+                f,
+                "a header states exactly one class with `a`; found {found}"
+            ),
             Self::InvalidType { got, declared } => {
                 write!(
                     f,
-                    "`x0k.type` must be one of commitment|design|architecture|publication|manuscript|wiki|implementation|seed|intent|affordance, got `{got}`"
+                    "the header's class must be one of Commitment|Design|Architecture|Publication|Manuscript|Wiki|Implementation|Seed|Intent|Affordance, got `{got}`"
                 )?;
                 if declared.is_empty() {
                     return Ok(());
-                }
-                let kebab = camel_to_kebab(got);
-                if declared.contains(&kebab) {
-                    return write!(
-                        f,
-                        " — a loaded vocabulary module declares that class; spell it `{kebab}`, the kebab-case of the class's local name"
-                    );
                 }
                 write!(
                     f,
@@ -567,8 +872,12 @@ impl std::fmt::Display for FolioError {
             }
             Self::InvalidStatus { got } => write!(
                 f,
-                "`x0k.status` must be one of proposed|accepted|superseded|draft|stable|stale, got `{got}`"
+                "`x0k:status` must be one of proposed|accepted|superseded|draft|stable|stale, got `{got}`"
             ),
+            Self::InvalidValue { predicate, reason } => {
+                write!(f, "`{predicate}` has a value folio cannot read: {reason}")
+            }
+            Self::Repeated { predicate } => write!(f, "`{predicate}` is stated more than once"),
         }
     }
 }
@@ -576,8 +885,7 @@ impl std::fmt::Display for FolioError {
 impl std::error::Error for FolioError {}
 
 /// The admitted genus names, for a refusal message. Capped: a corpus-sized
-/// vocabulary declares dozens, and a reader who needs the whole list needs
-/// the vocabulary, not an error line.
+/// vocabulary declares dozens.
 fn genus_list(declared: &[String]) -> String {
     const SHOWN: usize = 10;
     let head = declared.iter().take(SHOWN).cloned().collect::<Vec<_>>().join("|");
@@ -588,635 +896,696 @@ fn genus_list(declared: &[String]) -> String {
 }
 ```
 
-## The parsed envelope
+## The parsed header
 
-`Colophon` is the typed result. Two shape decisions deserve their
-sentence. `status` is `Option` even though decisions require it — the
-*shared* envelope stays permissive and each consumer enforces its own
-requirements, the same division of labor as the string-shaped URIs.
-And `Eq` is deliberately not derived: `pipelines[].config` is a
-`serde_json::Value`, which can carry `f64`s, and floats only have partial
-equality.
+`Colophon` is the typed result. `status` is `Option` even though decisions
+require it — the shared layer stays permissive and each consumer enforces its
+own requirements. `edges` is keyed by the predicate's compact term
+(`x0k:motivatedBy`), the vocabulary's own name for it, and holds compact
+targets. `properties` holds every literal statement this parser does not read
+for itself, keyed the same way. `Eq` is not derived: a pipeline's `config`
+can carry floats.
 
 <a name="chunk-colophon-type"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#colophon-type`</sub>
 
 ```rust {#colophon-type}
-/// Parsed canonical envelope. Edge targets and the document `id` are kept as
-/// strings here so the shared parser doesn't have to know about
-/// `EntityUri` validation rules — promote in the consumer.
-///
-/// `summary` and `updated_by` live on the shared envelope so both wiki and
-/// decision-domain docs can carry them when useful.
-///
-/// `Eq` is intentionally not derived: `pipelines[].config` is a
-/// `serde_json::Value`, which carries `f64` numbers that have only
-/// partial equality. Tests assert equality via `assert_eq!` (which only
-/// requires `PartialEq`); consumers that need hash/key behavior pin off
-/// the `id` field.
+/// A literal as the header states it: lexical form and datatype IRI.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Literal {
+    pub value: String,
+    pub datatype: String,
+}
+
+impl Literal {
+    /// A plain string.
+    pub fn string(value: impl Into<String>) -> Self {
+        Self { value: value.into(), datatype: XSD_STRING.to_string() }
+    }
+}
+
+/// Parsed document header. Ids and targets stay compact strings — promote in
+/// the consumer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Colophon {
-    /// The document's identity: an `x0k:<genus>/<stem>` URI, kept as a
-    /// string (see the type-level note).
+    /// The document's identity, compact: `x0k:<class>/<stem>`.
     pub id: String,
-    /// The document's genus: one of the ten [`DocType`] names, or a
-    /// class a loaded vocabulary declared.
+    /// The document's genus: the class it states with `a`.
     pub doc_type: DocType,
-    /// Optional CURIE-form subtype for genera with agent-curated page-kinds
-    /// (e.g. `wiki:Methodology`). For decision subtypes the type IS the
-    /// subtype, so this stays `None`.
+    /// `x0k:subtype` — a page-kind for genera that carry one
+    /// (`wiki:Methodology`).
     pub subtype: Option<String>,
-    /// Optional in the shared envelope. Decision docs require it; wiki
-    /// pages also carry it. The daemon's typed wrapper enforces presence.
+    /// `x0k:status`.
     pub status: Option<Status>,
-    /// Free-form topic tags; empty when the envelope omits `concerns:`.
+    /// `x0k:concerns`, in statement order.
     pub concerns: Vec<String>,
-    /// Optional one-line summary of the document.
+    /// `x0k:summary`.
     pub summary: Option<String>,
-    /// Optional identity of the last editor.
+    /// `x0k:updatedBy`.
     pub updated_by: Option<String>,
-    /// ISO-8601 UTC timestamp the document was first created. Carried on
-    /// the envelope (not the Loro op-log) so a daemon restart re-hydrates
-    /// timestamps from the file alone.
+    /// `x0k:createdAt`, ISO-8601 UTC, carried on the header so a restart
+    /// re-hydrates timestamps from the file alone.
     pub created_at: Option<String>,
-    /// ISO-8601 UTC timestamp of the most recent update. See `created_at`.
+    /// `x0k:updatedAt`.
     pub updated_at: Option<String>,
-    /// Graph edges, predicate → target URIs, in sorted predicate order.
-    /// Predicate vocabularies are validated by the consumer, not here.
+    /// Every statement whose object is an IRI: compact predicate → compact
+    /// targets, in statement order.
     pub edges: BTreeMap<String, Vec<String>>,
-    /// Present on files projected from a Loro document; absent on
-    /// file-authority documents that have not been ingested.
+    /// Every other literal statement: compact predicate → values.
+    pub properties: BTreeMap<String, Vec<Literal>>,
+    /// `folio:loroDocId` and its neighbours, on projected files.
     pub materialization: Option<Materialization>,
-    /// Literate programming tangle configuration. When present, the
-    /// document's named code chunks can be tangled into source files.
+    /// `folio:tangleCrate` / `folio:tangleRoot` / `folio:tangleRoots`.
     pub tangle: Option<TangleConfig>,
-    /// Pipeline declarations — codegen plugins that consume named chunks
-    /// from this document's body and produce transformed outputs. See
-    /// [`PipelineDecl`] for the wire format; the registry that resolves
-    /// plugin names is `PipelineRegistry` in `x0k-tangle`'s `pipeline`
-    /// module (this crate does not depend on the tangler).
+    /// `folio:pipelines`.
     pub pipelines: Vec<PipelineDecl>,
-    /// Body format dispatch flag — `"markdown"` (default) or `"html"`.
-    /// Unknown values are coerced to `"markdown"` at parse time with a
-    /// tracing warning (see `normalize_body_format`).
+    /// `x0k:bodyFormat`, `"markdown"` when unstated.
     pub body_format: String,
 }
 ```
 
-## The wire shapes
+## Finding the header
 
-Deserialization goes through private `Wire*` structs that mirror the YAML
-exactly, every field `Option` and `default`. This is the standard
-two-layer move: serde gets a shape it can fill mechanically, and the
-promotion from wire to `Colophon` — where required fields are demanded and
-keywords validated — happens in one readable pass inside
-[`parse_envelope`](#parse-envelope) instead of scattered across serde
-attributes.
+The header is the first fenced block of the Markdown, and only when its info
+string is `turtle folio:document`. Anything before it is the body's: the title
+heading, usually — the conversion that wrote every header in this corpus put
+it directly under a leading `# ` heading, as the decision's own example does,
+and at the top of a document with none. A host's frontmatter, where a site
+generator keeps a page `title:` or route `id:`, belongs to the host: the
+header is looked for after it, and folio reads nothing from it but the
+`title:` the title rule may show ([`doc-index.md`](../tangle/doc-index.md)).
 
-<a name="chunk-wire-shapes"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#wire-shapes`</sub>
+The walk stops at the first fenced block. Directory walks meet thousands of
+files, and a Markdown parse that ends at the first fence is as cheap a gate as
+the old substring check was, without its false positives.
 
-```rust {#wire-shapes}
-/// Inner serde shape mirrors the YAML wire format. `edges` is captured as
-/// `BTreeMap<String, Vec<String>>` because predicate names are open-ended.
-#[derive(Debug, Deserialize)]
-struct WireRoot {
-    x0k: Option<WireC0k>,
-}
+<a name="chunk-find-header"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#find-header`</sub>
 
-#[derive(Debug, Deserialize)]
-struct WireC0k {
-    format: Option<String>,
-    id: Option<String>,
-    #[serde(rename = "type")]
-    doc_type: Option<String>,
-    #[serde(default)]
-    subtype: Option<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    concerns: Option<Vec<String>>,
-    #[serde(default)]
-    summary: Option<String>,
-    #[serde(default)]
-    updated_by: Option<String>,
-    #[serde(default)]
-    created_at: Option<String>,
-    #[serde(default)]
-    updated_at: Option<String>,
-    #[serde(default)]
-    edges: Option<BTreeMap<String, Vec<String>>>,
-    #[serde(default)]
-    materialization: Option<WireMaterialization>,
-    #[serde(default)]
-    tangle: Option<WireTangle>,
-    #[serde(default)]
-    pipelines: Option<Vec<WirePipelineDecl>>,
-    #[serde(default)]
-    body_format: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WireMaterialization {
-    #[serde(default)]
-    loro_doc_id: Option<String>,
-    #[serde(default)]
-    document_revision_id: Option<String>,
-    #[serde(default)]
-    content_hash: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WireTangle {
-    #[serde(default, rename = "crate")]
-    crate_name: Option<String>,
-    #[serde(default)]
-    root: Option<String>,
-    #[serde(default)]
-    roots: Option<BTreeMap<String, String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WirePipelineDecl {
-    kind: String,
-    /// Long form — explicit name → chunk map.
-    #[serde(default)]
-    inputs: Option<HashMap<String, String>>,
-    /// Shorthand — bare chunk name. Normalized to
-    /// `inputs: { "default": <name> }`.
-    #[serde(default)]
-    input: Option<String>,
-    /// Plugin config payload, captured as untyped JSON for the plugin to
-    /// deserialize into its own typed shape.
-    #[serde(default)]
-    config: serde_norway::Value,
-}
-```
-
-## Splitting the file
-
-Before any YAML is parsed the file must split into envelope and body. The
-split recognizes two closers: `\n---\n` (a body follows) and `\n---` at
-end-of-file (an envelope-only document, legal for thin manifests). Note
-the return type — both halves borrow from the input, so a caller that only
-wants the body pays for no allocation:
-
-<a name="chunk-split-frontmatter"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#split-frontmatter`</sub>
-
-```rust {#split-frontmatter}
-/// Parse the frontmatter block out of `content`, leaving the body untouched.
-/// Returns `(yaml_block, body)`. Both wiki and daemon callers split on the
-/// same shape so the parser surface is uniform.
-pub fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
-    let body_start_marker = "\n---\n";
-    let eof_marker = "\n---";
+```rust {#find-header}
+/// The byte range of a host frontmatter block — `---` on the first line to
+/// the closing `---` line, its line end included — when the document opens
+/// with one.
+pub fn host_frontmatter(content: &str) -> Option<Range<usize>> {
     let after_open = content.strip_prefix("---\n")?;
-    if let Some(idx) = after_open.find(body_start_marker) {
-        let yaml = &after_open[..idx];
-        let body = &after_open[idx + body_start_marker.len()..];
-        return Some((yaml, body));
+    if let Some(index) = after_open.find("\n---\n") {
+        return Some(0..4 + index + 5);
     }
-    if let Some(idx) = after_open.find(eof_marker) {
-        let yaml = &after_open[..idx];
-        let body = &after_open[idx + eof_marker.len()..];
-        return Some((yaml, body));
+    if after_open.ends_with("\n---") {
+        return Some(0..content.len());
+    }
+    None
+}
+
+/// A document's header block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Header {
+    /// The Turtle between the fences.
+    pub text: String,
+    /// The block's byte range in the document: opening fence to the line end
+    /// after the closing fence.
+    pub span: Range<usize>,
+    /// 1-based line of the opening fence.
+    pub line: usize,
+}
+
+/// The header of `content`: its first fenced block, when that block is
+/// `turtle folio:document`.
+pub fn find_header(content: &str) -> Option<Header> {
+    let start = host_frontmatter(content).map_or(0, |range| range.end);
+    let markdown = &content[start..];
+    let mut text = String::new();
+    let mut open: Option<Range<usize>> = None;
+    for (event, range) in Parser::new(markdown).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                if !is_marker(&info, HEADER_MARKER) {
+                    return None;
+                }
+                open = Some(range);
+            }
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)) => {}
+            Event::Text(chunk) if open.is_some() => text.push_str(&chunk),
+            Event::End(TagEnd::CodeBlock) if open.is_some() => {
+                let range = open.take().unwrap_or(range);
+                let mut end = start + range.end;
+                if !content[..end].ends_with('\n') && content[end..].starts_with('\n') {
+                    end += 1;
+                }
+                let span = start + range.start..end;
+                let line = 1 + content[..span.start].matches('\n').count();
+                return Some(Header { text, span, line });
+            }
+            _ => {}
+        }
     }
     None
 }
 ```
 
-Directory walks meet thousands of files that are not folio documents, so
-there is a cheap gate that avoids the full YAML parse — a substring check,
-knowingly imprecise (a stray `folio/v1` in a comment would pass), because
-the full parser runs right behind it for anything that matters:
+The body is what is left when the host frontmatter and the header are lifted
+out, and the placement rule is its exact inverse. [`place_header`] puts a
+header after the body's leading `# ` heading line and a blank line, or at the
+very top when the body opens with anything else; [`strip_header`] removes the
+block and the one blank line that separates it from a heading above. A body
+stripped and placed again is the body it was, byte for byte — which is what
+lets every consumer that addressed "the body" by byte offset keep its
+offsets, and what lets an editor that saves only a body keep the header it
+never showed.
 
-<a name="chunk-is-colophon"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#is-colophon`</sub>
+<a name="chunk-strip-header"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#strip-header`</sub>
 
-```rust {#is-colophon}
-/// Quick check: does this file claim folio/v1? Cheap so callers can gate
-/// without paying full parse cost on legacy files.
-pub fn is_colophon(content: &str) -> bool {
-    let Some((yaml, _)) = split_frontmatter(content) else {
-        return false;
+```rust {#strip-header}
+/// The document's body: `content` with the host frontmatter and the header
+/// lifted out. A document with no header loses only its host frontmatter.
+pub fn strip_header(content: &str) -> String {
+    let start = host_frontmatter(content).map_or(0, |range| range.end);
+    let Some(header) = find_header(content) else {
+        return content[start..].to_string();
     };
-    yaml.contains(FORMAT_FOLIO_V1)
+    let mut before = &content[start..header.span.start];
+    if before.ends_with("\n\n") {
+        before = &before[..before.len() - 1];
+    }
+    let mut body = String::with_capacity(content.len());
+    body.push_str(before);
+    body.push_str(&content[header.span.end..]);
+    body
+}
+
+/// Place a rendered header block into a body: after the body's leading `# `
+/// heading line (leading blank lines kept) and one blank line, or at the top
+/// when the body opens any other way. [`strip_header`] undoes it exactly.
+pub fn place_header(header_block: &str, body: &str) -> String {
+    let mut cursor = 0;
+    for line in body.split_inclusive('\n') {
+        if line.trim().is_empty() && line.ends_with('\n') {
+            cursor += line.len();
+            continue;
+        }
+        if line.starts_with("# ") && line.ends_with('\n') {
+            let split = cursor + line.len();
+            return format!("{}\n{header_block}{}", &body[..split], &body[split..]);
+        }
+        break;
+    }
+    format!("{header_block}{body}")
+}
+
+/// `content` with its body replaced: host frontmatter and header kept as
+/// they are, the header placed into `body` by the placement rule.
+pub fn replace_body(content: &str, body: &str) -> String {
+    let front = host_frontmatter(content).map_or("", |range| &content[range]);
+    match find_header(content) {
+        Some(header) => format!("{front}{}", place_header(&content[header.span.clone()], body)),
+        None => format!("{front}{body}"),
+    }
+}
+```
+
+## Reading the Turtle
+
+The block is parsed with a Turtle parser, the predeclared prefixes in scope,
+and `<>` bound to the document. A block that does not parse is a defect naming
+its line in the file. So is a relative IRI other than `<>`: a document has no
+base IRI a reader could resolve `<../article>` against, so writing one is a
+mistake rather than a reference.
+
+The parser is strict: every IRI is validated whole. An IRI holds one
+fragment, and the shared namespace's ids already live in it
+(`https://0k.computer/ontology#design/…`), so an id that names a section of a
+document writes the section's `#` percent-encoded —
+`design:literate-programming%23read-a-document-as-the-woven-artifact`, a
+publication's section selector — and a second raw `#` is refused as the
+malformed IRI it is.
+
+<a name="chunk-read-turtle"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#read-turtle`</sub>
+
+```rust {#read-turtle}
+/// Parse a block's Turtle with `prefixes` predeclared and `<>` bound to the
+/// document. `first_line` is the file line of the block's first Turtle line,
+/// so a syntax error names a line a person can open.
+pub fn parse_turtle(
+    text: &str,
+    prefixes: &[(String, String)],
+    first_line: usize,
+) -> Result<Vec<oxrdf::Triple>, FolioError> {
+    let mut parser = TurtleParser::new()
+        .with_base_iri(SELF_IRI)
+        .map_err(|e| FolioError::Turtle { line: first_line, reason: e.to_string() })?;
+    for (prefix, namespace) in prefixes {
+        parser = parser
+            .with_prefix(prefix.as_str(), namespace.as_str())
+            .map_err(|e| FolioError::Turtle { line: first_line, reason: e.to_string() })?;
+    }
+    let triples = parser
+        .for_slice(text.as_bytes())
+        .map(|triple| {
+            triple.map_err(|e| FolioError::Turtle {
+                line: first_line + e.location().start.line as usize,
+                reason: e.message().to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let relative = |iri: &str| iri != SELF_IRI && iri.starts_with(RELATIVE_BASE);
+    for triple in &triples {
+        let subject = match &triple.subject {
+            NamedOrBlankNode::NamedNode(node) => Some(node.as_str()),
+            NamedOrBlankNode::BlankNode(_) => None,
+        };
+        let object = match &triple.object {
+            Term::NamedNode(node) => Some(node.as_str()),
+            _ => None,
+        };
+        for iri in [subject, Some(triple.predicate.as_str()), object].into_iter().flatten() {
+            if relative(iri) {
+                return Err(FolioError::Turtle {
+                    line: first_line,
+                    reason: format!("`<{}>` is a relative IRI; write it absolute", &iri[RELATIVE_BASE.len()..]),
+                });
+            }
+        }
+    }
+    Ok(triples)
 }
 ```
 
 ## parse_envelope
 
-The public entry point, and the one place wire shapes are promoted to the
-typed envelope. Reading it top to bottom is reading the envelope's rules:
-`format` must be present and exact; `id` and `type` must be present;
-`type` and `status` must be known keywords; everything else defaults. This
-is where our carried manifest's `type: publication` either becomes
-`DocType::Publication` or the file is rejected as loudly as possible.
+The public entry point, and the one place statements are promoted to the
+typed header. Reading it top to bottom is reading the header's rules: one
+subject, and it is the document; no blank nodes; exactly one `a`, naming a
+genus; `x0k:status` one of the six; the terms folio reads for itself
+single-valued where they are single-valued; every other IRI-valued statement
+an edge and every other literal a property. This is where our manifest's
+`a x0k:Publication` becomes `DocType::Publication` or the file is refused as
+loudly as possible.
 
-The YAML parser is `serde_norway`. It is a fork of `serde_yaml` with the
-same API — the swap was an identifier rename and nothing else — chosen
-because `serde_yaml` is archived upstream and its C backend
-(`unsafe-libyaml`) is unmaintained, and `serde_norway` is the only
-drop-in that replaces the backend too. There is no advisory against
-either, so this is hygiene rather than a fix; it is worth doing because
-this crate is published, and the first dependency a reader of a fresh
-repository inspects should not be a deprecated one. `serde_yml`, the
-other name in that neighbourhood, is a trap: it carries RUSTSEC-2025-0067
-and RUSTSEC-2025-0068, so adopting it would introduce two advisories
-where there are none.
+`parse_envelope` reads against the vocabulary this build compiled — its
+prefixes and its ten genera. `parse_envelope_in` reads against a vocabulary
+the caller assembled, which is how a reader whose module declares a genus, or
+a prefix of its own, gets a document of it read.
 
 <a name="chunk-parse-envelope"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#parse-envelope`</sub>
 
 ```rust {#parse-envelope}
-/// Parse a folio/v1 envelope from full file contents. Returns the typed
-/// envelope plus the body string (the markdown after the closing `---`).
-///
-/// The shared envelope is permissive: missing `status` is allowed at this
-/// layer (each consumer enforces what they require). Type keywords (`type`,
-/// `status`) ARE validated against the known closed sets, so unknown values
-/// fail loudly.
+/// Parse a document's header. Returns the typed header plus the body — the
+/// document with the host frontmatter and the header lifted out.
 pub fn parse_envelope(content: &str) -> Result<(Colophon, String), FolioError> {
-    parse_envelope_with(content, |type_str| {
-        DocType::from_str(type_str).ok_or_else(Vec::new)
-    })
+    let header = find_header(content).ok_or(FolioError::NoHeader)?;
+    let colophon = read_header(&header, shipped_prefixes(), None)?;
+    Ok((colophon, strip_header(content)))
 }
 
-/// Parse an envelope against a vocabulary rather than the ten genera this
-/// crate names: a `type:` naming any class `model` declares is admitted,
-/// carried as [`DocType::Declared`]. This is how a reader whose own
-/// vocabulary module declares a genus gets a document of it read.
+/// Parse a document's header against a vocabulary: its prefixes are
+/// predeclared, and a class it declares is admitted as a genus.
 pub fn parse_envelope_in(
     model: &OntologyModel,
     content: &str,
 ) -> Result<(Colophon, String), FolioError> {
-    parse_envelope_with(content, |type_str| {
-        DocType::declared_in(model, type_str)
-            .ok_or_else(|| DocType::declared_beyond_named(model))
-    })
+    let header = find_header(content).ok_or(FolioError::NoHeader)?;
+    let prefixes = predeclared_prefixes(model);
+    let colophon = read_header(&header, &prefixes, Some(model))?;
+    Ok((colophon, strip_header(content)))
 }
 
-fn parse_envelope_with(
-    content: &str,
-    genus: impl Fn(&str) -> Result<DocType, Vec<String>>,
-) -> Result<(Colophon, String), FolioError> {
-    let (yaml_block, body) = split_frontmatter(content).ok_or(FolioError::NoFrontmatter)?;
-    let root: WireRoot =
-        serde_norway::from_str(yaml_block).map_err(|e| FolioError::InvalidYaml(e.to_string()))?;
-    let block = root.x0k.ok_or(FolioError::NotColophon)?;
+/// Quick check: does this document carry a typed header?
+pub fn is_colophon(content: &str) -> bool {
+    parse_envelope(content).is_ok()
+}
 
-    let format = block
-        .format
-        .ok_or(FolioError::MissingField { field: "format" })?;
-    if format != FORMAT_FOLIO_V1 {
-        return Err(FolioError::WrongFormat { got: format });
+/// The tool configuration a document's header carries, whether the header
+/// names an identity or only the document itself (`<>`). This is what the
+/// tangler reads: a literate page need not be a typed document to tangle.
+pub fn read_tool_config(content: &str) -> Result<Option<(TangleConfig, Vec<PipelineDecl>)>, FolioError> {
+    let Some(header) = find_header(content) else {
+        return Ok(None);
+    };
+    let triples = parse_turtle(&header.text, shipped_prefixes(), header.line + 1)?;
+    let mut read = Statements::default();
+    for triple in &triples {
+        read.take(triple, shipped_prefixes())?;
     }
+    let pipelines = read.pipelines()?;
+    Ok(Some((read.tangle.unwrap_or_default(), pipelines)))
+}
 
-    let id = block.id.ok_or(FolioError::MissingField { field: "id" })?;
+/// Every literal the header states for `predicate`, in the order written.
+/// `predicate` is a full IRI or a compact term over the predeclared
+/// prefixes (`x0k:confidence`, `folio:tangleCrate`). A header that names only
+/// the document (`<>`) is read like a typed one; a document with no header
+/// states nothing. This is how a tool reads one header term without
+/// matching Turtle lines.
+pub fn header_literals(content: &str, predicate: &str) -> Result<Vec<Literal>, FolioError> {
+    let Some(header) = find_header(content) else {
+        return Ok(Vec::new());
+    };
+    let prefixes = shipped_prefixes();
+    let iri = match predicate.split_once(':') {
+        Some((prefix, rest)) if !rest.starts_with("//") => prefixes
+            .iter()
+            .find(|(p, _)| p == prefix)
+            .map(|(_, namespace)| format!("{namespace}{rest}"))
+            .unwrap_or_else(|| predicate.to_string()),
+        _ => predicate.to_string(),
+    };
+    let triples = parse_turtle(&header.text, prefixes, header.line + 1)?;
+    Ok(triples
+        .iter()
+        .filter(|triple| triple.predicate.as_str() == iri)
+        .filter_map(|triple| match &triple.object {
+            Term::Literal(literal) => Some(Literal {
+                value: literal.value().to_string(),
+                datatype: literal.datatype().as_str().to_string(),
+            }),
+            _ => None,
+        })
+        .collect())
+}
 
-    let type_str = block
-        .doc_type
-        .ok_or(FolioError::MissingField { field: "type" })?;
-    let doc_type =
-        genus(&type_str).map_err(|declared| FolioError::InvalidType { got: type_str, declared })?;
-
-    let status = match block.status {
+fn read_header(
+    header: &Header,
+    prefixes: &[(String, String)],
+    model: Option<&OntologyModel>,
+) -> Result<Colophon, FolioError> {
+    let triples = parse_turtle(&header.text, prefixes, header.line + 1)?;
+    let mut subjects: Vec<String> = Vec::new();
+    for triple in &triples {
+        let subject = match &triple.subject {
+            NamedOrBlankNode::NamedNode(node) => node.as_str().to_string(),
+            NamedOrBlankNode::BlankNode(_) => return Err(FolioError::BlankNode),
+        };
+        if !subjects.contains(&subject) {
+            subjects.push(subject);
+        }
+    }
+    let subject = match subjects.as_slice() {
+        [one] => one.clone(),
+        [] => return Err(FolioError::Subjects { found: Vec::new() }),
+        many => return Err(FolioError::Subjects { found: many.to_vec() }),
+    };
+    if subject == SELF_IRI {
+        return Err(FolioError::Untyped);
+    }
+    let mut read = Statements::default();
+    for triple in &triples {
+        read.take(triple, prefixes)?;
+    }
+    let class = match read.classes.as_slice() {
+        [one] => one.clone(),
+        other => return Err(FolioError::Class { found: other.len() }),
+    };
+    let doc_type = DocType::of_class(&class, model).map_err(|declared| FolioError::InvalidType {
+        got: compact_iri(&class, prefixes),
+        declared,
+    })?;
+    let status = match read.status.take() {
         Some(s) => Some(Status::from_str(&s).ok_or(FolioError::InvalidStatus { got: s })?),
         None => None,
     };
-
-    let materialization = block.materialization.map(|m| Materialization {
-        loro_doc_id: m.loro_doc_id,
-        document_revision_id: m.document_revision_id,
-        content_hash: m.content_hash,
-    });
-
-    let tangle = block.tangle.map(|t| TangleConfig {
-        crate_name: t.crate_name,
-        root: t.root,
-        roots: t.roots.unwrap_or_default(),
-    });
-
-    let pipelines = block
-        .pipelines
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| {
-            let mut inputs = p.inputs.unwrap_or_default();
-            if let Some(short) = p.input {
-                inputs.entry("default".to_string()).or_insert(short);
-            }
-            // YAML value → JSON value via serde_norway::Value -> serde_json
-            // round-trip through serialize.
-            let config = yaml_to_json(p.config);
-            PipelineDecl {
-                kind: p.kind,
-                inputs,
-                config,
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let body_format = normalize_body_format(block.body_format.as_deref());
-
-    Ok((
-        Colophon {
-            id,
-            doc_type,
-            subtype: block.subtype,
-            status,
-            concerns: block.concerns.unwrap_or_default(),
-            summary: block.summary,
-            updated_by: block.updated_by,
-            created_at: block.created_at,
-            updated_at: block.updated_at,
-            edges: block.edges.unwrap_or_default(),
-            materialization,
-            tangle,
-            pipelines,
-            body_format,
-        },
-        body.to_string(),
-    ))
+    let pipelines = read.pipelines()?;
+    Ok(Colophon {
+        id: compact_iri(&subject, prefixes),
+        doc_type,
+        subtype: read.subtype,
+        status,
+        concerns: read.concerns,
+        summary: read.summary,
+        updated_by: read.updated_by,
+        created_at: read.created_at,
+        updated_at: read.updated_at,
+        edges: read.edges,
+        properties: read.properties,
+        materialization: read.materialization,
+        tangle: read.tangle,
+        pipelines,
+        body_format: normalize_body_format(read.body_format.as_deref()),
+    })
 }
 ```
 
-Pipeline configs arrive as `serde_norway::Value` but plugins consume
-`serde_json::Value` — JSON is the lingua franca of the plugin boundary.
-The conversion is a straightforward structural walk; the one judgment call
-is collapsing non-string YAML map keys via `to_string`, which matches the
-loose frontmatter convention that structured config keys are always
-strings anyway:
+Each statement is sorted into the field it fills. The terms folio reads for
+itself are compared by full IRI, so a document that spells `x0k:status` as
+`<https://0k.computer/ontology#status>` means the same thing:
 
-<a name="chunk-yaml-to-json"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#yaml-to-json`</sub>
+<a name="chunk-statements"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#statements`</sub>
 
-```rust {#yaml-to-json}
-/// Convert a `serde_norway::Value` to a `serde_json::Value`. YAML maps with
-/// non-string keys collapse their keys via `to_string` (matches the loose
-/// frontmatter convention where structured config keys are always
-/// strings).
-fn yaml_to_json(v: serde_norway::Value) -> serde_json::Value {
-    match v {
-        serde_norway::Value::Null => serde_json::Value::Null,
-        serde_norway::Value::Bool(b) => serde_json::Value::Bool(b),
-        serde_norway::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                serde_json::Value::Number(serde_json::Number::from(i))
-            } else if let Some(u) = n.as_u64() {
-                serde_json::Value::Number(serde_json::Number::from(u))
-            } else if let Some(f) = n.as_f64() {
-                serde_json::Number::from_f64(f)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null)
-            } else {
-                serde_json::Value::Null
+```rust {#statements}
+#[derive(Default)]
+struct Statements {
+    classes: Vec<String>,
+    status: Option<String>,
+    subtype: Option<String>,
+    summary: Option<String>,
+    updated_by: Option<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    body_format: Option<String>,
+    concerns: Vec<String>,
+    edges: BTreeMap<String, Vec<String>>,
+    properties: BTreeMap<String, Vec<Literal>>,
+    materialization: Option<Materialization>,
+    tangle: Option<TangleConfig>,
+    pipelines: Option<String>,
+}
+
+impl Statements {
+    fn take(&mut self, triple: &oxrdf::Triple, prefixes: &[(String, String)]) -> Result<(), FolioError> {
+        let predicate = triple.predicate.as_str();
+        let literal = match &triple.object {
+            Term::NamedNode(node) if predicate == RDF_TYPE => {
+                self.classes.push(node.as_str().to_string());
+                return Ok(());
             }
-        }
-        serde_norway::Value::String(s) => serde_json::Value::String(s),
-        serde_norway::Value::Sequence(seq) => {
-            serde_json::Value::Array(seq.into_iter().map(yaml_to_json).collect())
-        }
-        serde_norway::Value::Mapping(map) => {
-            let mut out = serde_json::Map::with_capacity(map.len());
-            for (k, v) in map {
-                let key = match k {
-                    serde_norway::Value::String(s) => s,
-                    other => serde_norway::to_string(&other)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string(),
-                };
-                out.insert(key, yaml_to_json(v));
+            Term::NamedNode(node) => {
+                self.edges
+                    .entry(compact_iri(predicate, prefixes))
+                    .or_default()
+                    .push(compact_iri(node.as_str(), prefixes));
+                return Ok(());
             }
-            serde_json::Value::Object(out)
+            Term::BlankNode(_) => return Err(FolioError::BlankNode),
+            Term::Literal(literal) => literal,
+        };
+        if let Some(language) = literal.language() {
+            return Err(FolioError::InvalidValue {
+                predicate: compact_iri(predicate, prefixes),
+                reason: format!("a language-tagged literal (@{language})"),
+            });
         }
-        serde_norway::Value::Tagged(t) => yaml_to_json(t.value),
+        let value = literal.value().to_string();
+        let single = |slot: &mut Option<String>| -> Result<(), FolioError> {
+            if slot.is_some() {
+                return Err(FolioError::Repeated { predicate: compact_iri(predicate, prefixes) });
+            }
+            *slot = Some(value.clone());
+            Ok(())
+        };
+        match predicate.strip_prefix(X0K_NS) {
+            Some("status") => return single(&mut self.status),
+            Some("subtype") => return single(&mut self.subtype),
+            Some("summary") => return single(&mut self.summary),
+            Some("updatedBy") => return single(&mut self.updated_by),
+            Some("createdAt") => return single(&mut self.created_at),
+            Some("updatedAt") => return single(&mut self.updated_at),
+            Some("bodyFormat") => return single(&mut self.body_format),
+            Some("concerns") => {
+                self.concerns.push(value.clone());
+                return Ok(());
+            }
+            _ => {}
+        }
+        match predicate.strip_prefix(FOLIO_NS) {
+            Some("tangleCrate") => return single(&mut self.tangle.get_or_insert_with(Default::default).crate_name),
+            Some("tangleRoot") => return single(&mut self.tangle.get_or_insert_with(Default::default).root),
+            Some("tangleRoots") => {
+                let roots: BTreeMap<String, String> = serde_json::from_str(&value).map_err(|e| {
+                    FolioError::InvalidValue { predicate: "folio:tangleRoots".into(), reason: e.to_string() }
+                })?;
+                let tangle = self.tangle.get_or_insert_with(Default::default);
+                if !tangle.roots.is_empty() {
+                    return Err(FolioError::Repeated { predicate: "folio:tangleRoots".into() });
+                }
+                tangle.roots = roots;
+                return Ok(());
+            }
+            Some("pipelines") => return single(&mut self.pipelines),
+            Some("loroDocId") => {
+                return single(&mut self.materialization.get_or_insert_with(Default::default).loro_doc_id)
+            }
+            Some("documentRevisionId") => {
+                return single(
+                    &mut self.materialization.get_or_insert_with(Default::default).document_revision_id,
+                )
+            }
+            Some("contentHash") => {
+                return single(&mut self.materialization.get_or_insert_with(Default::default).content_hash)
+            }
+            _ => {}
+        }
+        self.properties
+            .entry(compact_iri(predicate, prefixes))
+            .or_default()
+            .push(Literal { value, datatype: literal.datatype().as_str().to_string() });
+        Ok(())
+    }
+
+    fn pipelines(&self) -> Result<Vec<PipelineDecl>, FolioError> {
+        let Some(json) = &self.pipelines else {
+            return Ok(Vec::new());
+        };
+        let wire: Vec<WirePipeline> = serde_json::from_str(json).map_err(|e| FolioError::InvalidValue {
+            predicate: "folio:pipelines".into(),
+            reason: e.to_string(),
+        })?;
+        Ok(wire
+            .into_iter()
+            .map(|p| {
+                let mut inputs = p.inputs.unwrap_or_default();
+                if let Some(short) = p.input {
+                    inputs.entry("default".to_string()).or_insert(short);
+                }
+                PipelineDecl { kind: p.kind, inputs, config: p.config }
+            })
+            .collect())
     }
 }
 ```
 
-## render_envelope
+## render_header
 
-The inverse direction. The obvious move would be `serde_norway::to_string`
-on a `Serialize` derive — and it would be wrong, because serde does not
-promise field order or formatting stability across versions, and this
-output lands in version-controlled files where every spurious byte is a
-diff. So the renderer is a hand-rolled string builder with a fixed field
-order, and *omission is load-bearing*: default values (`body_format:
-markdown`, empty `concerns`, empty sub-blocks) are not written at all, so
-legacy documents round-trip without picking up stray fields.
+The inverse direction, for the writers that make a document rather than edit
+one — the wiki and grove materializers. The output lands in version-control,
+where every spurious byte is a diff, so the statement order is fixed and
+omission is load-bearing: a default is not written. Class first, then the
+lifecycle and description terms, then the edges in term order, then the
+properties, then tool configuration.
 
-<a name="chunk-render-envelope"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#render-envelope`</sub>
+A header a human authored is never re-rendered: a parse-then-render round
+trip normalizes it (order, comments, spelling), which is why the save paths
+that hold a human file splice bodies with [`replace_body`] instead.
 
-```rust {#render-envelope}
-/// Render a `Colophon` as the canonical `--- ... ---` YAML
-/// frontmatter block (including the leading and trailing `---` lines and
-/// the trailing newline).
-///
-/// Field order is fixed: `format`, `id`, `type`, `subtype`, `status`,
-/// `summary`, `updated_by`, `concerns`, `edges`, `materialization`.
-pub fn render_envelope(env: &Colophon) -> String {
-    let mut out = String::new();
-    out.push_str("---\n");
-    out.push_str("x0k:\n");
-    out.push_str("  format: ");
-    out.push_str(FORMAT_FOLIO_V1);
-    out.push('\n');
-    out.push_str(&format!("  id: {}\n", env.id));
-    out.push_str(&format!("  type: {}\n", env.doc_type.as_str()));
-    if let Some(sub) = &env.subtype {
-        out.push_str(&format!("  subtype: {}\n", sub));
-    }
+<a name="chunk-render-header"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#render-header`</sub>
+
+```rust {#render-header}
+/// Render a `Colophon` as its `turtle folio:document` block, fences and the
+/// final line end included.
+pub fn render_header(env: &Colophon) -> String {
+    let prefixes = shipped_prefixes();
+    let mut statements: Vec<String> = Vec::new();
+    let term = |iri: &str| turtle_name(iri, prefixes);
+    let mut literal = |local: &str, value: &str| {
+        statements.push(format!("{} {}", term(&format!("{X0K_NS}{local}")), turtle_string(value)));
+    };
     if let Some(status) = env.status {
-        out.push_str(&format!("  status: {}\n", status.as_str()));
+        literal("status", status.as_str());
     }
-    // Only emit `body_format` when the value is non-default. Every legacy
-    // markdown-bodied doc continues to roundtrip without picking up a
-    // stray field; HTML bodies (and any future format) write the flag.
+    for (local, value) in [
+        ("subtype", &env.subtype),
+        ("summary", &env.summary),
+        ("updatedBy", &env.updated_by),
+        ("createdAt", &env.created_at),
+        ("updatedAt", &env.updated_at),
+    ] {
+        if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
+            literal(local, value);
+        }
+    }
     if env.body_format != BODY_FORMAT_MARKDOWN {
-        out.push_str(&format!("  body_format: {}\n", env.body_format));
-    }
-    if let Some(summary) = &env.summary {
-        if !summary.is_empty() {
-            out.push_str(&format!("  summary: {}\n", yaml_scalar(summary)));
-        }
-    }
-    if let Some(updated_by) = &env.updated_by {
-        if !updated_by.is_empty() {
-            out.push_str(&format!("  updated_by: {}\n", yaml_scalar(updated_by)));
-        }
-    }
-    if let Some(created_at) = &env.created_at {
-        if !created_at.is_empty() {
-            out.push_str(&format!("  created_at: {}\n", yaml_scalar(created_at)));
-        }
-    }
-    if let Some(updated_at) = &env.updated_at {
-        if !updated_at.is_empty() {
-            out.push_str(&format!("  updated_at: {}\n", yaml_scalar(updated_at)));
-        }
+        literal("bodyFormat", &env.body_format);
     }
     if !env.concerns.is_empty() {
-        out.push_str("  concerns:\n");
-        for tag in &env.concerns {
-            out.push_str(&format!("    - {}\n", tag));
-        }
+        let values: Vec<String> = env.concerns.iter().map(|c| turtle_string(c)).collect();
+        statements.push(format!("{} {}", term(&format!("{X0K_NS}concerns")), values.join(", ")));
     }
-    if !env.edges.is_empty() {
-        out.push_str("  edges:\n");
-        for (predicate, targets) in &env.edges {
-            out.push_str(&format!("    {}:\n", predicate));
-            for target in targets {
-                out.push_str(&format!("      - {}\n", target));
-            }
+    for (predicate, targets) in &env.edges {
+        if targets.is_empty() {
+            continue;
         }
+        let objects: Vec<String> =
+            targets.iter().map(|t| term(&expand_compact(t, prefixes))).collect();
+        statements.push(format!(
+            "{} {}",
+            term(&expand_compact(predicate, prefixes)),
+            objects.join(",\n        ")
+        ));
     }
-    if let Some(m) = &env.materialization {
-        let any =
-            m.loro_doc_id.is_some() || m.document_revision_id.is_some() || m.content_hash.is_some();
-        if any {
-            out.push_str("  materialization:\n");
-            if let Some(v) = &m.loro_doc_id {
-                out.push_str(&format!("    loro_doc_id: {}\n", v));
-            }
-            if let Some(v) = &m.document_revision_id {
-                out.push_str(&format!("    document_revision_id: {}\n", v));
-            }
-            if let Some(v) = &m.content_hash {
-                out.push_str(&format!("    content_hash: {}\n", v));
-            }
-        }
+    for (predicate, values) in &env.properties {
+        let objects: Vec<String> = values.iter().map(|v| turtle_literal(v, prefixes)).collect();
+        statements.push(format!("{} {}", term(&expand_compact(predicate, prefixes)), objects.join(", ")));
     }
+    let folio = |local: &str| term(&format!("{FOLIO_NS}{local}"));
+    let json = |value: String| turtle_literal(&Literal { value, datatype: RDF_JSON.to_string() }, prefixes);
     if let Some(t) = &env.tangle {
-        let any = t.crate_name.is_some() || t.root.is_some() || !t.roots.is_empty();
-        if any {
-            out.push_str("  tangle:\n");
-            if let Some(v) = &t.crate_name {
-                out.push_str(&format!("    crate: {}\n", v));
-            }
-            if let Some(v) = &t.root {
-                out.push_str(&format!("    root: {}\n", v));
-            }
-            if !t.roots.is_empty() {
-                out.push_str("    roots:\n");
-                for (lang, path) in &t.roots {
-                    out.push_str(&format!("      {}: {}\n", lang, path));
-                }
-            }
+        if let Some(v) = &t.crate_name {
+            statements.push(format!("{} {}", folio("tangleCrate"), turtle_string(v)));
+        }
+        if let Some(v) = &t.root {
+            statements.push(format!("{} {}", folio("tangleRoot"), turtle_string(v)));
+        }
+        if !t.roots.is_empty() {
+            let roots = serde_json::to_string(&t.roots).unwrap_or_default();
+            statements.push(format!("{} {}", folio("tangleRoots"), json(roots)));
         }
     }
     if !env.pipelines.is_empty() {
-        out.push_str("  pipelines:\n");
-        for p in &env.pipelines {
-            out.push_str(&format!("    - kind: {}\n", p.kind));
-            // Emit `input:` shorthand when the decl carries exactly one
-            // entry under the canonical `default` key; otherwise long
-            // form `inputs:` map.
-            if p.inputs.len() == 1 {
-                if let Some(only) = p.inputs.get("default") {
-                    out.push_str(&format!("      input: {}\n", only));
-                } else {
-                    out.push_str("      inputs:\n");
-                    let mut keys: Vec<&String> = p.inputs.keys().collect();
-                    keys.sort();
-                    for k in keys {
-                        out.push_str(&format!("        {}: {}\n", k, p.inputs[k]));
-                    }
-                }
-            } else if !p.inputs.is_empty() {
-                out.push_str("      inputs:\n");
-                let mut keys: Vec<&String> = p.inputs.keys().collect();
-                keys.sort();
-                for k in keys {
-                    out.push_str(&format!("        {}: {}\n", k, p.inputs[k]));
-                }
-            }
-            if !p.config.is_null() {
-                let cfg = serde_norway::to_string(&p.config).unwrap_or_default();
-                let cfg_trimmed = cfg.trim();
-                if !cfg_trimmed.is_empty() && cfg_trimmed != "null" {
-                    out.push_str("      config:\n");
-                    for line in cfg_trimmed.lines() {
-                        out.push_str(&format!("        {}\n", line));
-                    }
-                }
+        let wire: Vec<serde_json::Value> = env.pipelines.iter().map(pipeline_wire).collect();
+        let text = serde_json::to_string(&wire).unwrap_or_default();
+        statements.push(format!("{} {}", folio("pipelines"), json(text)));
+    }
+    if let Some(m) = &env.materialization {
+        for (local, value) in [
+            ("loroDocId", &m.loro_doc_id),
+            ("documentRevisionId", &m.document_revision_id),
+            ("contentHash", &m.content_hash),
+        ] {
+            if let Some(value) = value {
+                statements.push(format!("{} {}", folio(local), turtle_string(value)));
             }
         }
     }
-    out.push_str("---\n");
+    let subject = term(&expand_compact(&env.id, prefixes));
+    let mut out = format!("```turtle {HEADER_MARKER}\n{subject} a {}", term(&env.doc_type.class_iri()));
+    for statement in statements {
+        out.push_str(" ;\n    ");
+        out.push_str(&statement);
+    }
+    out.push_str(" .\n```\n");
     out
 }
-```
 
-The renderer needs to write string values that YAML will read back
-unchanged. Rather than pull in a YAML emitter for a handful of scalar
-fields, a small function decides between the plain form and the
-double-quoted-with-escapes form. The `needs_quote` predicate is a
-blocklist of the characters that make YAML re-interpret a plain scalar —
-grungy, but the mirror of what a full YAML emitter would write for these
-fields:
-
-<a name="chunk-yaml-scalar"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#yaml-scalar`</sub>
-
-```rust {#yaml-scalar}
-/// Serialize a string as a YAML scalar. Plain unquoted form when the value
-/// is YAML-safe; double-quoted with escapes otherwise. Mirrors what a full
-/// YAML emitter would produce for these fields, kept inline so the renderer
-/// stays a small `format!`-style string builder.
-pub fn yaml_scalar(s: &str) -> String {
-    let needs_quote = s.is_empty()
-        || s.starts_with(' ')
-        || s.starts_with('-')
-        || s.starts_with('?')
-        || s.starts_with(':')
-        || s.starts_with('!')
-        || s.starts_with('&')
-        || s.starts_with('*')
-        || s.starts_with('[')
-        || s.starts_with(']')
-        || s.starts_with('{')
-        || s.starts_with('}')
-        || s.starts_with('|')
-        || s.starts_with('>')
-        || s.starts_with('@')
-        || s.starts_with('`')
-        || s.starts_with('\'')
-        || s.starts_with('"')
-        || s.starts_with('#')
-        || s.contains('\n')
-        || s.contains(": ")
-        || s.contains(" #");
-    if !needs_quote {
-        return s.to_string();
-    }
-    let mut q = String::with_capacity(s.len() + 2);
-    q.push('"');
-    for c in s.chars() {
-        match c {
-            '\\' => q.push_str("\\\\"),
-            '"' => q.push_str("\\\""),
-            '\n' => q.push_str("\\n"),
-            '\t' => q.push_str("\\t"),
-            '\r' => q.push_str("\\r"),
-            c => q.push(c),
+/// A pipeline declaration as its JSON wire: the `input` shorthand when the
+/// only input is the default one, `inputs` otherwise, `config` when set.
+fn pipeline_wire(p: &PipelineDecl) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    object.insert("kind".into(), serde_json::Value::String(p.kind.clone()));
+    match (p.inputs.len(), p.inputs.get("default")) {
+        (1, Some(only)) => {
+            object.insert("input".into(), serde_json::Value::String(only.clone()));
+        }
+        (0, _) => {}
+        _ => {
+            let sorted: BTreeMap<&String, &String> = p.inputs.iter().collect();
+            object.insert("inputs".into(), serde_json::to_value(sorted).unwrap_or_default());
         }
     }
-    q.push('"');
-    q
+    if !p.config.is_null() {
+        object.insert("config".into(), p.config.clone());
+    }
+    serde_json::Value::Object(object)
+}
+
+/// A whole document: `env`'s header placed into `body`.
+pub fn render_document(env: &Colophon, body: &str) -> String {
+    place_header(&render_header(env), body)
 }
 ```
-
-Note the asymmetry the two halves leave open: `parse_envelope` accepts
-files the renderer would never produce (extra keys, human comments,
-arbitrary field order), and `render_envelope` canonicalizes. A
-parse-then-render round trip therefore *normalizes* a file — which is
-exactly why the in-place save path in [`segmentation.md`](segmentation.md)
-goes out of its way never to re-render the frontmatter of a file a human
-authored.
 
 ## Tests
 
-The tests pin the envelope's rules from both directions: what parses
-(minimal, full, missing-optional, unknown-key tolerance), what rejects
-(unknown type, missing format, malformed YAML, legacy flat frontmatter),
-and that render-then-parse round-trips including the omit-when-default
-behaviors.
+The tests pin the header's rules from both directions: what parses (the
+carried manifest, a wiki page with every lifecycle term, a class a loaded
+module declares, `<>`), what refuses (two subjects, two classes, an unknown
+class, a malformed block, a blank node), where the header may sit, that
+stripping and placing are inverse, and that render-then-parse round-trips.
 
 <a name="chunk-tests"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#tests`</sub>
 
@@ -1225,115 +1594,120 @@ behaviors.
 mod tests {
     use super::*;
 
+    const MANIFEST: &str = "# x0k-folio\n\n```turtle folio:document\npublication:x0k-folio a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:publishes x0k:software-module\\/x0k-folio,\n        x0k:software-module\\/x0k-tangle ;\n    x0k:license \"MIT OR Apache-2.0\" .\n```\n\nThe prose begins here.\n";
+
     #[test]
-    fn parses_minimal_envelope() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/example
-  type: design
-  status: proposed
----
-Body here.
-"#;
-        let (env, body) = parse_envelope(content).expect("parse");
-        assert_eq!(env.id, "x0k:design/example");
-        assert_eq!(env.doc_type, DocType::Design);
+    fn the_carried_manifest_parses() {
+        let (env, body) = parse_envelope(MANIFEST).expect("parse");
+        assert_eq!(env.id, "x0k:publication/x0k-folio");
+        assert_eq!(env.doc_type, DocType::Publication);
         assert_eq!(env.status, Some(Status::Proposed));
-        assert_eq!(env.subtype, None);
-        assert!(env.edges.is_empty());
-        assert!(env.materialization.is_none());
-        assert_eq!(body.trim(), "Body here.");
+        assert_eq!(
+            env.edges["x0k:publishes"],
+            vec!["x0k:software-module/x0k-folio", "x0k:software-module/x0k-tangle"]
+        );
+        assert_eq!(env.properties["x0k:license"], vec![Literal::string("MIT OR Apache-2.0")]);
+        assert_eq!(body, "# x0k-folio\n\nThe prose begins here.\n");
     }
 
     #[test]
-    fn parses_full_wiki_envelope() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/oracle
-  type: wiki
-  subtype: wiki:Methodology
-  status: stable
-  summary: A short summary.
-  updated_by: agent
-  concerns: [oracle, shaping]
-  edges:
-    cites:
-      - x0k:wiki/related
-    refines:
-      - x0k:wiki/agent-pattern
----
-# Oracle
-
-Body prose.
-"#;
-        let (env, _body) = parse_envelope(content).expect("parse wiki envelope");
+    fn a_wiki_header_with_every_lifecycle_term_parses() {
+        let content = "```turtle folio:document\nwiki:oracle a x0k:Wiki ;\n    x0k:subtype \"wiki:Methodology\" ;\n    x0k:status \"stable\" ;\n    x0k:summary \"A short summary.\" ;\n    x0k:updatedBy \"agent\" ;\n    x0k:concerns \"oracle\", \"shaping\" ;\n    x0k:cites wiki:related ;\n    x0k:refinedBy wiki:agent-pattern .\n```\n# Oracle\n\nBody prose.\n";
+        let (env, body) = parse_envelope(content).expect("parse");
         assert_eq!(env.doc_type, DocType::Wiki);
         assert_eq!(env.subtype.as_deref(), Some("wiki:Methodology"));
         assert_eq!(env.status, Some(Status::Stable));
         assert_eq!(env.summary.as_deref(), Some("A short summary."));
         assert_eq!(env.updated_by.as_deref(), Some("agent"));
         assert_eq!(env.concerns, vec!["oracle", "shaping"]);
-        assert_eq!(env.edges["cites"], vec!["x0k:wiki/related"]);
-        assert_eq!(env.edges["refines"], vec!["x0k:wiki/agent-pattern"]);
+        assert_eq!(env.edges["x0k:cites"], vec!["x0k:wiki/related"]);
+        assert_eq!(env.edges["x0k:refinedBy"], vec!["x0k:wiki/agent-pattern"]);
+        assert_eq!(body, "# Oracle\n\nBody prose.\n");
     }
 
     #[test]
-    fn missing_optional_status() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:wiki/no-status
-  type: wiki
-  subtype: wiki:Concept
----
-# Title
-
-body.
-"#;
-        let (env, _body) = parse_envelope(content).expect("parse without status");
-        assert!(env.status.is_none());
+    fn nested_ids_escape_their_separators_and_keep_their_iri() {
+        let content = "```turtle folio:document\nimplementation:folio\\/colophon a x0k:Implementation ;\n    x0k:cites x0k:paracosm\\/fossil-record .\n```\n";
+        let (env, _) = parse_envelope(content).expect("parse");
+        assert_eq!(env.id, "x0k:implementation/folio/colophon");
+        assert_eq!(env.edges["x0k:cites"], vec!["x0k:paracosm/fossil-record"]);
     }
 
     #[test]
-    fn ignores_unknown_authority_field() {
-        // Legacy files may still carry a stray `authority:` key. The
-        // parser silently drops it (serde-default ignores unknown wire
-        // fields when there's no matching deserialize target).
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/legacy
-  type: design
-  status: proposed
-  authority: file
----
-body
-"#;
-        let (env, _) = parse_envelope(content).expect("legacy authority field tolerated");
-        assert_eq!(env.id, "x0k:design/legacy");
-        assert_eq!(env.status, Some(Status::Proposed));
+    fn a_section_anchor_is_percent_encoded_and_a_second_raw_fragment_refuses() {
+        let encoded = "```turtle folio:document\ndesign:retry-budget a x0k:Design ;\n    x0k:cites design:literate-programming%23read-a-document .\n```\n";
+        let (env, _) = parse_envelope(encoded).expect("parse");
+        assert_eq!(env.edges["x0k:cites"], vec!["x0k:design/literate-programming%23read-a-document"]);
+        let raw = encoded.replace("%23", "\\#");
+        assert!(matches!(parse_envelope(&raw).unwrap_err(), FolioError::Turtle { .. }), "{raw}");
+        let spaced = "```turtle folio:document\ndesign:retry-budget a x0k:Design ;\n    x0k:cites <https://bad IRI> .\n```\n";
+        assert!(matches!(parse_envelope(spaced).unwrap_err(), FolioError::Turtle { .. }));
     }
 
     #[test]
-    fn rejects_unknown_type() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/example
-  type: pamphlet
-  status: proposed
----
-"#;
-        let err = parse_envelope(content).expect_err("unknown type must reject");
-        assert!(matches!(err, FolioError::InvalidType { .. }));
+    fn header_literals_reads_one_term_from_any_header() {
+        let typed = "# A\n\n```turtle folio:document\nwiki:a a x0k:Wiki ;\n    x0k:confidence \"sketch\" ;\n    folio:tangleCrate \"substrate/cells/a\" .\n```\n";
+        assert_eq!(header_literals(typed, "x0k:confidence").unwrap(), vec![Literal::string("sketch")]);
+        assert_eq!(header_literals(typed, "folio:tangleCrate").unwrap(), vec![Literal::string("substrate/cells/a")]);
+        assert_eq!(
+            header_literals(typed, "https://0k.computer/ontology#confidence").unwrap(),
+            vec![Literal::string("sketch")]
+        );
+        assert!(header_literals(typed, "x0k:summary").unwrap().is_empty());
+        let untyped = "```turtle folio:document\n<> folio:tangleRoot \"src/lib.rs\" .\n```\n";
+        assert_eq!(header_literals(untyped, "folio:tangleRoot").unwrap(), vec![Literal::string("src/lib.rs")]);
+        assert!(header_literals("# No header\n", "x0k:status").unwrap().is_empty());
     }
 
-    /// The smallest vocabulary that adds a genus: a `mycorp` module and one
-    /// class in it. Written to a scratch directory and loaded, because the
-    /// thing under test is that a genus arrives from *files* — the shape a
-    /// reader's own module actually has.
+    #[test]
+    fn a_document_whose_first_fence_is_not_a_header_is_untyped() {
+        let content = "# Title\n\n```rust\nfn main() {}\n```\n\n```turtle folio:document\ndesign:late a x0k:Design .\n```\n";
+        assert_eq!(parse_envelope(content).unwrap_err(), FolioError::NoHeader);
+        assert!(!is_colophon("# Plain markdown\n\nNo header.\n"));
+        let yaml = "---\nx0k:\n  id: x0k:design/old\n---\n# Old\n";
+        assert_eq!(parse_envelope(yaml).unwrap_err(), FolioError::NoHeader);
+    }
+
+    #[test]
+    fn a_self_header_is_untyped_and_still_configures_the_tangler() {
+        let content = "```turtle folio:document\n<> folio:tangleCrate \"substrate/cells/servitor\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n# A page\n";
+        assert_eq!(parse_envelope(content).unwrap_err(), FolioError::Untyped);
+        let (tangle, pipelines) = read_tool_config(content).unwrap().unwrap();
+        assert_eq!(tangle.crate_name.as_deref(), Some("substrate/cells/servitor"));
+        assert_eq!(tangle.root.as_deref(), Some("src/lib.rs"));
+        assert!(pipelines.is_empty());
+    }
+
+    #[test]
+    fn a_header_states_one_subject_one_class_and_no_blank_nodes() {
+        let two = "```turtle folio:document\ndesign:a a x0k:Design .\ndesign:b a x0k:Design .\n```\n";
+        assert!(matches!(parse_envelope(two), Err(FolioError::Subjects { .. })));
+        let classes = "```turtle folio:document\ndesign:a a x0k:Design, x0k:Wiki .\n```\n";
+        assert_eq!(parse_envelope(classes).unwrap_err(), FolioError::Class { found: 2 });
+        let none = "```turtle folio:document\ndesign:a x0k:status \"proposed\" .\n```\n";
+        assert_eq!(parse_envelope(none).unwrap_err(), FolioError::Class { found: 0 });
+        let blank = "```turtle folio:document\ndesign:a a x0k:Design ; x0k:cites [ a x0k:Design ] .\n```\n";
+        assert_eq!(parse_envelope(blank).unwrap_err(), FolioError::BlankNode);
+    }
+
+    #[test]
+    fn unknown_classes_statuses_and_broken_turtle_refuse() {
+        let unknown = "```turtle folio:document\ndesign:a a x0k:Pamphlet .\n```\n";
+        assert!(matches!(parse_envelope(unknown), Err(FolioError::InvalidType { .. })));
+        let status = "```turtle folio:document\ndesign:a a x0k:Design ; x0k:status \"maybe\" .\n```\n";
+        assert!(matches!(parse_envelope(status), Err(FolioError::InvalidStatus { .. })));
+        let broken = "# T\n\n```turtle folio:document\ndesign:a a x0k:Design ;\n    x0k:status .\n```\n";
+        match parse_envelope(broken) {
+            Err(FolioError::Turtle { line, .. }) => assert_eq!(line, 5),
+            other => panic!("expected a Turtle error, got {other:?}"),
+        }
+        let twice = "```turtle folio:document\ndesign:a a x0k:Design ; x0k:summary \"a\", \"b\" .\n```\n";
+        assert!(matches!(parse_envelope(twice), Err(FolioError::Repeated { .. })));
+    }
+
+    /// The smallest vocabulary that adds a genus and a prefix: a `mycorp`
+    /// module declaring `x0k:Brief`. Written to a scratch directory and
+    /// loaded, because a genus arrives from files.
     fn scratch_vocabulary(dir: &std::path::Path) -> OntologyModel {
         const CORE: &str = "\
 <https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
@@ -1352,428 +1726,207 @@ x0k:
     }
 
     #[test]
-    fn a_genus_a_loaded_module_declares_parses() {
+    fn a_class_a_loaded_module_declares_is_a_genus_and_a_prefix() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let model = scratch_vocabulary(&tmp.path().join("modules"));
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:brief/tender-process
-  type: brief
-  status: proposed
----
-Body.
-"#;
-        // The closed set still refuses it — this crate names no `brief`.
-        assert!(matches!(
-            parse_envelope(content),
-            Err(FolioError::InvalidType { .. })
-        ));
+        let content = "```turtle folio:document\nbrief:tender-process a x0k:Brief ;\n    x0k:status \"proposed\" .\n```\nBody.\n";
+        // Against the compiled vocabulary there is no `brief:` prefix at all.
+        assert!(matches!(parse_envelope(content), Err(FolioError::Turtle { .. })));
         let (env, _) = parse_envelope_in(&model, content).expect("a declared genus parses");
+        assert_eq!(env.id, "x0k:brief/tender-process");
         assert_eq!(env.doc_type, DocType::Declared("brief".to_string()));
-        assert_eq!(env.doc_type.as_str(), "brief");
-
-        // A keyword the module does not declare is still a parse error, so
-        // the loaded set widens the genus rather than opening it.
-        let unknown = content.replace("type: brief", "type: pamphlet");
-        assert!(matches!(
-            parse_envelope_in(&model, &unknown),
-            Err(FolioError::InvalidType { .. })
-        ));
-
-        // The ten this crate names keep their own variants under a model.
-        let known = content.replace("type: brief", "type: design");
-        let (env, _) = parse_envelope_in(&model, &known).expect("a named genus parses");
-        assert_eq!(env.doc_type, DocType::Design);
+        let unknown = content.replace("x0k:Brief", "x0k:Pamphlet");
+        let message = parse_envelope_in(&model, &unknown).unwrap_err().to_string();
+        assert!(message.contains("a class a loaded vocabulary module declares: brief"), "{message}");
     }
 
-    /// The refusal has to name what the run admits. A reader of the public
-    /// integration guide spelled a declared class three wrong ways —
-    /// `ConceptPage`, `concept_page`, `conceptpage` — before guessing
-    /// `concept-page`, because the message enumerated ten fixed keywords and
-    /// never mentioned the module they had just loaded.
     #[test]
-    fn a_refusal_under_a_vocabulary_names_the_declared_genera() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let model = scratch_vocabulary(&tmp.path().join("modules"));
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:brief/tender-process
-  type: Brief
-  status: proposed
----
-Body.
-"#;
-        // The class is declared and the keyword is only mis-cased: say which
-        // spelling, rather than listing.
-        let err = parse_envelope_in(&model, content).expect_err("`Brief` is not the spelling");
-        let message = err.to_string();
-        assert!(message.contains("spell it `brief`"), "{message}");
+    fn the_prefix_table_is_read_off_the_vocabulary() {
+        // What holds under any set of shipped modules: the fixed prefixes,
+        // a genus, every module's own prefix, and one kebab prefix per class
+        // the model declares in the shared namespace.
+        let model = OntologyModel::shipped();
+        let table = predeclared_prefixes(&model);
+        let get = |p: &str| table.iter().find(|(prefix, _)| prefix == p).map(|(_, ns)| ns.clone());
+        assert_eq!(get("design").as_deref(), Some("https://0k.computer/ontology#design/"));
+        assert_eq!(get("folio").as_deref(), Some(FOLIO_NS));
+        assert_eq!(get("xsd").as_deref(), Some(XSD_NS));
+        let modules: Vec<(String, String)> = model.extension_namespaces().into_iter().collect();
+        for (prefix, namespace) in &modules {
+            assert_eq!(get(prefix).as_ref(), Some(namespace), "module prefix {prefix}");
+        }
+        let owl_class = OntologyValue::Entity(OWL_CLASS.to_string());
+        let mut classes = 0;
+        for fact in model.facts() {
+            if fact.predicate != RDF_TYPE || fact.value != owl_class {
+                continue;
+            }
+            let Some(local) = fact.entity.strip_prefix(X0K_NS) else { continue };
+            if local.is_empty() || local.contains('/') {
+                continue;
+            }
+            let prefix = camel_to_kebab(local);
+            if modules.iter().any(|(module, _)| *module == prefix) {
+                continue;
+            }
+            assert_eq!(get(&prefix), Some(format!("{X0K_NS}{prefix}/")), "class {local}");
+            classes += 1;
+        }
+        assert!(classes > 0, "the shipped model declares classes");
+    }
 
-        // A keyword nothing declares gets the admitted set instead.
-        let unknown = content.replace("type: Brief", "type: pamphlet");
-        let err = parse_envelope_in(&model, &unknown).expect_err("nothing declares `pamphlet`");
-        let message = err.to_string();
-        assert!(
-            message.contains("a class a loaded vocabulary module declares: brief"),
-            "{message}"
+    #[test]
+    fn the_ten_genera_are_prefixes_under_any_vocabulary() {
+        let table = predeclared_prefixes(&OntologyModel::new(Vec::new()));
+        for genus in DocType::NAMED {
+            assert!(table.iter().any(|(prefix, ns)| prefix == genus && ns == &format!("{X0K_NS}{genus}/")), "{genus}");
+        }
+        assert!(!table.iter().any(|(prefix, _)| prefix == "software-module"));
+        let wiki = "```turtle folio:document\nwiki:paper-alpha a x0k:Wiki .\n```\n";
+        let header = find_header(wiki).unwrap();
+        assert!(read_header(&header, &table, Some(&OntologyModel::new(Vec::new()))).is_ok());
+    }
+
+    #[test]
+    fn terms_are_written_with_the_longest_prefix_and_escaped() {
+        let table = shipped_prefixes();
+        assert_eq!(turtle_name("https://0k.computer/ontology#design/retry-budget", table), "design:retry-budget");
+        assert_eq!(
+            turtle_name("https://0k.computer/ontology#implementation/folio/colophon", table),
+            "implementation:folio\\/colophon"
         );
-
-        // With no vocabulary there is nothing to add, and the message is the
-        // closed set it always was.
-        let message = parse_envelope(&unknown)
-            .expect_err("the closed set still refuses")
-            .to_string();
-        assert!(message.ends_with("got `pamphlet`"), "{message}");
+        assert_eq!(turtle_name("https://0k.computer/ontology#paracosm/a.b.", table), "x0k:paracosm\\/a.b\\.");
+        assert_eq!(turtle_name("https://0k.computer/ontology#folio/sourcePath", table), "folio:sourcePath");
+        assert_eq!(
+            turtle_name("https://0k.computer/ontology#design/icon-profile#show-it", table),
+            "design:icon-profile%23show-it"
+        );
+        assert_eq!(turtle_name("https://example.org/a b", table), "<https://example.org/a b>");
     }
 
     #[test]
-    fn rejects_missing_format() {
-        let content = r#"---
-x0k:
-  id: x0k:design/example
-  type: design
-  status: proposed
----
-"#;
-        let err = parse_envelope(content).expect_err("missing format must reject");
-        assert!(matches!(err, FolioError::MissingField { field: "format" }));
+    fn strip_and_place_are_inverse() {
+        let block = "```turtle folio:document\ndesign:x a x0k:Design .\n```\n";
+        for body in ["# Title\n\nProse.\n", "# Title\nProse.\n", "\n# Title\n\nProse.\n", "Prose first.\n", "<p>html</p>\n", ""] {
+            let document = place_header(block, body);
+            assert!(find_header(&document).is_some(), "{document:?}");
+            assert_eq!(strip_header(&document), body, "{document:?}");
+        }
+        let edited = replace_body(&place_header(block, "# Title\n\nOld.\n"), "# Title\n\nNew.\n");
+        assert_eq!(edited, place_header(block, "# Title\n\nNew.\n"));
     }
 
     #[test]
-    fn rejects_malformed_yaml() {
-        let content = "---\nx0k:\n  format: folio/v1\n  id: : :\n---\nbody\n";
-        let err = parse_envelope(content).expect_err("bad YAML must reject");
-        assert!(matches!(err, FolioError::InvalidYaml(_)));
-    }
-
-    #[test]
-    fn legacy_flat_frontmatter_is_not_colophon() {
-        let content = "---\nstatus: Proposed\n---\nBody\n";
-        assert!(!is_colophon(content));
-        let err = parse_envelope(content).expect_err("legacy must not parse as v1");
-        assert!(matches!(err, FolioError::NotColophon));
+    fn host_frontmatter_is_the_hosts_and_the_header_follows_it() {
+        let content = "---\ntitle: Search Documentation\n---\n```turtle folio:document\ndesign:x a x0k:Design .\n```\n# Search\n";
+        let (env, body) = parse_envelope(content).expect("parse");
+        assert_eq!(env.id, "x0k:design/x");
+        assert_eq!(body, "# Search\n");
     }
 
     #[test]
     fn render_then_parse_roundtrips() {
         let mut edges = BTreeMap::new();
         edges.insert(
-            "cites".to_string(),
-            vec![
-                "x0k:wiki/related".to_string(),
-                "x0k:design/oracle".to_string(),
-            ],
+            "x0k:cites".to_string(),
+            vec!["x0k:wiki/related".to_string(), "x0k:design/oracle".to_string()],
         );
+        let mut properties = BTreeMap::new();
+        properties.insert("x0k:confidence".to_string(), vec![Literal::string("high")]);
+        let mut roots = BTreeMap::new();
+        roots.insert("gallowglass".to_string(), "lit/fold.gls".to_string());
         let env = Colophon {
-            id: "x0k:wiki/sample".to_string(),
-            doc_type: DocType::Wiki,
+            id: "x0k:implementation/wiki/sample".to_string(),
+            doc_type: DocType::Implementation,
             subtype: Some("wiki:Methodology".to_string()),
             status: Some(Status::Stable),
-            concerns: vec!["alpha".to_string(), "beta".to_string()],
+            concerns: vec!["alpha".to_string(), "beta \"quoted\"".to_string()],
             summary: Some("Concise summary.".to_string()),
             updated_by: Some("agent".to_string()),
             created_at: Some("2026-01-15T10:30:00.000000Z".to_string()),
             updated_at: Some("2026-05-06T12:00:00.000000Z".to_string()),
             edges,
-            materialization: None,
-            tangle: None,
-            pipelines: vec![],
-            body_format: BODY_FORMAT_MARKDOWN.to_string(),
+            properties,
+            materialization: Some(Materialization {
+                loro_doc_id: Some("doc-123".into()),
+                document_revision_id: None,
+                content_hash: Some("hash-789".into()),
+            }),
+            tangle: Some(TangleConfig {
+                crate_name: Some("substrate/cells/x".into()),
+                root: Some("src/lib.rs".into()),
+                roots,
+            }),
+            pipelines: vec![PipelineDecl {
+                kind: "theme-codegen".into(),
+                inputs: HashMap::from([("default".to_string(), "tokens".to_string())]),
+                config: serde_json::json!({"name": "pansophia", "scheme": "single"}),
+            }],
+            body_format: BODY_FORMAT_HTML.to_string(),
         };
-        let yaml = render_envelope(&env);
-        let full = format!("{yaml}\nbody\n");
-        let (parsed, _body) = parse_envelope(&full).expect("roundtrip parse");
+        let document = render_document(&env, "<p>hi</p>\n");
+        let (parsed, body) = parse_envelope(&document).expect("roundtrip parse");
         assert_eq!(parsed, env);
+        assert_eq!(body, "<p>hi</p>\n");
     }
 
     #[test]
-    fn render_omits_empty_summary_and_updated_by() {
+    fn render_omits_defaults() {
         let env = Colophon {
-            id: "x0k:wiki/x".to_string(),
-            doc_type: DocType::Wiki,
-            subtype: Some("wiki:Concept".to_string()),
-            status: Some(Status::Stable),
+            id: "x0k:design/x".to_string(),
+            doc_type: DocType::Design,
+            subtype: None,
+            status: Some(Status::Proposed),
             concerns: vec![],
             summary: Some(String::new()),
-            updated_by: Some(String::new()),
+            updated_by: None,
             created_at: None,
             updated_at: None,
             edges: BTreeMap::new(),
+            properties: BTreeMap::new(),
             materialization: None,
             tangle: None,
             pipelines: vec![],
             body_format: BODY_FORMAT_MARKDOWN.to_string(),
         };
-        let yaml = render_envelope(&env);
-        assert!(!yaml.contains("summary:"));
-        assert!(!yaml.contains("updated_by:"));
-        assert!(!yaml.contains("created_at:"));
-        assert!(!yaml.contains("updated_at:"));
-    }
-
-    #[test]
-    fn renders_and_parses_timestamps() {
-        let env = Colophon {
-            id: "x0k:wiki/timestamped".to_string(),
-            doc_type: DocType::Wiki,
-            subtype: Some("wiki:Concept".to_string()),
-            status: Some(Status::Stable),
-            concerns: vec![],
-            summary: None,
-            updated_by: None,
-            created_at: Some("2026-01-15T10:30:00.000000Z".to_string()),
-            updated_at: Some("2026-05-06T12:00:00.000000Z".to_string()),
-            edges: BTreeMap::new(),
-            materialization: None,
-            tangle: None,
-            pipelines: vec![],
-            body_format: BODY_FORMAT_MARKDOWN.to_string(),
-        };
-        let yaml = render_envelope(&env);
-        assert!(yaml.contains("created_at: 2026-01-15T10:30:00.000000Z"));
-        assert!(yaml.contains("updated_at: 2026-05-06T12:00:00.000000Z"));
-        let full = format!("{yaml}\nbody\n");
-        let (parsed, _body) = parse_envelope(&full).expect("parse with timestamps");
         assert_eq!(
-            parsed.created_at.as_deref(),
-            Some("2026-01-15T10:30:00.000000Z")
+            render_header(&env),
+            "```turtle folio:document\ndesign:x a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n"
         );
-        assert_eq!(
-            parsed.updated_at.as_deref(),
-            Some("2026-05-06T12:00:00.000000Z")
-        );
-    }
-
-    #[test]
-    fn yaml_scalar_quotes_when_needed() {
-        assert_eq!(yaml_scalar("simple"), "simple");
-        assert_eq!(yaml_scalar(""), "\"\"");
-        assert_eq!(
-            yaml_scalar("Has: a colon, a # hash, and \"quotes\"."),
-            "\"Has: a colon, a # hash, and \\\"quotes\\\".\""
-        );
-    }
-
-    #[test]
-    fn default_body_format_is_markdown_when_field_absent() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/legacy
-  type: design
-  status: proposed
----
-body
-"#;
-        let (env, _) = parse_envelope(content).expect("parse legacy markdown");
-        assert_eq!(env.body_format, BODY_FORMAT_MARKDOWN);
-    }
-
-    #[test]
-    fn explicit_body_format_html_parses() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/html-decision
-  type: design
-  status: proposed
-  body_format: html
----
-<p>Hello.</p>
-"#;
-        let (env, body) = parse_envelope(content).expect("parse html-bodied");
-        assert_eq!(env.body_format, BODY_FORMAT_HTML);
-        assert!(body.contains("<p>Hello.</p>"));
     }
 
     #[test]
     fn unknown_body_format_warns_and_falls_back_to_markdown() {
-        // Unknown values must not error — forward-compat per the
-        // `unknown_edges` pattern. The fallback is markdown.
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/forward-compat
-  type: design
-  status: proposed
-  body_format: yaml
----
-body
-"#;
-        let (env, _) = parse_envelope(content).expect("unknown body_format must not error");
+        let content = "```turtle folio:document\ndesign:x a x0k:Design ; x0k:bodyFormat \"yaml\" .\n```\n";
+        let (env, _) = parse_envelope(content).expect("an unknown body format does not refuse");
         assert_eq!(env.body_format, BODY_FORMAT_MARKDOWN);
     }
 
     #[test]
-    fn render_emits_body_format_only_when_non_default() {
-        let mut env = Colophon {
-            id: "x0k:design/x".to_string(),
-            doc_type: DocType::Design,
-            subtype: None,
-            status: Some(Status::Proposed),
-            concerns: vec![],
-            summary: None,
-            updated_by: None,
-            created_at: None,
-            updated_at: None,
-            edges: BTreeMap::new(),
-            materialization: None,
-            tangle: None,
-            pipelines: vec![],
-            body_format: BODY_FORMAT_MARKDOWN.to_string(),
-        };
-        let md_yaml = render_envelope(&env);
-        assert!(
-            !md_yaml.contains("body_format"),
-            "default markdown body_format must be omitted from render, got:\n{md_yaml}"
-        );
-
-        env.body_format = BODY_FORMAT_HTML.to_string();
-        let html_yaml = render_envelope(&env);
-        assert!(
-            html_yaml.contains("body_format: html"),
-            "non-default html body_format must be rendered, got:\n{html_yaml}"
-        );
-    }
-
-    #[test]
-    fn render_then_parse_roundtrip_preserves_html_body_format() {
-        let env = Colophon {
-            id: "x0k:design/html-roundtrip".to_string(),
-            doc_type: DocType::Design,
-            subtype: None,
-            status: Some(Status::Proposed),
-            concerns: vec![],
-            summary: None,
-            updated_by: None,
-            created_at: None,
-            updated_at: None,
-            edges: BTreeMap::new(),
-            materialization: None,
-            tangle: None,
-            pipelines: vec![],
-            body_format: BODY_FORMAT_HTML.to_string(),
-        };
-        let yaml = render_envelope(&env);
-        let full = format!("{yaml}\n<p>hi</p>\n");
-        let (parsed, _body) = parse_envelope(&full).expect("roundtrip parse");
-        assert_eq!(parsed.body_format, BODY_FORMAT_HTML);
-        assert_eq!(parsed, env);
-    }
-
-    #[test]
-    fn parses_materialization_block() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/x
-  type: design
-  status: proposed
-  materialization:
-    loro_doc_id: doc-123
-    document_revision_id: rev-456
-    content_hash: hash-789
----
-body
-"#;
-        let (env, _) = parse_envelope(content).expect("parse mat");
-        let m = env.materialization.expect("materialization present");
-        assert_eq!(m.loro_doc_id.as_deref(), Some("doc-123"));
-        assert_eq!(m.document_revision_id.as_deref(), Some("rev-456"));
-        assert_eq!(m.content_hash.as_deref(), Some("hash-789"));
-    }
-
-    #[test]
-    fn parses_pipeline_shorthand_input() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/themes/pansophia
-  type: design
-  status: proposed
-  pipelines:
-    - kind: theme-codegen
-      input: tokens
-      config:
-        name: pansophia
-        scheme: single
----
-body
-"#;
-        let (env, _) = parse_envelope(content).expect("parse pipeline shorthand");
-        assert_eq!(env.pipelines.len(), 1);
-        let p = &env.pipelines[0];
-        assert_eq!(p.kind, "theme-codegen");
-        // Shorthand `input:` normalizes to `inputs.default`.
-        assert_eq!(p.inputs.get("default").map(|s| s.as_str()), Some("tokens"));
-        assert_eq!(
-            p.config.get("name").and_then(|v| v.as_str()),
-            Some("pansophia")
-        );
-        assert_eq!(
-            p.config.get("scheme").and_then(|v| v.as_str()),
-            Some("single")
-        );
-    }
-
-    #[test]
-    fn parses_pipeline_long_form_inputs_map() {
-        let content = r#"---
-x0k:
-  format: folio/v1
-  id: x0k:design/multi
-  type: design
-  status: proposed
-  pipelines:
-    - kind: theme-codegen
-      inputs:
-        tokens: tokens-chunk
-      config:
-        name: business
-        scheme: dual
----
-body
-"#;
-        let (env, _) = parse_envelope(content).expect("parse pipeline long form");
-        let p = &env.pipelines[0];
-        assert_eq!(
-            p.inputs.get("tokens").map(|s| s.as_str()),
-            Some("tokens-chunk")
-        );
-    }
-
-    #[test]
-    fn omits_pipelines_when_envelope_has_none() {
-        let env = Colophon {
-            id: "x0k:design/x".to_string(),
-            doc_type: DocType::Design,
-            subtype: None,
-            status: Some(Status::Proposed),
-            concerns: vec![],
-            summary: None,
-            updated_by: None,
-            created_at: None,
-            updated_at: None,
-            edges: BTreeMap::new(),
-            materialization: None,
-            tangle: None,
-            pipelines: vec![],
-            body_format: BODY_FORMAT_MARKDOWN.to_string(),
-        };
-        let yaml = render_envelope(&env);
-        assert!(!yaml.contains("pipelines:"));
+    fn pipelines_read_the_shorthand_and_the_long_form() {
+        let content = "```turtle folio:document\ndesign:themes\\/pansophia a x0k:Design ;\n    folio:pipelines '[{\"kind\":\"theme-codegen\",\"input\":\"tokens\",\"config\":{\"name\":\"pansophia\"}},{\"kind\":\"theme-codegen\",\"inputs\":{\"tokens\":\"tokens-chunk\"}}]'^^rdf:JSON .\n```\n";
+        let (env, _) = parse_envelope(content).expect("parse");
+        assert_eq!(env.pipelines[0].inputs.get("default").map(String::as_str), Some("tokens"));
+        assert_eq!(env.pipelines[0].config["name"], "pansophia");
+        assert_eq!(env.pipelines[1].inputs.get("tokens").map(String::as_str), Some("tokens-chunk"));
     }
 }
 ```
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [format-tokens](#chunk-format-tokens) · [normalize-body-format](#chunk-normalize-body-format) · [doc-type](#chunk-doc-type) · [doc-type-strings](#chunk-doc-type-strings) · [status](#chunk-status) · [materialization](#chunk-materialization) · [tangle-config](#chunk-tangle-config) · [pipeline-decl](#chunk-pipeline-decl) · [folio-error](#chunk-folio-error) · [colophon-type](#chunk-colophon-type) · [wire-shapes](#chunk-wire-shapes) · [split-frontmatter](#chunk-split-frontmatter) · [is-colophon](#chunk-is-colophon) · [parse-envelope](#chunk-parse-envelope) · [yaml-to-json](#chunk-yaml-to-json) · [render-envelope](#chunk-render-envelope) · [yaml-scalar](#chunk-yaml-scalar) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [markers](#chunk-markers) · [prefixes](#chunk-prefixes) · [compact](#chunk-compact) · [turtle-name](#chunk-turtle-name) · [format-tokens](#chunk-format-tokens) · [normalize-body-format](#chunk-normalize-body-format) · [doc-type](#chunk-doc-type) · [doc-type-strings](#chunk-doc-type-strings) · [status](#chunk-status) · [materialization](#chunk-materialization) · [tangle-config](#chunk-tangle-config) · [pipeline-decl](#chunk-pipeline-decl) · [folio-error](#chunk-folio-error) · [colophon-type](#chunk-colophon-type) · [find-header](#chunk-find-header) · [strip-header](#chunk-strip-header) · [read-turtle](#chunk-read-turtle) · [parse-envelope](#chunk-parse-envelope) · [statements](#chunk-statements) · [render-header](#chunk-render-header) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
+
+<<markers>>
+
+<<prefixes>>
+
+<<compact>>
+
+<<turtle-name>>
 
 <<format-tokens>>
 
@@ -1795,28 +1948,24 @@ body
 
 <<colophon-type>>
 
-<<wire-shapes>>
+<<find-header>>
 
-<<split-frontmatter>>
+<<strip-header>>
 
-<<is-colophon>>
+<<read-turtle>>
 
 <<parse-envelope>>
 
-<<yaml-to-json>>
+<<statements>>
 
-<<render-envelope>>
-
-<<yaml-scalar>>
+<<render-header>>
 
 <<tests>>
 ```
 
-What this module leaves genuinely open: the renderer and parser are not
-inverses over the space of *files*, only over the space of *envelopes* —
-a fact every caller that holds a human-authored file must respect by
-splicing bodies rather than re-rendering (the
-`body_swap_preserves_frontmatter_verbatim` test in
-[`segmentation.md`](segmentation.md) pins the technique). And the closed
-`DocType` set means adding a genus is a code change in a public library;
-that is the point — a genus is an ontology commitment, not a string.
+What this module leaves open: the renderer and parser are inverses over the
+space of *headers*, not of *files* — a human's statement order and comments
+are theirs, which is why a caller holding a human-authored file splices
+bodies with [`replace_body`] rather than re-rendering. And the named `DocType`
+set means a genus this crate dispatches on is a code change in a public
+library; a genus it merely admits is a class in a module.
