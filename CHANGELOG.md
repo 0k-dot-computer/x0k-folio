@@ -12,10 +12,14 @@ revision, which crates.io refuses, and `x0k-folio-cli` depends on it.
 Both ship as the release binaries `install.sh` installs, and both
 build from a clone. `x0k-folio-cli` carries the number of the release its
 binary ships in, so `x0k-folio-cli --version` names the release you
-installed, although no registry ever serves it.
+installed, although no registry ever serves it. `x0k-tangle` carries it
+too: a repository projected without the tangler's source has its CI
+install the tangler that projected it, by that tangler's version, and the
+installer fetches by release number, so the two are one number.
 
-They do not all carry the same number. A crate's version moves when that
-crate's own public surface moves, and by how much follows semver: a change
+They do not all carry the same number. Apart from those two, a crate's
+version moves when that crate's own public surface moves, and by how much
+follows semver: a change
 that can break a caller's code moves the minor number while a crate is
 below 1.0, anything else moves the patch number. So a release names a
 subset of the bundle, each crate in it under its own new number, and the
@@ -23,6 +27,235 @@ rest keep the number they already have; the sections under a release below
 are exactly the crates whose numbers moved in it, and each heading names
 the number. Reading a crate's version as "how recent is this bundle" will
 mislead you — read the release it is listed under instead.
+
+## 0.4.0 — 2026-10-04
+
+On GitHub as
+[v0.4.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.4.0):
+a binary per platform, `install.sh`, the source closure, and one
+`SHA256SUMS`.
+
+**Publish a collection of your own.** A publication — one document naming
+the documents, and any crates, it publishes, and the licence they go out
+under — is now projected, published and received by the released
+`x0k-tangle`, for anybody's collection. Through 0.3.0 `project-repo`,
+`publish-repo` and `receive-repo` were listed in `--help`, marked
+`[corpus-only]`, and refused to run anywhere but the corpus this repository
+is projected from. They run on yours now: members are found by the id their
+headers declare, wherever they are filed; your vocabulary is read with
+`--vocabulary` and ships in the repository; a collection of documents with
+no crate at all publishes; the build policy is what the publication states,
+with defaults that add nothing it did not say; and `publish-repo --really`
+pushes to the remote the publication names, uploading crates to crates.io
+only when the publication asks for that. The integration guide's new
+section,
+[Publishing a collection](guides/INTEGRATING.md#publishing-a-collection),
+walks through it. What stays ours is the reader website we weave our own
+publications into.
+
+0.3.0's integration guide said MkDocs, Docusaurus and GitHub all show a
+header as a Turtle code block. MkDocs does not. Its Markdown reads a fence
+opened by a language and, optionally, attributes in braces, and nothing
+else, so `turtle folio:document` opens no fence there: the header became
+inline code and swallowed the prose after it, and a graph block went the
+same way. Under plain `fenced_code` a chunk's opening,
+`python {#backoff from="…"}`, did too.
+
+The format stays as it is. The repository now ships
+`tools/mkdocs_folio.py`, a hook for MkDocs' own `hooks:` setting: it
+rewrites folio's fence openings into the form MkDocs reads, so the header
+and graph blocks show as Turtle code and a chunk as code in its language
+under its id, under `pymdownx.superfences` and under plain `fenced_code`.
+`folio_header: hide`, in a page's front matter or under `extra:` for the
+site, drops the header instead. The guide's paragraph now says what was
+tested, on which versions: GitHub shows the blocks as written, MkDocs
+needs the hook, and Docusaurus 3.10.2 shows them as code with no plugin,
+with the header unhighlighted and a chunk's id not kept as an anchor.
+
+`check` read a header's edges against the vocabulary and never its literal
+statements, so `x0k:fooBar "x"` passed on a design and `x0k:tells` passed
+for `x0k:tell`; in a graph block a misspelled field passed on any class no
+datatype property described. The guide promised that a predicate no loaded
+module declares is refused by name, and now it is, wherever it is written
+and whatever the document's class. A term your documents carry that no
+module declares is now a defect: declare it in your module, or stop using
+it. `ingest` and `index` still carry every statement as written.
+
+Five crates move. `x0k-tangle` and `x0k-folio-cli` take the release's
+number. `x0k-folio` moves its minor number, because the strict check
+changed a `Defect` a caller may match on; `x0k-ontology` moves a patch, for
+the terms it adds, and `x0k-folio-ingest` a patch, for the wait it fixes.
+Every crate's description was rewritten to say what the crate does for a
+reader who has not met our words for it. For `x0k-fact-projection`,
+`x0k-icon`, `x0k-syntax` and `x0k-folio-dialog` that is the whole change,
+so they keep their numbers, and crates.io shows the old description of the
+three it serves until they next move.
+
+### x0k-tangle 0.4.0
+
+- **`project-repo`, `publish-repo` and `receive-repo` ship**, with the
+  modules they use: `collection` (where a collection keeps its documents,
+  the vocabulary a header is read in, a document found by its id),
+  `region_repo`, `publish_repo` and `receive`. Each verb's function has an
+  `_in` form that reads the publication in a `Vocabulary` you pass
+  (`project_publication_repo_in`, `publish_repo_in`, `receive_repo_in`),
+  and `collection_documents` and `documents_declaring` find a collection's
+  documents.
+- **`weave-region` and `workspace` leave the published build**, and no
+  verb is marked `[corpus-only]`. 0.3.0 listed both and refused to run
+  them: one weaves the reader website our publications are read on, the
+  other sweeps our corpus's layout. They compile only under a `corpus`
+  feature, which the published manifest declares empty, and their source
+  does not ship. The library loses the modules only they used — `atlas`,
+  `presentation`, `region_project` and `region_weave` — with everything
+  `lib.rs` re-exported from them (`weave_region`, `build_atlas`,
+  `project_publication`, `apply_publication_shell` and the types beside
+  them), so code calling those no longer compiles. `region_gfm`, the weave
+  for a code host's Markdown renderer, stays.
+- **Members by id, in any namespace.** `publishes`, `entryPoint` and
+  `excludes` name documents by the id their headers declare, found
+  wherever they are filed; an id nothing declares is refused by name, and
+  so are two documents declaring one id. Each verb takes `--vocabulary
+  <dir>`, repeatable.
+- **A collection with no crate publishes.** No Cargo manifest, lockfile or
+  toolchain file is written for one. Every literate chapter ships, whatever
+  it tangles to — a `.py` or `.ts` output included — or is refused by id;
+  none is dropped silently. The vocabulary modules your documents are
+  written in ship under `ontology/modules/`.
+- **A publication carries the files its crates read.** `x0k:carries`
+  (declared by `document`) names collection paths, files or directories,
+  that are neither crate source nor a document — a vendored tree, test
+  data — and ships them as the collection holds them, at the same path. A
+  directory carries what version control tracks. A path inside or holding a
+  crate, or a generated file whose chapter does not ship, is refused by
+  name; carried files are recorded with the mirrored sources under
+  `PROVENANCE.json`'s `sources`, so `receive-repo` routes an edit back.
+- **The publication states its build policy**: `x0k:rustVersion`,
+  `x0k:rustToolchain`, `x0k:gitPin`, `x0k:marks`, `x0k:publishBranch`,
+  `x0k:publishRemote`, `x0k:publishRegistry`, and a `deny.toml` chunk.
+  Unstated, each adds nothing: no toolchain pin, no Git dependency, no
+  `cargo deny` step, the remote's default branch, no upload. Any SPDX
+  licence is accepted; one whose text the projector does not carry gets a
+  placeholder file naming where the text is.
+- **`publish-repo` pushes to your remote.** `--remote <url>`, else the
+  publication's `x0k:publishRemote`, else its own `x0k:repository`, else
+  its `x0k:publishedOn` surface mapped in `config/x0k-tangle.toml`, read
+  only when the publication names no repository of its own. It builds and tests only when a crate
+  ships, asks the crates.io index and rehearses `cargo publish` only when
+  the publication states `x0k:publishRegistry "crates.io"`, and refuses
+  `--really` before uploading anything when there is no remote.
+  `PublishRepoOptions` gains `remote`, so a struct literal naming every
+  field no longer compiles.
+- **CI in a repository that does not ship the tangler installs it**:
+  `tools/ci` fetches the `x0k-tangle` release the projection was made with,
+  checked against the release's `SHA256SUMS` (`FOLIO_VERSION` moves the
+  pin, `X0K_TANGLE` names one you have), and checks every document against
+  the shipped vocabulary.
+- Every projection carries `tools/mkdocs_folio.py`, the MkDocs hook above,
+  beside the CI scripts.
+- **`receive-repo`** rebuilds the projection at the exact commit the clone's
+  `PROVENANCE.json` records, finds the publication by the id it records,
+  routes a hand-written edit back to the crate it came from, and refuses an
+  edit to a generated file naming the document that produces it. It finds a
+  crate nested below the workspace root and a publication kept in a
+  directory of its own, and routes an edit back under the `organized`
+  layout too.
+- **`receive-repo` replays the clone's proofs** instead of running them: the
+  reference projection takes each test's outcome from the clone's
+  `PROVENANCE.json` (`Proofs` gains `Recorded`), so a receive of this
+  repository takes about 4 s where it took 36 s.
+- **`receipt.json` says what `--apply` did.** It was written before the
+  apply ran, so it said `"applied": false` even when the patches landed; it
+  is written after, and `apply_error` carries the reason a refused apply
+  exited with.
+- A relative `--output-dir` works.
+- **`check` refuses an undeclared literal term**, in a header or a graph
+  block, naming the term, the line that wrote it and the nearest declared
+  term (`x0k:tells` is told `x0k:tell`). An undeclared edge predicate's
+  refusal names its line and nearest term too.
+
+### x0k-ontology 0.3.1
+
+- `document` declares the terms a publication states its policy in:
+  `x0k:rustVersion`, `x0k:rustToolchain`, `x0k:gitPin`, `x0k:marks`,
+  `x0k:publishBranch`, `x0k:publishRemote` and `x0k:publishRegistry`, and
+  `x0k:carries`, the files it ships beside its crates.
+- Five classes move into the shipped modules from ones this crate does not
+  ship: `x0k:SoftwareModule` to `software`, and `x0k:Artifact`,
+  `x0k:Actor`, `x0k:Human` and `x0k:AIAgent` to `document`. A reader
+  holding the shipped modules can now read a publication that names crates
+  (`software-module:`) and the kinds of reader an affordance is claimed for
+  (`actor:human`), and write one of their own. Terms and IRIs are
+  unchanged; only the module that declares each moved.
+- `software` declares `x0k:cue`, the cue every signifier states, and
+  `document` declares the publication-manifest terms the repository
+  projector reads: `x0k:license`, `x0k:copyright`, `x0k:repository`,
+  `x0k:keywords`, `x0k:overlay`, `x0k:repositoryLayout`, `x0k:prebuilt`,
+  `x0k:palette`, `x0k:projection` and the edge `x0k:severs`.
+- `document` also declares the terms the corpus had been writing on open
+  questions and chapters without a declaration: `x0k:resolution` over an
+  open question, `x0k:methodology` over an implementation chapter, and
+  `x0k:visualizes`, the edge from a chapter that draws an idea to the page
+  whose idea it draws.
+- `x0k:refinedBy` and `x0k:mentions` reach wiki pages. `refinedBy` runs
+  from a decision or a wiki page to a narrower one, where it ran decision
+  to decision, and `mentions` runs from either to anything. Each is stated
+  on one side only: no module declares `x0k:refines` or
+  `x0k:mentionedBy`, so `check` refuses both.
+- The build reruns when a module or shape file is added or removed, not
+  only when a file it already read changes.
+
+### x0k-folio 0.3.0
+
+- **Every undeclared term is a defect, literal or edge, on any class.**
+  `check_envelope` refuses a header's literal statement whose term no loaded
+  module declares, as `Defect::UndeclaredLiteral`, as it already refused an
+  edge's predicate. `check_literal_fields` refuses an undeclared field on an
+  instance of any class, not only one some datatype property describes.
+- `Defect::UndeclaredPredicate` carries `line` and `nearest` beside
+  `predicate`, so a pattern naming only `predicate` no longer compiles.
+  `Defect::locate` reads the line that wrote the term off the document's
+  text, and both refusals name the nearest declared term within two edits.
+- **`writing_presentation` is new**: a Markdown document shown as editable
+  text keeps its source bytes. `WritingPresentation::project` lays a source
+  out as runs, each mapped back to its source range, so a heading can hide
+  its `# ` and an edit still saves the exact source; `html` writes the
+  layout and `decode` reads a submitted one back.
+- `html_canonical` has an editing policy beside the storage one:
+  `HtmlTextPolicy::Editing` keeps a draft's spaces, where the canonical
+  form would drop a space whose next word is not typed yet, and strips the
+  same behaviour-bearing markup. Each reader and patch is a method on the
+  policy (`normalize_html`, `apply_patches`, `text_changes`, …), and new
+  ones say what an edit changed and where it may land:
+  `metadata_changes`, `keyed_children_change` (children moved by HTML id
+  keep their text addresses), and `declared_editing_region` and
+  `declared_editing_extent`, which hold a selection to one
+  `contenteditable` root. The free functions are unchanged.
+
+### x0k-folio-ingest 0.2.1
+
+- A direct call on a backend's sink — `replace_document`, `retract_document`
+  and the rest — waits under the delivery policy the backend was given:
+  for the store's reply on a backend told to wait for quiescence, where it
+  used to give up after a fixed 30 s whatever it had been told.
+
+### x0k-folio-cli 0.4.0
+
+- Carries the release number. Its own code did not change: the binary is
+  built on `x0k-folio` 0.3.0, `x0k-ontology` 0.3.1 and `x0k-folio-ingest`
+  0.2.1, and reads the vocabulary above.
+
+### Guides
+
+- The integration guide has a section on publishing a collection: the
+  smallest publication, what `project-repo` writes, the policy statements
+  and their defaults, `publish-repo --really`, and `receive-repo`.
+- The README and `AGENTS.md` say a collection of your own publishes: the
+  README's task table has `publish-repo`, and `AGENTS.md` says what to do
+  when asked to publish, leaving `--really` to the person.
+- The query CLI has one section in the guide, where there were two that
+  disagreed about how long `ingest` waits; it waits for the store.
+- The guide's release examples name v0.4.0.
 
 ## 0.3.0 — 2026-10-03
 

@@ -768,7 +768,11 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         }).collect();
         let base=OntologyModel::parse_turtle_sources(&sources).unwrap();
         assert_eq!(base.modules().len(),3);
-        assert!(!base.classes().iter().any(|class|base.expand(&class.uri)=="https://0k.computer/ontology#SoftwareModule"));
+        // The slice declares the class its crates are named by (moved into
+        // `software` on 2026-10-04, `x0k:architecture/ontology-modules`
+        // Notes); it still imports nothing of `product`.
+        assert!(base.classes().iter().any(|class|base.expand(&class.uri)=="https://0k.computer/ontology#SoftwareModule"));
+        assert!(!base.modules().iter().any(|module|module.name=="product"));
         assert!(base.facts().iter().any(|fact|fact.entity=="https://0k.computer/ontology#enabledBy"
             && fact.predicate=="https://0k.computer/ontology#targetClass"
             && matches!(&fact.value,OntologyValue::Entity(target) if target=="https://0k.computer/ontology#SoftwareModule")));

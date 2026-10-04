@@ -273,7 +273,11 @@ and its pins out with it. They walk `MODULE_TABLES`: the set is closed under
 imports, `core` is always in it (it is the one module with no imports and
 every other module imports it), each term lives in exactly one module and
 the union is the sum, and the placement the ADR's table fixes holds for
-whichever modules are present. Predicates the corpus actively uses are
+whichever modules are present. The imports are the table's, with one
+addition the table's cut predates: `work` imports `time`, because an
+intent's `startedAt`, `completedAt` and `abandonedAt` refine
+the time module's `occurred` role, and the ADR's §1 licenses a refinement only of a
+property whose module is imported. Predicates the corpus actively uses are
 checked module by module for the same reason: `supersedes` sits in `work`
 (its declared domain and range are both the union of `Decision` and
 `Observation`, and `Observation` is `work`'s own term, so `document`
@@ -481,9 +485,17 @@ mod tests {
             ("core", "x0k:Concept"),
             ("document", "x0k:Decision"),
             ("work", "x0k:Intent"),
-            ("actor", "x0k:Actor"),
+            ("actor", "x0k:Techne"),
             ("software", "x0k:Affordance"),
-            ("product", "x0k:SoftwareModule"),
+            // Moved down from `product` and `work` on 2026-10-04 (the ADR's
+            // implementation note of that date): a publication shipping
+            // `software` names its crates in the vocabulary it ships.
+            ("software", "x0k:SoftwareModule"),
+            ("document", "x0k:Artifact"),
+            // Down from `actor` on 2026-10-04 (same note, later entry): the
+            // `actor:` ids a shipped affordance is claimed for need the class.
+            ("document", "x0k:Actor"),
+            ("product", "x0k:Profile"),
             ("paracosm", "paracosm:Place"),
         ] {
             if let Some(tables) = MODULE_TABLES.iter().find(|t| t.name == module) {
@@ -495,7 +507,7 @@ mod tests {
         }
         for (module, imports) in [
             ("document", &["core"][..]),
-            ("work", &["core", "document"]),
+            ("work", &["core", "document", "time"]),
             ("actor", &["core"]),
             ("software", &["core", "document"]),
             ("paracosm", &["core", "work"]),

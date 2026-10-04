@@ -11,17 +11,18 @@
 //! are reported and left alone. Never commits — `--apply` patches the
 //! working copy for the operator to review.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::parser::parse_document;
 use crate::region_gfm::unweave_chapter;
-use crate::region_project::CorpusLayout;
-use crate::region_repo::{project_publication_repo, RepoProjectOptions};
+use crate::collection::{documents_declaring, CorpusLayout, Vocabulary};
+use crate::region_repo::{
+    project_publication_repo_in, source_package_roots, ProofOutcome, Proofs, RepoProjectOptions,
+};
 use crate::resolve::expand_chunk;
-use x0k_folio::colophon::parse_envelope;
 
 /// What a changed path in the clone is, and therefore what can be done
 /// with it. Only `Literate` and `Source` produce a patch.
@@ -88,8 +89,9 @@ pub struct ReceiveOptions {
     pub apply: bool,
     /// Where to write the patch set + `receipt.json`.
     pub out_dir: Option<PathBuf>,
-    /// The publication doc; default is a scan of
-    /// the publications directory for the clone's `publication_uri`.
+    /// The publication doc; default is the document declaring the clone's
+    /// `publication_uri` — under the publications directory, else anywhere
+    /// in the collection.
     pub publication: Option<PathBuf>,
     /// Root for the reference projection's temp dir. Must be OUTSIDE
     /// the workspace — a jj workspace auto-tracks new files.
@@ -104,6 +106,10 @@ pub struct ReceiveReport {
     pub clone_rev: String,
     /// The revision the reference projection was actually built from.
     pub reference_rev: String,
+    /// The commit the reference's corpus was materialized at — the
+    /// clone's recorded `corpus_commit` when it resolves. `None` when the
+    /// reference is the current tree (`rev_exact: false`).
+    pub reference_commit: Option<String>,
     /// `reference_rev` is `clone_rev`. When false, the diff includes
     /// the corpus's own drift since the clone was projected, reversed.
     pub rev_exact: bool,
@@ -111,7 +117,13 @@ pub struct ReceiveReport {
     /// Which VCS answered the dirty check before `--apply`
     /// (`jj` | `git` | `none`).
     pub dirty_check: String,
+    /// The patch set is in the working copy: `--apply` ran and every
+    /// patch landed.
     pub applied: bool,
+    /// Why `--apply` did not land, when it was asked and refused or
+    /// failed — the same message the run exits with. `None` when it
+    /// landed or was not asked.
+    pub apply_error: Option<String>,
 }
 
 impl ReceiveReport {
@@ -127,6 +139,17 @@ impl ReceiveReport {
 /// against `workspace`. Reports every change; applies the receivable
 /// ones only under `opts.apply`.
 pub fn receive_repo(clone: &Path, workspace: &Path, opts: &ReceiveOptions) -> Result<ReceiveReport> {
+    receive_repo_in(clone, workspace, opts, &Vocabulary::shipped())
+}
+
+/// As [`receive_repo`], reading the publication and its members against
+/// `vocabulary` — the reference must be projected the way the clone was.
+pub fn receive_repo_in(
+    clone: &Path,
+    workspace: &Path,
+    opts: &ReceiveOptions,
+    vocabulary: &Vocabulary,
+) -> Result<ReceiveReport> {
     let clone = clone
         .canonicalize()
         .with_context(|| format!("clone dir {}", clone.display()))?;
@@ -140,18 +163,20 @@ pub fn receive_repo(clone: &Path, workspace: &Path, opts: &ReceiveOptions) -> Re
     let layout = CorpusLayout::read(&workspace);
     let pub_doc = match &opts.publication {
         Some(p) => p.clone(),
-        None => find_publication_doc(&workspace, &layout, &prov.publication_uri)?,
+        None => find_publication_doc(&workspace, &layout, &prov.publication_uri, vocabulary)?,
     };
     let reference =
-        build_reference(&workspace, &layout, &pub_doc, &prov, &clone, opts.scratch.as_deref())?;
+        build_reference(&workspace, &pub_doc, &prov, &clone, opts.scratch.as_deref(), vocabulary)?;
     let mut report = ReceiveReport {
         publication_uri: prov.publication_uri.clone(),
         clone_rev: prov.corpus_rev.clone(),
         reference_rev: reference.rev.clone(),
+        reference_commit: reference.commit.clone(),
         rev_exact: reference.exact,
-        changes: diff_and_classify(&clone, &reference.dir, &prov, &layout)?,
+        changes: diff_and_classify(&clone, &reference.dir, &prov, &layout, &reference.crate_roots)?,
         dirty_check: "none".to_string(),
         applied: false,
+        apply_error: None,
     };
     tracing::info!(
         changes = report.changes.len(),
@@ -165,9 +190,18 @@ pub fn receive_repo(clone: &Path, workspace: &Path, opts: &ReceiveOptions) -> Re
         None => reference.dir.join("patches"),
     };
     write_patch_set(&patch_dir, &mut report)?;
-    if opts.apply {
-        apply_patch_set(&workspace, &patch_dir, &mut report)?;
+    // The receipt records what `--apply` did, so it is written after it —
+    // a refused or failed apply included, before the run exits with it.
+    let applied = if opts.apply {
+        apply_patch_set(&workspace, &patch_dir, &mut report)
+    } else {
+        Ok(())
+    };
+    if let Err(e) = &applied {
+        report.apply_error = Some(format!("{e:#}"));
     }
+    write_receipt(&patch_dir, &report)?;
+    applied?;
     Ok(report)
 }
 
@@ -177,21 +211,39 @@ pub struct Provenance {
     pub publication_uri: String,
     #[serde(default)]
     pub corpus_rev: String,
-    /// Monorepo doc path → projected path.
+    /// The commit `corpus_rev` was at when the projection was taken. Empty
+    /// in a clone projected before the projector recorded it.
+    #[serde(default)]
+    pub corpus_commit: String,
+    /// Projected path → the corpus path it was projected from. Identity
+    /// for a chapter in the canonical layout; a different path under the
+    /// organized layout and for a decision document's projected section.
     #[serde(default)]
     pub path_map: BTreeMap<String, String>,
     /// Projected paths (or `dir/` prefixes) preserved on the public side.
     #[serde(default)]
     pub overlay: Vec<String>,
+    /// The crates the projection vendored. Empty for a projection that
+    /// ships documents only — which then has no package to look up.
+    #[serde(default)]
+    pub crates: Vec<String>,
+    /// Hand-written files a document's `from=` mirror quotes, carried
+    /// outside any crate: projected path → collection path.
+    #[serde(default)]
+    pub sources: BTreeMap<String, String>,
+    /// What each proof test did when the clone was projected, by test id
+    /// (`passed` | `failed`). The reference replays these rather than
+    /// running the tests again. Empty when the projection skipped its
+    /// proofs or published no affordance that names one.
+    #[serde(default)]
+    pub proofs: BTreeMap<String, String>,
 }
 
 impl Provenance {
-    /// Projected path → monorepo path, the direction receiving needs.
+    /// Projected path → monorepo path, the direction receiving needs and
+    /// the direction the projector writes the map in.
     fn canonical_for(&self, projected: &str) -> Option<&str> {
-        self.path_map
-            .iter()
-            .find(|(_, p)| p.as_str() == projected)
-            .map(|(c, _)| c.as_str())
+        self.path_map.get(projected).map(String::as_str)
     }
     fn is_overlay(&self, path: &str) -> bool {
         self.overlay.iter().any(|o| {
@@ -213,63 +265,107 @@ fn read_provenance(clone: &Path) -> Result<Provenance> {
 
 /// Find the publication doc whose header subject is `uri` under
 /// the corpus's publications directory.
-fn find_publication_doc(workspace: &Path, layout: &CorpusLayout, uri: &str) -> Result<PathBuf> {
+fn find_publication_doc(
+    workspace: &Path,
+    layout: &CorpusLayout,
+    uri: &str,
+    vocabulary: &Vocabulary,
+) -> Result<PathBuf> {
     let dir = workspace.join(layout.class_dir("publication"));
-    let entries = std::fs::read_dir(&dir)
-        .with_context(|| format!("listing {}", dir.display()))?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().map(|e| e != "md").unwrap_or(true) {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        if let Ok((env, _)) = parse_envelope(&text) {
-            if env.id == uri {
-                return Ok(path);
+    // The directory itself and one level of per-publication directories.
+    if dir.is_dir() {
+        for entry in walkdir::WalkDir::new(&dir).max_depth(2).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.into_path();
+            if !path.is_file() || path.extension().map(|e| e != "md").unwrap_or(true) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            if let Ok((env, _)) = vocabulary.read(&text) {
+                if env.id == uri {
+                    return Ok(path);
+                }
             }
         }
     }
-    bail!("no publication with id `{uri}` under {} (pass --publication)", dir.display())
+    // Not where ours are kept: wherever the collection declares it.
+    let mut declaring = documents_declaring(workspace, vocabulary, &BTreeSet::from([uri.to_string()]))
+        .remove(uri)
+        .unwrap_or_default();
+    match declaring.len() {
+        1 => Ok(declaring.remove(0)),
+        0 => bail!(
+            "no publication with id `{uri}` under {} or anywhere else in the collection \
+             (pass --publication)",
+            dir.display()
+        ),
+        n => bail!(
+            "{n} documents in the collection declare `{uri}` as their id: {declaring:?} \
+             (pass --publication)"
+        ),
+    }
+}
+
+/// How the reference treats the proofs: replay the outcomes the clone's
+/// projection recorded, never run them.
+fn reference_proofs(prov: &Provenance) -> Proofs {
+    Proofs::Recorded(
+        prov.proofs
+            .iter()
+            .filter_map(|(id, outcome)| ProofOutcome::parse(outcome).map(|o| (id.clone(), o)))
+            .collect(),
+    )
 }
 
 /// The reference projection: a temp dir holding a fresh projection of
-/// the publication, and which corpus revision it came from.
+/// the publication, which corpus revision it came from, and where each
+/// package it vendored lives in that corpus.
 struct Reference {
     dir: PathBuf,
     rev: String,
+    /// The commit the corpus was materialized at; `None` when the
+    /// reference is the current tree.
+    commit: Option<String>,
     exact: bool,
+    /// Package name → its root in the corpus the reference was projected
+    /// from, relative to that corpus.
+    crate_roots: BTreeMap<String, PathBuf>,
     _tmp: tempfile::TempDir,
 }
 
 fn build_reference(
     workspace: &Path,
-    layout: &CorpusLayout,
     pub_doc: &Path,
     prov: &Provenance,
     clone: &Path,
     scratch: Option<&Path>,
+    vocabulary: &Vocabulary,
 ) -> Result<Reference> {
     let tmp = match scratch {
         Some(s) => tempfile::Builder::new().prefix("x0k-receive-").tempdir_in(s)?,
         None => tempfile::Builder::new().prefix("x0k-receive-").tempdir()?,
     };
-    let crates = published_crates(pub_doc)?;
-    let (source_root, source_doc, exact) =
-        match materialize_corpus_at(workspace, layout, &prov.corpus_rev, &crates, tmp.path()) {
-            Some(root) => {
-                let rel = pub_doc.strip_prefix(workspace).unwrap_or(pub_doc);
-                let doc = root.join(rel);
-                let doc = if doc.is_file() { doc } else { pub_doc.to_path_buf() };
-                (root, doc, true)
-            }
-            None => (workspace.to_path_buf(), pub_doc.to_path_buf(), false),
-        };
+    // The commit is immutable; the revision may be a jj change id that
+    // has moved since. The revision is the fallback for a clone that
+    // records no commit.
+    let materialized = [prov.corpus_commit.as_str(), prov.corpus_rev.as_str()]
+        .into_iter()
+        .find_map(|rev| materialize_corpus_at(workspace, rev, tmp.path()));
+    let (source_root, source_doc, commit) = match materialized {
+        Some((root, commit)) => {
+            let rel = pub_doc.strip_prefix(workspace).unwrap_or(pub_doc);
+            let doc = root.join(rel);
+            let doc = if doc.is_file() { doc } else { pub_doc.to_path_buf() };
+            (root, doc, Some(commit))
+        }
+        None => (workspace.to_path_buf(), pub_doc.to_path_buf(), None),
+    };
+    let exact = commit.is_some();
     let rev = if exact {
         prov.corpus_rev.clone()
     } else {
         current_rev(workspace)
     };
-    tracing::info!(exact, rev = %rev, "tangle.receive.reference");
+    tracing::info!(exact, rev = %rev, commit = commit.as_deref().unwrap_or(""), "tangle.receive.reference");
     let dir = tmp.path().join("reference");
     let opts = RepoProjectOptions {
         license: None,
@@ -279,64 +375,37 @@ fn build_reference(
         allow_dirty: true,
         emit_github: clone.join(".github/workflows").is_dir(),
     };
-    project_publication_repo(&source_doc, &dir, &source_root, &opts)
+    project_publication_repo_in(&source_doc, &dir, &source_root, &opts, &reference_proofs(prov), vocabulary)
         .context("projecting the reference")?;
-    Ok(Reference { dir, rev, exact, _tmp: tmp })
+    // A projection of documents only vendored no package, and its
+    // collection need not be a Cargo workspace at all.
+    let crate_roots = if prov.crates.is_empty() {
+        BTreeMap::new()
+    } else {
+        source_package_roots(&source_root).context("reading where the reference's packages live")?
+    };
+    Ok(Reference { dir, rev, commit, exact, crate_roots, _tmp: tmp })
 }
 
-/// Crate names from the publication's `publishes` edges.
-fn published_crates(pub_doc: &Path) -> Result<Vec<String>> {
-    let text = std::fs::read_to_string(pub_doc)
-        .with_context(|| format!("reading {}", pub_doc.display()))?;
-    let (env, _) = parse_envelope(&text).map_err(|e| anyhow!("parsing publication: {e:?}"))?;
-    Ok(env
-        .edges
-        .get("x0k:publishes")
-        .into_iter()
-        .flatten()
-        .filter_map(|u| u.strip_prefix("x0k:software-module/"))
-        .map(|s| s.to_string())
-        .collect())
-}
-
-/// Materialize the projector's inputs at `rev` under `<scratch>/corpus`.
-/// `None` when the revision cannot be resolved or archived.
-fn materialize_corpus_at(
-    workspace: &Path,
-    layout: &CorpusLayout,
-    rev: &str,
-    crates: &[String],
-    scratch: &Path,
-) -> Option<PathBuf> {
+/// Materialize the whole corpus tree at `rev` under `<scratch>/corpus`;
+/// the root and the commit `rev` resolved to. `None` when the revision
+/// cannot be resolved or archived.
+fn materialize_corpus_at(workspace: &Path, rev: &str, scratch: &Path) -> Option<(PathBuf, String)> {
     if rev.is_empty() {
         return None;
     }
     let (git_dir, commit) = resolve_commit(workspace, rev)?;
     let root = scratch.join("corpus");
-    std::fs::create_dir_all(&root).ok()?;
-    let mut paths: Vec<String> = vec![
-        layout.implementation_root().display().to_string(),
-        layout.class_dir("publication").display().to_string(),
-        // The class registry itself: the archived corpus is projected from,
-        // so it must carry the table that says where its own documents are.
-        "config".into(),
-        "ontology/modules".into(),
-    ];
-    paths.extend(crates.iter().cloned());
-    // git archive refuses a pathspec that matches nothing; keep only
-    // paths present at the commit.
-    let present: Vec<String> = paths
-        .into_iter()
-        .filter(|p| git_path_exists(&git_dir, &commit, p))
-        .collect();
-    if present.is_empty() {
-        return None;
+    // A candidate that failed half-way leaves files behind; the next one
+    // starts from an empty directory.
+    if root.exists() {
+        std::fs::remove_dir_all(&root).ok()?;
     }
+    std::fs::create_dir_all(&root).ok()?;
     let mut archive = std::process::Command::new("git")
         .arg("--git-dir")
         .arg(&git_dir)
-        .args(["archive", "--format=tar", &commit, "--"])
-        .args(&present)
+        .args(["archive", "--format=tar", &commit])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -350,18 +419,7 @@ fn materialize_corpus_at(
     if !archive.wait().ok()?.success() || !status.success() {
         return None;
     }
-    Some(root)
-}
-
-fn git_path_exists(git_dir: &Path, commit: &str, path: &str) -> bool {
-    std::process::Command::new("git")
-        .arg("--git-dir")
-        .arg(git_dir)
-        .args(["cat-file", "-e", &format!("{commit}:{path}")])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    Some((root, commit))
 }
 
 /// `(git dir, commit sha)` for `rev`, via jj (change id → commit) or
@@ -408,6 +466,7 @@ fn diff_and_classify(
     reference: &Path,
     prov: &Provenance,
     layout: &CorpusLayout,
+    crate_roots: &BTreeMap<String, PathBuf>,
 ) -> Result<Vec<ReceivedChange>> {
     let clone_files = collect_files(clone)?;
     let ref_files = collect_files(reference)?;
@@ -424,6 +483,12 @@ fn diff_and_classify(
             _ => "modified",
         };
         let (class, target, produced_by) = classify(path, &old, &new, reference, prov, layout);
+        // The classifier speaks projection paths; a crate's source lives
+        // at its own root in the corpus, not at `<name>/`.
+        let target = match class {
+            Class::Source => target.map(|t| source_target(&t, reference, crate_roots)),
+            _ => target,
+        };
         // A literate chapter crossed woven for the forge; the contributor
         // edited the woven text, and the corpus holds the source. Both
         // sides are unwoven before the diff, so the patch is against the
@@ -450,6 +515,26 @@ fn diff_and_classify(
         });
     }
     Ok(changes)
+}
+
+/// The corpus path of a hand-written file the clone holds inside a
+/// vendored crate: the crate's root in the corpus joined with the path
+/// inside it. The projection names a crate's directory after its package
+/// (`<name>/`, or `crates/<name>/` organized). A crate the reference does
+/// not know keeps its projected path.
+fn source_target(
+    projected: &str,
+    reference: &Path,
+    crate_roots: &BTreeMap<String, PathBuf>,
+) -> String {
+    let Some((dir, rest)) = projected_crate(reference, projected) else {
+        return projected.to_string();
+    };
+    let name = dir.rsplit('/').next().unwrap_or(dir);
+    match crate_roots.get(name) {
+        Some(root) => root.join(rest).to_string_lossy().to_string(),
+        None => projected.to_string(),
+    }
 }
 
 fn collect_files(root: &Path) -> Result<BTreeSet<String>> {
@@ -496,6 +581,9 @@ fn classify(
     if let Some(canonical) = prov.canonical_for(path) {
         return (Class::Literate, Some(canonical.to_string()), None);
     }
+    if let Some(source) = prov.sources.get(path) {
+        return (Class::Source, Some(source.clone()), None);
+    }
     let literate_prefix = format!("{}/", layout.implementation_root().display());
     if path.starts_with(&literate_prefix) && path.ends_with(".md") {
         return (Class::Literate, Some(path.to_string()), None);
@@ -503,11 +591,14 @@ fn classify(
     if path.ends_with(".tangle-map.json") {
         return (Class::ProjectionOwned, None, None);
     }
-    let in_crate = path.split('/').count() >= 2 && reference.join(path.split('/').next().unwrap()).join("Cargo.toml").is_file();
-    if !in_crate {
+    let Some((_, crate_rel)) = projected_crate(reference, path) else {
+        // A chapter's output outside any crate: some sidecar names it.
+        if doc_for_output(reference, path).is_some() {
+            let origin = generated_origin(reference, prov, path, old.as_deref(), new.as_deref());
+            return (Class::Generated, None, Some(origin));
+        }
         return (Class::ProjectionOwned, None, None);
-    }
-    let crate_rel = &path[path.find('/').unwrap() + 1..];
+    };
     if crate_rel == "Cargo.toml" || crate_rel.starts_with("ontology/modules/") {
         // Rewritten (license, versions) or projected from `ontology/modules/`
         // (versionIRI stamped) at projection time; the monorepo original is
@@ -520,35 +611,64 @@ fn classify(
         .and_then(|t| t.lines().next())
         .unwrap_or("");
     if first_line.contains("@generated") {
-        let origin = generated_origin(reference, layout, path, old.as_deref(), new.as_deref());
+        let origin = generated_origin(reference, prov, path, old.as_deref(), new.as_deref());
         return (Class::Generated, None, Some(origin));
     }
     (Class::Source, Some(path.to_string()), None)
 }
 
+/// The vendored crate `path` sits in, as `(crate dir, path inside it)`.
+/// The crate dir is the outermost directory below the projection root that
+/// holds a `Cargo.toml` in the reference: `<name>/` in the canonical
+/// layout, `crates/<name>/` in the organized one. Outermost, because a
+/// crate's own test fixtures may carry manifests of their own.
+fn projected_crate<'a>(reference: &Path, path: &'a str) -> Option<(&'a str, &'a str)> {
+    path.match_indices('/').find_map(|(i, _)| {
+        let dir = &path[..i];
+        reference
+            .join(dir)
+            .join("Cargo.toml")
+            .is_file()
+            .then(|| (dir, &path[i + 1..]))
+    })
+}
+
 /// The doc (and, best-effort, the chunks) that produce `output` in the
-/// reference projection.
+/// reference projection. The doc is found at its projected path and named
+/// at its corpus path, which differ under the organized layout.
 fn generated_origin(
     reference: &Path,
-    layout: &CorpusLayout,
+    prov: &Provenance,
     output: &str,
     old: Option<&str>,
     new: Option<&str>,
 ) -> GeneratedOrigin {
-    let doc = doc_for_output(reference, layout, output)
-        .or_else(|| doc_from_header(old.or(new)?))
-        .unwrap_or_else(|| "(unknown — no sidecar names this output)".to_string());
-    let chunks = match (old, new, std::fs::read_to_string(reference.join(&doc))) {
+    let Some(projected) =
+        doc_for_output(reference, output).or_else(|| doc_from_header(old.or(new)?))
+    else {
+        return GeneratedOrigin {
+            doc: "(unknown — no sidecar names this output)".to_string(),
+            chunks: Vec::new(),
+        };
+    };
+    let chunks = match (old, new, std::fs::read_to_string(reference.join(&projected))) {
         (Some(old), Some(new), Ok(text)) => touched_chunks(&text, old, new),
         _ => Vec::new(),
     };
+    let doc = prov.canonical_for(&projected).map(str::to_string).unwrap_or(projected);
     GeneratedOrigin { doc, chunks }
 }
 
 /// Walk the reference's sidecars for one whose outputs name `output`.
-fn doc_for_output(reference: &Path, layout: &CorpusLayout, output: &str) -> Option<String> {
-    let root = reference.join(layout.implementation_root());
-    for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+/// The whole projection is walked: its chapters sit under the corpus's
+/// implementation root in the canonical layout and under
+/// `implementation/` in the organized one.
+fn doc_for_output(reference: &Path, output: &str) -> Option<String> {
+    let walk = walkdir::WalkDir::new(reference).into_iter().filter_entry(|e| {
+        let n = e.file_name().to_string_lossy();
+        !(e.depth() >= 1 && (n == ".git" || n == "target"))
+    });
+    for entry in walk.filter_map(|e| e.ok()) {
         let name = entry.file_name().to_string_lossy();
         if !name.ends_with(".tangle-map.json") {
             continue;
@@ -637,14 +757,18 @@ fn write_patch_set(dir: &Path, report: &mut ReceiveReport) -> Result<()> {
         std::fs::write(dir.join(&name), patch)?;
         change.patch_file = Some(name);
     }
+    Ok(())
+}
+
+fn write_receipt(dir: &Path, report: &ReceiveReport) -> Result<()> {
     std::fs::write(
         dir.join("receipt.json"),
         serde_json::to_string_pretty(&serde_json::json!({
             "schema": "x0k.receipt/v1",
             "report": report,
         }))?,
-    )?;
-    Ok(())
+    )
+    .with_context(|| format!("writing {}", dir.join("receipt.json").display()))
 }
 
 fn apply_patch_set(workspace: &Path, patch_dir: &Path, report: &mut ReceiveReport) -> Result<()> {
@@ -721,6 +845,7 @@ mod tests {
         Provenance {
             publication_uri: "x0k:publication/demo".into(),
             corpus_rev: String::new(),
+            corpus_commit: String::new(),
             path_map: [(
                 "corpora/x0k/implementation/folio/colophon.md".to_string(),
                 "corpora/x0k/implementation/folio/colophon.md".to_string(),
@@ -728,6 +853,9 @@ mod tests {
             .into_iter()
             .collect(),
             overlay: vec!["CONTRIBUTING.md".into(), "docs/".into()],
+            crates: vec!["x0k-folio".into()],
+            sources: BTreeMap::new(),
+            proofs: BTreeMap::new(),
         }
     }
 
@@ -770,6 +898,83 @@ mod tests {
                 assert_eq!(origin.doc, "corpora/x0k/implementation/folio/colophon.md");
             }
         }
+    }
+
+    /// A projection of documents carries hand-written files outside any
+    /// crate — a mirror's source — and generated ones a chapter tangles
+    /// there. The first is source, routed back through `sources`; the
+    /// second is refused naming its chapter; a file neither names is
+    /// scaffolding, as it always was.
+    #[test]
+    fn files_outside_any_crate_are_sources_or_a_chapters_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let reference = tmp.path();
+        std::fs::create_dir_all(reference.join("chapters")).unwrap();
+        std::fs::write(
+            reference.join("chapters/gen.tangle-map.json"),
+            r#"{"source":"chapters/gen.md","source_hash":"x","pipelines":[{"kind":"identity-tangle","config_hash":"y","outputs":[{"path":"pkg/gen.py","hash":"z"}]}]}"#,
+        )
+        .unwrap();
+        let mut p = prov();
+        p.sources.insert("pkg/mod.py".into(), "pkg/mod.py".into());
+        p.path_map.insert("chapters/gen.md".into(), "chapters/gen.md".into());
+        let hand = Some("def area(w, h):\n    return w * h\n".to_string());
+        let gen = Some("# @generated by x0k-tangle (pipeline: identity-tangle) from chapters/gen.md — DO NOT EDIT.\n".to_string());
+        let layout = CorpusLayout::default();
+        let (class, target, _) = classify("pkg/mod.py", &hand, &hand, reference, &p, &layout);
+        assert_eq!((class, target.as_deref()), (Class::Source, Some("pkg/mod.py")));
+        let (class, _, origin) = classify("pkg/gen.py", &gen, &gen, reference, &p, &layout);
+        assert_eq!(class, Class::Generated);
+        assert_eq!(origin.expect("names its chapter").doc, "chapters/gen.md");
+        let (class, _, _) = classify("pkg/other.py", &hand, &hand, reference, &p, &layout);
+        assert_eq!(class, Class::ProjectionOwned);
+    }
+
+    /// A collection that is not ours keeps its publication wherever it
+    /// likes: the receiver finds it by the id the clone records, and an id
+    /// nothing declares still asks for `--publication`.
+    #[test]
+    fn an_outside_publication_is_found_by_its_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        std::fs::create_dir_all(ws.join("pubs")).unwrap();
+        std::fs::write(
+            ws.join("pubs/field-notes.md"),
+            "# Field notes\n\n```turtle folio:document\npublication:field-notes a x0k:Publication ;\n    x0k:status \"proposed\" .\n```\n",
+        )
+        .unwrap();
+        let vocabulary = Vocabulary::shipped();
+        let layout = CorpusLayout::default();
+        let found = find_publication_doc(ws, &layout, "x0k:publication/field-notes", &vocabulary)
+            .expect("found by id");
+        assert!(found.ends_with("pubs/field-notes.md"), "{}", found.display());
+        let err = find_publication_doc(ws, &layout, "x0k:publication/elsewhere", &vocabulary)
+            .expect_err("nothing declares it");
+        assert!(format!("{err:#}").contains("pass --publication"), "{err:#}");
+    }
+
+    #[test]
+    fn the_reference_replays_the_clones_proofs_and_runs_none() {
+        let mut p = prov();
+        p.proofs = [
+            ("x0k:test/x0k-folio/tests/colophon.rs::reads_a_header", "passed"),
+            ("x0k:test/x0k-folio/src/lib.rs::a_word_nobody_wrote", "maybe"),
+        ]
+        .into_iter()
+        .map(|(id, o)| (id.to_string(), o.to_string()))
+        .collect();
+        match reference_proofs(&p) {
+            Proofs::Recorded(outcomes) => {
+                assert_eq!(
+                    outcomes.into_iter().collect::<Vec<_>>(),
+                    vec![("x0k:test/x0k-folio/tests/colophon.rs::reads_a_header".to_string(), ProofOutcome::Passed)],
+                    "the recorded outcome replays; a word that is no outcome is dropped"
+                );
+            }
+            other => panic!("the reference must replay the record, never run the proofs: {other:?}"),
+        }
+        // A clone that recorded nothing replays nothing — still no run.
+        assert!(matches!(reference_proofs(&prov()), Proofs::Recorded(o) if o.is_empty()));
     }
 
     #[test]

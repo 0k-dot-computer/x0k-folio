@@ -132,16 +132,22 @@ chapter:
 | `sync.rs` | [source-sync.md](source-sync.md) |
 | `stitch.rs` | [reverse-stitch.md](reverse-stitch.md) — also home of `TangleMap`, the sidecar shape |
 | `index.rs` | [doc-index.md](doc-index.md) |
-| `weave.rs`, `presentation.rs`, `atlas.rs` | [weave.md](weave.md), [presentation.md](presentation.md), [atlas.md](atlas.md) |
-| `region_weave.rs`, `region_project.rs`, `region_repo.rs` | [region-weave.md](region-weave.md), [region-project.md](region-project.md), [region-repo.md](region-repo.md) |
-| `publish_repo.rs`, `receive.rs` | [publishing.md](publishing.md), [receiving.md](receiving.md) |
+| `weave.rs`, `instance_rendering.rs` | [weave.md](weave.md), [instance-rendering.md](instance-rendering.md) |
+| `region_gfm.rs` | [region-gfm.md](region-gfm.md) |
+| `faces.rs` | [cli-faces.md](cli-faces.md) |
+
+The monorepo's build compiles more: the verbs that project a publication
+of our corpus, publish it and receive a contribution back, and the
+modules only they use. `lib.rs` includes them under the `corpus`
+feature, and their chapters stay in our corpus with them, so a
+repository projected from it carries neither.
 
 The pre-pipeline-protocol emitter that once defined `TangleMap` is gone;
 its only surviving type moved into the reverse-stitch chapter, which was its
 only reader.
 
-The repository projector ([region-repo.md](region-repo.md)) ships more
-than crates. A publication's `publishes` edge names each vocabulary
+The repository projector, which is part of that corpus build, ships
+more than crates. A publication's `publishes` edge names each vocabulary
 module it carries as `x0k:ontology-module/<name>` beside its
 `x0k:software-module/<crate>` members (ADR
 `x0k:architecture/ontology-modules` §6). The projector reads

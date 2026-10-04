@@ -99,6 +99,7 @@ The single serialization a body is stored in, and the structural patch grammar a
 
 - [Canonical HTML: one true serialization](implementation/folio/html-canonical.md) — The chokepoint every HTML body passes before it is stored: idempotent normalization, alphabetical attributes, an explicit whitespace policy, and behaviour-bearing markup removed whole.
 - [Canonical patches: one grammar, two dialects](implementation/folio/canonical-patch.md) — The structural-address patch grammar editors speak instead of byte offsets, so one editing intent is true of a markdown body and an HTML body alike and cannot smuggle non-canonical markup past normalization.
+- [Writing keeps its source](implementation/folio/writing-presentation.md) — A Markdown document shown as editable text keeps its source bytes: each displayed run maps back to a source range, so a heading can hide its # and an edit still saves the exact source.
 
 ### A document that changes
 
@@ -147,7 +148,7 @@ The tangle run in reverse: a symbol lifted out of a source file, a chunk body wr
 
 ### Weaving a document into something to read
 
-The second output channel — HTML with chunk-headed code — the classification it is coloured by, the index a browser navigates it through, and the shell around the pages.
+The second output channel — HTML with chunk-headed code — the classification it is coloured by, and the index a browser navigates it through.
 
 *rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](background/literate-programming.md)
 
@@ -155,21 +156,19 @@ The second output channel — HTML with chunk-headed code — the classification
 - [Instances on a reading surface](implementation/tangle/instance-rendering.md) — Instance identity, fields and source declarations rendered with the selected vocabulary on HTML and forge surfaces.
 - [Tokens are not colors](implementation/syntax/tokenizer.md) — Source text to a flat list of (byte range, kind) spans and nothing further, so a native presenter and a web presenter share one classification and disagree only about presentation.
 - [An index is the document seen from outside](implementation/tangle/doc-index.md) — The one-pass walk that emits a serializable index of a corpus — envelope fields, tangle target, mtime, and per-chunk coordinates — so a sidebar or a figure can render a chunk without re-parsing its document.
-- [The shell wraps the weave; it does not fork it](implementation/tangle/presentation.md) — Wrapping the woven pages in a canvas shell instead of forking the weaver: the pages move under `pages/` as the fallback a screen reader and a crawler still get, and the shell reads static JSON with no daemon in the loop.
 
-### Publishing a region
+### Publishing a collection
 
-A publication names a region of the graph; these chapters turn one into a reader site, into this repository, and back into the corpus when the world answers.
+A publication names documents and crates from a collection; it is projected as a repository like this one, published by a push, and a contributor's clone of it is received back as patches. Each chapter here is woven for a forge's renderer, as you are reading it. The reader website we weave our own publications into is not in this repository.
 
 *rests on:* [Literate Programming &amp; Legibility-as-Sovereignty](background/literate-programming.md)
 
-- [Region projection: the filesystem side](implementation/tangle/region-project.md) — The filesystem half the pure region weaver leaves out — resolving a publication's members with nothing but the envelope parser and a corpus layout read from the class registry, shared by the CLI and the MCP tool so the two cannot drift.
-- [Region weave: many documents, one artifact, no I/O](implementation/tangle/region-weave.md) — Region weaving as pure post-processing over the single-document weaver — cross-document links, the site nav, the URI-to-file map — computed without reading or writing a file, which is what makes every rule testable with strings.
-- [Atlas: a region laid out in time and idea](implementation/tangle/atlas.md) — Placing every member of a woven region at (year, idea-lane) as data rather than as rendering: the year sources, the lane and band membership, and the sorting that makes `atlas.json` byte-identical across runs.
+- [x0k-tangle: publishing a collection as a repository](implementation/tangle/repository-verbs.md) — The three verbs that take a collection of documents to a public repository and back — project a publication as a repository, publish it, and receive a contributor's clone of it as patches — with the modules they share, in every build of the tangler.
+- [The collection a publication is drawn from](implementation/tangle/collection.md) — What every verb that reads a publication shares: where a collection keeps each kind of document, the vocabulary its headers are read in, and finding a document by the id its own header declares, wherever it is filed.
 - [The repository projector: a region, made buildable](implementation/tangle/region-repo.md) — The projector behind this repository: crates vendored, literate documents carried beside the code they generate, licensing applied at the boundary, and guards that refuse a projection which would leak an unpublished dependency.
-- [Weaving a chapter for a forge](implementation/tangle/region-gfm.md) — A chapter woven for a forge's renderer — a caption over every named fence, x0k: links rewritten to shipped paths — under two tested invariants, the same tangle and line-for-line inversion; and an affordance's section woven with the evidence its record holds.
-- [Publishing a projected repository](implementation/tangle/publishing.md) — The stages between a repository-shaped artifact and a public one, arranged so everything reversible runs by default and the irreversible acts — `cargo publish`, a push to a public remote — sit behind one explicit flag.
+- [Publishing a projected repository](implementation/tangle/publishing.md) — The stages between a repository-shaped artifact and a public one, arranged so everything reversible runs by default and the irreversible acts — a push to the publication's remote, and `cargo publish` when the publication asks for it — sit behind one explicit flag.
 - [Receiving a contribution from a projected repository](implementation/tangle/receiving.md) — The door the world comes back through: a contributor's clone read as patches against the corpus files it was projected from, because a contribution is a proposal against the graph and never a merge into the projection.
+- [Weaving a chapter for a forge](implementation/tangle/region-gfm.md) — A chapter woven for a forge's renderer — a caption over every named fence, x0k: links rewritten to shipped paths — under two tested invariants, the same tangle and line-for-line inversion; and an affordance's section woven with the evidence its record holds.
 
 ### One icon language
 
@@ -185,8 +184,8 @@ The small drawing language every mark on these pages is declared in: a declarati
 ### Vocabulary modules
 
 - [`x0k-ontology/ontology/modules/core.ttl`](crates/x0k-ontology/ontology/modules/core.ttl) — The self-typed root every x0k vocabulary module stands on: Concept, the one meta-level that every class and property occupies.
-- [`x0k-ontology/ontology/modules/document.ttl`](crates/x0k-ontology/ontology/modules/document.ttl) — The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with the document-to-document edges, the header properties that stay inside the genus, and the folio: tool-configuration terms a header or a parameter panel carries.
-- [`x0k-ontology/ontology/modules/software.ttl`](crates/x0k-ontology/ontology/modules/software.ttl) — The publishable software vocabulary: Affordance, Signifier, Surface, and their relations to documents and implementations. enabledBy belongs here through its Affordance domain; its SoftwareModule target constraint is a shape. SoftwareModule and its Artifact superclass remain in product and work. A publication can select core, document, and software without importing those modules.
+- [`x0k-ontology/ontology/modules/document.ttl`](crates/x0k-ontology/ontology/modules/document.ttl) — The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with Artifact, what work produces and a document is one of, Actor and its kinds (Human, AIAgent), whom a publication is published for and an affordance is claimed for, the document-to-document edges, the header properties that stay inside the genus, and the folio: tool-configuration terms a header or a parameter panel carries.
+- [`x0k-ontology/ontology/modules/software.ttl`](crates/x0k-ontology/ontology/modules/software.ttl) — The publishable software vocabulary: SoftwareModule, Affordance, Signifier, Surface, and their relations to documents and implementations. SoftwareModule is here so that a publication shipping core, document, and software can name the crates it publishes (software-module:<crate>) in the vocabulary it ships; its Artifact superclass is in document. enabledBy belongs here through its Affordance domain; its SoftwareModule target constraint is a shape. A publication can select core, document, and software without importing work or product.
 
 ## Lineage
 

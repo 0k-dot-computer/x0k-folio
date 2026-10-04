@@ -13,11 +13,9 @@ source out of it. The document is the artifact I maintain; the code is what it
 projects. Nothing asks me to keep the two in agreement, because only one of
 them is authored.
 
-<a name="folio-instance-78306b3a6166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1"></a><sub data-instance-iri="x0k:affordance/tangle_source_from_a_document" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/tangle_source_from_a_document</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1">source declaration</a> · the graph block at line 18 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md:16</sub><a name="folio-source-78306b3a6166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1"></a>
+<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/tangle_source_from_a_document" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md"><strong>Affordance</strong> · Project source code out of a document · <code>https://0k.computer/ontology#affordance/tangle_source_from_a_document</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f74616e676c655f736f757263655f66726f6d5f615f646f63756d656e74-1"></a>
 
 ```turtle folio:graph
-@prefix actor: <https://0k.computer/ontology#actor/> .
-@prefix software-module: <https://0k.computer/ontology#software-module/> .
 affordance:tangle_source_from_a_document a x0k:Affordance ;
     x0k:claimedFor actor:human,
         actor:ai_agent ;

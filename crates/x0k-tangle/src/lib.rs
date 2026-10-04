@@ -36,11 +36,9 @@
 //!
 //! Everything else in the crate builds outward from those: the
 //! pipeline protocol that lets other generators ride the same
-//! dispatcher, the region weaver that renders a whole publication as a
-//! site, and the repository projector that turns one into a buildable
-//! public repository.
+//! dispatcher, and the forge weave that renders a chapter for a code
+//! host's Markdown renderer and reads it back.
 
-pub mod atlas;
 pub mod chunk;
 pub mod chunk_refs;
 pub mod cli;
@@ -51,13 +49,7 @@ pub mod multi_doc_resolve;
 pub mod parser;
 pub mod pipeline;
 pub mod pipeline_runner;
-pub mod presentation;
 pub mod region_gfm;
-pub mod region_project;
-pub mod publish_repo;
-pub mod receive;
-pub mod region_repo;
-pub mod region_weave;
 pub mod resolve;
 pub mod source_ref;
 pub mod stitch;
@@ -65,9 +57,11 @@ pub mod sync;
 pub mod weave;
 pub mod instance_rendering;
 
-pub use atlas::{
-    atlas_json, build_atlas, Atlas, AtlasEdge, AtlasNode, AtlasPlacement, YearSource, ATLAS_FILE,
-};
+include!("repository_verbs.rs");
+
+#[cfg(feature = "corpus")]
+include!("corpus.rs");
+
 pub use identity_pipeline::{IdentityPipeline, IDENTITY_KIND};
 pub use pipeline::{
     ChunkInput, ChunkVariant, ClobberPolicy, ClobberRefusal, CommentStyle, OutputProvenance,
@@ -78,22 +72,6 @@ pub use pipeline_runner::{
     doc_freshness, tangle_directory, tangle_directory_with, tangle_document, tangle_document_with,
     tangle_workspace, tangle_workspace_with, DirtyReason, DocFreshness, PipelineRunOutput,
     TangleResult, TangleSettings, WorkspaceTangleReport,
-};
-pub use presentation::{
-    apply_publication_shell, build_members_json, BOOT_FILE, FALLBACK_DIR, MEMBERS_FILE,
-    NARRATIVE_FILE, SHELL_FILE,
-};
-pub use region_project::{
-    parse_publication_region, project_publication, project_publication_content, RegionProjectReport,
-};
-pub use publish_repo::{publish_repo, PublishRepoOptions, PublishRepoReport};
-pub use receive::{receive_repo, ReceiveOptions, ReceiveReport};
-pub use region_repo::{
-    project_publication_repo, LicenseSource, RepoProjectOptions, RepoProjectReport,
-};
-pub use region_weave::{
-    build_uri_to_path, rewrite_cross_doc_links, validate_artifact, weave_region, ArtifactFile,
-    RegionInput, RegionMember, RegionWeaveOutput, UnresolvedLink,
 };
 
 /// Resolving every `from=` chunk in a document without writing anything.

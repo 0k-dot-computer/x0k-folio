@@ -11,10 +11,6 @@ implementation:tangle\/crate a x0k:Implementation ;
         implementation:tangle\/identity-pipeline,
         implementation:tangle\/dispatcher,
         implementation:tangle\/weave,
-        implementation:tangle\/region-project,
-        implementation:tangle\/region-repo,
-        implementation:tangle\/publishing,
-        implementation:tangle\/receiving,
         implementation:tangle\/cli-faces,
         implementation:tangle\/bundle ;
     x0k:implements design:literate-programming,
@@ -25,10 +21,9 @@ implementation:tangle\/crate a x0k:Implementation ;
 
 `x0k-tangle` is the crate that makes a [literate
 document](../../background/literate-programming.md "x0k:wiki/literate-programming") executable:
-it parses the literate pages under `knowledge/implementation/`, expands
-their named chunks into source files, weaves them into HTML, and — the
-outward-facing half — projects a whole publication region into a reader
-site or a buildable public repository, and receives what comes back.
+it parses literate pages, expands
+their named chunks into source files, weaves them into HTML, and checks
+both the code and the documents' typed headers against the tree.
 This chapter is the crate's contract: the module list and re-exports in
 `src/lib.rs` that say what a consumer may name, and the CLI in
 `src/cli.rs` that exposes those verbs to a shell, which the plugin-less
@@ -55,40 +50,50 @@ newcomer is [`protocol.md`](protocol.md) first, then inward to outward:
   [`dispatcher.md`](dispatcher.md) — tangling as one plugin among
   many, and the runner that discovers, dispatches, and tracks
   freshness.
-- [`weave.md`](weave.md), [`region-weave.md`](region-weave.md),
-  [`presentation.md`](presentation.md), [`atlas.md`](atlas.md),
-  [`region-project.md`](region-project.md) — one document, then a
-  region, rendered as HTML and wrapped in the canvas shell.
+- [`weave.md`](weave.md), [`instance-rendering.md`](instance-rendering.md),
+  [`region-gfm.md`](region-gfm.md) — one document rendered as HTML, and
+  one chapter woven for a forge's renderer.
 - [`doc-index.md`](doc-index.md) — the corpus seen from outside.
-- [`region-repo.md`](region-repo.md), [`publishing.md`](publishing.md),
-  [`receiving.md`](receiving.md) — the repository projector, the
-  irreversible publish step, and the inbound contribution.
 - [`cli-faces.md`](cli-faces.md) — the vocabulary check and the
   affordance read-out behind the `check` and `affordances` verbs, the
   two that make a shipped human claim true from a shell, and the
   `declarations` read-out tools call instead of parsing Turtle.
+- [`repository-verbs.md`](repository-verbs.md),
+  [`collection.md`](collection.md), [`region-repo.md`](region-repo.md),
+  [`publishing.md`](publishing.md), [`receiving.md`](receiving.md) — a
+  collection published as a repository: projected, published, and a
+  contribution received back as patches.
 
-One document threads through those chapters: the publication manifest
-`decisions/publications/x0k-folio.md`, which names this
-crate among the four it publishes. The parser reads its header like any
-other page's, `project-repo` projects it as a repository, and the repository's
-own CI runs the `x0k-tangle` built from that projection over the
-literate documents that produced it — this chapter's own `lib.rs`
-included.
+The monorepo's build carries more: the verbs that weave a publication
+of this corpus into our reader website and sweep this corpus's own
+layout, and the chapters that implement them. They stay on our side of
+a publication (§ "Two builds, two features"). What a published
+repository's CI runs is the `x0k-tangle` built from that repository, or
+the released one, over the literate documents that produced it — this
+chapter's own `lib.rs` included.
 
-## Two builds, one feature
+## Two builds, two features
 
-The monorepo build and the published build differ by one cargo
-feature. `motifs` wires `x0k-surface-build` into the HTML region
-weaver so `x0k:media` embeds are bundled as canvas wasm. In the
-monorepo it is on by default. In a projected repository it is
-severed: the surface-build crate is publish-excluded and never
-published, so the projector's manifest rewrite cuts the optional
-dependency out from under the feature, the projection builds as the
-monorepo's `--no-default-features` build does, and the HTML weave
-degrades embeds to their static labels. The repository backend needs
-neither motifs nor syntax highlighting and is feature-independent —
-which is what lets the crate publish itself.
+The monorepo build and the published build differ by two cargo
+features, both on by default in the monorepo and both severed in a
+projected repository, which therefore builds as the monorepo's
+`--no-default-features` build does.
+
+`corpus` is the larger. It compiles the two verbs that are ours alone —
+weaving a publication into our reader website, and the whole-tree sweep
+of this corpus's layout — and every module only they use. Its whole
+surface in this chapter is two lines: one `include!` in the crate root
+and one flattened variant in the CLI. Everything behind them is a
+chapter of its own, held back from a publication together with the
+chapters it names, so a published repository carries no source for
+them. The verbs that publish a collection as a repository are not
+behind it: they are in every build (§ "Publishing a collection").
+
+`motifs` lives inside that machinery: it wires `x0k-surface-build`
+into the HTML region weaver so `x0k:media` embeds are bundled as
+canvas wasm. The surface-build crate is publish-excluded, so the
+projector's manifest rewrite cuts the optional dependency out from
+under the feature.
 
 ## The crate surface
 
@@ -141,15 +146,13 @@ user needs, and where the document format is specified.
 //!
 //! Everything else in the crate builds outward from those: the
 //! pipeline protocol that lets other generators ride the same
-//! dispatcher, the region weaver that renders a whole publication as a
-//! site, and the repository projector that turns one into a buildable
-//! public repository.
+//! dispatcher, and the forge weave that renders a chapter for a code
+//! host's Markdown renderer and reads it back.
 ```
 
 <a name="chunk-modules"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#modules`</sub>
 
 ```rust {#modules}
-pub mod atlas;
 pub mod chunk;
 pub mod chunk_refs;
 pub mod cli;
@@ -160,33 +163,36 @@ pub mod multi_doc_resolve;
 pub mod parser;
 pub mod pipeline;
 pub mod pipeline_runner;
-pub mod presentation;
 pub mod region_gfm;
-pub mod region_project;
-pub mod publish_repo;
-pub mod receive;
-pub mod region_repo;
-pub mod region_weave;
 pub mod resolve;
 pub mod source_ref;
 pub mod stitch;
 pub mod sync;
 pub mod weave;
 pub mod instance_rendering;
+
+include!("repository_verbs.rs");
+
+#[cfg(feature = "corpus")]
+include!("corpus.rs");
 ```
 
+The last two lines are chapters of their own. The first is the verbs
+that publish a collection as a repository, with the modules they use;
+the second is the corpus build's: the modules only its verbs use, and
+those verbs. Each is declared where the file it names is tangled, and
+included rather than declared module by module, so the names stay with
+the chapter that owns them, and a build without the feature reads no
+`corpus.rs` at all.
+
 The re-exports are the names a consumer is expected to use without
-knowing the module layout: the atlas, the pipeline protocol and its
-runner, the presentation shell's file names, and the four outward
-verbs — project a region to HTML, project it to a repository, publish
-that repository, receive a contribution from it.
+knowing the module layout: the pipeline protocol and its runner. The
+repository verbs and the corpus build re-export their own outward verbs
+from their own files.
 
 <a name="chunk-exports"></a><sub>[`src/lib.rs`](../../crates/x0k-tangle/src/lib.rs) · `#exports`</sub>
 
 ```rust {#exports}
-pub use atlas::{
-    atlas_json, build_atlas, Atlas, AtlasEdge, AtlasNode, AtlasPlacement, YearSource, ATLAS_FILE,
-};
 pub use identity_pipeline::{IdentityPipeline, IDENTITY_KIND};
 pub use pipeline::{
     ChunkInput, ChunkVariant, ClobberPolicy, ClobberRefusal, CommentStyle, OutputProvenance,
@@ -197,22 +203,6 @@ pub use pipeline_runner::{
     doc_freshness, tangle_directory, tangle_directory_with, tangle_document, tangle_document_with,
     tangle_workspace, tangle_workspace_with, DirtyReason, DocFreshness, PipelineRunOutput,
     TangleResult, TangleSettings, WorkspaceTangleReport,
-};
-pub use presentation::{
-    apply_publication_shell, build_members_json, BOOT_FILE, FALLBACK_DIR, MEMBERS_FILE,
-    NARRATIVE_FILE, SHELL_FILE,
-};
-pub use region_project::{
-    parse_publication_region, project_publication, project_publication_content, RegionProjectReport,
-};
-pub use publish_repo::{publish_repo, PublishRepoOptions, PublishRepoReport};
-pub use receive::{receive_repo, ReceiveOptions, ReceiveReport};
-pub use region_repo::{
-    project_publication_repo, LicenseSource, RepoProjectOptions, RepoProjectReport,
-};
-pub use region_weave::{
-    build_uri_to_path, rewrite_cross_doc_links, validate_artifact, weave_region, ArtifactFile,
-    RegionInput, RegionMember, RegionWeaveOutput, UnresolvedLink,
 };
 ```
 
@@ -568,9 +558,9 @@ own binary name (the monorepo's is `x0k-tangle-bundle`,
 
 So the verbs live in the library, in `src/cli.rs`, and `src/main.rs` is
 one call. What a binary decides when it links them is a `Host`: the name
-and version `--help` and `--version` print, the registry `tangle` and
-`workspace` dispatch through, and the two places a monorepo sweep is
-allowed to be more lenient than a published one. Everything else — every
+and version `--help` and `--version` print, the registry `tangle`
+dispatches through, and the two places the corpus build's whole-tree
+sweep is allowed to be more lenient for one host than for another. Everything else — every
 verb, every sentence it prints, every exit code — is one copy. There used
 to be two: the bundle carried a 730-line second copy of this file, a fix
 landed in one and not the other, and the two binaries shared the output
@@ -591,13 +581,14 @@ pub struct Host {
     pub version: &'static str,
     /// The one-line description at the top of `--help`.
     pub about: &'static str,
-    /// The registry `tangle` and `workspace` dispatch through.
+    /// The registry `tangle` dispatches through.
     pub registry: fn() -> PipelineRegistry,
-    /// An environment variable `workspace` falls back to before the
-    /// current directory when `--root` is not given.
+    /// An environment variable the corpus build's whole-tree sweep falls
+    /// back to before the current directory when it is not handed a root.
+    /// A build without that sweep reads nothing from it.
     pub root_env: Option<&'static str>,
-    /// Whether a `workspace` sweep whose only errors are output-path
-    /// collisions fails the run. A collision needs a person to pick the
+    /// Whether that sweep fails the run when its only errors are
+    /// output-path collisions. A collision needs a person to pick the
     /// source of truth; a host whose build pipelines run the sweep may
     /// report it loudly and pass.
     pub collisions_fatal: bool,
@@ -609,7 +600,7 @@ impl Host {
     pub const PROTOCOL: Host = Host {
         name: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
-        about: "Literate programming tangler: documents to code, and code quoted back into documents",
+        about: "Literate programming tangler: documents to code, code quoted back into documents, and a collection published as a repository",
         registry: <PipelineRegistry as Default>::default,
         root_env: None,
         collisions_fatal: true,
@@ -617,26 +608,23 @@ impl Host {
 }
 ```
 
-Four of the verbs read the publication corpus itself — the
-`decisions/publications/` manifests and the decision documents they
-name — and so need a corpus checkout. A projected repository carries
-only the literate documents under `knowledge/implementation/`, which is
-all the literate verbs need; the other nine verbs, `workspace`
-included, run there unchanged.
+Every verb below runs wherever the binary is built: it needs the
+documents it is pointed at and nothing else. The monorepo's build has
+two more, which are ours alone — the reader website a publication is
+woven into, and the whole-tree sweep of this corpus's own layout. They
+are compiled only under the `corpus` feature (§ "The corpus build's
+verbs").
 
-Those four are marked `[corpus-only]` in the *first* line of their help,
-which is the line `--help` prints in the command list, and the
-`after_help` note below repeats the rule once for the whole binary. The
-alternative was to compile them out of the published build behind a
-feature. We did not, and the reason is what the published repository
-already carries: the literate documents that *describe* these verbs —
-[`region-repo.md`](region-repo.md), [`publishing.md`](publishing.md),
-[`receiving.md`](receiving.md) — ship with it, and the README's reading
-route points a reader at them. A feature gate would leave those
-chapters describing commands the binary does not have, which is a worse
-lie than a command that names its own precondition: one is a sentence a
-reader can act on, the other is a discrepancy they can only be confused
-by.
+Through 0.3.0 five verbs shipped, each saying in the first line of its
+help that it needed our corpus, and refusing to run in a projected
+repository. Every outside evaluator who read the repository flagged the
+commands that refused. Three of them — projecting a publication as a
+repository, publishing it, receiving a contribution back — now run on
+anybody's collection and ship (§ "Publishing a collection"); the other
+two and their chapters leave together: the feature gate takes the verbs
+out of the published build, and the publication holds their chapters
+back, so nothing in a projected repository describes a command it
+lacks.
 
 <a name="chunk-bin-doc"></a><sub>[`src/main.rs`](../../crates/x0k-tangle/src/main.rs) · `#bin-doc`</sub>
 
@@ -685,28 +673,21 @@ package's name into every binary that links it.
 
 ```rust {#cli-struct file="src/cli.rs"}
 #[derive(Parser)]
-#[command(
-    after_help = "Commands marked [corpus-only] read the publication corpus \
-(decisions/publications/ and the decision documents it names). They are not \
-runnable from a projected repository, which carries only the literate documents \
-under knowledge/implementation/ — everything else here works there."
-)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
 }
 ```
 
-The subcommands fall into two groups. The literate verbs operate on
-documents in place: `tangle`, `check`, `affordances`, `icon`, `sync`,
-`index`, `weave`, `list`, and `workspace`. The publication verbs operate on a
-region: `weave-region` and `project-repo` are the two projection
-backends, `publish-repo` the pipeline that makes a projection public,
-and `receive-repo` the inbound door. Each variant's doc comment is its
-`--help` text, so the clap derive below is also the user-facing
+The subcommands are the literate verbs, and they operate on documents
+in place: `tangle`, `check`, `affordances`, `declarations`, `icon`,
+`sync`, `index`, `weave`, and `list`. The verbs that publish a
+collection follow them (§ "Publishing a collection"), and the corpus
+build adds its own last (§ "The corpus build's verbs"). Each variant's doc comment is
+its `--help` text, so the clap derive below is also the user-facing
 contract.
 
-<a name="chunk-command-enum"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [declarations-command](#chunk-declarations-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [weave-region-command](#chunk-weave-region-command) · [project-repo-command](#chunk-project-repo-command) · [publish-repo-command](#chunk-publish-repo-command) · [receive-repo-command](#chunk-receive-repo-command) · [list-command](#chunk-list-command) · [workspace-command](#chunk-workspace-command)</sub>
+<a name="chunk-command-enum"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [declarations-command](#chunk-declarations-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [list-command](#chunk-list-command) · [repository-commands](#chunk-repository-commands) · [corpus-commands](#chunk-corpus-commands)</sub>
 
 ```rust {#command-enum file="src/cli.rs"}
 #[derive(Subcommand)]
@@ -719,12 +700,9 @@ enum Command {
     <<sync-command>>
     <<index-command>>
     <<weave-command>>
-    <<weave-region-command>>
-    <<project-repo-command>>
-    <<publish-repo-command>>
-    <<receive-repo-command>>
     <<list-command>>
-    <<workspace-command>>
+    <<repository-commands>>
+    <<corpus-commands>>
 }
 ```
 
@@ -1042,168 +1020,7 @@ Weave {
 },
 ```
 
-### The publication verbs
-
-<a name="chunk-weave-region-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#weave-region-command`</sub>
-
-```rust {#weave-region-command file="src/cli.rs"}
-/// [corpus-only] Project a publication region into a self-contained,
-/// navigable multi-page web artifact.
-///
-/// `region` is the publication decision doc
-/// (`decisions/publications/<slug>.md`, `type: publication`). Its
-/// `publishes:` membership + `entryPoint:` define the region; each member's
-/// decision doc is woven (wrapping the single-doc weaver), cross-doc links
-/// are rewritten to artifact-relative paths, and a site nav is injected.
-///
-/// Reads `decisions/publications/` and the decision documents it names,
-/// so it needs a corpus checkout; a projected repository carries only
-/// `knowledge/implementation/` and this verb refuses there.
-WeaveRegion {
-    /// Path to the publication decision doc.
-    region: PathBuf,
-    /// Directory to write the artifact into (created if absent).
-    #[arg(long)]
-    output_dir: PathBuf,
-    /// Workspace root the `decisions/<subtype>/...` tree hangs off of
-    /// (defaults to current directory). Member sources + motif scanning
-    /// resolve against this.
-    #[arg(long)]
-    workspace: Option<PathBuf>,
-    /// Skip motif wasm bundling (page/nav/link-rewrite core only). Motif
-    /// refs are still reported but no `.wasm`/`host.js` is emitted.
-    #[arg(long)]
-    no_motifs: bool,
-},
-```
-
-`project-repo` has no silent license default: the flag is an explicit
-override of the publication doc's `license:` field, and with neither the
-projection refuses ([`region-repo.md`](region-repo.md)). `--allow-dirty`
-is the escape hatch past the disclosure and closure guards, for
-inspecting a projection that is not yet clean.
-
-<a name="chunk-project-repo-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#project-repo-command`</sub>
-
-```rust {#project-repo-command file="src/cli.rs"}
-/// [corpus-only] Project a publication region into a standalone,
-/// buildable Cargo repository.
-///
-/// Literate `.md` source + committed tangled code + workspace manifest +
-/// the publication's declared license + README + CI, git-init'd. Sibling
-/// to `weave-region` (which emits an HTML reader site).
-///
-/// Reads `decisions/publications/` and the decision documents it names,
-/// so it needs a corpus checkout; a projected repository carries only
-/// `knowledge/implementation/` and this verb refuses there.
-ProjectRepo {
-    /// Path to the publication decision doc (`type: publication`).
-    region: PathBuf,
-    /// Directory to write the standalone repo into (created if absent).
-    #[arg(long)]
-    output_dir: PathBuf,
-    /// Workspace root the published crates resolve against (defaults to cwd).
-    #[arg(long)]
-    workspace: Option<PathBuf>,
-    /// Explicit SPDX license override. Without this flag the license comes
-    /// from the publication header's `x0k:license` (the manifest
-    /// is authoritative); with neither, the projection refuses. There is
-    /// no silent default.
-    #[arg(long)]
-    license: Option<String>,
-    /// Do not `git init` / commit the output dir.
-    #[arg(long)]
-    no_git: bool,
-    /// Do not emit `.github/workflows/` wrappers (the forge-agnostic
-    /// `tools/ci` + `tools/x0k-guard-generated` are always emitted).
-    #[arg(long)]
-    no_github: bool,
-    /// Bypass leak / closure / publish-exclusion guards (escape hatch).
-    #[arg(long)]
-    allow_dirty: bool,
-},
-```
-
-`publish-repo` is the one verb with an irreversible half, and it sits
-behind `--really` ([`publishing.md`](publishing.md)).
-
-<a name="chunk-publish-repo-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#publish-repo-command`</sub>
-
-```rust {#publish-repo-command file="src/cli.rs"}
-/// [corpus-only] Publish pipeline for a projected repository: project,
-/// prove, rehearse, and (only under --really) publish.
-///
-/// Projects with guards on, builds + tests the projection standalone,
-/// asks the crates.io index which crate versions it already serves,
-/// rehearses with one `cargo publish --dry-run --workspace` excluding
-/// those, and reports. The real `cargo publish` of the rest and
-/// the `git push` to the publication's configured remote run ONLY under
-/// `--really` (operator-only; refuses unless the rehearsal passed).
-///
-/// Reads `decisions/publications/` and the decision documents it names,
-/// so it needs a corpus checkout; a projected repository carries only
-/// `knowledge/implementation/` and this verb refuses there.
-PublishRepo {
-    /// Path to the publication decision doc (`type: publication`).
-    region: PathBuf,
-    /// Directory to project the repo into (created if absent).
-    #[arg(long)]
-    output_dir: PathBuf,
-    /// Workspace root the published crates resolve against (defaults to cwd).
-    #[arg(long)]
-    workspace: Option<PathBuf>,
-    /// Explicit SPDX license override (default: the publication doc's
-    /// `license:` field is authoritative).
-    #[arg(long)]
-    license: Option<String>,
-    /// Do not emit `.github/workflows/` wrappers.
-    #[arg(long)]
-    no_github: bool,
-    /// Actually publish to crates.io and push to the configured remote.
-    /// Operator-only.
-    #[arg(long)]
-    really: bool,
-},
-```
-
-<a name="chunk-receive-repo-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#receive-repo-command`</sub>
-
-```rust {#receive-repo-command file="src/cli.rs"}
-/// [corpus-only] Receive changes made in a projected repository (a
-/// contributor's clone) back into the corpus as a proposed change.
-///
-/// Diffs the clone against a reference projection at the clone's
-/// `corpus_rev`, classifies every changed path, writes unified diffs +
-/// `receipt.json`, and — under `--apply` — patches the working copy
-/// (never commits). Exits non-zero when any change was refused (an
-/// `@generated` edit).
-///
-/// Reads `decisions/publications/` and the decision documents it names,
-/// so it needs a corpus checkout; a projected repository carries only
-/// `knowledge/implementation/` and this verb refuses there.
-ReceiveRepo {
-    /// The contributor's clone of the projected repository.
-    clone: PathBuf,
-    /// Workspace root the patches apply to (defaults to cwd).
-    #[arg(long)]
-    workspace: Option<PathBuf>,
-    /// Directory for the patch set + receipt.json (default: temp).
-    #[arg(long)]
-    out: Option<PathBuf>,
-    /// Apply the receivable patches to the working copy. Refused when a
-    /// target path already has uncommitted changes.
-    #[arg(long)]
-    apply: bool,
-    /// Publication doc override (default: resolved from the clone's
-    /// PROVENANCE.json `publication_uri` under decisions/publications/).
-    #[arg(long)]
-    publication: Option<PathBuf>,
-    /// Root for the reference projection's temp dir (must be outside the
-    /// workspace; default: the system temp dir).
-    #[arg(long)]
-    scratch: Option<PathBuf>,
-},
-```
+### `x0k-tangle list`
 
 <a name="chunk-list-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#list-command`</sub>
 
@@ -1215,37 +1032,45 @@ List {
 },
 ```
 
-<a name="chunk-workspace-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#workspace-command`</sub>
+### Publishing a collection
 
-```rust {#workspace-command file="src/cli.rs"}
-/// Tangle every dirty literate document this binary's registry
-/// can handle.
-///
-/// Walks every literate root the registry's plugins claim and
-/// re-tangles docs whose source or outputs drifted from the recorded
-/// sidecar. `x0k-tangle` ships only the built-in
-/// `PipelineRegistry::default()`, which carries only the
-/// `identity-tangle` plugin and its roots (`knowledge/implementation/**`);
-/// a doc that declares another pipeline lands in the `errored` bucket as
-/// "unknown pipeline kind". A host that registers more plugins links
-/// this same CLI with its own registry.
-Workspace {
-    /// Workspace root (defaults to the current directory)
-    #[arg(long)]
-    root: Option<PathBuf>,
-    /// Overwrite outputs holding content this tangler did not write
-    #[arg(long)]
-    force: bool,
-},
+Three verbs take a collection of documents to a public repository and
+back: `project-repo` writes a publication as a standalone repository,
+`publish-repo` proves, rehearses and pushes it, and `receive-repo` reads
+a contributor's clone back into patches. They are one variant here, and
+their variants, dispatch and the modules they use are a chapter of
+their own ([`repository-verbs.md`](repository-verbs.md)). The variant is
+flattened, so they sit in `--help` beside the verbs above, in every
+build.
+
+<a name="chunk-repository-commands"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#repository-commands`</sub>
+
+```rust {#repository-commands file="src/cli.rs"}
+#[command(flatten)]
+Repository(crate::RepositoryCommand),
 ```
 
-The sweep carries the same flag for the same reason, and it means the
-same thing document by document: a `--force` sweep is the operator
-saying the tree's generated files are expendable, not that one file is.
-Without it, a document whose output was edited outside the tangler lands
-in the report's `errored` bucket and the rest of the sweep proceeds —
-the guard is a per-document verdict, so one refusal costs one document
-rather than the run.
+### The corpus build's verbs
+
+The monorepo's build has two more verbs, and they are one variant here.
+`weave-region` weaves a publication into our reader website — the
+canvas shell, the atlas, the motif embeds — and `workspace` sweeps the
+literate roots of this corpus's layout. Neither has a use outside our
+corpus, so they are compiled only under the `corpus` feature, which the
+monorepo turns on by default and a publication severs. Their variants,
+their dispatch and the modules only they use are a chapter of their own
+that stays in our corpus, the way `motifs` keeps the motif system out
+of a published build. The variant below is flattened, so in the corpus
+build those verbs sit in `--help` beside the ones above, and in the
+published build the variant, the verbs and their source do not exist.
+
+<a name="chunk-corpus-commands"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#corpus-commands`</sub>
+
+```rust {#corpus-commands file="src/cli.rs"}
+#[cfg(feature = "corpus")]
+#[command(flatten)]
+Corpus(crate::CorpusCommand),
+```
 
 ## Dispatch
 
@@ -1253,35 +1078,29 @@ rather than the run.
 workspace root, calls the library, and prints a report to stderr; stdout
 is reserved for data (`index` and `weave` without an output path,
 `list`, and `affordances`). Exit codes carry the verdicts: `check` exits
-non-zero on any error and `workspace` on any the host counts as fatal,
-`sync` when a chunk it was asked to fill stayed empty, `publish-repo`
-when the projection fails to build or test, `receive-repo` when any
-change was refused.
+non-zero on any error, `sync` when a chunk it was asked to fill stayed
+empty. The repository verbs and the corpus verbs dispatch in their own
+chapters and keep their own exit codes.
 
 The host's name, version and description are stamped onto the parsed
-command before the arguments are read, and the `workspace` root's help
-line says which variable it falls back to when the host names one — a
-help text is part of the contract, and a sentence true of one binary
-must not print in another.
+command before the arguments are read — a help text is part of the
+contract, and a sentence true of one binary must not print in another.
+The corpus build gets one more say over its help lines first, for the
+same reason.
 
-<a name="chunk-main-fn"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-declarations](#chunk-dispatch-declarations) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-weave-region](#chunk-dispatch-weave-region) · [dispatch-project-repo](#chunk-dispatch-project-repo) · [dispatch-publish-repo](#chunk-dispatch-publish-repo) · [dispatch-receive-repo](#chunk-dispatch-receive-repo) · [dispatch-workspace](#chunk-dispatch-workspace) · [dispatch-list](#chunk-dispatch-list)</sub>
+<a name="chunk-main-fn"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-declarations](#chunk-dispatch-declarations) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-list](#chunk-dispatch-list)</sub>
 
 ```rust {#main-fn file="src/cli.rs"}
 /// Parse the process arguments and run the verb they name, as `host`.
 pub fn run(host: &Host) -> Result<()> {
     crate::init_diagnostics();
-    let mut command = Cli::command()
+    let command = Cli::command()
         .name(host.name)
         .bin_name(host.name)
         .version(host.version)
         .about(host.about);
-    if let Some(var) = host.root_env {
-        command = command.mut_subcommand("workspace", |sub| {
-            sub.mut_arg("root", |arg| {
-                arg.help(format!("Workspace root (defaults to ${var}, else the current directory)"))
-            })
-        });
-    }
+    #[cfg(feature = "corpus")]
+    let command = crate::corpus_help(command, host);
     let cli = Cli::from_arg_matches(&command.get_matches()).unwrap_or_else(|e| e.exit());
 
     match cli.command {
@@ -1300,17 +1119,12 @@ pub fn run(host: &Host) -> Result<()> {
 
         <<dispatch-weave>>
 
-        <<dispatch-weave-region>>
-
-        <<dispatch-project-repo>>
-
-        <<dispatch-publish-repo>>
-
-        <<dispatch-receive-repo>>
-
-        <<dispatch-workspace>>
-
         <<dispatch-list>>
+
+        Command::Repository(verb) => crate::run_repository(verb)?,
+
+        #[cfg(feature = "corpus")]
+        Command::Corpus(verb) => crate::run_corpus(verb, host)?,
     }
 
     Ok(())
@@ -1801,7 +1615,7 @@ Command::Icon { paths, out, palette } => {
     if let (Some(out), Some(palette)) = (out, palette) {
         let content = std::fs::read_to_string(&palette)
             .with_context(|| format!("reading {}", palette.display()))?;
-        let palette = crate::region_repo::header_palette(&content)?.ok_or_else(|| {
+        let palette = crate::faces::header_palette(&content)?.ok_or_else(|| {
             anyhow::anyhow!("{} carries no `x0k:palette` in its header", palette.display())
         })?;
         written = crate::faces::write_icon_files(&report, &palette, &out)?.len();
@@ -1863,300 +1677,6 @@ Command::Weave { path, output_dir } => {
 }
 ```
 
-The region arms print the report shapes their chapters define; the
-prose about what each field means lives there, not here.
-
-<a name="chunk-dispatch-weave-region"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-weave-region`</sub>
-
-```rust {#dispatch-weave-region file="src/cli.rs"}
-Command::WeaveRegion {
-    region,
-    output_dir,
-    workspace,
-    no_motifs,
-} => {
-    let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let report = crate::project_publication(&region, &output_dir, &ws, no_motifs)?;
-    eprintln!(
-        "wove region {} → {} ({} page(s), {} media ref(s), {} unresolved link(s))",
-        region.display(),
-        output_dir.join(&report.entry_rel_path).display(),
-        report.page_count,
-        report.media_refs.len(),
-        report.unresolved_links.len(),
-    );
-    if !report.unresolved_links.is_empty() {
-        for href in &report.unresolved_links {
-            eprintln!("  unresolved link: {href}");
-        }
-    }
-    if !report.degraded_embeds.is_empty() {
-        eprintln!(
-            "  {} embed(s) show their static fallback label",
-            report.degraded_embeds.len()
-        );
-    }
-    eprintln!(
-        "  atlas.json: {} node(s), {} edge(s), {} thread(s) [{}]",
-        report.atlas_node_count,
-        report.atlas_edge_count,
-        report.atlas_threads.len(),
-        report.atlas_threads.join(", "),
-    );
-    eprintln!(
-        "  presentation: render-vello wasm {}, narrative {}",
-        if report.wasm_bundled {
-            format!("bundled ({} KiB)", report.wasm_bytes / 1024)
-        } else {
-            "MISSING (set X0K_RENDER_VELLO_WASM_DIR or build it)".to_string()
-        },
-        if report.narrative_bundled {
-            "bundled"
-        } else {
-            "stub (no sidecar)"
-        },
-    );
-    if !report.atlas_unresolved_years.is_empty() {
-        for uri in &report.atlas_unresolved_years {
-            eprintln!("  atlas: unresolved year for {uri}");
-        }
-    }
-}
-```
-
-<a name="chunk-dispatch-project-repo"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-project-repo`</sub>
-
-```rust {#dispatch-project-repo file="src/cli.rs"}
-Command::ProjectRepo {
-    region,
-    output_dir,
-    workspace,
-    license,
-    no_git,
-    no_github,
-    allow_dirty,
-} => {
-    let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let opts = crate::RepoProjectOptions {
-        license,
-        git_init: !no_git,
-        allow_dirty,
-        emit_github: !no_github,
-    };
-    let report = crate::project_publication_repo(&region, &output_dir, &ws, &opts)?;
-    eprintln!(
-        "projected repo {} → {} ({} crate(s), {} literate doc(s), license {} [{}]{})",
-        region.display(),
-        output_dir.display(),
-        report.crates.len(),
-        report.literate_docs.len(),
-        report.license,
-        match report.license_source {
-            crate::LicenseSource::PublicationDoc => "from publication doc",
-            crate::LicenseSource::Override => "explicit override",
-        },
-        if report.committed {
-            ", committed"
-        } else if !no_git {
-            ", unchanged (no new commit)"
-        } else {
-            ""
-        },
-    );
-    if !report.excluded.is_empty() {
-        eprintln!("  publish-excluded: {}", report.excluded.join(", "));
-    }
-    for v in report
-        .leak_violations
-        .iter()
-        .chain(report.closure_violations.iter())
-    {
-        eprintln!("  WARNING: {v}");
-    }
-}
-```
-
-<a name="chunk-dispatch-publish-repo"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-publish-repo`</sub>
-
-```rust {#dispatch-publish-repo file="src/cli.rs"}
-Command::PublishRepo {
-    region,
-    output_dir,
-    workspace,
-    license,
-    no_github,
-    really,
-} => {
-    let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let opts = crate::PublishRepoOptions {
-        license,
-        emit_github: !no_github,
-        really,
-    };
-    let report = crate::publish_repo(&region, &output_dir, &ws, &opts)?;
-    eprintln!(
-        "publish-repo {} → {} (license {})",
-        region.display(),
-        output_dir.display(),
-        report.projection.license,
-    );
-    eprintln!(
-        "  build: {}  test: {}",
-        if report.build_ok { "ok" } else { "FAILED" },
-        if report.test_ok { "ok" } else { "FAILED" },
-    );
-    eprintln!("  publish order: {}", report.publish_order.join(" → "));
-    eprintln!("  registry (crates.io index):");
-    let width = report.plan.iter().map(|c| c.name.len() + c.version.len()).max().unwrap_or(0);
-    for c in &report.plan {
-        use crate::publish_repo::CrateDisposition as D;
-        let said = match c.disposition {
-            D::Unpublishable => "never attempted (publish = false)",
-            D::AlreadyPublished => "already published — skipped",
-            D::Pending => "not on the index — will publish",
-        };
-        let pad = width - c.name.len() - c.version.len();
-        eprintln!("    {} {}{:pad$}  {said}", c.name, c.version, "");
-    }
-    let pending: Vec<&str> = report
-        .plan
-        .iter()
-        .filter(|c| c.disposition == crate::publish_repo::CrateDisposition::Pending)
-        .map(|c| c.name.as_str())
-        .collect();
-    if pending.is_empty() {
-        eprintln!("  to publish: nothing — the index already serves every publishable crate's version");
-    } else {
-        eprintln!("  to publish: {}", pending.join(" → "));
-    }
-    if let Some(r) = &report.rehearsal {
-        eprintln!(
-            "  dry-run ({} pending): {}",
-            pending.len(),
-            if r.ok { "ok" } else { "FAILED" }
-        );
-        if !r.ok {
-            for line in r.output_tail.lines() {
-                eprintln!("      {line}");
-            }
-        }
-    }
-    if !report.build_ok || !report.test_ok {
-        eprintln!("  stopped: the projection must build and test green before any rehearsal");
-        std::process::exit(1);
-    }
-    match (&report.surface, &report.remote) {
-        (Some(s), Some(r)) => eprintln!("  remote: {s} → {r}"),
-        (Some(s), None) => eprintln!(
-            "  remote: {s} has no [publish.remotes] entry in config/x0k-tangle.toml"
-        ),
-        (None, _) => eprintln!("  remote: publication has no publishedOn edge"),
-    }
-    if report.published || report.pushed {
-        eprintln!(
-            "  PUBLISHED: crates.io={} push={}",
-            report.published, report.pushed
-        );
-    } else if !really {
-        eprintln!("  stopped before publishing (pass --really to publish; operator-only)");
-    }
-}
-```
-
-<a name="chunk-dispatch-receive-repo"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-receive-repo`</sub>
-
-```rust {#dispatch-receive-repo file="src/cli.rs"}
-Command::ReceiveRepo {
-    clone,
-    workspace,
-    out,
-    apply,
-    publication,
-    scratch,
-} => {
-    let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let opts = crate::ReceiveOptions {
-        apply,
-        out_dir: out.clone(),
-        publication,
-        scratch,
-    };
-    let report = crate::receive_repo(&clone, &ws, &opts)?;
-    eprintln!(
-        "receive-repo {} ({}): clone rev {} vs reference {}{}",
-        clone.display(),
-        report.publication_uri,
-        if report.clone_rev.is_empty() { "(none)" } else { &report.clone_rev },
-        if report.reference_rev.is_empty() { "(none)" } else { &report.reference_rev },
-        if report.rev_exact { "" } else { "  [REV SKEW: diff includes the corpus's own drift, reversed]" },
-    );
-    for c in &report.changes {
-        let class = match c.class {
-            crate::receive::Class::Literate => "literate (received)",
-            crate::receive::Class::Source => "source (received)",
-            crate::receive::Class::Generated => "GENERATED (refused)",
-            crate::receive::Class::ProjectionLocal => "overlay (projection-local, not received)",
-            crate::receive::Class::ProjectionOwned => "projection-owned (not received)",
-        };
-        let size = c.patch.as_ref().map(|p| p.lines().count()).unwrap_or(0);
-        match (&c.target, &c.produced_by) {
-            (Some(t), _) => eprintln!("  {:<9} {}  {class}  → {t}  ({size} patch lines)", c.kind, c.path),
-            (None, Some(o)) => eprintln!(
-                "  {:<9} {}  {class}  produced by {}{}",
-                c.kind,
-                c.path,
-                o.doc,
-                if o.chunks.is_empty() { String::new() } else { format!(" chunks {}", o.chunks.join(", ")) }
-            ),
-            (None, None) => eprintln!("  {:<9} {}  {class}", c.kind, c.path),
-        }
-    }
-    eprintln!(
-        "  {} change(s): {} received, {} refused{}{}",
-        report.changes.len(),
-        report.received(),
-        report.refused(),
-        match &out {
-            Some(d) => format!("; patch set in {}", d.display()),
-            None => String::new(),
-        },
-        if report.applied { format!("; applied to working copy (dirty check: {})", report.dirty_check) } else { "" .to_string() },
-    );
-    if report.refused() > 0 {
-        std::process::exit(1);
-    }
-}
-```
-
-The sweep's exit code is the one verdict a host may soften, and only in
-one way. An output-path collision — two documents claiming one file —
-cannot be fixed by the run: someone has to pick which document is the
-source of truth. A host whose build pipelines run the sweep over a whole
-tree may report such a collision loudly and still pass, so an unrelated
-build is not held hostage by two documents it never touches
-(`collisions_fatal: false`). Everything else stays fatal for every host,
-a clobber refusal included: it says a generated file holds work the
-sweep declined to destroy, and a pipeline that goes green over it has
-thrown away the only notice anyone gets.
-
-<a name="chunk-dispatch-workspace"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-workspace`</sub>
-
-```rust {#dispatch-workspace file="src/cli.rs"}
-Command::Workspace { root, force } => {
-    let ws = resolve_workspace_root(root, host.root_env)?;
-    let registry = (host.registry)();
-    let settings = clobber_settings(force);
-    let report = crate::tangle_workspace_with(&ws, &registry, &settings)?;
-    print_workspace_summary(&ws, &report);
-    let fatal = report.errored.iter().any(|(_, e)| {
-        host.collisions_fatal || !e.to_string().contains("output path collision")
-    });
-    if fatal {
-        std::process::exit(1);
-    }
-}
-```
-
 <a name="chunk-dispatch-list"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-list`</sub>
 
 ```rust {#dispatch-list file="src/cli.rs"}
@@ -2210,38 +1730,14 @@ Command::List { path } => {
 
 ## Helpers
 
-The workspace root — the `--root` flag, else the host's root variable
-when it names one, else the current directory — is canonicalized before
-anything is written so the tree being tangled
-is named, not implied by the current directory; the library refuses
-writes outside it regardless. Document discovery is a
+Document discovery is a
 content sniff — a `.md` mentioning `folio:tangle` (or, for `sync`, `from=`) —
 because the parse that would confirm it is what the verb is about to do
 anyway. The rest is report formatting.
 
-<a name="chunk-resolve-workspace-root"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#resolve-workspace-root`</sub>
-
-```rust {#resolve-workspace-root file="src/cli.rs"}
-/// Resolve a workspace root from the CLI flag, else the host's root
-/// variable when it names one and it is set, else the current directory.
-fn resolve_workspace_root(flag: Option<PathBuf>, env: Option<&str>) -> Result<PathBuf> {
-    let from_env = env
-        .and_then(|var| std::env::var(var).ok())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    let raw = match flag.or(from_env) {
-        Some(p) => p,
-        None => std::env::current_dir()?,
-    };
-    // Canonicalize so the tree being written is named, not implied by
-    // cwd. The library refuses writes outside this root regardless.
-    std::fs::canonicalize(&raw)
-        .with_context(|| format!("resolving workspace root {}", raw.display()))
-}
-```
-
-Two verbs take `--force` and both mean the same thing by it, so the
-translation from flag to policy lives in one place. The default is the
+`tangle` takes `--force`, and so does the corpus build's sweep, and both
+mean the same thing by it, so the translation from flag to policy lives
+in one place, visible to the crate. The default is the
 absence of the flag rather than a configured value: a run that did not
 say "overwrite" gets the guard.
 
@@ -2249,7 +1745,7 @@ say "overwrite" gets the guard.
 
 ```rust {#clobber-settings file="src/cli.rs"}
 /// The run-scoped settings a `--force` flag decides.
-fn clobber_settings(force: bool) -> crate::TangleSettings {
+pub(crate) fn clobber_settings(force: bool) -> crate::TangleSettings {
     crate::TangleSettings {
         clobber: if force {
             crate::ClobberPolicy::Force
@@ -2257,62 +1753,6 @@ fn clobber_settings(force: bool) -> crate::TangleSettings {
             crate::ClobberPolicy::Refuse
         },
         ..Default::default()
-    }
-}
-```
-
-The sweep's summary counts a document's outputs from `pipeline_outputs`
-alone. `identity_outputs` is a projection of the same list
-([`dispatcher.md`](dispatcher.md)), so adding the two counted every
-identity output twice: a document that wrote one file was reported as
-`→ <file> (+1 more)`. The bundle's copy of this function already counted
-once, and folding the two copies into one kept its count.
-
-<a name="chunk-print-workspace-summary"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#print-workspace-summary`</sub>
-
-```rust {#print-workspace-summary file="src/cli.rs"}
-/// Pretty-print a `WorkspaceTangleReport` to stderr.
-fn print_workspace_summary(
-    workspace_root: &std::path::Path,
-    report: &crate::WorkspaceTangleReport,
-) {
-    eprintln!("tangle workspace summary:");
-    eprintln!("  tangled:    {}", report.tangled.len());
-    eprintln!("  up-to-date: {}", report.up_to_date.len());
-    eprintln!("  errored:    {}", report.errored.len());
-
-    for tr in &report.tangled {
-        let rel_source = tr
-            .source_path
-            .strip_prefix(workspace_root)
-            .unwrap_or(&tr.source_path)
-            .display();
-        let total_outputs = tr.pipeline_outputs.len();
-        let first = tr.pipeline_outputs.first().map(|o| o.path.clone());
-        if let Some(first) = first {
-            let rel_first = first
-                .strip_prefix(workspace_root)
-                .unwrap_or(&first)
-                .display()
-                .to_string();
-            if total_outputs > 1 {
-                eprintln!(
-                    "  {} → {} (+{} more)",
-                    rel_source,
-                    rel_first,
-                    total_outputs - 1
-                );
-            } else {
-                eprintln!("  {} → {}", rel_source, rel_first);
-            }
-        } else {
-            eprintln!("  {} → (no outputs)", rel_source);
-        }
-    }
-
-    for (path, err) in &report.errored {
-        let rel = path.strip_prefix(workspace_root).unwrap_or(path).display();
-        eprintln!("  ERROR {}: {}", rel, err);
     }
 }
 ```
@@ -2636,7 +2076,7 @@ fn mirror_only(path: &Path, chunks: usize) -> String {
 <<bin-main>>
 ```
 
-<a name="chunk-cli-root"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-root` · assembles [cli-doc](#chunk-cli-doc) · [cli-imports](#chunk-cli-imports) · [cli-host](#chunk-cli-host) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [resolve-workspace-root](#chunk-resolve-workspace-root) · [clobber-settings](#chunk-clobber-settings) · [print-workspace-summary](#chunk-print-workspace-summary) · [dangling-finding](#chunk-dangling-finding) · [title-warning](#chunk-title-warning) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
+<a name="chunk-cli-root"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-root` · assembles [cli-doc](#chunk-cli-doc) · [cli-imports](#chunk-cli-imports) · [cli-host](#chunk-cli-host) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [clobber-settings](#chunk-clobber-settings) · [dangling-finding](#chunk-dangling-finding) · [title-warning](#chunk-title-warning) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
 
 ```rust {#cli-root file="src/cli.rs"}
 <<cli-doc>>
@@ -2651,11 +2091,7 @@ fn mirror_only(path: &Path, chunks: usize) -> String {
 
 <<main-fn>>
 
-<<resolve-workspace-root>>
-
 <<clobber-settings>>
-
-<<print-workspace-summary>>
 
 <<dangling-finding>>
 
@@ -2725,9 +2161,9 @@ simply moved forward re-tangles with no flag at all. That last one is
 the important one — it is the whole corpus, and a guard that got it
 wrong would refuse everything.
 
-The last two pin what folding the bundle's copy into this one changed or
-must not change: `--version` still names this package and nothing else,
-and the sweep's summary counts each output once. What the bundle adds —
+The last pins what folding the bundle's copy into this one must not
+change: `--version` still names this package and nothing else. The
+corpus build's sweep is pinned in its own chapter. What the bundle adds —
 its registry, its root variable, its tolerance for collisions — is
 pinned in its own suite, against its own binary.
 
@@ -3919,30 +3355,6 @@ fn version_names_this_package() {
         "the version line names the package and its version"
     );
 }
-
-/// A sweep reports each output once. `identity_outputs` is a projection
-/// of `pipeline_outputs`, and a summary that added the two reported a
-/// one-file document as `→ src/lib.rs (+1 more)`.
-#[test]
-fn workspace_counts_each_output_once() {
-    let tmp = TempDir::new().unwrap();
-    let root = x0k_tangle::identity_pipeline::LITERATE_ROOTS[0];
-    write(tmp.path(), &format!("{root}/d.md"), &tangling_doc("once"));
-
-    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
-        .arg("workspace")
-        .arg("--root")
-        .arg(tmp.path())
-        .output()
-        .expect("the x0k-tangle binary runs");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "the sweep failed: {stderr}");
-    assert!(stderr.contains("tangled:    1"), "the sweep tangled the doc: {stderr}");
-    assert!(
-        stderr.contains("d.md → src/lib.rs") && !stderr.contains("more)"),
-        "a one-file document is reported as one file: {stderr}"
-    );
-}
 `````
 
 ## The package manifest
@@ -3955,9 +3367,9 @@ The manifest is a complete chunk so repository projection can carry its public f
 ```toml {#package-manifest file="Cargo.toml"}
 [package]
 name = "x0k-tangle"
-version = "0.3.0"
+version = "0.4.0"
 edition = { workspace = true }
-description = "Literate programming tangler and weaver for folio Markdown: generates source from a document's code blocks, fills quoted-code blocks from existing source, and checks both, and the documents' typed headers, against the tree."
+description = "Literate programming for folio Markdown: writes source files from a document's named code blocks, fills quoted blocks from source that already exists, renders a document as an HTML page, and checks the code against the tree and each document's header against the vocabulary."
 license = "MIT"
 keywords = ["literate-programming", "tangle", "markdown", "codegen", "documentation"]
 categories = ["development-tools", "development-tools::build-utils", "command-line-utilities", "text-processing"]
@@ -3973,18 +3385,22 @@ name = "x0k-tangle"
 path = "src/main.rs"
 
 [features]
-# `motifs` wires the x0k:media / surface-wasm bundling into the HTML region
-# weaver (region_project/region_weave). Default in the monorepo. x0k-surface-build
-# is publish-excluded, so the repository projector severs this feature in the
-# published manifest: it stays declared (the `#[cfg(feature = "motifs")]` sites
-# ship) with an empty list, out of `default`, so the motif system never ships.
-# The repo backend (region_repo) needs neither motifs nor syntax and stays
-# feature-independent.
+# `corpus` compiles the two verbs that are ours alone (the reader website a
+# publication is woven into, the whole-tree sweep of our corpus's layout)
+# and the modules only they use. The verbs that publish a collection as a
+# repository are in every build. Default in the monorepo; a publication
+# severs it by name,
+# so the published manifest declares it with an empty list, out of
+# `default`, and the published source does not carry what it gates.
+# `motifs` wires the x0k:media / surface-wasm bundling into the corpus
+# build's HTML region weaver. x0k-surface-build is publish-excluded, so the
+# projector severs this feature too: declared, empty, out of `default`.
 default = []
+corpus = [] # severed in this publication: not supported here; the crate declares it, this publication does not enable it
 motifs = [] # severed in this publication: its dependency is not published; enabling it does not build
 
 [dependencies]
-x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.2.0" }
+x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.3.0" }
 # The triples `colophon::parse_turtle` hands back: `index` lists a header's
 # literal statements off them.
 oxrdf = "0.3"
@@ -3992,15 +3408,14 @@ oxrdf = "0.3"
 # the runtime module loader, which is what `--vocabulary <dir>` and the
 # PROVENANCE-recorded default are: a projected repository checks its own
 # documents against the module files it actually shipped.
-x0k-ontology = { path = "../x0k-ontology" , version = "0.3.0" }
+x0k-ontology = { path = "../x0k-ontology" , version = "0.3.1" }
 # Shared renderer-agnostic syntax tokenizer; weave uses it to emit
 # highlighted <span class="tok-*"> spans in the HTML output.
 x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
-# The icon profile's one implementation: the repository projector reads
-# every mark it shows — an affordance's own, the actor and status marks —
-# from its `svg x0k:icon` declaration through this crate's checker, binds
-# it to the publication's palette, and writes the per-scheme files. Nothing
-# in this crate draws a mark.
+# The icon profile's one implementation: `icon` reads every mark a document
+# declares as `svg x0k:icon` through this crate's checker, binds it to a
+# publication's palette, and writes the per-scheme files. Nothing in this
+# crate draws a mark.
 x0k-icon = { path = "../x0k-icon" , version = "0.2.0" }
 
 pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
@@ -4023,8 +3438,7 @@ tree-sitter-julia = "0.23"
 
 serde = { workspace = true }
 serde_json = { workspace = true }
-# YAML the repository projector writes (its release workflow) is read back
-# with it.
+# YAML the repository projector writes (a release workflow) is read back with it.
 serde_norway = "0.9"
 anyhow = { workspace = true }
 clap = { workspace = true }
@@ -4034,16 +3448,13 @@ tracing = { workspace = true }
 # no collector and print nothing at any level.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 walkdir = "2"
-# Format-preserving TOML editing for the repository projector (region_repo):
-# rewrites vendored crate manifests (strip workspace-hack + publish-excluded
-# optional deps, set license) without disturbing hand-authored layout.
+# Format-preserving TOML editing: the repository projector rewrites crate
+# manifests without disturbing hand-authored layout.
 toml_edit = "0.22"
-# In-process unified diffs for the receiver (receive.rs): a contribution's
-# patch set is computed without shelling out, so the report is complete
-# wherever the tool runs.
+# In-process unified diffs for the projector and the receiver, computed
+# without shelling out, so a report is complete wherever the tool runs.
 similar = "2"
-# Reference projections for receive-repo live in a temp dir removed with
-# the report.
+# Scratch directories the projector and the receiver remove with their report.
 tempfile = "3"
 
 [dev-dependencies]

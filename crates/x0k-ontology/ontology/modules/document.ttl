@@ -2,12 +2,27 @@
 # Bootstrap source: this view seeds an empty region exactly once.
 # Module: document
 
+<https://0k.computer/ontology#AIAgent> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#AIAgent> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#AIAgent> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#AIAgent> <http://www.w3.org/2000/01/rdf-schema#label> "AI Agent Actor" .
+<https://0k.computer/ontology#AIAgent> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Actor> .
+<https://0k.computer/ontology#Actor> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Actor> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Actor> <http://www.w3.org/2000/01/rdf-schema#comment> "A kind of agent to whom affordances may be offered. Perception-dependent actors (humans) require signifiers; structured actors (AI agents) may rely on operation descriptors directly." .
+<https://0k.computer/ontology#Actor> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#Actor> <http://www.w3.org/2000/01/rdf-schema#label> "Actor" .
 <https://0k.computer/ontology#Architecture> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#Architecture> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#Architecture> <http://www.w3.org/2000/01/rdf-schema#comment> "Decision about a structural primitive of an x0k system — runtime substrate, meta-system convention, knowledge organization. ADRs. Lives in decisions/architecture/." .
 <https://0k.computer/ontology#Architecture> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#Architecture> <http://www.w3.org/2000/01/rdf-schema#label> "Architecture Decision" .
 <https://0k.computer/ontology#Architecture> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#Artifact> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Artifact> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Artifact> <http://www.w3.org/2000/01/rdf-schema#comment> "What a session produces: software modules or documents. Each artifact carries provenance back to the intents (and indirectly to the seeds) that produced it." .
+<https://0k.computer/ontology#Artifact> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#Artifact> <http://www.w3.org/2000/01/rdf-schema#label> "Artifact" .
 <https://0k.computer/ontology#Commitment> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#Commitment> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#Commitment> <http://www.w3.org/2000/01/rdf-schema#comment> "Stance x0k will not compromise on. Long-lived, top-level constraint. Lives in decisions/commitments/." .
@@ -25,6 +40,11 @@
 <https://0k.computer/ontology#Design> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#Design> <http://www.w3.org/2000/01/rdf-schema#label> "Design Decision" .
 <https://0k.computer/ontology#Design> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#Human> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Human> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Human> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#Human> <http://www.w3.org/2000/01/rdf-schema#label> "Human Actor" .
+<https://0k.computer/ontology#Human> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Actor> .
 <https://0k.computer/ontology#Implementation> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#Implementation> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#Implementation> <http://www.w3.org/2000/01/rdf-schema#comment> "Literate-programming implementation document: folio page whose prose explains and whose code chunks tangle into compiled source files. Each Implementation implements one or more upstream commitments — usually a Design or an Architecture decision, sometimes an Affordance or another Implementation — the decision records the commitment, the implementation brings it into being through real code. Lives in knowledge/implementation/<dir>/<slug>.md; addressed as x0k:implementation/<dir>/<slug>. Carries `implements` edges to whatever it realizes." .
@@ -68,6 +88,13 @@
 <https://0k.computer/ontology#bodyFormat> <http://www.w3.org/2000/01/rdf-schema#comment> "How to read the document's body: 'markdown' (the default) or 'html'. A header statement, and projected for every folio document — a header that states none has a markdown body. Deliberately domain-free, like its neighbours: a header belongs to every genus a folio document can be, not to Decision, and a domain naming one of them would be a claim the projection does not make." .
 <https://0k.computer/ontology#bodyFormat> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#bodyFormat> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#carries> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#carries> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#carries> <http://www.w3.org/2000/01/rdf-schema#comment> "A collection-relative path, a file or a directory, that a publication ships as the collection holds it, at the same path: what its crates or documents read that is neither crate source nor a document, such as a vendored tree or test data. Multi-valued. A directory carries the files its version control tracks." .
+<https://0k.computer/ontology#carries> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#carries> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#carries> <http://www.w3.org/2000/01/rdf-schema#label> "carries" .
+<https://0k.computer/ontology#carries> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#checkedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#checkedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#checkedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "The executable check that would catch a violation of a claim this decision states — above all a cost law, the class of claim a corpus audit most often finds stated and never checked. Distinct from verifiedBy, which is evidence that an AFFORDANCE holds and whose range is LiterateSpec alone: checkedBy answers 'what goes red when this decision's stated bound stops holding', and its target is whatever actually asserts it — a literate spec, a test inside an Implementation doc, or a plain Rust test addressed as x0k:test/<file>::<fn>. Deliberately range-free: a test function is not a product concept and minting a class for one would put code in a vocabulary that is deliberately kept code-agnostic. Doc-grained like every folio edge; which claim a target checks is named in that claim's own prose. Gated by a lint that reports a decision stating a marked cost law and carrying no checkedBy, and resolves the targets of every checkedBy it finds." .
@@ -89,6 +116,13 @@
 <https://0k.computer/ontology#constrains> <http://www.w3.org/2000/01/rdf-schema#comment> "What this decision restricts: another decision, a techne, or a software module. Two of those three carry no envelope of their own, so the deciding side is the only end that can state the restriction at all — which is what this predicate is for. A restriction on a literate chapter goes the other way round, as that chapter's `constrainedBy`: the constrained side is the side that knows, because an architecture cannot enumerate the chapters that will be written under it, and the set grows with every one. The two are not inverses — an inverse is total, and this predicate reaches targets no Implementation is. Its three admissible targets span `document`, `actor` and `product`, so they are carried as shapes rather than as a range that would exile the term from the module its `x0k:Decision` domain places it in." .
 <https://0k.computer/ontology#constrains> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
 <https://0k.computer/ontology#constrains> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#copyright> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#copyright> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#copyright> <http://www.w3.org/2000/01/rdf-schema#comment> "The copyright holder a publication's license names, which the projector writes into the projected LICENSE. Required under MIT, whose text names a holder." .
+<https://0k.computer/ontology#copyright> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#copyright> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#copyright> <http://www.w3.org/2000/01/rdf-schema#label> "copyright" .
+<https://0k.computer/ontology#copyright> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#createdAt> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
 <https://0k.computer/ontology#createdAt> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#createdAt> <http://www.w3.org/2000/01/rdf-schema#comment> "When the document was first created, ISO-8601 UTC, as the header states it: carried in the file so a restart re-hydrates it from the file alone. Domain-free for the reason its neighbours are." .
@@ -205,6 +239,13 @@
 <https://0k.computer/ontology#folio/transcludes> <http://www.w3.org/2000/01/rdf-schema#comment> "A rendering instruction: a reference the weave inlines into the document's body, in statement order — a document id, optionally with a section anchor. A string because an anchor is a second fragment no IRI can hold." .
 <https://0k.computer/ontology#folio/transcludes> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#folio/transcludes> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#gitPin> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#gitPin> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#gitPin> <http://www.w3.org/2000/01/rdf-schema#comment> "One Git revision a publication's projected crates may depend on, as <url>?rev=<commit>. Multi-valued. The projector refuses any other Git dependency, and the projected tools/check-git-pins refuses a lockfile resolving one; a publication stating none admits no Git dependency." .
+<https://0k.computer/ontology#gitPin> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#gitPin> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#gitPin> <http://www.w3.org/2000/01/rdf-schema#label> "git pin" .
+<https://0k.computer/ontology#gitPin> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#implements> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#implements> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#implements> <http://www.w3.org/2000/01/rdf-schema#comment> "The bringing-into-being relation. An Implementation document implements what its code brings into being: most often a Design or an Architecture decision, and also an Affordance it makes the case, or another Implementation it builds on. Deliberately range-free, following wiki:cites - the target is whatever the implementation actually realizes, and a closed range has to be reopened every time the corpus finds a true edge the schema did not anticipate, which is how the affordance and implementation targets already in the corpus came to be refused. The convention that a target is a Design or an Architecture is a validator's rule, not the vocabulary's. Domain stays Implementation: every implements edge in the corpus has one as its subject, and the folio edge vocabulary is derived from Decision-genus domains. Distinct from realizes, the capability-mechanism relation - a Techne, or a Decision asserting one, being what makes an Affordance the case - whereas implements is the authorship relation from the literate document up to what it brings into being." .
@@ -215,21 +256,66 @@
 <https://0k.computer/ontology#informedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "Evidence this decision draws on in its rationale. Range unions Decision (a prior decision whose conclusions the new one cites) and Observation (an agent-memory observation produced by the Deriver/Dreamer pipeline). Closes the cultivation loop on the decision side, mirroring the existing `informs (Memory → Intent)` predicate." .
 <https://0k.computer/ontology#informedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
 <https://0k.computer/ontology#informedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#keywords> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#keywords> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#keywords> <http://www.w3.org/2000/01/rdf-schema#comment> "One registry keyword of a publication's projected packages; multi-valued, in statement order. Optional." .
+<https://0k.computer/ontology#keywords> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#keywords> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#keywords> <http://www.w3.org/2000/01/rdf-schema#label> "keywords" .
+<https://0k.computer/ontology#keywords> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#license> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#license> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#license> <http://www.w3.org/2000/01/rdf-schema#comment> "The SPDX expression a publication is released under, which the repository projector applies to the projected repository and stamps into every package manifest. Read by x0k-tangle project-repo; a publication without one is refused unless the caller names a license." .
+<https://0k.computer/ontology#license> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#license> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#license> <http://www.w3.org/2000/01/rdf-schema#label> "license" .
+<https://0k.computer/ontology#license> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#marks> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#marks> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#marks> <http://www.w3.org/2000/01/rdf-schema#comment> "A document whose sections declare the marks a publication's contents-page rows show beside an affordance's status: each status or test word's icon is found under the section headed by that word, in the first such document named. Multi-valued, in order. A publication naming none shows no status, test or actor marks." .
+<https://0k.computer/ontology#marks> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#marks> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#marks> <http://www.w3.org/2000/01/rdf-schema#label> "marks" .
 <https://0k.computer/ontology#mentions> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#mentions> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#comment> "Soft, prose-equivalent reference from one decision to another. Used when a decision touches another's territory but neither motivates, supports, refines, nor constrains it." .
-<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#comment> "Soft, prose-equivalent reference from one document to another: a decision or a wiki page touching another's territory where neither motivates, supports, refines, nor constrains it. Range-free, because what a document mentions may be any concept — a genome, a manuscript, a page. Stated on the mentioning document; the relation has no inverse spelling." .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
 <https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
-<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#methodology> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#methodology> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#methodology> <http://www.w3.org/2000/01/rdf-schema#comment> "The method and budget the loop that produced this chapter ran under, as that loop names it (ralph budget=2)." .
+<https://0k.computer/ontology#methodology> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Implementation> .
+<https://0k.computer/ontology#methodology> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#methodology> <http://www.w3.org/2000/01/rdf-schema#label> "methodology" .
+<https://0k.computer/ontology#methodology> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#motivatedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#motivatedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#motivatedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "An upstream cause this decision rests on. Range unions Decision (the typical case — design motivatedBy commitment, architecture motivatedBy design, publication motivatedBy design) and Intent (the cultivation-loop case — a decision was written because executing the named intent surfaced the need for it). Consumers walk rdf:type to disambiguate the target class." .
 <https://0k.computer/ontology#motivatedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
 <https://0k.computer/ontology#motivatedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#overlay> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#overlay> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#overlay> <http://www.w3.org/2000/01/rdf-schema#comment> "A projected-repo-relative path the publication owns by hand rather than by projection: the projector seeds the file once and never overwrites it. Multi-valued; the one channel for deliberate divergence." .
+<https://0k.computer/ontology#overlay> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#overlay> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#overlay> <http://www.w3.org/2000/01/rdf-schema#label> "overlay" .
+<https://0k.computer/ontology#overlay> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#palette> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#palette> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#palette> <http://www.w3.org/2000/01/rdf-schema#comment> "The colours a publication binds the icon profile's four paint roles to, light and dark, as an rdf:JSON object. Read by the projector, which binds every checked icon to it; a publication that shows icons and states none is refused." .
+<https://0k.computer/ontology#palette> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#palette> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#palette> <http://www.w3.org/2000/01/rdf-schema#label> "palette" .
+<https://0k.computer/ontology#prebuilt> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#prebuilt> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#prebuilt> <http://www.w3.org/2000/01/rdf-schema#comment> "A publication's prebuilt-binary lane, as an rdf:JSON object: the target triples its release builds binaries for and, optionally, the installer's settings. Read by the projector, which emits the release workflow and installer from it." .
+<https://0k.computer/ontology#prebuilt> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#prebuilt> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#prebuilt> <http://www.w3.org/2000/01/rdf-schema#label> "prebuilt" .
 <https://0k.computer/ontology#presents> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#presents> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#comment> "An authored presentation of an entity: the Manuscript (or Decision-genus doc) that renders this entity's neighbourhood as a composed telling. Range is left open (mirroring `publishes`): any presentable entity may be presented — a Seed's bloom, the ontology world, a population chart. The presentation view-mode lens keys on this edge — an entity with an inbound `presents` link offers the curation lens (raw bloom <-> composed presentation). Distinct from `publishes` (region membership): `presents` binds one presentation doc to the one entity it is experienced over." .
-<https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
+<https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0001n0000 .
 <https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#presupposes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#presupposes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
@@ -237,6 +323,33 @@
 <https://0k.computer/ontology#presupposes> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Implementation> .
 <https://0k.computer/ontology#presupposes> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#presupposes> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Wiki> .
+<https://0k.computer/ontology#projection> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#projection> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#projection> <http://www.w3.org/2000/01/rdf-schema#comment> "What a site projection of this Publication shows of each projected class, as an rdf:JSON object keyed by class name." .
+<https://0k.computer/ontology#projection> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#projection> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#projection> <http://www.w3.org/2000/01/rdf-schema#label> "projection" .
+<https://0k.computer/ontology#publishBranch> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#publishBranch> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#publishBranch> <http://www.w3.org/2000/01/rdf-schema#comment> "The branch a publication's publish pushes its projected history to. Stated at most once; without it the push goes to the remote's default branch." .
+<https://0k.computer/ontology#publishBranch> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#publishBranch> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#publishBranch> <http://www.w3.org/2000/01/rdf-schema#label> "publish branch" .
+<https://0k.computer/ontology#publishBranch> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#publishRegistry> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#publishRegistry> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#publishRegistry> <http://www.w3.org/2000/01/rdf-schema#comment> "The package registry a publication's publish uploads its publishable crates to. Stated at most once; the one value read is crates.io, and any other is refused. Without it the publish pushes the repository and uploads nothing." .
+<https://0k.computer/ontology#publishRegistry> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#publishRegistry> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#publishRegistry> <http://www.w3.org/2000/01/rdf-schema#label> "publish registry" .
+<https://0k.computer/ontology#publishRegistry> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#publishRemote> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#publishRemote> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#publishRemote> <http://www.w3.org/2000/01/rdf-schema#comment> "The git remote a publication's publish pushes its projected history to, as a URL or a path git accepts. Stated at most once; a remote named on the command line outranks it, and without either the publish resolves the publication's publishedOn surface through the collection's configuration, or has no remote." .
+<https://0k.computer/ontology#publishRemote> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#publishRemote> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#publishRemote> <http://www.w3.org/2000/01/rdf-schema#label> "publish remote" .
+<https://0k.computer/ontology#publishRemote> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#publishedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#publishedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#publishedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "The Profile that publishes this Publication. Each Publication is owned by exactly one Profile." .
@@ -267,16 +380,57 @@
 <https://0k.computer/ontology#raises> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#OpenQuestion> .
 <https://0k.computer/ontology#refinedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#refinedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "A more specific downstream decision that fills in this one." .
-<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "A more specific downstream document that fills in this one: a decision refined by a narrower decision or implementation chapter, a wiki page by a narrower page. Stated on the refined document; the relation has no inverse spelling." .
+<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0002n0000 .
 <https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
-<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#range> _:b0003n0000 .
+<https://0k.computer/ontology#repository> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#repository> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#repository> <http://www.w3.org/2000/01/rdf-schema#comment> "The URL of the repository a publication is projected into, stamped into each projected package manifest. Optional." .
+<https://0k.computer/ontology#repository> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#repository> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#repository> <http://www.w3.org/2000/01/rdf-schema#label> "repository" .
+<https://0k.computer/ontology#repository> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#repositoryLayout> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#repositoryLayout> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#repositoryLayout> <http://www.w3.org/2000/01/rdf-schema#comment> "How the projector arranges a publication's repository: canonical (the corpus paths) or organized (packages, chapters and assets moved to a public layout). Stated at most once." .
+<https://0k.computer/ontology#repositoryLayout> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#repositoryLayout> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#repositoryLayout> <http://www.w3.org/2000/01/rdf-schema#label> "repository layout" .
+<https://0k.computer/ontology#repositoryLayout> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#resolution> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#resolution> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#resolution> <http://www.w3.org/2000/01/rdf-schema#comment> "How an open question was answered, in prose, once its status is resolved." .
+<https://0k.computer/ontology#resolution> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#OpenQuestion> .
+<https://0k.computer/ontology#resolution> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#resolution> <http://www.w3.org/2000/01/rdf-schema#label> "resolution" .
+<https://0k.computer/ontology#resolution> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#comment> "A decision resolves an open question by settling its answer. The resolution is recorded both on the decision (as the body of the answer) and on the question (status flips to 'resolved')." .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#OpenQuestion> .
+<https://0k.computer/ontology#rustToolchain> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#rustToolchain> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#rustToolchain> <http://www.w3.org/2000/01/rdf-schema#comment> "The Rust toolchain channel a publication's projected repository pins in rust-toolchain.toml, for CI and for a contributor running its CI locally. Stated at most once; without it the projection carries the source workspace's own toolchain file, or pins none." .
+<https://0k.computer/ontology#rustToolchain> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#rustToolchain> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#rustToolchain> <http://www.w3.org/2000/01/rdf-schema#label> "rust toolchain" .
+<https://0k.computer/ontology#rustToolchain> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#rustVersion> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#rustVersion> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#rustVersion> <http://www.w3.org/2000/01/rdf-schema#comment> "The oldest Rust a publication's projected manifests promise to build with: the workspace's rust-version, inherited by every published crate. Stated at most once; without it the projection takes the source workspace's own floor, or declares none." .
+<https://0k.computer/ontology#rustVersion> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#rustVersion> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#rustVersion> <http://www.w3.org/2000/01/rdf-schema#label> "rust version" .
+<https://0k.computer/ontology#rustVersion> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#severs> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#severs> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#severs> <http://www.w3.org/2000/01/rdf-schema#comment> "A feature of a published software module this Publication severs from the published manifests, named as the module's section (software-module:<crate>#<feature>). Its source may still ship; the publication says so." .
+<https://0k.computer/ontology#severs> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#severs> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#severs> <http://www.w3.org/2000/01/rdf-schema#label> "severs" .
 <https://0k.computer/ontology#status> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
 <https://0k.computer/ontology#status> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#status> <http://www.w3.org/2000/01/rdf-schema#comment> "Decision status: 'proposed' | 'accepted' | 'superseded'." .
@@ -315,13 +469,33 @@
 <https://0k.computer/ontology#updatedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "Who last edited the document, as the header states it. Domain-free for the reason its neighbours are." .
 <https://0k.computer/ontology#updatedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#updatedBy> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#visualizes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#visualizes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#visualizes> <http://www.w3.org/2000/01/rdf-schema#comment> "A viz page's edge to the page it illustrates: an Implementation that renders a concept visualizes the chapter or wiki page whose idea it shows (sync/viz-fingerprint visualizes sync/engine). Domain Implementation, which places it here; deliberately range-free, as implements is, because which kinds of page get a visualization is usage, not meaning." .
+<https://0k.computer/ontology#visualizes> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Implementation> .
+<https://0k.computer/ontology#visualizes> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology/document> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
-<https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#comment> "The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with the document-to-document edges, the header properties that stay inside the genus, and the folio: tool-configuration terms a header or a parameter panel carries." .
+<https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#comment> "The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with Artifact, what work produces and a document is one of, Actor and its kinds (Human, AIAgent), whom a publication is published for and an affordance is claimed for, the document-to-document edges, the header properties that stay inside the genus, and the folio: tool-configuration terms a header or a parameter panel carries." .
 <https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#label> "document" .
 <https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
-<https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/document/0.3.0> .
+<https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/document/0.4.0> .
 _:b0000n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0000n0001 .
-_:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Manuscript> .
+_:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
 _:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0000n0002 .
-_:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Wiki> .
 _:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+_:b0001n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0001n0001 .
+_:b0001n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Manuscript> .
+_:b0001n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0001n0002 .
+_:b0001n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0001n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+_:b0002n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0002n0001 .
+_:b0002n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0002n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0002n0002 .
+_:b0002n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Wiki> .
+_:b0002n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+_:b0003n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0003n0001 .
+_:b0003n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0003n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0003n0002 .
+_:b0003n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Wiki> .
+_:b0003n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .

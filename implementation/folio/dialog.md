@@ -392,13 +392,13 @@ version = "0.1.0"
 publish = false
 edition = { workspace = true }
 license = "MIT"
-description = "Source-owned local Dialog database adapter for Folio"
+description = "A folio fact store on Dialog, an embedded datalog database: keeps a collection's document facts in a local directory, replaces a changed document's facts in one commit, and answers JSON datalog queries over them."
 rust-version = { workspace = true }
 repository = "https://github.com/0k-dot-computer/x0k-folio"
 readme = "../../README.md"
 keywords = ["literate-programming", "tangle", "markdown", "documentation"]
 [dependencies]
-x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.2.0" }
+x0k-folio-ingest = { path = "../x0k-folio-ingest" , version = "0.2.1" }
 x0k-fact-projection = { path = "../x0k-fact-projection" , version = "0.2.0" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

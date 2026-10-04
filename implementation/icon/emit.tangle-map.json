@@ -1,6 +1,6 @@
 {
   "source": "implementation/icon/emit.md",
-  "source_hash": "45ba25ff20829085",
+  "source_hash": "fc61011d9bdd7740",
   "pipelines": [
     {
       "kind": "identity-tangle",

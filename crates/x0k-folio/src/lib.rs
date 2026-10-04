@@ -32,6 +32,7 @@ pub mod document_vocabulary;
 pub mod entity_id;
 pub mod envelope_check;
 pub mod html_canonical;
+pub mod writing_presentation;
 pub mod inline_entity;
 pub mod layout;
 // Unconditional: this is the half of materialization the published build

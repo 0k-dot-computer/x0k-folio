@@ -128,16 +128,29 @@ let modules_dir = load::shipped_modules_dir(&manifest);
 let shapes_dir = load::shapes_dir_for(&modules_dir);
 ```
 
-The rerun declarations name every file the script reads, and no directory.
-Cargo judges a watched path by its mtime, even under checksum freshness, and a
-directory's mtime moves whenever an entry in it is created: a tree whose files
-arrive with their content unchanged (a checkout beside a seeded target, a
-frozen build) would rerun the script, and every crate above x0k-ontology would
-recompile. A module is never added alone, because the set's declared modules
-and its files must agree (the check below): adding one edits a module file
-already watched, and the rerun that edit causes finds the new file. A shape
-file added for an existing module, with nothing else changed, is not seen
-until a watched file changes.
+The rerun declarations name the script's own sources and the two
+directories it reads modules and shapes from. A directory is what has to be
+watched, because what the script folds is a *set*, and a set changes by a
+member arriving or leaving as well as by a member's bytes changing: Cargo
+judges a watched directory by the newest mtime under it, the directory's own
+included, and the directory's own moves whenever an entry is created,
+removed or renamed. Watching only the files that existed at the last run
+missed exactly that. A module added alone — `guidance`, which imports `core`
+and is imported by nothing, so no watched file changed — stayed out of the
+compiled vocabulary until a forced rebuild, and a header using its prefix
+was refused as undeclared by a binary built a commit earlier (2026-10-03).
+The set check below does not close that gap: it compares the files present
+with the modules they declare, and a new file declares its own module.
+
+Watching a directory costs something a file does not, and the cost is why
+this script once watched files only. A checkout writes every directory new,
+so a lane whose target was seeded from another checkout would rerun the
+script — and recompile every crate above x0k-ontology — even with every
+module file the same bytes. `tools/workspace-mtime-sync`, which already
+gives a seeded lane's unchanged files the host's mtimes, gives a directory
+the host's mtime too when its entries are the host's, so a lane whose
+modules are the host's keeps the seed fresh and a lane with a module added
+or removed reruns, which is the point.
 
 <a name="chunk-declare-reruns"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#declare-reruns`</sub>
 
@@ -147,9 +160,9 @@ println!("cargo:rerun-if-changed=src/concept_facts.rs");
 println!("cargo:rerun-if-changed=src/load.rs");
 ```
 
-The file lists are the script's own because it needs them twice over: once to
-declare the reruns, and once to embed each file's bytes in the emitted tables.
-Each rerun names its file relative to the package root. The loader hands back
+The file lists are the script's own because it embeds each file's bytes in
+the emitted tables; the reruns name the directories the lists were read from.
+Each rerun names its path relative to the package root. The loader hands back
 absolute paths, and the modules live outside the package (one level up the
 monorepo), where Cargo keeps an absolute path as it is: the build script's
 fingerprint would then name the tree that ran it. A target seeded from
@@ -164,13 +177,20 @@ tree it is judging.
 let module_paths = load::module_file_paths(&modules_dir)
     .unwrap_or_else(|error| panic!("{error}"));
 let shape_paths = load::shape_file_paths(&shapes_dir);
-for path in module_paths.iter().chain(shape_paths.iter()) {
-    println!("cargo:rerun-if-changed={}", package_relative(&manifest, path).display());
+// The directories, not the files in them: a directory is judged by the
+// newest mtime under it, so it covers every file it holds and every file
+// added to or removed from it. A shapes directory that does not exist is
+// not watched — Cargo reruns a script whose watched path is missing on
+// every build.
+for dir in [&modules_dir, &shapes_dir] {
+    if dir.is_dir() {
+        println!("cargo:rerun-if-changed={}", package_relative(&manifest, dir).display());
+    }
 }
 ```
 
 The relative path climbs from the package root to the nearest ancestor that
-holds the file, then descends.
+holds the path, then descends.
 
 <a name="chunk-package-relative"></a><sub>[`build.rs`](../../crates/x0k-ontology/build.rs) · `#package-relative`</sub>
 

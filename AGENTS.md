@@ -7,7 +7,8 @@ Files marked `@generated` are derived from Markdown documents under
 `implementation/`; edit those documents. Files without that
 header are edited directly. This file is a decision procedure. Find the
 branch for what you were asked to do, read what it names, run what it names.
-Every verb below (`tangle`, `check`, `affordances`, `weave`, `sync`) is
+Every verb below (`tangle`, `check`, `affordances`, `weave`, `sync`,
+`publish-repo`) is
 `x0k-tangle <verb>` where the tools are installed, and
 `cargo run -p x0k-tangle -- <verb>` in this checkout without them;
 `x0k-tangle --help` wins where this file and the binary disagree. To
@@ -104,6 +105,22 @@ Then `check <dir>` over the documents involved, and
 JSON — id, title, description, the document it is defined in, its facts by
 predicate — for whatever consumes it next.
 
+## If you are asked to publish documents
+
+This means the person's own collection, published as a repository of
+their own. `guides/INTEGRATING.md` § "Publishing a collection" shows the
+publication document to write — the documents it publishes, by id, and a
+licence, which is theirs to choose and has no default. Then:
+
+```sh
+x0k-tangle publish-repo <publication.md> --output-dir <dir> --workspace <root>
+```
+
+It projects, builds and tests when crates are published, and stops before
+anything leaves the machine. Show the person the projection and the
+report. `--really` pushes it to their remote, and passing it is their
+decision, not yours.
+
 ## If you are asked what a term means
 
 Quote the vocabulary, not the README's paraphrase of it.
@@ -126,6 +143,7 @@ chapter as a page: `x0k-tangle weave <doc> --output-dir <dir>`.
   fails on it for generated files. Hand-written modules and public-owned
   overlays are edited directly. `PROVENANCE.json` lists the documents that back the code
   (`literate_docs`), the crates in the publication, and what was held back.
-- **`weave-region`, `project-repo`, `publish-repo`, `receive-repo`.** They
-  read the corpus this repository was projected from and refuse to run here;
-  they are marked `[corpus-only]` in `x0k-tangle --help`.
+- **Re-projecting this repository.** Its sources live upstream and it is
+  regenerated from them, so `project-repo` here publishes a collection of
+  the person's own, never this tree; a change to this repository goes
+  through `guides/CONTRIBUTING.md`.

@@ -61,7 +61,7 @@ because a signifier is declared where its face lives.
 <a name="chunk-imports"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#imports`</sub>
 
 ```rust {#imports}
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -255,8 +255,8 @@ The check reads documents against a vocabulary, and until now there was
 only one to read against: whichever ontology modules the binary was
 compiled with. That answer is wrong in the one place the check matters
 most. A projected repository ships its own module files — the projector
-writes them and records where in `PROVENANCE.json`'s `modules_dir`
-([`region-repo.md`](region-repo.md)) — and a reader who builds the CLI in
+writes them and records where in `PROVENANCE.json`'s `modules_dir` — and
+a reader who builds the CLI in
 that repository was, until this function, checking those documents
 against a vocabulary compiled from a *different* copy of the tree.
 
@@ -359,6 +359,12 @@ declaration deleted, since the edge on the chunk outlives both. A
 `proves=` value that is not an id at all is a defect, the same one a
 malformed edge target is.
 
+A header defect that names an undeclared term — an edge's predicate or a
+literal statement's, on a document of any class — is located before it
+is reported: [`Defect::locate`](../folio/checking.md) reads the line that
+wrote the term off the document's text, which this pass holds and the
+header parse does not keep.
+
 <a name="chunk-vocabulary-report"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#vocabulary-report`</sub>
 
 ```rust {#vocabulary-report}
@@ -451,6 +457,14 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
         }
     }
     let mut corpus = check_corpus(model, headers.iter().map(|(name, env)| (name.as_str(), env)));
+    // The header parse keeps no line per statement; the text it came from
+    // does, and an undeclared term is refused at the line that wrote it.
+    let texts: HashMap<&str, &str> = documents.iter().map(|(name, content)| (name.as_str(), content.as_str())).collect();
+    for (name, defect) in &mut corpus.defects {
+        if let Some(content) = texts.get(name.as_str()) {
+            defect.locate(content);
+        }
+    }
     // Every affordance and signifier is a typed instance too, so the two
     // passes read the same blocks and ask different questions of them.
     // The count is therefore the larger of the two and never their sum,
@@ -608,7 +622,7 @@ chunks under the same paths that name it, each as its chapter's id, its
 chunk's name and its test functions — so the relation reaches a
 reader's tooling as data. Relayed, not judged: this verb reads what a
 chunk says it proves; whether the test passes is settled where the
-tests run, at projection ([`region-repo.md`](region-repo.md)).
+tests run, at projection, by the projector on our side.
 
 <a name="chunk-declared-affordances"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#declared-affordances`</sub>
 
@@ -852,6 +866,69 @@ pub fn write_icon_files(report: &IconReport, palette: &Palette, out: &Path) -> R
 }
 ```
 
+The palette is a publication's: the `x0k:palette` statement in its
+header binds the profile's four paint roles to colours, once per scheme,
+and it is the only palette a projected repository has — there is no
+theme document in reach, which is why the profile lets a publication
+carry one (`x0k:design/icon-profile` § "The paints"). `icon --palette`
+names that document and reads the statement through the binder's own
+type, so a statement that is not four roles per scheme refuses, naming
+why, rather than binding a mark to nothing.
+
+The statement is one `rdf:JSON` literal whose text is the structure,
+and reading one is a function of its own because the palette is not the
+only structure a publication header states that way. It refuses a
+structure stated twice or stated as anything but JSON, because either
+would leave the reader to guess which declaration was meant.
+
+<a name="chunk-header-json"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#header-json`</sub>
+
+```rust {#header-json}
+/// The one `rdf:JSON` literal the header states for `predicate`, read as
+/// `T` — `None` when the header states none. A second value, a literal of
+/// another datatype, or JSON that does not read as `T` refuses, naming why.
+pub(crate) fn header_json<T: serde::de::DeserializeOwned>(env: &Colophon, predicate: &str) -> Result<Option<T>> {
+    let values = env.properties.get(predicate).map(Vec::as_slice).unwrap_or_default();
+    let literal = match values {
+        [] => return Ok(None),
+        [one] => one,
+        many => anyhow::bail!("the header states `{predicate}` {} times; state it once", many.len()),
+    };
+    if literal.datatype != RDF_JSON {
+        anyhow::bail!("the header's `{predicate}` is not an `rdf:JSON` literal (datatype `{}`)", literal.datatype);
+    }
+    serde_json::from_str(&literal.value)
+        .map(Some)
+        .map_err(|e| anyhow::anyhow!("the header's `{predicate}` does not read: {e}"))
+}
+```
+
+<a name="chunk-header-palette"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#header-palette`</sub>
+
+```rust {#header-palette}
+/// Read the publication header's `x0k:palette` — the icon profile's four
+/// roles bound to colours, per scheme — as the binder's own type. `None`
+/// when the header states none; a statement that does not read as one
+/// refuses, naming why.
+pub fn header_palette(content: &str) -> Result<Option<Palette>> {
+    let (env, _) = parse_envelope(content)
+        .map_err(|e| anyhow::anyhow!("the publication doc has no readable header: {e}"))?;
+    colophon_palette(&env)
+}
+
+/// [`header_palette`] for a header already read — by a caller that read it
+/// in a vocabulary of its own (the repository projector, under
+/// `--vocabulary`).
+pub fn colophon_palette(env: &Colophon) -> Result<Option<Palette>> {
+    header_json::<Palette>(env, "x0k:palette").map_err(|e| {
+        anyhow::anyhow!(
+            "the publication's `x0k:palette` does not read as the icon profile's four \
+             roles (ink, line, paper, accent) per scheme (light, dark): {e}"
+        )
+    })
+}
+```
+
 ## Every declaration, as data
 
 The `affordances` verb is one class read with an opinion — its record
@@ -1007,7 +1084,7 @@ fn markdown_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [vocabulary](#chunk-vocabulary) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances) · [declarations](#chunk-declarations) · [icon-report](#chunk-icon-report) · [check-section](#chunk-check-section) · [declared-icons](#chunk-declared-icons)</sub>
+<a name="chunk-root"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#root` · assembles [doc](#chunk-doc) · [imports](#chunk-imports) · [proving-chunks](#chunk-proving-chunks) · [discover](#chunk-discover) · [vocabulary-report](#chunk-vocabulary-report) · [vocabulary](#chunk-vocabulary) · [check-vocabulary](#chunk-check-vocabulary) · [fact-value](#chunk-fact-value) · [affordance-record](#chunk-affordance-record) · [declared-affordances](#chunk-declared-affordances) · [declarations](#chunk-declarations) · [icon-report](#chunk-icon-report) · [check-section](#chunk-check-section) · [declared-icons](#chunk-declared-icons) · [header-json](#chunk-header-json) · [header-palette](#chunk-header-palette)</sub>
 
 ```rust {#root}
 <<doc>>
@@ -1037,6 +1114,10 @@ fn markdown_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 <<check-section>>
 
 <<declared-icons>>
+
+<<header-json>>
+
+<<header-palette>>
 ```
 
 ## Proving the faces
@@ -1164,6 +1245,30 @@ fn check_names_an_undeclared_predicate_and_fails() {
         stderr.contains("frobnicates") && stderr.contains("fixture.md"),
         "the defect names the predicate and the document: {stderr}"
     );
+}
+
+/// Found 2026-10-03: a literal statement whose term no module declares
+/// passed `check` on a design and on a class a module declares alike. It
+/// is refused now, by the term and the line that wrote it, in a file
+/// holding a declared literal beside it that is not.
+#[test]
+fn check_names_an_undeclared_literal_term_and_its_line_and_fails() {
+    let tmp = TempDir::new().unwrap();
+    let doc = design_doc(&shipped_predicate())
+        .replace("x0k:status \"draft\" ;", "x0k:status \"draft\" ;\n    x0k:summary \"s\" ;\n    x0k:fooBar \"x\" ;");
+    write(tmp.path(), "docs/fixture.md", &doc);
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "check passed a defect: {stderr}");
+    let refusals: Vec<&str> = stderr.lines().filter(|line| line.contains("declared by no ontology module")).collect();
+    match refusals.as_slice() {
+        [one] => assert!(
+            one.contains("fixture.md") && one.contains("`x0k:fooBar` at line 7"),
+            "the refusal names the document, the term and its line: {one}"
+        ),
+        other => panic!("expected one refusal, got {other:?} in {stderr}"),
+    }
 }
 
 /// A vocabulary a reader could write: `mycorp` in its own namespace,

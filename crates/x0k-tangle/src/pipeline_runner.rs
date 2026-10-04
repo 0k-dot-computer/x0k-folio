@@ -452,8 +452,8 @@ pub fn tangle_document_with(
         return Err(anyhow!(
             "refusing to tangle publication document {} into {}: a publication's \
              tangle output is its projected repository's README, relative to a \
-             projection root (one carrying PROVENANCE.json), never a corpus root. \
-             Use `x0k-tangle project-repo` instead.",
+             projection root (one carrying PROVENANCE.json), never a corpus root; \
+             the repository projector writes it there.",
             doc_path.display(),
             workspace_root.display()
         ));
@@ -1482,7 +1482,7 @@ let main = body
     /// repository's README, so it tangles only into a projection root
     /// (one carrying `PROVENANCE.json`). From any other root — the
     /// corpus, where `folio:tangleRoot "README.md"` would clobber the monorepo's
-    /// own README — it is refused, naming `project-repo`.
+    /// own README — it is refused, naming the root it does tangle into.
     #[test]
     fn publication_document_tangles_only_into_a_projection_root() {
         let tmp = TempDir::new().unwrap();
@@ -1501,8 +1501,8 @@ let main = body
         let err = tangle_document(&doc_path, &workspace, &registry)
             .expect_err("a corpus root refuses a publication document");
         assert!(
-            err.to_string().contains("project-repo"),
-            "refusal names the command that does tangle it: {err}"
+            err.to_string().contains("projection root"),
+            "refusal names the root that does take it: {err}"
         );
         assert_eq!(
             std::fs::read_to_string(workspace.join("README.md")).unwrap(),
@@ -2075,12 +2075,12 @@ two = 2
     /// line keep reading it.
     ///
     /// The first is `tools/x0k-guard-generated`, written into every
-    /// projected repository by region-repo.md's `GUARD_SCRIPT`. This test
+    /// projected repository by the projector's `GUARD_SCRIPT`. This test
     /// runs its classifier and its `sed`, copied verbatim, over both header
     /// forms — the shell is the parser, so the shell is what is tested.
     #[test]
     fn guard_script_still_reads_the_document_out_of_the_header() {
-        // Verbatim from `GUARD_SCRIPT` in region-repo.md: the `case` that
+        // Verbatim from the projector's `GUARD_SCRIPT`: the `case` that
         // decides a file is generated, and the `sed` that names its source.
         const GUARD_PARSE: &str = r#"first="$1"
 case "$first" in
@@ -2123,7 +2123,7 @@ esac
         assert_eq!(src.split_whitespace().next(), Some("lit/remap.md"));
     }
 
-    /// The second parser: `doc_from_header` in receiving.md, the fallback
+    /// The second parser: the receiver's `doc_from_header`, the fallback
     /// that routes an edit in a clone back to the document it came from.
     /// It is private to that module, so its two lines are restated here;
     /// what is being pinned is that the header's first token after ` from `

@@ -1,6 +1,6 @@
 {
   "source": "implementation/tangle/instance-rendering.md",
-  "source_hash": "3da30e773afd3a04",
+  "source_hash": "8baf2207a7561dc4",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-tangle/src/instance_rendering.rs",
-          "hash": "087a92d9c4538e8e"
+          "hash": "2f5e0169ae8e2ad4"
         }
       ]
     }

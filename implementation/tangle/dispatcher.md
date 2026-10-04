@@ -528,8 +528,9 @@ Three properties decide the shape.
 
 It **appends, never substitutes**. Two parsers already read this line by
 its shape — `tools/x0k-guard-generated` in every projected repository
-(`sed -n 's/.* from \(.*\) — DO NOT EDIT.*/\1/p'`) and
-[`receiving.md`](receiving.md)'s `doc_from_header` fallback
+(`sed -n 's/.* from \(.*\) — DO NOT EDIT.*/\1/p'`) and the
+`doc_from_header` fallback of the receiver that routes a contribution
+back on our side
 (`split(" from ").nth(1)`, then up to the first space or em dash). Putting
 the URL *in place of* the path would hand the receiver a URL where it
 expects a corpus-relative doc path and break the route back to the
@@ -747,8 +748,8 @@ absolute one is how the tree you write to becomes an accident of cwd.
 
 Between parsing and dispatch sits one genus check. A **publication**
 document (`a x0k:Publication`) may state `folio:tangleRoot`, but its
-output — the projected repository's `README.md`, per
-[`region-repo.md`](region-repo.md) — is expressed relative to a
+output — the projected repository's `README.md`, as the repository
+projector writes it — is expressed relative to a
 *projection* root, never the corpus root the document lives in.
 Tangled from the corpus root, `folio:tangleRoot "README.md"` would resolve to the
 monorepo's own tracked `README.md` and overwrite it. No sweep walks
@@ -823,8 +824,8 @@ pub fn tangle_document_with(
         return Err(anyhow!(
             "refusing to tangle publication document {} into {}: a publication's \
              tangle output is its projected repository's README, relative to a \
-             projection root (one carrying PROVENANCE.json), never a corpus root. \
-             Use `x0k-tangle project-repo` instead.",
+             projection root (one carrying PROVENANCE.json), never a corpus root; \
+             the repository projector writes it there.",
             doc_path.display(),
             workspace_root.display()
         ));
@@ -1754,7 +1755,7 @@ with readers outside this crate. One pins the no-site line byte for byte (it is
 the line every generated file in this tree carries), one pins the
 site-bearing line, and two pin the *parsers*: the projected repository's
 `tools/x0k-guard-generated`, run as the shell script it is, and
-receiving.md's `doc_from_header` fallback. Both must still find a bare
+the receiver's `doc_from_header` fallback. Both must still find a bare
 document path where they always found one.
 
 <a name="chunk-tests"></a><sub>[`src/pipeline_runner.rs`](../../crates/x0k-tangle/src/pipeline_runner.rs) · `#tests` · proves [Project source code out of a document](../../decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)</sub>
@@ -2052,7 +2053,7 @@ workspace aggregation, the write path and the lock.
     /// repository's README, so it tangles only into a projection root
     /// (one carrying `PROVENANCE.json`). From any other root — the
     /// corpus, where `folio:tangleRoot "README.md"` would clobber the monorepo's
-    /// own README — it is refused, naming `project-repo`.
+    /// own README — it is refused, naming the root it does tangle into.
     #[test]
     fn publication_document_tangles_only_into_a_projection_root() {
         let tmp = TempDir::new().unwrap();
@@ -2071,8 +2072,8 @@ workspace aggregation, the write path and the lock.
         let err = tangle_document(&doc_path, &workspace, &registry)
             .expect_err("a corpus root refuses a publication document");
         assert!(
-            err.to_string().contains("project-repo"),
-            "refusal names the command that does tangle it: {err}"
+            err.to_string().contains("projection root"),
+            "refusal names the root that does take it: {err}"
         );
         assert_eq!(
             std::fs::read_to_string(workspace.join("README.md")).unwrap(),
@@ -2645,12 +2646,12 @@ two = 2
     /// line keep reading it.
     ///
     /// The first is `tools/x0k-guard-generated`, written into every
-    /// projected repository by region-repo.md's `GUARD_SCRIPT`. This test
+    /// projected repository by the projector's `GUARD_SCRIPT`. This test
     /// runs its classifier and its `sed`, copied verbatim, over both header
     /// forms — the shell is the parser, so the shell is what is tested.
     #[test]
     fn guard_script_still_reads_the_document_out_of_the_header() {
-        // Verbatim from `GUARD_SCRIPT` in region-repo.md: the `case` that
+        // Verbatim from the projector's `GUARD_SCRIPT`: the `case` that
         // decides a file is generated, and the `sed` that names its source.
         const GUARD_PARSE: &str = r#"first="$1"
 case "$first" in
@@ -2693,7 +2694,7 @@ esac
         assert_eq!(src.split_whitespace().next(), Some("lit/remap.md"));
     }
 
-    /// The second parser: `doc_from_header` in receiving.md, the fallback
+    /// The second parser: the receiver's `doc_from_header`, the fallback
     /// that routes an edit in a clone back to the document it came from.
     /// It is private to that module, so its two lines are restated here;
     /// what is being pinned is that the header's first token after ` from `

@@ -22,9 +22,13 @@ impl Response {
 struct Request {operation:Operation,response:Response}
 #[derive(Clone)]
 enum Sender {Blocking(mpsc::SyncSender<Request>),Async(tokio::sync::mpsc::Sender<Request>)}
+/// The longest a live caller waits on a backend: the cap on every bounded
+/// grace, and the bounded wait of a direct sink call.
+pub(crate) const GRACE_CEILING:Duration=Duration::from_secs(30);
 /// One admitted operation per backend; cancellation leaves the actor responsible for completion.
+/// `settle` is how long a direct sink call waits: `None` until the backend replies.
 #[derive(Clone)]
-pub(crate) struct Worker {sender:Sender,busy:Arc<AtomicBool>,history:bool}
+pub(crate) struct Worker {sender:Sender,busy:Arc<AtomicBool>,history:bool,settle:Option<Duration>}
 pub(crate) enum Ticket {
     Blocking(mpsc::Receiver<Result<Reply>>),
     Async(tokio::sync::oneshot::Receiver<Result<Reply>>),
@@ -95,7 +99,7 @@ impl Worker {
                 running.store(false,Ordering::Release);request.response.send(result);
             }
         });
-        Self {sender:Sender::Blocking(sender),busy,history}
+        Self {sender:Sender::Blocking(sender),busy,history,settle:Some(GRACE_CEILING)}
     }
     pub(crate) fn new_async(mut sink:Box<dyn AsyncFactSink>)->Self {
         let history=sink.retains_history();
@@ -112,8 +116,11 @@ impl Worker {
                 running.store(false,Ordering::Release);request.response.send(result);
             }
         });
-        Self {sender:Sender::Async(sender),busy,history}
+        Self {sender:Sender::Async(sender),busy,history,settle:Some(GRACE_CEILING)}
     }
+    /// The backend's policy, as a direct sink call reads it.
+    pub(crate) fn set_settle(&mut self,settle:Option<Duration>){self.settle=settle;}
+    fn settled(&self)->Option<Instant>{self.settle.map(|wait|Instant::now()+wait)}
     fn synchronous(&self)->Result<()> {
         anyhow::ensure!(matches!(self.sender,Sender::Blocking(_)),"async backend requires awaited delivery");
         Ok(())
@@ -146,28 +153,28 @@ impl Worker {
     pub(crate) fn read_awaitable(&self,cause:&str)->Result<Ticket>{self.submit(Operation::Read(cause.into()),true)}
     pub(crate) fn start_identity(&self)->Result<Ticket>{self.submit(Operation::Identity,false)}
     pub(crate) fn start_read(&self,cause:&str)->Result<Ticket>{self.submit(Operation::Read(cause.into()),false)}
-    pub(crate) fn read(&self,cause:&str,grace:Duration)->Result<Option<Vec<FactEntry>>> {
+    pub(crate) fn read(&self,cause:&str,deadline:Option<Instant>)->Result<Option<Vec<FactEntry>>> {
         self.synchronous()?;
-        self.start_read(cause)?.facts_until(Some(Instant::now()+grace))
+        self.start_read(cause)?.facts_until(deadline)
     }
 }
 impl FactSink for Worker {
     fn incarnation(&mut self)->Result<Option<String>> {
         self.synchronous()?;
-        self.start_identity()?.identity_until(Some(Instant::now()+Duration::from_secs(30)))
+        self.start_identity()?.identity_until(self.settled())
     }
     fn replace_source(&mut self,source:&str,batches:&FactBatches,prior:&[FactEntry],cause:&str)->Result<usize> {
         self.synchronous()?;
-        self.source(source,batches,prior.to_vec(),cause)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
+        self.source(source,batches,prior.to_vec(),cause)?.count_until(self.settled())
     }
     fn replace(&mut self,entity:&str,facts:&[FactEntry],cause:&str)->Result<usize> {
         self.synchronous()?;
-        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()),false)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
+        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()),false)?.count_until(self.settled())
     }
     fn retract(&mut self,facts:&[FactEntry],cause:&str)->Result<usize> {
         self.synchronous()?;
-        self.submit(Operation::Retract(facts.into(),cause.into()),false)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
+        self.submit(Operation::Retract(facts.into(),cause.into()),false)?.count_until(self.settled())
     }
-    fn facts_caused_by(&self,cause:&str)->Result<Option<Vec<FactEntry>>>{self.read(cause,Duration::from_secs(30))}
+    fn facts_caused_by(&self,cause:&str)->Result<Option<Vec<FactEntry>>>{self.read(cause,self.settled())}
     fn retains_history(&self)->bool{self.history}
 }

@@ -56,13 +56,27 @@ const VOID_ELEMENTS: &[&str] = &[
 /// trim). Standard HTML pre-formatted contexts.
 const PRESERVE_WHITESPACE_ELEMENTS: &[&str] = &["pre", "code"];
 
+/// Storage canonicalization and live editing share structure/attribute rules.
+/// Editing preserves decoded text whitespace; it does not select a storage format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HtmlTextPolicy {
+    Canonical,
+    Editing,
+}
+
 /// Normalize an HTML body string into the canonical form documented at the
 /// module level. Idempotent and self-contained — does not consult the
 /// envelope or filesystem.
 pub fn normalize_html(input: &str) -> String {
-    let dom = parse_body_fragment(input);
+    HtmlTextPolicy::Canonical.normalize_html(input)
+}
 
-    serialize_body_fragment(&dom, input.len())
+impl HtmlTextPolicy {
+    pub fn normalize_html(self, input: &str) -> String {
+        let dom = parse_body_fragment(input);
+
+        serialize_body_fragment(&dom, input.len(), self)
+    }
 }
 
 /// Apply canonical HTML patches, attributes first, and return a canonical
@@ -71,23 +85,32 @@ pub fn apply_canonical_patches(
     input: &str,
     patches: &[CanonicalPatch],
 ) -> Result<String, CanonicalPatchError> {
-    let canonical = normalize_html(input);
-    let dom = parse_body_fragment(&canonical);
+    HtmlTextPolicy::Canonical.apply_patches(input, patches)
+}
 
-    for patch in patches
-        .iter()
-        .filter(|patch| matches!(patch, CanonicalPatch::SetAttribute { .. }))
-    {
-        apply_attribute_patch(&dom, patch)?;
-    }
-    for patch in patches
-        .iter()
-        .filter(|patch| matches!(patch, CanonicalPatch::ReplaceVisibleText { .. }))
-    {
-        apply_text_patch(&dom, patch)?;
-    }
+impl HtmlTextPolicy {
+    pub fn apply_patches(self,
+        input: &str,
+        patches: &[CanonicalPatch],
+    ) -> Result<String, CanonicalPatchError> {
+        let canonical = self.normalize_html(input);
+        let dom = parse_body_fragment(&canonical);
 
-    Ok(serialize_body_fragment(&dom, canonical.len()))
+        for patch in patches
+            .iter()
+            .filter(|patch| matches!(patch, CanonicalPatch::SetAttribute { .. }))
+        {
+            apply_attribute_patch(&dom, patch)?;
+        }
+        for patch in patches
+            .iter()
+            .filter(|patch| matches!(patch, CanonicalPatch::ReplaceVisibleText { .. }))
+        {
+            apply_text_patch(&dom, patch)?;
+        }
+
+        Ok(serialize_body_fragment(&dom, canonical.len(), self))
+    }
 }
 
 /// Return the decoded contents of one canonical direct text run.
@@ -95,10 +118,19 @@ pub fn canonical_text_run(
     input: &str,
     point: &CanonicalTextPoint,
 ) -> Result<String, CanonicalPatchError> {
-    let dom = parse_body_fragment(&normalize_html(input));
-    let runs = canonical_text_runs(&dom);
-    let index = find_text_run_index(&runs, point)?;
-    Ok(text_run_contents(&runs[index]))
+    HtmlTextPolicy::Canonical.text_run(input, point)
+}
+
+impl HtmlTextPolicy {
+    pub fn text_run(self,
+        input: &str,
+        point: &CanonicalTextPoint,
+    ) -> Result<String, CanonicalPatchError> {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let runs = canonical_text_runs(&dom);
+        let index = find_text_run_index(&runs, point)?;
+        Ok(text_run_contents(&runs[index]))
+    }
 }
 
 /// Serialize only the canonical children of an element.
@@ -110,26 +142,64 @@ pub fn canonical_element_inner_html(
     input: &str,
     element: &str,
 ) -> Result<String, CanonicalPatchError> {
-    let canonical = normalize_html(input);
-    let dom = parse_body_fragment(&canonical);
-    let node = find_element(&dom, element)
-        .ok_or_else(|| CanonicalPatchError::ElementNotFound(element.to_string()))?;
-    let stripped: HashSet<&'static str> = STRIPPED_ELEMENTS.iter().copied().collect();
-    let void: HashSet<&'static str> = VOID_ELEMENTS.iter().copied().collect();
-    let preserve: HashSet<&'static str> = PRESERVE_WHITESPACE_ELEMENTS.iter().copied().collect();
-    let ctx = SerializeCtx {
-        stripped: &stripped,
-        void: &void,
-        preserve: &preserve,
-    };
-    let mut out = String::with_capacity(canonical.len());
-    for child in node.children.borrow().iter() {
-        serialize_inline(&mut out, child, &ctx, false, None);
+    HtmlTextPolicy::Canonical.element_inner_html(input, element)
+}
+
+impl HtmlTextPolicy {
+    /// Read presentation metadata at an address in this source reading.
+    pub fn element_attributes(self, input: &str, element: &str) -> Result<BTreeMap<String, String>, CanonicalPatchError> {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let node = find_element(&dom, element)
+            .ok_or_else(|| CanonicalPatchError::ElementNotFound(element.to_owned()))?;
+        let NodeData::Element { attrs, .. } = &node.data else { unreachable!() };
+        let attributes = attrs.borrow().iter().map(|attr| (qualified_attr_name(attr), attr.value.to_string())).collect();
+        Ok(attributes)
     }
-    while out.ends_with(' ') || out.ends_with('\t') {
-        out.pop();
+
+    /// Decode a literal text region, refusing nested markup instead of flattening it.
+    pub fn literal_element_text(self, input: &str, element: &str) -> Result<String, CanonicalPatchError> {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let node = find_element(&dom, element)
+            .ok_or_else(|| CanonicalPatchError::ElementNotFound(element.to_owned()))?;
+        let mut text = String::new();
+        for child in node.children.borrow().iter() {
+            let NodeData::Text { contents } = &child.data else {
+                return Err(CanonicalPatchError::InvalidFolio("literal text region contains markup".into()));
+            };
+            text.push_str(&contents.borrow());
+        }
+        Ok(text)
     }
-    Ok(out)
+}
+
+impl HtmlTextPolicy {
+    pub fn element_inner_html(self,
+        input: &str,
+        element: &str,
+    ) -> Result<String, CanonicalPatchError> {
+        let canonical = self.normalize_html(input);
+        let dom = parse_body_fragment(&canonical);
+        let node = find_element(&dom, element)
+            .ok_or_else(|| CanonicalPatchError::ElementNotFound(element.to_string()))?;
+        let stripped: HashSet<&'static str> = STRIPPED_ELEMENTS.iter().copied().collect();
+        let void: HashSet<&'static str> = VOID_ELEMENTS.iter().copied().collect();
+        let preserve: HashSet<&'static str> = PRESERVE_WHITESPACE_ELEMENTS.iter().copied().collect();
+        let ctx = SerializeCtx {
+            stripped: &stripped,
+            void: &void,
+            preserve: &preserve,
+            preserve_all: self == Self::Editing,
+            keep_styles: self == Self::Editing,
+        };
+        let mut out = String::with_capacity(canonical.len());
+        for child in node.children.borrow().iter() {
+            serialize_inline(&mut out, child, &ctx, ctx.preserve_all, None);
+        }
+        while !ctx.preserve_all && (out.ends_with(' ') || out.ends_with('\t')) {
+            out.pop();
+        }
+        Ok(out)
+    }
 }
 
 /// Put two canonical text points in document order and validate their UTF-8
@@ -139,16 +209,26 @@ pub fn order_canonical_text_points(
     a: &CanonicalTextPoint,
     b: &CanonicalTextPoint,
 ) -> Result<(CanonicalTextPoint, CanonicalTextPoint), CanonicalPatchError> {
-    let dom = parse_body_fragment(&normalize_html(input));
-    let runs = canonical_text_runs(&dom);
-    let a_index = find_text_run_index(&runs, a)?;
-    let b_index = find_text_run_index(&runs, b)?;
-    validate_text_offset(&runs[a_index], a.byte_offset)?;
-    validate_text_offset(&runs[b_index], b.byte_offset)?;
-    if (a_index, a.byte_offset) <= (b_index, b.byte_offset) {
-        Ok((a.clone(), b.clone()))
-    } else {
-        Ok((b.clone(), a.clone()))
+    HtmlTextPolicy::Canonical.order_points(input, a, b)
+}
+
+impl HtmlTextPolicy {
+    pub fn order_points(self,
+        input: &str,
+        a: &CanonicalTextPoint,
+        b: &CanonicalTextPoint,
+    ) -> Result<(CanonicalTextPoint, CanonicalTextPoint), CanonicalPatchError> {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let runs = canonical_text_runs(&dom);
+        let a_index = find_text_run_index(&runs, a)?;
+        let b_index = find_text_run_index(&runs, b)?;
+        validate_text_offset(&runs[a_index], a.byte_offset)?;
+        validate_text_offset(&runs[b_index], b.byte_offset)?;
+        if (a_index, a.byte_offset) <= (b_index, b.byte_offset) {
+            Ok((a.clone(), b.clone()))
+        } else {
+            Ok((b.clone(), a.clone()))
+        }
     }
 }
 
@@ -159,28 +239,38 @@ pub fn canonical_text_in_range(
     a: &CanonicalTextPoint,
     b: &CanonicalTextPoint,
 ) -> Result<String, CanonicalPatchError> {
-    let dom = parse_body_fragment(&normalize_html(input));
-    let runs = canonical_text_runs(&dom);
-    let a_index = find_text_run_index(&runs, a)?;
-    let b_index = find_text_run_index(&runs, b)?;
-    validate_text_offset(&runs[a_index], a.byte_offset)?;
-    validate_text_offset(&runs[b_index], b.byte_offset)?;
-    let ((start_index, start_offset), (end_index, end_offset)) =
-        if (a_index, a.byte_offset) <= (b_index, b.byte_offset) {
-            ((a_index, a.byte_offset), (b_index, b.byte_offset))
-        } else {
-            ((b_index, b.byte_offset), (a_index, a.byte_offset))
-        };
-    if start_index == end_index {
-        return Ok(text_run_contents(&runs[start_index])[start_offset..end_offset].to_string());
+    HtmlTextPolicy::Canonical.text_in_range(input, a, b)
+}
+
+impl HtmlTextPolicy {
+    pub fn text_in_range(self,
+        input: &str,
+        a: &CanonicalTextPoint,
+        b: &CanonicalTextPoint,
+    ) -> Result<String, CanonicalPatchError> {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let runs = canonical_text_runs(&dom);
+        let a_index = find_text_run_index(&runs, a)?;
+        let b_index = find_text_run_index(&runs, b)?;
+        validate_text_offset(&runs[a_index], a.byte_offset)?;
+        validate_text_offset(&runs[b_index], b.byte_offset)?;
+        let ((start_index, start_offset), (end_index, end_offset)) =
+            if (a_index, a.byte_offset) <= (b_index, b.byte_offset) {
+                ((a_index, a.byte_offset), (b_index, b.byte_offset))
+            } else {
+                ((b_index, b.byte_offset), (a_index, a.byte_offset))
+            };
+        if start_index == end_index {
+            return Ok(text_run_contents(&runs[start_index])[start_offset..end_offset].to_string());
+        }
+        let mut text = String::new();
+        text.push_str(&text_run_contents(&runs[start_index])[start_offset..]);
+        for run in &runs[start_index + 1..end_index] {
+            text.push_str(&text_run_contents(run));
+        }
+        text.push_str(&text_run_contents(&runs[end_index])[..end_offset]);
+        Ok(text)
     }
-    let mut text = String::new();
-    text.push_str(&text_run_contents(&runs[start_index])[start_offset..]);
-    for run in &runs[start_index + 1..end_index] {
-        text.push_str(&text_run_contents(run));
-    }
-    text.push_str(&text_run_contents(&runs[end_index])[..end_offset]);
-    Ok(text)
 }
 
 /// A direct text child, located between an element's child elements.
@@ -204,21 +294,68 @@ pub struct CanonicalElementTextChange {
 /// This is not a whole-page serializer: page bindings and scripts belong
 /// outside the canonical body that owns these text runs.
 pub fn canonical_text_changes(before: &str, after: &str) -> Result<Vec<CanonicalElementTextChange>, CanonicalPatchError> {
-    let before = parse_body_fragment(&normalize_html(before));
-    let after = parse_body_fragment(&normalize_html(after));
-    if body_text(&before) != body_text(&after) {
-        return Err(CanonicalPatchError::InvalidFolio("direct body text has no retained element identity".into()));
+    HtmlTextPolicy::Canonical.text_changes(before, after)
+}
+
+impl HtmlTextPolicy {
+    pub fn text_changes(self, before: &str, after: &str) -> Result<Vec<CanonicalElementTextChange>, CanonicalPatchError> {
+        let before = parse_body_fragment(&self.normalize_html(before));
+        let after = parse_body_fragment(&self.normalize_html(after));
+        if body_text(&before) != body_text(&after) {
+            return Err(CanonicalPatchError::InvalidFolio("direct body text has no retained element identity".into()));
+        }
+        let before = text_projection(&before);
+        let after = text_projection(&after);
+        if before.len() != after.len() || before.iter().zip(&after).any(|(a, b)| a.0 != b.0 || a.1 != b.1 || a.2 != b.2) {
+            return Err(CanonicalPatchError::InvalidFolio("visible-text edits cannot change element structure or attributes".into()));
+        }
+        Ok(before.into_iter().zip(after).filter_map(|(a, b)| {
+            (a.3 != b.3).then_some(CanonicalElementTextChange {
+                element: a.0, child_elements: a.2, before: a.3, after: b.3,
+            })
+        }).collect())
     }
-    let before = text_projection(&before);
-    let after = text_projection(&after);
-    if before.len() != after.len() || before.iter().zip(&after).any(|(a, b)| a.0 != b.0 || a.1 != b.1 || a.2 != b.2) {
-        return Err(CanonicalPatchError::InvalidFolio("visible-text edits cannot change element structure or attributes".into()));
+}
+
+/// A data or disclosure-state change on an otherwise unchanged canonical element.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalMetadataChange {
+    pub element: String,
+    pub name: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+impl HtmlTextPolicy {
+    /// Reading/provenance metadata can refresh without replacing the document.
+    /// Text and structure remain fixed; only data attributes and boolean disclosure state change.
+    pub fn metadata_changes(self, before: &str, after: &str) -> Result<Vec<CanonicalMetadataChange>, CanonicalPatchError> {
+        let before = parse_body_fragment(&self.normalize_html(before));
+        let after = parse_body_fragment(&self.normalize_html(after));
+        if body_text(&before) != body_text(&after) {
+            return Err(CanonicalPatchError::InvalidFolio("metadata cannot change body text".into()));
+        }
+        let before = text_projection(&before);
+        let after = text_projection(&after);
+        if before.len() != after.len() || before.iter().zip(&after).any(|(a,b)| a.0 != b.0 || a.2 != b.2 || a.3 != b.3) {
+            return Err(CanonicalPatchError::InvalidFolio("metadata cannot change text or structure".into()));
+        }
+        let mut changes = Vec::new();
+        for (a,b) in before.into_iter().zip(after) {
+            let names: std::collections::BTreeSet<_> = a.1.keys().chain(b.1.keys()).collect();
+            for name in names {
+                if a.1.get(name) == b.1.get(name) { continue; }
+                let disclosure = name == "aria-expanded" && [a.1.get(name),b.1.get(name)]
+                    .into_iter().flatten().all(|value| matches!(value.as_str(),"true"|"false"));
+                if (!name.starts_with("data-") && !disclosure) || name.contains(':') {
+                    return Err(CanonicalPatchError::InvalidFolio("retained metadata requires data attributes or boolean disclosure state".into()));
+                }
+                changes.push(CanonicalMetadataChange { element:a.0.clone(), name:name.clone(),
+                    before:a.1.get(name).cloned(), after:b.1.get(name).cloned() });
+            }
+        }
+        Ok(changes)
     }
-    Ok(before.into_iter().zip(after).filter_map(|(a, b)| {
-        (a.3 != b.3).then_some(CanonicalElementTextChange {
-            element: a.0, child_elements: a.2, before: a.3, after: b.3,
-        })
-    }).collect())
 }
 
 type TextProjection = (String, BTreeMap<String, String>, Vec<String>, Vec<CanonicalTextChild>);
@@ -270,6 +407,93 @@ fn text_projection(dom: &RcDom) -> Vec<TextProjection> {
     out
 }
 
+/// A parsed inert fragment used only when inserting new keyed children.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CanonicalFragment {
+    Text(String),
+    Element { tag: String, namespace: String, attributes: BTreeMap<String,String>, children: Vec<CanonicalFragment> },
+}
+
+/// One changed sibling list. Retained children keep their exact source subtree.
+#[derive(Clone, Debug)]
+pub struct CanonicalChildListChange {
+    pub parent: String,
+    pub before: Vec<(String,String)>,
+    pub after: Vec<(String,String,CanonicalFragment)>,
+}
+
+impl CanonicalChildListChange {
+    /// Map a canonical text address through its retained keyed subtree.
+    pub fn retained_path(&self, path: &str) -> Option<String> {
+        for (old,key) in &self.before {
+            if path == old || path.starts_with(&format!("{old}/")) {
+                let (new,_,_) = self.after.iter().find(|(_,candidate,_)| candidate == key)?;
+                return Some(format!("{new}{}",&path[old.len()..]));
+            }
+        }
+        Some(path.into())
+    }
+}
+
+fn fragment_tree(node: &Handle) -> Option<CanonicalFragment> {
+    match &node.data {
+        NodeData::Text { contents } => Some(CanonicalFragment::Text(contents.borrow().to_string())),
+        NodeData::Element { name,attrs,.. } => Some(CanonicalFragment::Element {
+            tag:name.local.to_string(), namespace:name.ns.to_string(),
+            attributes:attrs.borrow().iter().map(|a| (qualified_attr_name(a),a.value.to_string())).collect(),
+            children:node.children.borrow().iter().map(fragment_tree).collect::<Option<_>>()?,
+        }),
+        _ => None,
+    }
+}
+
+fn keyed_children(node: &Handle, parent: &str) -> Option<Vec<(String,String,CanonicalFragment)>> {
+    let mut indexes = BTreeMap::<String,usize>::new();
+    let mut keys = HashSet::new();
+    node.children.borrow().iter().map(|child| {
+        let tree = fragment_tree(child)?;
+        let CanonicalFragment::Element { tag,attributes,.. } = &tree else { return None };
+        let key = attributes.get("id").filter(|key| !key.is_empty())?.clone();
+        if !keys.insert(key.clone()) { return None; }
+        let index = indexes.entry(tag.clone()).or_default();
+        *index += 1;
+        Some((format!("{parent}/{tag}[{index}]"),key,tree))
+    }).collect()
+}
+
+impl HtmlTextPolicy {
+    /// Admit exactly one keyed sibling-list change and no other source change.
+    /// Ambiguous IDs, text between siblings and modified retained subtrees refuse.
+    pub fn keyed_children_change(self, before: &str, after: &str) -> Result<CanonicalChildListChange,CanonicalPatchError> {
+        let old_source = self.normalize_html(before);
+        let new_source = self.normalize_html(after);
+        let old = parse_body_fragment(&old_source);
+        let new = parse_body_fragment(&new_source);
+        let unique_ids = |dom: &RcDom| {
+            let mut seen = HashSet::new();
+            text_projection(dom).iter().all(|(_,attrs,_,_)|
+                attrs.get("id").is_none_or(|id| !id.is_empty() && seen.insert(id.clone())))
+        };
+        if old_source != new_source && unique_ids(&old) && unique_ids(&new) {
+            for (path,_,_,_) in text_projection(&old) {
+                let (Some(a),Some(b)) = (find_element(&old,&path),find_element(&new,&path)) else { continue };
+                let (Some(before),Some(after)) = (keyed_children(&a,&path),keyed_children(&b,&path)) else { continue };
+                if before.iter().map(|(_,id,_)| id).eq(after.iter().map(|(_,id,_)| id)) { continue; }
+                if before.iter().any(|(_,id,tree)| after.iter().any(|(_,next,t)| next == id && t != tree)) { continue; }
+                // Replacing just these children must reconstruct the complete old page.
+                let saved = b.children.replace(a.children.borrow().clone());
+                let restored = serialize_body_fragment(&new,old_source.len(),self);
+                b.children.replace(saved);
+                if restored == old_source {
+                    return Ok(CanonicalChildListChange { parent:path,
+                        before:before.into_iter().map(|(path,id,_)| (path,id)).collect(), after });
+                }
+            }
+        }
+        Err(CanonicalPatchError::InvalidFolio("source is not one retained keyed child list".into()))
+    }
+}
+
 fn parse_body_fragment(input: &str) -> RcDom {
     let opts = ParseOpts {
         tree_builder: TreeBuilderOpts {
@@ -284,7 +508,7 @@ fn parse_body_fragment(input: &str) -> RcDom {
     parse_fragment(RcDom::default(), opts, context, vec![], false).one(input)
 }
 
-fn serialize_body_fragment(dom: &RcDom, capacity: usize) -> String {
+fn serialize_body_fragment(dom: &RcDom, capacity: usize, policy: HtmlTextPolicy) -> String {
     let mut out = String::with_capacity(capacity);
     // The fragment-parser wraps content in `<html>`; descend into the
     // <html> root and serialize its children.
@@ -297,6 +521,8 @@ fn serialize_body_fragment(dom: &RcDom, capacity: usize) -> String {
         stripped: &stripped,
         void: &void,
         preserve: &preserve,
+        preserve_all: policy == HtmlTextPolicy::Editing,
+        keep_styles: policy == HtmlTextPolicy::Editing,
     };
     for child in children.iter() {
         // The fragment root contains a single <html> node with one
@@ -386,6 +612,100 @@ fn parse_canonical_segment(segment: &str) -> Option<(&str, usize)> {
     }
     let index = segment[open + 1..segment.len() - 1].parse().ok()?;
     (index > 0).then_some((&segment[..open], index))
+}
+
+impl HtmlTextPolicy {
+    /// Canonical writing extent excludes metadata; callers retain editing authority.
+    pub fn visible_text_extent(self, input: &str)
+        -> Option<(CanonicalTextPoint, CanonicalTextPoint)>
+    {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let runs = canonical_text_runs(&dom);
+        let writing = |run: &CanonicalTextRun| !run.point.element.split('/').any(|part|
+            matches!(part.split('[').next(),Some("style"|"script"|"title"|"template"|"desc"|"metadata")));
+        let start=runs.iter().position(writing)?;
+        let end=runs.iter().rposition(writing)?;
+        // One text range cannot skip a stylesheet or metadata island.
+        if runs[start..=end].iter().any(|run| !writing(run)) {return None;}
+        let (first,last)=(&runs[start],&runs[end]);
+        let mut end = last.point.clone();
+        end.byte_offset = text_run_contents(last).len();
+        Some((first.point.clone(), end))
+    }
+    /// Text endpoints inside one retained element, including empty inline leaves.
+    pub fn element_text_extent(self, input: &str, element: &str)
+        -> Result<Option<(CanonicalTextPoint, CanonicalTextPoint)>, CanonicalPatchError>
+    {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        find_element(&dom,element).ok_or_else(|| CanonicalPatchError::ElementNotFound(element.into()))?;
+        let prefix=format!("{element}/");
+        let runs:Vec<_>=canonical_text_runs(&dom).into_iter().filter(|run|
+            run.point.element==element || run.point.element.starts_with(&prefix)).collect();
+        let (Some(first),Some(last))=(runs.first(),runs.last()) else {return Ok(None)};
+        let mut end=last.point.clone();end.byte_offset=text_run_contents(last).len();
+        Ok(Some((first.point.clone(),end)))
+    }
+
+}
+impl HtmlTextPolicy {
+    /// The full current editing region, or no range when protected/nested
+    /// regions interrupt it. A single range cannot skip protected text.
+    pub fn declared_editing_extent(self, input: &str, at: &CanonicalTextPoint)
+        -> Result<Option<(CanonicalTextPoint, CanonicalTextPoint)>, CanonicalPatchError>
+    {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let runs = canonical_text_runs(&dom);
+        let index = find_text_run_index(&runs, at)?;
+        validate_text_offset(&runs[index], at.byte_offset)?;
+        let Some(region) = declared_region_at(&dom, &at.element) else { return Ok(None); };
+        let prefix = format!("{region}/");
+        let scoped: Vec<_> = runs.iter().filter(|run|
+            run.point.element == region || run.point.element.starts_with(&prefix)).collect();
+        if scoped.iter().any(|run| declared_region_at(&dom, &run.point.element).as_ref() != Some(&region)) {
+            return Ok(None);
+        }
+        let (Some(first), Some(last)) = (scoped.first(), scoped.last()) else { return Ok(None); };
+        let mut end = last.point.clone();
+        end.byte_offset = text_run_contents(last).len();
+        Ok(Some((first.point.clone(), end)))
+    }
+}
+
+impl HtmlTextPolicy {
+    pub fn declared_editing_region(self, input: &str, a: &CanonicalTextPoint, b: &CanonicalTextPoint)
+        -> Result<Option<String>, CanonicalPatchError>
+    {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let runs = canonical_text_runs(&dom);
+        let ai = find_text_run_index(&runs, a)?;
+        let bi = find_text_run_index(&runs, b)?;
+        validate_text_offset(&runs[ai], a.byte_offset)?;
+        validate_text_offset(&runs[bi], b.byte_offset)?;
+        let region = declared_region_at(&dom, &runs[ai].point.element);
+        if region.is_none() { return Ok(None); }
+        for run in &runs[ai.min(bi)..=ai.max(bi)] {
+            if declared_region_at(&dom, &run.point.element) != region { return Ok(None); }
+        }
+        Ok(region)
+    }
+}
+
+fn declared_region_at(dom: &RcDom, element: &str) -> Option<String> {
+    let mut path = element;
+    while !path.is_empty() {
+        let node = find_element(dom, path)?;
+        if let NodeData::Element { attrs, .. } = &node.data {
+            if let Some(attr) = attrs.borrow().iter().find(|attr| attr.name.local.as_ref() == "contenteditable") {
+                let value = attr.value.as_ref();
+                if value.eq_ignore_ascii_case("false") { return None; }
+                if value.is_empty() || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("plaintext-only") {
+                    return Some(path.to_owned());
+                }
+            }
+        }
+        path = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+    }
+    None
 }
 
 fn apply_attribute_patch(dom: &RcDom, patch: &CanonicalPatch) -> Result<(), CanonicalPatchError> {
@@ -530,6 +850,8 @@ struct SerializeCtx<'a> {
     stripped: &'a HashSet<&'static str>,
     void: &'a HashSet<&'static str>,
     preserve: &'a HashSet<&'static str>,
+    preserve_all: bool,
+    keep_styles: bool,
 }
 
 fn serialize_root_child(out: &mut String, node: &Handle, ctx: &SerializeCtx) {
@@ -538,17 +860,17 @@ fn serialize_root_child(out: &mut String, node: &Handle, ctx: &SerializeCtx) {
             // Descend into the fragment wrapper; the wrapper itself isn't
             // emitted.
             for child in node.children.borrow().iter() {
-                serialize_inline(out, child, ctx, false, None);
+                serialize_inline(out, child, ctx, ctx.preserve_all, None);
             }
         }
         _ => {
-            serialize_inline(out, node, ctx, false, None);
+            serialize_inline(out, node, ctx, ctx.preserve_all, None);
         }
     }
     // Trim any trailing whitespace at the top level so the canonical form
     // doesn't carry stray spaces. Inner whitespace collapse handles the
     // inside; this only matters when the input ends with a space-textnode.
-    while out.ends_with(' ') || out.ends_with('\t') {
+    while !ctx.preserve_all && (out.ends_with(' ') || out.ends_with('\t')) {
         out.pop();
     }
 }
@@ -609,7 +931,9 @@ fn serialize_inline(
             for attr in attrs_borrowed.iter() {
                 let key = qualified_attr_name(attr);
                 let lower = key.to_ascii_lowercase();
-                if !attribute_passes_filter(&lower, &attr.value) {
+                let kept = (ctx.keep_styles && lower == "style")
+                    || attribute_passes_filter(&lower, &attr.value);
+                if !kept {
                     continue;
                 }
                 keep.push((key, attr.value.to_string()));
@@ -631,8 +955,13 @@ fn serialize_inline(
                 return;
             }
 
-            // Children
-            if next_preserve {
+            // Raw-text parsing does not decode entities: escaping here would
+            // create a new apparent edit on every editing-projection pass.
+            if ctx.preserve_all && matches!(tag_local, "style" | "noscript" | "xmp" | "noembed" | "noframes") {
+                for child in node.children.borrow().iter() {
+                    if let NodeData::Text { contents } = &child.data { out.push_str(&contents.borrow()); }
+                }
+            } else if next_preserve {
                 for child in node.children.borrow().iter() {
                     serialize_inline(out, child, ctx, true, None);
                 }
@@ -666,6 +995,7 @@ fn append_text_character(out: &mut String, ch: char) {
         '<' => out.push_str("&lt;"),
         '>' => out.push_str("&gt;"),
         '&' => out.push_str("&amp;"),
+        '\r' => out.push_str("&#13;"),
         _ => out.push(ch),
     }
 }
@@ -746,6 +1076,7 @@ fn escape_attr_value(value: &str) -> String {
     for ch in value.chars() {
         match ch {
             '&' => out.push_str("&amp;"),
+        '\r' => out.push_str("&#13;"),
             '"' => out.push_str("&quot;"),
             _ => out.push(ch),
         }
@@ -759,6 +1090,140 @@ mod tests {
 
     fn norm(s: &str) -> String {
         normalize_html(s)
+    }
+
+    #[test]
+    fn visible_text_extent_excludes_stylesheet_at_the_document_boundary() {
+        let p=HtmlTextPolicy::Editing;
+        let html="<!doctype html>\r\n<html><head><meta charset=\"utf-8\"><style>body{margin:48px;font:32px Georgia;color:#5d686f}</style></head><body><p>é<em>界</em> 🪝</p><p>Other</p></body></html>\r\n";
+        let (start,end)=p.visible_text_extent(html).unwrap();
+        assert_eq!(start,CanonicalTextPoint::new("/p[1]",0,0));
+        assert_eq!(end,CanonicalTextPoint::new("/p[2]",0,5));
+        assert_eq!(p.text_in_range(html,&start,&end).unwrap(),"é界 🪝Other");
+        assert!(p.visible_text_extent("<style>p{color:red}</style>").is_none());
+        assert!(p.visible_text_extent("<p>one</p><style>p{color:red}</style><p>two</p>").is_none());
+    }
+
+    #[test]
+    fn visible_text_extent_spans_inline_sibling_and_empty_runs() {
+        let p = HtmlTextPolicy::Editing;
+        let html = "<p>é<em>界</em> 🪝</p><pre>line\r\n  </pre>";
+        let (start,end)=p.visible_text_extent(html).unwrap();
+        assert_eq!(start,CanonicalTextPoint::new("/p[1]",0,0));
+        assert_eq!(end,CanonicalTextPoint::new("/pre[1]",0,"line\n  ".len()));
+        assert_eq!(p.text_in_range(html,&start,&end).unwrap(),"é界 🪝line\n  ");
+        assert_eq!(p.visible_text_extent("<p></p>"),Some((
+            CanonicalTextPoint::new("/p[1]",0,0),CanonicalTextPoint::new("/p[1]",0,0))));
+        let empty="<h2>Date</h2><p><em></em></p><p>Other</p>";
+        assert_eq!(p.element_text_extent(empty,"/p[1]").unwrap(),Some((
+            CanonicalTextPoint::new("/p[1]/em[1]",0,0),CanonicalTextPoint::new("/p[1]/em[1]",0,0))));
+        assert!(p.element_text_extent(empty,"/p[3]").is_err());
+        assert_eq!(p.visible_text_extent("<img src=\"picture.png\">"),None);
+    }
+
+    #[test]
+    fn keyed_history_requires_unique_ids_and_exact_retained_subtrees() {
+        let policy = HtmlTextPolicy::Editing;
+        let before = r#"<main><section id="a"><p>é 🪝</p></section><section id="b"></section></main>"#;
+        let after = before.replace("<main>","<main><section id=\"older\"></section>");
+        let change = policy.keyed_children_change(before,&after).unwrap();
+        assert_eq!(change.retained_path("/main[1]/section[1]/p[1]"),Some("/main[1]/section[2]/p[1]".into()));
+        let removed = policy.keyed_children_change(&after,before).unwrap();
+        assert_eq!(removed.retained_path("/main[1]/section[1]"),None);
+        assert_eq!(removed.retained_path("/main[1]/section[2]/p[1]"),Some("/main[1]/section[1]/p[1]".into()));
+        for unsafe_source in [after.replace("é 🪝","changed"),after.replace("id=\"older\"","id=\"a\""),
+            after.replace("<main>","<main class=\"changed\">"),after.replace("<main>","<main>text"),
+            format!("{after}<p>outside</p>")] {
+            assert!(policy.keyed_children_change(before,&unsafe_source).is_err(),"{unsafe_source}");
+        }
+        assert!(policy.keyed_children_change(before,before).is_err());
+    }
+
+    #[test]
+    fn metadata_changes_preserve_exact_text_structure_and_non_metadata_attributes() {
+        let policy = HtmlTextPolicy::Editing;
+        let before = "<p class=\"entry\" data-reading=\"a\">  é &amp; 🪝\n</p>";
+        let after = before.replace("data-reading=\"a\"", "data-reading=\"b\" data-origin=\"agent\"");
+        let changes = policy.metadata_changes(before,&after).unwrap();
+        assert_eq!(changes.len(),2);
+        assert_eq!(changes[1],CanonicalMetadataChange { element:"/p[1]".into(),name:"data-reading".into(),before:Some("a".into()),after:Some("b".into()) });
+        let removed = policy.metadata_changes(before,&before.replace(" data-reading=\"a\"", "")).unwrap();
+        assert_eq!(removed[0].after,None);
+        for changed in [before.replace("entry","other"),before.replace("é","new"),before.replace("</p>","<b></b></p>"),format!("body{before}")] {
+            assert!(policy.metadata_changes(before,&changed).is_err(),"{changed}");
+        }
+        assert!(policy.text_changes(before,&after).is_err(),"metadata is not a text edit");
+    }
+
+    #[test]
+    fn disclosure_metadata_retains_source_and_refuses_other_attributes() {
+        let before = r#"<a href="x0k:menu" aria-expanded="false">+</a>"#;
+        let policy = HtmlTextPolicy::Editing;
+        let after = before.replace("false","true");
+        let changes = policy.metadata_changes(before,&after).unwrap();
+        assert_eq!(changes.len(),1);
+        assert_eq!(changes[0].name,"aria-expanded");
+        for after in [before.replace("false","unknown"),before.replace("x0k:menu","x0k:other"),before.replace("+","−")] {
+            assert!(policy.metadata_changes(before,&after).is_err());
+        }
+    }
+
+    #[test]
+    fn editing_keeps_inline_geometry_without_changing_storage_policy() {
+        let source = "<p contenteditable=\"plaintext-only\" style=\"min-height:2em;white-space:pre-wrap\"></p>";
+        let policy = HtmlTextPolicy::Editing;
+        assert_eq!(policy.normalize_html(source), source);
+        assert_eq!(normalize_html(source), "<p contenteditable=\"plaintext-only\"></p>");
+        let point = CanonicalTextPoint::new("/p[1]", 0, 0);
+        let after = policy.apply_patches(source, &[CanonicalPatch::ReplaceVisibleText {
+            start: point.clone(), end: point, replacement: "first  界".into(),
+        }]).unwrap();
+        assert_eq!(after, source.replace("</p>", "first  界</p>"));
+        assert_eq!(policy.normalize_html(&after), after);
+    }
+
+    #[test]
+    fn editing_raw_text_projection_is_stable_while_heading_text_changes() {
+        let policy = HtmlTextPolicy::Editing;
+        let source = "<style>p > a::before { content: '<&>'; }</style><noscript><p>fallback &amp; text</p></noscript><h1>Words</h1>";
+        let projection = policy.normalize_html(source);
+        assert_eq!(policy.normalize_html(&projection), projection);
+        assert_eq!(projection, source);
+        let after = policy.normalize_html(&source.replace("Words", "Changed"));
+        let changes = policy.text_changes(source, &after).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].element, "/h1[1]");
+        assert_eq!(changes[0].after[0].text, "Changed");
+    }
+
+    #[test]
+    fn editing_policy_preserves_draft_spaces_without_relaxing_attribute_filters() {
+        let policy = HtmlTextPolicy::Editing;
+        let raw = "<p onclick=\"x()\">  café  &amp; 界 \n</p><script>bad()</script>";
+        let expected = "<p>  café  &amp; 界 \n</p>";
+        assert_eq!(policy.normalize_html(raw), expected);
+        assert_eq!(policy.normalize_html(expected), expected);
+        assert_eq!(normalize_html(raw), "<p>café &amp; 界</p>");
+        assert_eq!(policy.element_inner_html(raw, "/p[1]").unwrap(), "  café  &amp; 界 \n");
+    }
+
+    #[test]
+    fn editing_ranges_patches_and_diffs_use_the_same_whitespace_coordinates() {
+        let policy = HtmlTextPolicy::Editing;
+        let before = "<p>é  <strong>界 </strong> tail  </p>";
+        let start = CanonicalTextPoint::new("/p[1]", 0, "é".len());
+        let end = CanonicalTextPoint::new("/p[1]/strong[1]", 0, "界 ".len());
+        assert_eq!(policy.text_in_range(before, &end, &start).unwrap(), "  界 ");
+        assert_eq!(policy.order_points(before, &end, &start).unwrap(), (start.clone(), end.clone()));
+        let after = policy.apply_patches(before, &[CanonicalPatch::ReplaceVisibleText {
+            start: start.clone(), end, replacement: " <&>  ".into(),
+        }]).unwrap();
+        assert_eq!(after, "<p>é &lt;&amp;&gt;  <strong></strong> tail  </p>");
+        assert_eq!(policy.text_run(&after, &start).unwrap(), "é <&>  ");
+        let space_only = policy.text_changes("<p>é</p>", "<p>é </p>").unwrap();
+        assert_eq!(space_only.len(), 1);
+        assert_eq!(space_only[0].after[0].text, "é ");
+        assert!(canonical_text_changes("<p>é</p>", "<p>é </p>").unwrap().is_empty());
     }
 
     #[test]
@@ -980,6 +1445,60 @@ mod tests {
         assert!(once.contains("&amp;"));
         let twice = norm(&once);
         assert_eq!(once, twice, "entity escaping must be idempotent");
+    }
+
+    #[test]
+    fn editing_extent_includes_inline_text_but_not_other_regions() {
+        let policy = HtmlTextPolicy::Editing;
+        let source = r#"<h2>Date</h2><article contenteditable="true">é<span>界</span></article><p contenteditable="true"></p>"#;
+        let at = CanonicalTextPoint::new("/article[1]/span[1]", 0, 0);
+        let (start, end) = policy.declared_editing_extent(source, &at).unwrap().unwrap();
+        assert_eq!(policy.text_in_range(source, &start, &end).unwrap(), "é界");
+        let empty = CanonicalTextPoint::new("/p[1]", 0, 0);
+        assert_eq!(policy.declared_editing_extent(source, &empty).unwrap(), Some((empty.clone(),empty)));
+        for declaration in ["false", "true"] {
+            let guarded = format!("<article contenteditable=\"true\">a<span contenteditable=\"{declaration}\">guarded</span>b</article>");
+            assert!(policy.declared_editing_extent(&guarded, &CanonicalTextPoint::new("/article[1]",0,0)).unwrap().is_none());
+        }
+        assert!(policy.declared_editing_extent(source, &CanonicalTextPoint::new("/h2[1]",0,0)).unwrap().is_none());
+        assert!(policy.declared_editing_extent(source, &CanonicalTextPoint::new("/article[1]",0,1)).is_err());
+    }
+
+    #[test]
+    fn declared_regions_validate_every_run_and_utf8_offset() {
+        let html = r#"<h2>Date</h2><article contenteditable="true"><span>é</span><em contenteditable="inherit">idea</em><small contenteditable="false">Saved</small><b>tail</b></article><p contenteditable="plaintext-only"></p>"#;
+        let point = |element: &str, offset| CanonicalTextPoint::new(element, 0, offset);
+        let region = |a: &str, start, b: &str, end| HtmlTextPolicy::Editing.declared_editing_region(html, &point(a, start), &point(b, end));
+        assert_eq!(region("/article[1]/em[1]", 4, "/article[1]/span[1]", 0).unwrap().as_deref(), Some("/article[1]"));
+        assert_eq!(region("/article[1]/span[1]", 0, "/article[1]/b[1]", 4).unwrap(), None, "read-only island between editable endpoints");
+        assert_eq!(region("/h2[1]", 0, "/h2[1]", 4).unwrap(), None);
+        assert_eq!(region("/p[1]", 0, "/p[1]", 0).unwrap().as_deref(), Some("/p[1]"));
+        assert_eq!(region("/article[1]/span[1]", 0, "/p[1]", 0).unwrap(), None);
+        assert!(region("/article[1]/span[1]", 1, "/article[1]/span[1]", 2).is_err());
+        assert!(region("/missing[1]", 0, "/p[1]", 0).is_err());
+    }
+
+    #[test]
+    fn declared_regions_keep_nested_roots_distinct_even_with_duplicate_ids() {
+        let html = r#"<article contenteditable="TRUE" id="same">outer<span contenteditable="" id="same">inner</span>end</article><aside contenteditable="false"><p contenteditable="true">local</p></aside>"#;
+        let point = |element: &str, run| CanonicalTextPoint::new(element, run, 0);
+        let policy = HtmlTextPolicy::Editing;
+        assert_eq!(policy.declared_editing_region(html, &point("/article[1]", 0), &point("/article[1]", 1)).unwrap(), None);
+        let inner = point("/article[1]/span[1]", 0);
+        assert_eq!(policy.declared_editing_region(html, &inner, &inner).unwrap().as_deref(), Some("/article[1]/span[1]"));
+        let local = point("/aside[1]/p[1]", 0);
+        assert_eq!(policy.declared_editing_region(html, &local, &local).unwrap().as_deref(), Some("/aside[1]/p[1]"));
+    }
+
+    #[test]
+    fn literal_regions_decode_text_and_metadata_without_flattening_markup() {
+        let policy = HtmlTextPolicy::Editing;
+        let source = "<p data-entry='17' data-reading='a&amp;b'>  &lt;code&gt; é\n🪝  </p>";
+        assert_eq!(policy.literal_element_text(source, "/p[1]").unwrap(), "  <code> é\n🪝  ");
+        assert_eq!(policy.element_attributes(source, "/p[1]").unwrap()["data-reading"], "a&b");
+        assert_eq!(policy.literal_element_text("<p></p>", "/p[1]").unwrap(), "");
+        assert!(policy.literal_element_text("<p>a<em>b</em></p>", "/p[1]").is_err());
+        assert!(policy.element_attributes(source, "/p[2]").is_err());
     }
 
     #[test]

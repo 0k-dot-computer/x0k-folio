@@ -3260,7 +3260,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-folio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3280,7 +3280,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-folio-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3324,7 +3324,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-folio-ingest"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3347,7 +3347,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-ontology"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "oxrdf",
  "oxttl",
@@ -3368,7 +3368,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-tangle"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",

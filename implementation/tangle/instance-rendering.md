@@ -279,22 +279,22 @@ pub fn gfm(view: &InstanceView) -> String {
 
 ## A declaration on both surfaces
 
-These tests use one Paper and one Affordance, with the Paper definition in another selected document.
+These tests use one Paper and one Affordance, with the Paper definition in another selected document. The corpus build's region weaver renders the same pair across the members of a region, and pins that with this fixture in its own chapter.
 
 <a name="chunk-tests"></a><sub>[`src/instance_rendering.rs`](../../crates/x0k-tangle/src/instance_rendering.rs) · `#tests`</sub>
 
 ```rust {#tests}
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::parser::parse_document;
     use crate::region_gfm::{weave_chapter_with_instances, unweave_chapter, ChapterLinks};
-    use crate::region_weave::{RegionInput, RegionMember, weave_region_with_vocabulary};
     use crate::weave::weave_html_with_instances;
-    use std::path::PathBuf;
 
-    fn fixture() -> (String, String) {
+    /// A vocabulary document defining `paper:Paper`, and a document
+    /// declaring one paper and one affordance under it.
+    pub(crate) fn fixture() -> (String, String) {
         let fence = char::from(96).to_string().repeat(3);
         let definitions = format!("# Vocabulary\n\n{fence}turtle folio:graph\n\
             @prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
@@ -336,26 +336,6 @@ mod tests {
         assert!(html.contains("data-source-start="));
         assert!(html.contains("var(--border)"), "cards use existing theme variables");
         assert_eq!(unweave_chapter(&woven), source);
-    }
-
-    #[test]
-    fn region_wide_definitions_render_an_instance_in_another_member() {
-        let (definitions, source) = fixture();
-        let input = RegionInput {
-            members: vec![
-                RegionMember { uri: "x0k:design/example".into(), content: source, source_path: PathBuf::from("example.md") },
-                RegionMember { uri: "x0k:design/vocabulary".into(), content: definitions, source_path: PathBuf::from("vocab.md") },
-            ],
-            entry_point_uri: "x0k:design/example".into(),
-        };
-        let mut output = weave_region_with_vocabulary(&input, &OntologyModel::shipped()).unwrap();
-        crate::presentation::apply_publication_shell(&mut output, &input, None);
-        let page = output.files.iter().find(|file| file.rel_path == std::path::Path::new("pages/index.html")).unwrap();
-        let html = std::str::from_utf8(&page.bytes).unwrap();
-        assert!(html.contains("https://example.test/paper#paper/one"), "{html}");
-        assert!(html.contains("folio-instance-affordance"));
-        assert!(!html.contains("Unresolved instance"));
-        assert!(html.contains("Source declaration"));
     }
 
     /// A document declaring one paper; `extra` is further statements,

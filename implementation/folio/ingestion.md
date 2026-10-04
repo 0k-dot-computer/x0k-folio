@@ -57,6 +57,21 @@ no loop to keep moving, and a write that takes a minute is a slow ingest
 rather than a lost one. `Some(duration)` keeps the watcher's bounded wait
 exactly as it was.
 
+Which caller takes which follows from the same question. The query CLI's
+`ingest` and `rebuild` read a closed local collection and wait for
+quiescence unless told otherwise; its `watch`, and a daemon's watcher, keep
+a bound, because a loop that serves edits as they happen has to keep moving.
+
+The policy is the backend's, so it holds on every path to the sink, not only
+the fan-out's. `replace_document`, `replace_document_with_prior` and
+`retract_document` call a backend's sink directly, and so does anyone holding
+`Backend::sink`. Under quiescence those calls wait for the store too. Under a
+bound they wait up to the thirty seconds every grace is capped at, rather than
+the fan-out's own shorter grace: the fan-out can give up early because its
+journal replays the source on the next pass, and a direct call keeps no
+journal, so a write it abandoned would simply be a write that failed. Thirty
+seconds is as long as any live caller is allowed to wait, and no longer.
+
 The carried example is the ADR itself. When
 `corpora/x0k/decisions/architecture/delivery/folio-backends.md` is saved, the fold
 yields seven envelope facts on `x0k:architecture/folio-backends` — status,
@@ -244,16 +259,23 @@ impl Backend {
     /// Overall completion grace after fan-out admission, capped at 30 seconds.
     /// Late success remains unacknowledged and is safely replayed. The
     /// live-delivery answer: a watcher cannot stall its loop on the difference
-    /// between a slow sink and an absent one.
+    /// between a slow sink and an absent one. A direct sink call, which has
+    /// no journal to replay from, waits the 30-second cap itself.
     pub fn with_delivery_grace(mut self, grace: std::time::Duration) -> Self {
-        self.grace = Some(grace.min(std::time::Duration::from_secs(30)));
-        self
+        self.grace = Some(grace.min(crate::delivery::GRACE_CEILING));
+        self.settling(Some(crate::delivery::GRACE_CEILING))
     }
     /// Wait for this backend to finish rather than for a clock — the answer
     /// for a closed collection, where nothing is racing the write and
     /// abandoning one leaves the worker busy and every later source refused.
+    /// The fan-out and every direct sink call both wait.
     pub fn waiting_for_quiescence(mut self) -> Self {
         self.grace = None;
+        self.settling(None)
+    }
+    fn settling(mut self, settle: Option<std::time::Duration>) -> Self {
+        self.worker.set_settle(settle);
+        self.sink = Box::new(self.worker.clone());
         self
     }
     /// Either policy as one option, for a caller whose verb decides which:
@@ -759,10 +781,10 @@ not a claim of fresh results or a complete freshness/status interface.
 ```toml {#ingest-manifest file="Cargo.toml"}
 [package]
 name = "x0k-folio-ingest"
-version = "0.2.0"
+version = "0.2.1"
 edition = { workspace = true }
 license = "MIT"
-description = "Standalone document ingestion and independent backend recovery"
+description = "Keeps one or more fact stores in step with a directory of documents: the host projects each changed document into facts, this crate delivers them to every attached store, and an on-disk checkpoint records what each store acknowledged, so a failed or interrupted write is replayed rather than lost."
 rust-version = { workspace = true }
 repository = "https://github.com/0k-dot-computer/x0k-folio"
 readme = "../../README.md"
@@ -1655,6 +1677,9 @@ A synchronous sink call refuses an async backend before submitting anything.
 All source effects are submitted before
 the coordinator waits, using one completion deadline. Late acknowledgements are
 not applied to newer revisions; the next reconciliation replays safely.
+A direct sink call on the worker waits under the backend's own policy,
+carried as `settle`: no deadline for a quiescent backend, the thirty-second
+ceiling for a bounded one.
 
 <a name="chunk-backend-worker"></a><sub>[`src/delivery.rs`](../../crates/x0k-folio-ingest/src/delivery.rs) · `#backend-worker`</sub>
 
@@ -1682,9 +1707,13 @@ impl Response {
 struct Request {operation:Operation,response:Response}
 #[derive(Clone)]
 enum Sender {Blocking(mpsc::SyncSender<Request>),Async(tokio::sync::mpsc::Sender<Request>)}
+/// The longest a live caller waits on a backend: the cap on every bounded
+/// grace, and the bounded wait of a direct sink call.
+pub(crate) const GRACE_CEILING:Duration=Duration::from_secs(30);
 /// One admitted operation per backend; cancellation leaves the actor responsible for completion.
+/// `settle` is how long a direct sink call waits: `None` until the backend replies.
 #[derive(Clone)]
-pub(crate) struct Worker {sender:Sender,busy:Arc<AtomicBool>,history:bool}
+pub(crate) struct Worker {sender:Sender,busy:Arc<AtomicBool>,history:bool,settle:Option<Duration>}
 pub(crate) enum Ticket {
     Blocking(mpsc::Receiver<Result<Reply>>),
     Async(tokio::sync::oneshot::Receiver<Result<Reply>>),
@@ -1755,7 +1784,7 @@ impl Worker {
                 running.store(false,Ordering::Release);request.response.send(result);
             }
         });
-        Self {sender:Sender::Blocking(sender),busy,history}
+        Self {sender:Sender::Blocking(sender),busy,history,settle:Some(GRACE_CEILING)}
     }
     pub(crate) fn new_async(mut sink:Box<dyn AsyncFactSink>)->Self {
         let history=sink.retains_history();
@@ -1772,8 +1801,11 @@ impl Worker {
                 running.store(false,Ordering::Release);request.response.send(result);
             }
         });
-        Self {sender:Sender::Async(sender),busy,history}
+        Self {sender:Sender::Async(sender),busy,history,settle:Some(GRACE_CEILING)}
     }
+    /// The backend's policy, as a direct sink call reads it.
+    pub(crate) fn set_settle(&mut self,settle:Option<Duration>){self.settle=settle;}
+    fn settled(&self)->Option<Instant>{self.settle.map(|wait|Instant::now()+wait)}
     fn synchronous(&self)->Result<()> {
         anyhow::ensure!(matches!(self.sender,Sender::Blocking(_)),"async backend requires awaited delivery");
         Ok(())
@@ -1806,29 +1838,29 @@ impl Worker {
     pub(crate) fn read_awaitable(&self,cause:&str)->Result<Ticket>{self.submit(Operation::Read(cause.into()),true)}
     pub(crate) fn start_identity(&self)->Result<Ticket>{self.submit(Operation::Identity,false)}
     pub(crate) fn start_read(&self,cause:&str)->Result<Ticket>{self.submit(Operation::Read(cause.into()),false)}
-    pub(crate) fn read(&self,cause:&str,grace:Duration)->Result<Option<Vec<FactEntry>>> {
+    pub(crate) fn read(&self,cause:&str,deadline:Option<Instant>)->Result<Option<Vec<FactEntry>>> {
         self.synchronous()?;
-        self.start_read(cause)?.facts_until(Some(Instant::now()+grace))
+        self.start_read(cause)?.facts_until(deadline)
     }
 }
 impl FactSink for Worker {
     fn incarnation(&mut self)->Result<Option<String>> {
         self.synchronous()?;
-        self.start_identity()?.identity_until(Some(Instant::now()+Duration::from_secs(30)))
+        self.start_identity()?.identity_until(self.settled())
     }
     fn replace_source(&mut self,source:&str,batches:&FactBatches,prior:&[FactEntry],cause:&str)->Result<usize> {
         self.synchronous()?;
-        self.source(source,batches,prior.to_vec(),cause)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
+        self.source(source,batches,prior.to_vec(),cause)?.count_until(self.settled())
     }
     fn replace(&mut self,entity:&str,facts:&[FactEntry],cause:&str)->Result<usize> {
         self.synchronous()?;
-        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()),false)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
+        self.submit(Operation::Replace(entity.into(),facts.into(),cause.into()),false)?.count_until(self.settled())
     }
     fn retract(&mut self,facts:&[FactEntry],cause:&str)->Result<usize> {
         self.synchronous()?;
-        self.submit(Operation::Retract(facts.into(),cause.into()),false)?.count_until(Some(Instant::now()+Duration::from_secs(30)))
+        self.submit(Operation::Retract(facts.into(),cause.into()),false)?.count_until(self.settled())
     }
-    fn facts_caused_by(&self,cause:&str)->Result<Option<Vec<FactEntry>>>{self.read(cause,Duration::from_secs(30))}
+    fn facts_caused_by(&self,cause:&str)->Result<Option<Vec<FactEntry>>>{self.read(cause,self.settled())}
     fn retains_history(&self)->bool{self.history}
 }
 ```
@@ -1944,6 +1976,51 @@ async fn a_backend_slower_than_any_grace_still_acknowledges_every_source_when_wa
     assert!(settled.files.values().all(|file| file.acked_by.contains("slow")),
         "waiting for the backend acknowledges every source");
     assert_eq!(view.facts().len(), 3);
+}
+```
+
+The direct paths — `replace_document`, `replace_document_with_prior`,
+`retract_document`, and a call on `Backend::sink` — take the same policy.
+They once did not: each waited a fixed thirty seconds whatever the backend
+had been told, so a quiescent backend whose write outlasted that was
+abandoned on exactly the clock it had been configured not to have. The
+write below takes longer than those thirty seconds, which makes this the
+slowest test in the crate, and it has to: a sink any faster cannot tell a
+thirty-second cap from no cap. The time bound is the other half of the
+claim — the call returns when the store goes quiet, not a grace period
+after it.
+
+<a name="chunk-quiescent-direct-paths"></a><sub>[`tests/standalone.rs`](../../crates/x0k-folio-ingest/tests/standalone.rs) · `#quiescent-direct-paths`</sub>
+
+```rust {#quiescent-direct-paths file="tests/standalone.rs"}
+#[test]
+fn a_closed_ingest_through_the_direct_paths_waits_for_the_store_not_a_clock() {
+    struct Slow { view: MemorySink, delay: std::time::Duration }
+    impl FactSink for Slow {
+        fn replace(&mut self, entity:&str,facts:&[FactEntry],cause:&str)->Result<usize> {
+            std::thread::sleep(self.delay);
+            self.view.replace(entity,facts,cause)
+        }
+        fn retract(&mut self,facts:&[FactEntry],cause:&str)->Result<usize> { self.view.retract(facts,cause) }
+        fn retains_history(&self)->bool { false }
+    }
+    // Longer than the thirty seconds the direct paths used to allow.
+    let delay = std::time::Duration::from_secs(31);
+    let view = MemorySink::default();
+    let mut backends = vec![
+        Backend::new("slow", Slow { view: view.clone(), delay }).waiting_for_quiescence(),
+    ];
+    let fact = FactEntry::new("urn:a", "urn:label", FactValue::Text("A".into()));
+    let batches = vec![("urn:a".to_string(), vec![fact])];
+    let started = std::time::Instant::now();
+    let fan_out = x0k_folio_ingest::backend::replace_document(
+        &mut backends, &std::collections::BTreeSet::new(), &batches, None, "file-content:a");
+    let elapsed = started.elapsed();
+    assert!(fan_out.acked.contains("slow"),
+        "a quiescent backend's write was abandoned after {elapsed:.1?}, before the store went quiet");
+    assert!(elapsed < delay + std::time::Duration::from_secs(5),
+        "a {delay:?} write took {elapsed:.1?}: the call waited past the store going quiet");
+    assert_eq!(view.facts().len(), 1);
 }
 ```
 

@@ -7,8 +7,7 @@ implementation:icon\/emit a x0k:Implementation ;
     x0k:concerns "icons", "svg", "emit", "publishing", "sprite" ;
     x0k:cites architecture:entity-iconography,
         implementation:icon\/bind,
-        implementation:icon\/validate,
-        implementation:tangle\/region-repo ;
+        implementation:icon\/validate ;
     x0k:implements design:icon-profile ;
     folio:tangleCrate "crates/x0k-icon" ;
     folio:tangleRoot "src/emit.rs" .
@@ -191,8 +190,7 @@ pub fn inline_svg(icon: &Accepted, label: &Label) -> String {
 Where a surface cannot resolve a variable, the emitter writes one file
 per scheme, and the page shows them through a `<picture>` whose
 `prefers-color-scheme` source picks the dark one — the convention the
-[repository projector](../tangle/region-repo.md "x0k:implementation/tangle/region-repo") already
-uses for its plates. The file names are the stem and the scheme; the
+repository projector already uses for its plates. The file names are the stem and the scheme; the
 order is light then dark, always.
 
 <a name="chunk-files"></a><sub>[`src/emit.rs`](../../crates/x0k-icon/src/emit.rs) · `#files`</sub>

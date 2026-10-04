@@ -1184,27 +1184,3 @@ fn version_names_this_package() {
         "the version line names the package and its version"
     );
 }
-
-/// A sweep reports each output once. `identity_outputs` is a projection
-/// of `pipeline_outputs`, and a summary that added the two reported a
-/// one-file document as `→ src/lib.rs (+1 more)`.
-#[test]
-fn workspace_counts_each_output_once() {
-    let tmp = TempDir::new().unwrap();
-    let root = x0k_tangle::identity_pipeline::LITERATE_ROOTS[0];
-    write(tmp.path(), &format!("{root}/d.md"), &tangling_doc("once"));
-
-    let out = Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
-        .arg("workspace")
-        .arg("--root")
-        .arg(tmp.path())
-        .output()
-        .expect("the x0k-tangle binary runs");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "the sweep failed: {stderr}");
-    assert!(stderr.contains("tangled:    1"), "the sweep tangled the doc: {stderr}");
-    assert!(
-        stderr.contains("d.md → src/lib.rs") && !stderr.contains("more)"),
-        "a one-file document is reported as one file: {stderr}"
-    );
-}

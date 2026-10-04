@@ -16,11 +16,9 @@ presented according to their concept, publication surface, and theme.
 An affordance is one example: its instance says what a person or tool can
 do, who can use it, and which software provides it.
 
-<a name="folio-instance-78306b3a6166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1"></a><sub data-instance-iri="x0k:affordance/read_declared_affordances" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/read_declared_affordances</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1">source declaration</a> · the graph block at line 21 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md:19</sub><a name="folio-source-78306b3a6166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1"></a>
+<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/read_declared_affordances" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md"><strong>Affordance</strong> · Declare concepts and instances · <code>https://0k.computer/ontology#affordance/read_declared_affordances</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f726561645f6465636c617265645f6166666f7264616e636573-1"></a>
 
 ```turtle folio:graph
-@prefix actor: <https://0k.computer/ontology#actor/> .
-@prefix software-module: <https://0k.computer/ontology#software-module/> .
 affordance:read_declared_affordances a x0k:Affordance ;
     x0k:claimedFor actor:human,
         actor:ai_agent ;

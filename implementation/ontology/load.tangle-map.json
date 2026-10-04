@@ -1,6 +1,6 @@
 {
   "source": "implementation/ontology/load.md",
-  "source_hash": "d2df7bf11db8f9c8",
+  "source_hash": "52270409304ac817",
   "pipelines": [
     {
       "kind": "identity-tangle",

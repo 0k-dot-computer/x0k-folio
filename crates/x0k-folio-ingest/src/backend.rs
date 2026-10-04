@@ -115,16 +115,23 @@ impl Backend {
     /// Overall completion grace after fan-out admission, capped at 30 seconds.
     /// Late success remains unacknowledged and is safely replayed. The
     /// live-delivery answer: a watcher cannot stall its loop on the difference
-    /// between a slow sink and an absent one.
+    /// between a slow sink and an absent one. A direct sink call, which has
+    /// no journal to replay from, waits the 30-second cap itself.
     pub fn with_delivery_grace(mut self, grace: std::time::Duration) -> Self {
-        self.grace = Some(grace.min(std::time::Duration::from_secs(30)));
-        self
+        self.grace = Some(grace.min(crate::delivery::GRACE_CEILING));
+        self.settling(Some(crate::delivery::GRACE_CEILING))
     }
     /// Wait for this backend to finish rather than for a clock — the answer
     /// for a closed collection, where nothing is racing the write and
     /// abandoning one leaves the worker busy and every later source refused.
+    /// The fan-out and every direct sink call both wait.
     pub fn waiting_for_quiescence(mut self) -> Self {
         self.grace = None;
+        self.settling(None)
+    }
+    fn settling(mut self, settle: Option<std::time::Duration>) -> Self {
+        self.worker.set_settle(settle);
+        self.sink = Box::new(self.worker.clone());
         self
     }
     /// Either policy as one option, for a caller whose verb decides which:

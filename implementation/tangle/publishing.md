@@ -3,7 +3,7 @@
 ```turtle folio:document
 implementation:tangle\/publishing a x0k:Implementation ;
     x0k:status "draft" ;
-    x0k:summary "The stages between a repository-shaped artifact and a public one, arranged so everything reversible runs by default and the irreversible acts — `cargo publish`, a push to a public remote — sit behind one explicit flag." ;
+    x0k:summary "The stages between a repository-shaped artifact and a public one, arranged so everything reversible runs by default and the irreversible acts — a push to the publication's remote, and `cargo publish` when the publication asks for it — sit behind one explicit flag." ;
     x0k:concerns "tangle", "publication", "publishing", "crates-io", "git" ;
     x0k:cites implementation:folio\/colophon ;
     x0k:implements design:publish-a-region-as-a-repository ;
@@ -14,10 +14,19 @@ implementation:tangle\/publishing a x0k:Implementation ;
 Projection (`region_repo`) makes a repository-shaped *artifact*;
 publishing makes it *public*. The two are different acts with different
 blast radii: a projection into a scratch directory is free to repeat,
-while `cargo publish` to crates.io and a `git push` to a public remote
+while a `git push` to a public remote and `cargo publish` to crates.io
 are outward-facing and effectively irreversible. This module is the
 pipeline between them, built so that everything reversible runs by
 default and everything irreversible sits behind one explicit flag.
+
+A publication is anybody's. The one that publishes this crate ships nine
+Rust crates and uploads seven of them to crates.io; another ships three
+reports and a vocabulary module and has nothing to build. So the
+pipeline asks the publication what it is before doing anything on its
+behalf: whether a crate ships decides whether there is a build to prove,
+and whether the publication *states* a registry decides whether one is
+asked anything at all. A publication that says nothing about a registry
+is published by a push and nothing else.
 
 Given a publication doc and an output directory, `publish_repo` runs
 four stages:
@@ -32,11 +41,16 @@ four stages:
    nothing changed), so repeated publishes of the same publication
    append to one continuous public history rather than each minting a
    fresh root — the base an outside contribution needs.
-2. **Prove** — build and test the projection standalone, with a private
-   target dir inside the output (the repo's own `.gitignore` already
-   covers it). What ships is what compiled, not what the monorepo
-   compiled.
-3. **Rehearse** — ask the registry index which version of each crate
+2. **Prove** — when a crate ships, build and test the projection
+   standalone, with a private target dir inside the output (the repo's
+   own `.gitignore` already covers it). What ships is what compiled, not
+   what the source workspace compiled. A projection with no crate has
+   nothing to compile and skips the stage.
+3. **Rehearse** — name the commit the push would carry, the remote it
+   would go to and the branch it would land on (see *Where the push
+   goes* below), without touching the remote. Then, only when the
+   publication states `x0k:publishRegistry "crates.io"`: ask the
+   registry index which version of each crate
    it already serves (see *Asking the index* below), then one
    `cargo publish --dry-run --workspace` with every already-published
    crate `--exclude`d: cargo packages and verifies the rest in a single
@@ -48,44 +62,44 @@ four stages:
    reported (see below) so the operator can see what cargo will do.
    When the index already serves every publishable crate's version
    there is nothing to rehearse, and the report says so.
-4. **Publish** — the same `cargo publish --workspace --exclude …`
-   without `--dry-run` (skipped when nothing is pending), and the
-   `git push` to the remote the publication doc
-   names. **Operator-only:** both run solely under `really: true`; the
-   default invocation reports what *would* happen and stops. The remote comes from the doc's
-   `x0k:publishedOn` edge (`x0k:surface/<name>`) resolved through
-   `config/x0k-tangle.toml`'s `[publish.remotes]` table — the doc names
-   the surface, the config owns the URL, and a missing entry is a
-   reported gap, not an error.
+4. **Publish** — for a publication that states the registry, the same
+   `cargo publish --workspace --exclude …` without `--dry-run` (skipped
+   when nothing is pending); then, for every publication, the
+   `git push` to its remote. Both run solely under `really: true`; the
+   default invocation reports what *would* happen and stops. A run
+   with no remote to push to reports the gap and, under `really`,
+   refuses before anything outward-facing happens.
 
-Placement note: this is build-time tooling that operates on the
-workspace and spawns `cargo`/`git` — world-touching orchestration around
-the substrate's edges, not pure logic a cell could host. Per the
-residency test, a module in the plain `x0k-tangle` crate (beside the
-projector it drives) is the right home.
+This is build-time tooling that operates on a collection and spawns
+`cargo` and `git`, so it lives beside the projector it drives, in the
+plain `x0k-tangle` crate, and ships with it.
 
 <a name="chunk-module-doc"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
 //! Publish pipeline for a projected repository — project, prove,
-//! rehearse, and (operator-only, behind `really`) publish.
+//! rehearse, and (only behind `really`) publish.
 //!
-//! Wraps [`crate::region_repo`]: projects the publication with guards on,
-//! builds + tests the projection standalone with a private target dir,
-//! asks the registry index which crate versions it already serves, runs
-//! one `cargo publish --dry-run --workspace` excluding those, and —
-//! only under `really: true` — runs the real `cargo publish` and pushes
-//! the projected git history to the remote the publication doc's
-//! `x0k:publishedOn` edge names (resolved via `[publish.remotes]` in
-//! `config/x0k-tangle.toml`). The default run stops after the rehearsal
-//! and reports; nothing outward-facing happens without the flag.
+//! Wraps [`crate::region_repo`]: projects the publication with guards on;
+//! when a crate ships, builds + tests the projection standalone with a
+//! private target dir; names the commit, remote and branch a push would
+//! use; and, when the publication states `x0k:publishRegistry
+//! "crates.io"`, asks the index which crate versions it already serves and
+//! runs one `cargo publish --dry-run --workspace` excluding those. Only
+//! under `really: true` does it upload to the registry and push the
+//! projected git history to the remote — `--remote`, else the
+//! publication's `x0k:publishRemote`, else its own `x0k:repository`, else
+//! its `x0k:publishedOn` surface resolved via `[publish.remotes]` in
+//! `config/x0k-tangle.toml`. The
+//! default run stops after the rehearsal and reports; nothing
+//! outward-facing happens without the flag.
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::region_repo::{project_publication_repo, RepoProjectOptions, RepoProjectReport};
-use x0k_folio::colophon::parse_envelope;
+use crate::collection::Vocabulary;
+use crate::region_repo::{project_publication_repo_in, Proofs, RepoProjectOptions, RepoProjectReport};
 ```
 
 ## Options and report
@@ -101,9 +115,28 @@ pub struct PublishRepoOptions {
     pub license: Option<String>,
     /// Emit the `.github/workflows/` thin wrappers in the projection.
     pub emit_github: bool,
-    /// Actually run `cargo publish` (no `--dry-run`) and `git push`.
-    /// Operator-only; the default run stops after the dry-run rehearsal.
+    /// Actually push, and run `cargo publish` (no `--dry-run`) when the
+    /// publication states a registry. The default run stops after the
+    /// rehearsal.
     pub really: bool,
+    /// The git remote to push to, overriding whatever the publication
+    /// names. `None` asks the publication.
+    pub remote: Option<String>,
+}
+
+/// Where the remote a publish pushes to came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteSource {
+    /// `--remote` on the command line.
+    Flag,
+    /// The publication's `x0k:publishRemote` statement.
+    Publication,
+    /// The publication's `x0k:repository` statement — the repository it
+    /// says it is projected into.
+    Repository,
+    /// The publication's `x0k:publishedOn` surface, looked up in
+    /// `config/x0k-tangle.toml`'s `[publish.remotes]`.
+    Surface,
 }
 
 /// The bundle's `cargo publish --dry-run --workspace` outcome. One
@@ -127,8 +160,16 @@ pub struct PublishRehearsal {
 #[derive(Debug)]
 pub struct PublishRepoReport {
     pub projection: RepoProjectReport,
+    /// Whether a crate ships, so the projection was built and tested. A
+    /// projection with no crate has nothing to compile: `build_ok` and
+    /// `test_ok` then say only that nothing failed.
+    pub cargo: bool,
     pub build_ok: bool,
     pub test_ok: bool,
+    /// The registry the publication states (`x0k:publishRegistry`) —
+    /// `crates.io`, the one this pipeline uploads to — or `None`, when no
+    /// registry is asked anything and no crate is uploaded.
+    pub registry: Option<String>,
     /// Publish order computed from in-bundle path deps (dependencies
     /// before dependents). Reported so the operator can see the order
     /// cargo will publish in; cargo performs the ordering itself.
@@ -136,18 +177,23 @@ pub struct PublishRepoReport {
     /// Every projected crate in `publish_order`, with its manifest
     /// version and what the registry index said about it. The pending
     /// entries are exactly what the rehearsal and the real publish
-    /// hand to cargo.
+    /// hand to cargo. Empty when the publication states no registry.
     pub plan: Vec<PlannedCrate>,
     /// The one dry-run rehearsal over the pending crates. `None` when the
     /// projection did not build or test green and the rehearsal never
     /// ran, or when nothing is pending and there was nothing to rehearse.
     pub rehearsal: Option<PublishRehearsal>,
-    /// The remote URL the `x0k:publishedOn` surface resolved to, when
-    /// configured.
+    /// The remote URL a push goes to, when one resolved.
     pub remote: Option<String>,
+    /// Where `remote` came from.
+    pub remote_source: Option<RemoteSource>,
     /// The surface URI the publication doc names (e.g.
     /// `x0k:surface/github`), resolved or not.
     pub surface: Option<String>,
+    /// The projection's `HEAD` — the commit a push carries.
+    pub head: Option<String>,
+    /// The branch the push landed on (only ever set under `really`).
+    pub branch: Option<String>,
     /// Real publishes + push happened (only ever true under `really`).
     pub published: bool,
     pub pushed: bool,
@@ -160,30 +206,47 @@ The stages run in sequence, each gating the next: a projection that
 fails guards never builds, a build that fails never rehearses, and the
 rehearsal happens even when `really` is set — a real publish with a
 failing dry-run behind it is exactly the accident the rehearsal exists
-to prevent.
+to prevent. The registry statement is read before anything is built, so
+a publication naming a registry this pipeline cannot upload to is
+refused before minutes of compilation, not after.
 
 <a name="chunk-publish-repo"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#publish-repo` · assembles [really-publish](#chunk-really-publish)</sub>
 
 ```rust {#publish-repo}
 /// Run the publish pipeline for the publication doc at `region_doc`,
 /// projecting into `output_dir` against `workspace`, asking crates.io's
-/// sparse index what is already published.
+/// sparse index what is already published when the publication states
+/// that registry.
 pub fn publish_repo(
     region_doc: &Path,
     output_dir: &Path,
     workspace: &Path,
     opts: &PublishRepoOptions,
 ) -> Result<PublishRepoReport> {
-    publish_repo_with_index(region_doc, output_dir, workspace, opts, &SparseIndex::default())
+    publish_repo_in(region_doc, output_dir, workspace, opts, &Vocabulary::shipped())
 }
 
-/// [`publish_repo`] against an explicit registry index.
+/// [`publish_repo`], reading the publication and its members against
+/// `vocabulary` (`collection` § "The vocabulary a publication is read
+/// in").
+pub fn publish_repo_in(
+    region_doc: &Path,
+    output_dir: &Path,
+    workspace: &Path,
+    opts: &PublishRepoOptions,
+    vocabulary: &Vocabulary,
+) -> Result<PublishRepoReport> {
+    publish_repo_with_index(region_doc, output_dir, workspace, opts, &SparseIndex::default(), vocabulary)
+}
+
+/// [`publish_repo_in`] against an explicit registry index.
 pub fn publish_repo_with_index(
     region_doc: &Path,
     output_dir: &Path,
     workspace: &Path,
     opts: &PublishRepoOptions,
     index: &dyn RegistryIndex,
+    vocabulary: &Vocabulary,
 ) -> Result<PublishRepoReport> {
     // `git_init` here means "commit the projection": a fresh output dir
     // gets a root commit, an existing repo gets the run appended.
@@ -193,41 +256,64 @@ pub fn publish_repo_with_index(
         allow_dirty: false,
         emit_github: opts.emit_github,
     };
-    let projection = project_publication_repo(region_doc, output_dir, workspace, &proj_opts)?;
+    let registry = publish_registry(region_doc, vocabulary)?;
+    // Resolve the remote before anything is written or built, whether or
+    // not we push: the report shows where a real publish would land, and an
+    // unreadable config refuses here, not after the minutes-long build.
+    let resolved = resolve_remote(region_doc, workspace, vocabulary, opts.remote.as_deref())?;
+    let projection = project_publication_repo_in(
+        region_doc, output_dir, workspace, &proj_opts, &Proofs::Cargo, vocabulary,
+    )?;
 
     // Ask the index before the minutes-long build: a run that cannot
-    // tell what is already published should say so first.
+    // tell what is already published should say so first. A publication
+    // that states no registry has nothing to ask it.
     let order = publish_order(output_dir, &projection.crates)?;
-    let plan = plan_publication(output_dir, &order, index)?;
+    let plan = match registry {
+        Some(_) => plan_publication(output_dir, &order, index)?,
+        None => Vec::new(),
+    };
     let mut report = PublishRepoReport {
+        cargo: !projection.crates.is_empty(),
+        registry: registry.map(str::to_string),
         publish_order: order,
         plan,
         projection,
         build_ok: false,
         test_ok: false,
         rehearsal: None,
-        remote: None,
-        surface: None,
+        remote: resolved.url,
+        remote_source: resolved.source,
+        surface: resolved.surface,
+        head: None,
+        branch: None,
         published: false,
         pushed: false,
     };
 
     // Prove: standalone build + test, private target dir inside the
-    // output (covered by the projected .gitignore).
+    // output (covered by the projected .gitignore). Nothing to compile
+    // when no crate ships.
     let target_dir = output_dir.join("target/publish");
-    report.build_ok = cargo_in(output_dir, &target_dir, &["build", "--workspace"])?.0;
-    if !report.build_ok {
-        return Ok(report);
-    }
-    report.test_ok = cargo_in(output_dir, &target_dir, &["test", "--workspace"])?.0;
-    if !report.test_ok {
-        return Ok(report);
+    if report.cargo {
+        report.build_ok = cargo_in(output_dir, &target_dir, &["build", "--workspace"])?.0;
+        if !report.build_ok {
+            return Ok(report);
+        }
+        report.test_ok = cargo_in(output_dir, &target_dir, &["test", "--workspace"])?.0;
+        if !report.test_ok {
+            return Ok(report);
+        }
+    } else {
+        report.build_ok = true;
+        report.test_ok = true;
     }
 
     // Rehearse: ONE dry run over the pending crates. Not per crate — see
     // `PublishRehearsal` for why a per-crate gate cannot pass a first
     // release. This is the same invocation the real publish uses; with
-    // nothing pending there is no invocation to rehearse.
+    // nothing pending, or no registry stated, there is no invocation to
+    // rehearse.
     if let Some(args) = publish_args(&report.plan, true) {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let (ok, tail) = cargo_in(output_dir, &target_dir, &args)?;
@@ -237,11 +323,8 @@ pub fn publish_repo_with_index(
         });
     }
 
-    // Resolve the remote the publication names, whether or not we push:
-    // the report should show where a real publish would land.
-    let (surface, remote) = resolve_remote(region_doc, workspace)?;
-    report.surface = surface;
-    report.remote = remote;
+    // The commit a push would carry.
+    report.head = projection_head(output_dir);
 
     if opts.really {
         <<really-publish>>
@@ -262,14 +345,27 @@ disclosure guards are a different mechanism and stay on.
 Everything in this chunk is outward-facing: a version number burned on
 crates.io, history on a public remote. It runs only under `really`, it
 refuses to start unless every rehearsal passed, and the push goes to
-the configured remote exactly as `git push <url> HEAD:main` — nothing
-forge-specific beyond a URL. A run with nothing pending publishes
+the resolved remote exactly as `git push <url> HEAD:<branch>` — nothing
+forge-specific beyond a URL. A run with no remote refuses before the
+registry upload, not after it: half a publish — crates on the registry
+and no repository behind them — is the one outcome worse than none. The branch is the publication's to name
+(`x0k:publishBranch`); one that names none pushes to the branch the
+remote itself calls default, read off its `HEAD`, and to the projection's
+own branch when the remote is empty and has none yet. A run with nothing pending publishes
 nothing and still pushes: a documentation-only re-projection is a
 real publish of the repository even when no crate version moved.
 
 <a name="chunk-really-publish"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#really-publish`</sub>
 
 ```rust {#really-publish}
+let Some(remote) = report.remote.clone() else {
+    bail!(
+        "nothing to push to: pass --remote <url>, state `x0k:publishRemote \"<url>\"` or \
+         `x0k:repository \"<url>\"` in the publication's header, or map its `x0k:publishedOn` \
+         surface ({}) under [publish.remotes] in config/x0k-tangle.toml",
+        report.surface.as_deref().unwrap_or("none stated")
+    );
+};
 if let Some(args) = publish_args(&report.plan, false) {
     if !report.rehearsal.as_ref().is_some_and(|r| r.ok) {
         bail!("refusing --really publish: the dry-run rehearsal did not pass");
@@ -281,20 +377,16 @@ if let Some(args) = publish_args(&report.plan, false) {
     }
     report.published = true;
 }
-let Some(remote) = report.remote.clone() else {
-    bail!(
-        "no remote configured for {} — add it under [publish.remotes] in config/x0k-tangle.toml",
-        report.surface.as_deref().unwrap_or("(no publishedOn edge)")
-    );
-};
+let branch = push_branch(region_doc, output_dir, &remote, vocabulary)?;
 let status = std::process::Command::new("git")
     .current_dir(output_dir)
-    .args(["push", &remote, "HEAD:main"])
+    .args(["push", &remote, &format!("HEAD:{branch}")])
     .status()
     .context("running git push")?;
 if !status.success() {
     bail!("git push to {remote} failed");
 }
+report.branch = Some(branch);
 report.pushed = true;
 ```
 
@@ -427,9 +519,9 @@ serve `name@version`?* Three ways to ask it were weighed:
 
 It is fetched with `curl`, spawned like `cargo` and `git` already are,
 rather than by linking an HTTP client into a crate that is itself
-published: the verb is corpus-only orchestration, and a TLS stack in
-every `x0k-tangle` build would be paid for by users who never reach
-it. The fetch sits behind a one-method trait so the planning below is
+published: the verb is orchestration around tools a publisher already
+has, and a TLS stack in every `x0k-tangle` build would be paid for by
+users who never reach it. The fetch sits behind a one-method trait so the planning below is
 tested against a stub, not the network.
 
 A yanked version counts as published: crates.io refuses to re-upload a
@@ -683,18 +775,45 @@ fn cargo_in(dir: &Path, target_dir: &Path, args: &[&str]) -> Result<(bool, Strin
 }
 ```
 
-The remote resolution reads the publication doc's `x0k:publishedOn` edge —
-a surface URI like `x0k:surface/github` — and looks its short name up in
-`config/x0k-tangle.toml`:
+## Where the push goes
 
-```toml
-[publish.remotes]
-github = "https://github.com/0k-dot-computer/x0k-folio"
-```
+A remote is named in one of four places, tried in this order:
 
-The split keeps the publication doc forge-light: the doc commits to *a
-surface*, the config owns the concrete URL, and moving forges is a
-config edit that touches no decision document.
+1. `--remote <url>` on the command line — the publisher's explicit act
+   for this run, which outranks anything written down.
+2. `x0k:publishRemote "<url>"` in the publication's header — the plain
+   way for a publication to say where it pushes.
+3. `x0k:repository "<url>"` in the publication's header — the repository
+   the publication says it is projected into, which the projector already
+   stamps into every package manifest it vendors. A publication that
+   names its own repository has said where it lives.
+4. The publication's `x0k:publishedOn` edge — a surface URI like
+   `x0k:surface/github` — whose short name is looked up in the
+   collection's `config/x0k-tangle.toml`:
+
+   ```toml
+   [publish.remotes]
+   github = "https://github.com/0k-dot-computer/x0k-folio"
+   ```
+
+   The document commits to *a surface*, the config owns the concrete
+   URL, and moving forges is a config edit that touches no document.
+
+The mapping is keyed by the surface alone, and a collection publishes
+more than one thing to the same surface: `github` maps to x0k-folio's
+repository, and before `x0k:repository` was read here, a `--really`
+publish of any other publication on GitHub that stated no
+`x0k:publishRemote` would have pushed into x0k-folio's. So the mapping is
+the last resort, read only when the publication names no repository of
+its own in any of the three ways above. A publication's own word about
+where it lives always wins: one that states `x0k:repository` is pushed
+there whatever the config maps its surface to (x0k-plan-vm states its
+own repository and is published on `github`, which the config maps to
+x0k-folio's).
+
+None of the four is required until a push happens. A rehearsal with no
+remote reports the gap; `--really` with no remote refuses, naming every
+way to supply one.
 
 The URL is HTTPS, not SSH. The node that publishes needs push rights,
 not a GitHub SSH key: over HTTPS `git push` asks the node's credential
@@ -703,42 +822,208 @@ with its token. The 0.1.1 release was pushed exactly that way, by hand,
 because the configured `git@github.com:` remote needed a key arca does
 not hold.
 
+The branch a push lands on is resolved the same way — the publication
+first, then the remote — and only when there is a push to land: asking
+the remote for its default branch is a network call the rehearsal does
+not need.
+
+<a name="chunk-push-branch"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#push-branch`</sub>
+
+```rust {#push-branch}
+/// The branch a publish pushes to: the publication's `x0k:publishBranch`,
+/// else the remote's default branch, else (an empty remote) the
+/// projection's own current branch.
+fn push_branch(
+    region_doc: &Path,
+    output_dir: &Path,
+    remote: &str,
+    vocabulary: &Vocabulary,
+) -> Result<String> {
+    let content = std::fs::read_to_string(region_doc)
+        .with_context(|| format!("reading {}", region_doc.display()))?;
+    let (env, _) = vocabulary.read(&content).map_err(|e| anyhow!("parsing publication: {e}"))?;
+    if let Some(branch) = env
+        .properties
+        .get("x0k:publishBranch")
+        .and_then(|values| values.first())
+        .map(|literal| literal.value.trim().to_string())
+        .filter(|branch| !branch.is_empty())
+    {
+        return Ok(branch);
+    }
+    let symref = std::process::Command::new("git")
+        .current_dir(output_dir)
+        .args(["ls-remote", "--symref", remote, "HEAD"])
+        .output()
+        .context("asking the remote for its default branch")?;
+    if !symref.status.success() {
+        bail!(
+            "could not ask {remote} for its default branch:\n{}",
+            String::from_utf8_lossy(&symref.stderr)
+        );
+    }
+    if let Some(branch) = default_branch(&String::from_utf8_lossy(&symref.stdout)) {
+        return Ok(branch);
+    }
+    let local = std::process::Command::new("git")
+        .current_dir(output_dir)
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .output()
+        .context("reading the projection's branch")?;
+    let branch = String::from_utf8_lossy(&local.stdout).trim().to_string();
+    if !local.status.success() || branch.is_empty() {
+        bail!(
+            "{remote} names no default branch and the projection is on none — state one as \
+             `x0k:publishBranch` in the publication's header"
+        );
+    }
+    Ok(branch)
+}
+
+/// The branch `git ls-remote --symref <remote> HEAD` names as the remote's
+/// `HEAD`, if it names one.
+fn default_branch(ls_remote: &str) -> Option<String> {
+    ls_remote.lines().find_map(|line| {
+        let (reference, name) = line.strip_prefix("ref: ")?.split_once('\t')?;
+        (name.trim() == "HEAD").then(|| reference.strip_prefix("refs/heads/"))?.map(str::to_string)
+    })
+}
+```
+
 <a name="chunk-resolve-remote"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#resolve-remote`</sub>
 
 ```rust {#resolve-remote}
-/// Resolve the publication's `x0k:publishedOn` surface to a configured git
-/// remote URL. Returns `(surface_uri, url)` — either may be `None` (no
-/// edge; no config entry). Missing config is a reported gap, not an
-/// error: the dry-run stages are useful without a remote.
-fn resolve_remote(region_doc: &Path, workspace: &Path) -> Result<(Option<String>, Option<String>)> {
+/// The remote a publish pushes to, and where it was found.
+#[derive(Debug, Default)]
+struct ResolvedRemote {
+    /// The surface URI the publication's `x0k:publishedOn` names, if any.
+    surface: Option<String>,
+    url: Option<String>,
+    source: Option<RemoteSource>,
+}
+
+/// Resolve the remote: `flag`, else the publication's `x0k:publishRemote`,
+/// else its `x0k:repository`, else its `x0k:publishedOn` surface looked up
+/// in the collection's `config/x0k-tangle.toml` `[publish.remotes]`, which
+/// is read only when none of the others is stated. Any of them may be
+/// missing; a missing remote is a reported gap, not an error, because the
+/// rehearsal is useful without one.
+fn resolve_remote(
+    region_doc: &Path,
+    workspace: &Path,
+    vocabulary: &Vocabulary,
+    flag: Option<&str>,
+) -> Result<ResolvedRemote> {
     let content = std::fs::read_to_string(region_doc)
         .with_context(|| format!("reading {}", region_doc.display()))?;
-    let (env, _) = parse_envelope(&content).map_err(|e| anyhow!("parsing publication: {e}"))?;
-    let Some(surface) = env
-        .edges
-        .get("x0k:publishedOn")
-        .and_then(|v| v.first())
-        .cloned()
-    else {
-        return Ok((None, None));
+    let (env, _) = vocabulary.read(&content).map_err(|e| anyhow!("parsing publication: {e}"))?;
+    let surface = env.edges.get("x0k:publishedOn").and_then(|v| v.first()).cloned();
+    let mut resolved = ResolvedRemote { surface, ..ResolvedRemote::default() };
+    if let Some(url) = flag.map(str::trim).filter(|url| !url.is_empty()) {
+        resolved.url = Some(url.to_string());
+        resolved.source = Some(RemoteSource::Flag);
+        return Ok(resolved);
+    }
+    let stated = |key: &str| {
+        env.properties
+            .get(key)
+            .and_then(|values| values.first())
+            .map(|literal| literal.value.trim().to_string())
+            .filter(|url| !url.is_empty())
     };
-    let Some(short) = surface.strip_prefix("x0k:surface/") else {
-        return Ok((Some(surface), None));
+    if let Some(url) = stated("x0k:publishRemote") {
+        resolved.url = Some(url);
+        resolved.source = Some(RemoteSource::Publication);
+        return Ok(resolved);
+    }
+    if let Some(url) = stated("x0k:repository") {
+        resolved.url = Some(url);
+        resolved.source = Some(RemoteSource::Repository);
+        return Ok(resolved);
+    }
+    if let Some(url) = surface_remote(workspace, resolved.surface.as_deref())? {
+        resolved.url = Some(url);
+        resolved.source = Some(RemoteSource::Surface);
+    }
+    Ok(resolved)
+}
+
+/// The URL `[publish.remotes]` in the collection's `config/x0k-tangle.toml`
+/// maps `surface` (`x0k:surface/<name>`) to; `None` when there is no
+/// surface, no config, or no entry for it.
+fn surface_remote(workspace: &Path, surface: Option<&str>) -> Result<Option<String>> {
+    let Some(short) = surface.and_then(|s| s.strip_prefix("x0k:surface/")) else {
+        return Ok(None);
     };
     let config_path = workspace.join("config/x0k-tangle.toml");
     let Ok(text) = std::fs::read_to_string(&config_path) else {
-        return Ok((Some(surface), None));
+        return Ok(None);
     };
     let doc = text
         .parse::<toml_edit::DocumentMut>()
         .with_context(|| format!("parsing {}", config_path.display()))?;
-    let url = doc
+    Ok(doc
         .get("publish")
         .and_then(|p| p.get("remotes"))
         .and_then(|r| r.get(short))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    Ok((Some(surface), url))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty()))
+}
+
+/// The projection's `HEAD` commit, the one a push carries; `None` when it
+/// has none (a projection made without git).
+fn projection_head(output_dir: &Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .current_dir(output_dir)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .ok()?;
+    let head = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !head.is_empty()).then_some(head)
+}
+```
+
+## Asking for a registry
+
+Uploading crates is a second act on top of publishing a repository, and
+a publication opts into it by saying so: `x0k:publishRegistry
+"crates.io"` in its header. crates.io is the one registry this pipeline
+uploads to, so any other value is refused by name rather than read as
+"no registry", which would quietly publish a repository without the
+crates its author expected to upload. A publication that states nothing
+is published by its push alone, whatever crates it ships: a project's
+crates going to a public registry is not something a tool decides for
+it.
+
+<a name="chunk-publish-registry"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#publish-registry`</sub>
+
+```rust {#publish-registry}
+/// The one registry this pipeline uploads crates to.
+const CRATES_IO: &str = "crates.io";
+
+/// The registry the publication states (`x0k:publishRegistry`): `crates.io`,
+/// or `None` when it states none. Any other value is refused.
+fn publish_registry(region_doc: &Path, vocabulary: &Vocabulary) -> Result<Option<&'static str>> {
+    let content = std::fs::read_to_string(region_doc)
+        .with_context(|| format!("reading {}", region_doc.display()))?;
+    let (env, _) = vocabulary.read(&content).map_err(|e| anyhow!("parsing publication: {e}"))?;
+    let Some(stated) = env
+        .properties
+        .get("x0k:publishRegistry")
+        .and_then(|values| values.first())
+        .map(|literal| literal.value.trim().to_string())
+    else {
+        return Ok(None);
+    };
+    if stated == CRATES_IO {
+        return Ok(Some(CRATES_IO));
+    }
+    bail!(
+        "the publication states `x0k:publishRegistry \"{stated}\"`, and the only registry \
+         publish-repo uploads to is `{CRATES_IO}` — state that, or drop the statement to publish \
+         the repository without uploading crates"
+    )
 }
 ```
 
@@ -998,6 +1283,28 @@ mod tests {
     }
 
     #[test]
+    fn the_default_branch_is_read_off_the_remote_s_head() {
+        let ls_remote = "ref: refs/heads/trunk\tHEAD\n0123abcd\tHEAD\n";
+        assert_eq!(default_branch(ls_remote).as_deref(), Some("trunk"));
+        assert_eq!(default_branch(""), None, "an empty remote has no HEAD");
+        assert_eq!(default_branch("0123abcd\tHEAD\n"), None);
+    }
+
+    #[test]
+    fn a_stated_branch_is_pushed_without_asking_the_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        let doc_path = tmp.path().join("pub.md");
+        std::fs::write(
+            &doc_path,
+            "# X\n\n```turtle folio:document\npublication:x a x0k:Publication ;\n    x0k:publishBranch \"release\" .\n```\n\nbody\n",
+        )
+        .unwrap();
+        // The remote does not exist: a stated branch never asks it.
+        let branch = push_branch(&doc_path, tmp.path(), "/nonexistent/remote", &Vocabulary::shipped()).unwrap();
+        assert_eq!(branch, "release");
+    }
+
+    #[test]
     fn resolve_remote_reads_surface_and_config() {
         let tmp = tempfile::tempdir().unwrap();
         let doc_path = tmp.path().join("pub.md");
@@ -1007,9 +1314,10 @@ mod tests {
         )
         .unwrap();
         // No config: surface resolves, remote does not.
-        let (surface, remote) = resolve_remote(&doc_path, tmp.path()).unwrap();
-        assert_eq!(surface.as_deref(), Some("x0k:surface/github"));
-        assert!(remote.is_none());
+        let resolved = resolve_remote(&doc_path, tmp.path(), &Vocabulary::shipped(), None).unwrap();
+        assert_eq!(resolved.surface.as_deref(), Some("x0k:surface/github"));
+        assert!(resolved.url.is_none());
+        assert_eq!(resolved.source, None);
         // With config: both resolve.
         std::fs::create_dir_all(tmp.path().join("config")).unwrap();
         std::fs::write(
@@ -1017,15 +1325,137 @@ mod tests {
             "[publish.remotes]\ngithub = \"git@example.com:org/repo.git\"\n",
         )
         .unwrap();
-        let (_, remote) = resolve_remote(&doc_path, tmp.path()).unwrap();
-        assert_eq!(remote.as_deref(), Some("git@example.com:org/repo.git"));
+        let resolved = resolve_remote(&doc_path, tmp.path(), &Vocabulary::shipped(), None).unwrap();
+        assert_eq!(resolved.url.as_deref(), Some("git@example.com:org/repo.git"));
+        assert_eq!(resolved.source, Some(RemoteSource::Surface));
+    }
+
+    /// A publication with its remote stated in its header, and a surface
+    /// mapped in config: the statement outranks the mapping, and the flag
+    /// outranks both.
+    #[test]
+    fn the_flag_outranks_the_statement_which_outranks_the_surface() {
+        let tmp = tempfile::tempdir().unwrap();
+        let doc_path = tmp.path().join("pub.md");
+        std::fs::write(
+            &doc_path,
+            "# X\n\n```turtle folio:document\npublication:x a x0k:Publication ;\n    \
+             x0k:publishedOn surface:github ;\n    x0k:publishRemote \"https://example.com/ours.git\" .\n```\n\nbody\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("config")).unwrap();
+        std::fs::write(
+            tmp.path().join("config/x0k-tangle.toml"),
+            "[publish.remotes]\ngithub = \"https://example.com/mapped.git\"\n",
+        )
+        .unwrap();
+        let stated = resolve_remote(&doc_path, tmp.path(), &Vocabulary::shipped(), None).unwrap();
+        assert_eq!(stated.url.as_deref(), Some("https://example.com/ours.git"));
+        assert_eq!(stated.source, Some(RemoteSource::Publication));
+        let flagged =
+            resolve_remote(&doc_path, tmp.path(), &Vocabulary::shipped(), Some("/srv/bare.git")).unwrap();
+        assert_eq!(flagged.url.as_deref(), Some("/srv/bare.git"));
+        assert_eq!(flagged.source, Some(RemoteSource::Flag));
+    }
+
+    /// A publication with nothing above its `x0k:repository`: no flag, no
+    /// `x0k:publishRemote`, no surface. The repository it names is where
+    /// it is pushed.
+    #[test]
+    fn a_publication_stating_only_its_repository_is_pushed_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        let doc_path = tmp.path().join("pub.md");
+        std::fs::write(
+            &doc_path,
+            "# X\n\n```turtle folio:document\npublication:x a x0k:Publication ;\n    \
+             x0k:repository \"https://example.com/org/x\" .\n```\n\nbody\n",
+        )
+        .unwrap();
+        let resolved = resolve_remote(&doc_path, tmp.path(), &Vocabulary::shipped(), None).unwrap();
+        assert_eq!(resolved.url.as_deref(), Some("https://example.com/org/x"));
+        assert_eq!(resolved.source, Some(RemoteSource::Repository));
+    }
+
+    /// The case that made the order matter: two publications on one
+    /// surface, the config mapping it to the first one's repository. The
+    /// second states its own repository and is pushed there, never into
+    /// the first's; an `x0k:publishRemote` still outranks the repository.
+    #[test]
+    fn a_stated_repository_wins_over_a_contradicting_surface_mapping() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("config")).unwrap();
+        std::fs::write(
+            tmp.path().join("config/x0k-tangle.toml"),
+            "[publish.remotes]\ngithub = \"https://github.com/org/first\"\n",
+        )
+        .unwrap();
+        let second = tmp.path().join("second.md");
+        let header = "# X\n\n```turtle folio:document\npublication:second a x0k:Publication ;\n    \
+                      x0k:publishedOn surface:github ;\n    x0k:repository \"https://github.com/org/second\" .\n```\n\nbody\n";
+        std::fs::write(&second, header).unwrap();
+        let resolved = resolve_remote(&second, tmp.path(), &Vocabulary::shipped(), None).unwrap();
+        assert_eq!(resolved.url.as_deref(), Some("https://github.com/org/second"));
+        assert_eq!(resolved.source, Some(RemoteSource::Repository));
+        let settled = header.replace(
+            "x0k:repository",
+            "x0k:publishRemote \"https://github.com/org/second.git\" ;\n    x0k:repository",
+        );
+        std::fs::write(&second, settled).unwrap();
+        let resolved = resolve_remote(&second, tmp.path(), &Vocabulary::shipped(), None).unwrap();
+        assert_eq!(resolved.url.as_deref(), Some("https://github.com/org/second.git"));
+        assert_eq!(resolved.source, Some(RemoteSource::Publication));
+    }
+
+    /// x0k-folio's own header and config, as they stand: it resolves to
+    /// its own repository, from the statement, which now comes before the
+    /// `github` mapping.
+    #[test]
+    fn x0k_folio_still_resolves_to_its_own_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("config")).unwrap();
+        std::fs::write(
+            tmp.path().join("config/x0k-tangle.toml"),
+            "[publish.remotes]\ngithub = \"https://github.com/0k-dot-computer/x0k-folio\"\n",
+        )
+        .unwrap();
+        let doc_path = tmp.path().join("x0k-folio.md");
+        let header = "# X\n\n```turtle folio:document\npublication:x0k-folio a x0k:Publication ;\n    \
+                      x0k:publishedOn surface:github ;\n    \
+                      x0k:repository \"https://github.com/0k-dot-computer/x0k-folio\" .\n```\n\nbody\n";
+        std::fs::write(&doc_path, header).unwrap();
+        let resolved = resolve_remote(&doc_path, tmp.path(), &Vocabulary::shipped(), None).unwrap();
+        assert_eq!(resolved.url.as_deref(), Some("https://github.com/0k-dot-computer/x0k-folio"));
+        assert_eq!(resolved.source, Some(RemoteSource::Repository));
+    }
+
+    /// A publication's header, stating `extra` beside its class.
+    fn publication_stating(dir: &Path, extra: &str) -> PathBuf {
+        let doc_path = dir.join("pub.md");
+        std::fs::write(
+            &doc_path,
+            format!("# X\n\n```turtle folio:document\npublication:x a x0k:Publication{extra} .\n```\n\nbody\n"),
+        )
+        .unwrap();
+        doc_path
+    }
+
+    #[test]
+    fn a_registry_is_asked_only_when_the_publication_states_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let silent = publication_stating(tmp.path(), "");
+        assert_eq!(publish_registry(&silent, &Vocabulary::shipped()).unwrap(), None);
+        let stated = publication_stating(tmp.path(), " ;\n    x0k:publishRegistry \"crates.io\"");
+        assert_eq!(publish_registry(&stated, &Vocabulary::shipped()).unwrap(), Some("crates.io"));
+        let other = publication_stating(tmp.path(), " ;\n    x0k:publishRegistry \"npm\"");
+        let err = publish_registry(&other, &Vocabulary::shipped()).expect_err("only crates.io uploads");
+        assert!(format!("{err:#}").contains("`x0k:publishRegistry \"npm\"`"), "{err:#}");
     }
 }
 ```
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [options-and-report](#chunk-options-and-report) · [publish-repo](#chunk-publish-repo) · [vendored-manifest](#chunk-vendored-manifest) · [publish-order](#chunk-publish-order) · [registry-index](#chunk-registry-index) · [publication-plan](#chunk-publication-plan) · [cargo-in](#chunk-cargo-in) · [resolve-remote](#chunk-resolve-remote) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/publish_repo.rs`](../../crates/x0k-tangle/src/publish_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [options-and-report](#chunk-options-and-report) · [publish-repo](#chunk-publish-repo) · [vendored-manifest](#chunk-vendored-manifest) · [publish-order](#chunk-publish-order) · [registry-index](#chunk-registry-index) · [publication-plan](#chunk-publication-plan) · [cargo-in](#chunk-cargo-in) · [resolve-remote](#chunk-resolve-remote) · [publish-registry](#chunk-publish-registry) · [push-branch](#chunk-push-branch) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -1045,6 +1475,10 @@ mod tests {
 <<cargo-in>>
 
 <<resolve-remote>>
+
+<<publish-registry>>
+
+<<push-branch>>
 
 <<tests>>
 ```

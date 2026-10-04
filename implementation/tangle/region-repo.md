@@ -9,7 +9,7 @@ implementation:tangle\/region-repo a x0k:Implementation ;
     x0k:cites design:author-and-publish-the-same-surface,
         implementation:tangle\/publishing,
         implementation:tangle\/receiving,
-        implementation:tangle\/region-project,
+        implementation:tangle\/collection,
         implementation:tangle\/pipeline,
         implementation:folio\/colophon ;
     x0k:implements design:publish-a-region-as-a-repository ;
@@ -17,9 +17,8 @@ implementation:tangle\/region-repo a x0k:Implementation ;
     folio:tangleRoot "src/region_repo.rs" .
 ```
 
-A publication names a region of the graph. The reader-site projector
-([`region-project.md`](region-project.md)) turns that region into HTML;
-this chapter turns it into a **git repository** that anyone can clone
+A publication names a region of the graph. This chapter turns that
+region into a **git repository** that anyone can clone
 and build with plain `cargo` — the published crates' source, the
 literate documents that produce the generated half of it, a workspace
 manifest, the license bodies, a README tangled from the publication
@@ -85,9 +84,8 @@ the two from drifting apart afterwards.
 ```rust {#module-doc}
 //! Repository projection — the git-repo Surface for a Publication.
 //!
-//! Sibling to [`region_project`](crate::region_project) (which projects a region
-//! to an HTML reader site). This backend projects a publication region into a
-//! standalone, buildable Cargo repository: the published crates' source (both
+//! This backend projects a publication region into a
+//! standalone, buildable repository: the published crates' source (both
 //! `@generated` and hand-written), the literate documents that back the
 //! generated code, a standalone workspace manifest, the license bodies for
 //! the publication's declared license (the `x0k:license` field of the
@@ -100,8 +98,9 @@ the two from drifting apart afterwards.
 //! page, grouped by the concepts that marker names and opening with one
 //! row per affordance declaration the publication publishes, drawn from
 //! the extracted record, the icons its rows show under `affordances/`), a committed
-//! `Cargo.lock`, and a forge-agnostic `tools/ci` that re-tangles and diffs
-//! against the committed generated files. It realizes
+//! `Cargo.lock`, a forge-agnostic `tools/ci` that re-tangles and diffs
+//! against the committed generated files, and `tools/mkdocs_folio.py`, the
+//! hook a MkDocs site enables to show folio's fenced blocks as code. It realizes
 //! `x0k:design/publish-a-region-as-a-repository`.
 //!
 //! Membership is **crate-granular**: the publication's `publishes` edges name
@@ -175,17 +174,17 @@ use serde::Deserialize;
 
 use x0k_folio::colophon::{
     host_frontmatter, is_marker, parse_envelope, predeclared_prefixes, render_document,
-    shipped_prefixes, strip_header, Colophon, DocType, RDF_JSON, XSD_STRING, BODY_FORMAT_MARKDOWN,
+    strip_header, Colophon, DocType, XSD_STRING, BODY_FORMAT_MARKDOWN,
 };
 use x0k_folio::transclusion::extract_section;
 use x0k_folio::{EntityId, InlineEntity, ICON_CLASS};
 use x0k_icon::{emit, Accepted, Label, Palette, RoleBinding};
 
-use crate::faces::{check_section, icon_svg, proving_chunks};
+use crate::faces::{check_section, colophon_palette, header_json, icon_svg, proving_chunks};
 use crate::parser::parse_document;
 use crate::pipeline::PipelineRegistry;
 use crate::pipeline_runner::{content_hash, tangle_document, TangleSidecar};
-use crate::region_project::CorpusLayout;
+use crate::collection::{documents_declaring, CorpusLayout, Vocabulary};
 use crate::region_gfm::{
     relative_link, weave_affordance_section, AffordanceEvidence, ChapterLinks,
     ProofEvidence,
@@ -198,12 +197,14 @@ resolves to the module IRI `https://0k.computer/ontology/<name>` and the
 tree file `ontology/modules/<name>.ttl`. `excludes` alone may also name
 `x0k:implementation/<area>/<stem>` — a single literate document held
 back, which is the third grain the severances need. `publishes` alone
-may also name a *document* under `decisions/`, whole or by section —
-see [Documents the publication names](#documents-the-publication-names). The standalone workspace needs
-concrete versions for the dependency keys the monorepo inherits from
-its root manifest. The resolutions are a fixed table mirroring the
-monorepo root; an inherited key with no entry here surfaces as a build
-failure in the projection's own CI, not a silent substitution.
+may also name a *document*, whole or by section, by its id in any
+namespace the vocabulary declares —
+see [Documents the publication names](#documents-the-publication-names). Nothing here says how the
+projected repository is built — its toolchain, its floor, the Git
+sources it admits, its supply-chain policy, the marks its rows show:
+those are the publication's to state, and
+[the publication's build policy](#the-publications-build-policy) reads
+them.
 
 <a name="chunk-constants"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#constants`</sub>
 
@@ -234,24 +235,6 @@ const OWL_VERSION_IRI: &str = "<http://www.w3.org/2002/07/owl#versionIRI>";
 /// Any triple under this namespace is an instance fact, and a module file
 /// never carries one (ADR §3).
 const INSTANCE_NAMESPACE: &str = "<https://0k.computer/instance/";
-/// Toolchain floor the standalone workspace declares (`workspace.package.rust-version`),
-/// inherited by every published crate. Set by the newest std item the
-/// published code uses: `File::lock` (the tangle lock in
-/// [`crate::pipeline_runner`]), stable since 1.89. There is no portable
-/// pre-1.89 std file lock, and buying a lower floor with a `fs2`-style
-/// dependency in a published crate is the worse trade — so the floor moves
-/// to meet the code rather than the claim staying convenient.
-///
-/// Not a comment anybody has to keep true by hand: `tools/ci` runs clippy
-/// with warnings denied, and clippy's `incompatible_msrv` compares every
-/// item the published crates touch against this value. The floor is the one
-/// claim in the projection with a machine check behind it.
-const RUST_VERSION: &str = "1.89";
-/// Toolchain the projection pins for CI and for a contributor running
-/// `tools/ci` locally (`rust-toolchain.toml`). This is the *ceiling* — the
-/// version the tree is known to build and test green on — and it is a
-/// different claim from [`RUST_VERSION`], which is the floor.
-const PINNED_TOOLCHAIN: &str = "1.95.0";
 /// Trailing comment on a feature severed because a dependency beneath it
 /// is not published. Enabling it genuinely cannot build.
 const SEVERED_FEATURE_NOTE: &str =
@@ -267,32 +250,6 @@ const SEVERED_FEATURE_NOTE: &str =
 /// audience reads (`publication-is-the-shipping-unit` §9, "Two acts").
 const DECLARED_SEVERANCE_NOTE: &str =
     "# severed in this publication: not supported here; the crate declares it, this publication does not enable it";
-/// Workspace-inherited dependency keys the projector knows how to resolve into
-/// the standalone root `[workspace.dependencies]`. Values mirror the monorepo
-/// root `Cargo.toml`; keep in sync if a published crate adopts a new inherited
-/// key (the closure check flags an inherited key with no resolution).
-///
-/// This is a *table of resolutions*, not the list emitted: a projection
-/// declares only the keys its own crates actually inherit
-/// ([`emit_workspace_manifest`]). An entry nobody references is a pin a
-/// reader would take for a real dependency, and the last one that shipped
-/// (`thiserror = "1.0"`, referenced by no published crate) advertised a
-/// major version the lockfile did not even contain.
-const RESOLVED_WORKSPACE_DEPS: &[(&str, &str)] = &[
-    ("anyhow", "\"1.0\""),
-    ("clap", "{ version = \"4\", features = [\"derive\"] }"),
-    ("serde", "{ version = \"1.0\", features = [\"derive\"] }"),
-    ("serde_json", "\"1.0\""),
-    ("thiserror", "\"1.0\""),
-    ("tracing", "\"0.1\""),
-    // Added 2026-09-09 with the tangle CLI's tracing subscriber (N1). The
-    // table's own instruction — keep in sync when a published crate adopts a
-    // new inherited key — was not followed in that unit, and the projection
-    // emitted an x0k-tangle manifest cargo could not load: ten of
-    // publication_repo_bootstrap's twenty-one tests, red, in a gate nothing
-    // was running.
-    ("tracing-subscriber", "{ version = \"0.3\", features = [\"env-filter\"] }"),
-];
 ```
 
 ## Contract
@@ -430,13 +387,15 @@ pub struct RepoProjectReport {
     /// to the bound file has no corpus source to route back to.
     pub figures: BTreeMap<String, String>,
     /// Every proof test run this projection, by its id
-    /// (`x0k:test/<crate>/<file>::<fn>`) → what it did. Recorded in
-    /// `PROVENANCE.json` under `proofs`, because the README's status
+    /// (`x0k:test/<crate>/<file>::<fn>`) → what it did — or, under
+    /// [`Proofs::Recorded`], what the record replayed said it did. Recorded
+    /// in `PROVENANCE.json` under `proofs`, because the README's status
     /// marks are claims the provenance should back. Empty when no
     /// published affordance names a proof, or when proofs were skipped.
     pub proofs: BTreeMap<String, ProofOutcome>,
     /// Whether the proofs were run at all — false under [`Proofs::Skip`],
-    /// when every row reads at most `declared`.
+    /// when every row reads at most `declared`, and under
+    /// [`Proofs::Recorded`], when what the rows read was replayed.
     pub proofs_run: bool,
     /// Chunks that say `proves=` an affordance this publication does not
     /// publish (`<chapter id>#<chunk> proves <id>`). A note, not a
@@ -453,6 +412,23 @@ pub struct RepoProjectReport {
     /// publication declares none, in which case the projection carries no
     /// release workflow and no wrapper.
     pub prebuilt: Option<PrebuiltSummary>,
+    /// The modules of the collection's own vocabulary the shipped documents
+    /// are written in, read from the `--vocabulary` directories with
+    /// everything they import there, by name. Empty when the documents use
+    /// no term beyond what this build compiled and the publication names.
+    pub vocabulary: Vec<String>,
+    /// The projection-relative directory `vocabulary` was written to; `None`
+    /// when it is empty.
+    pub vocabulary_dir: Option<String>,
+    /// Hand-written source files a shipped document's `from=` mirror quotes
+    /// and no shipped crate carries, by their collection-relative path —
+    /// the path they have in the projection too.
+    pub sources: BTreeSet<String>,
+    /// The files the publication carries (`x0k:carries`), projected path →
+    /// collection path: the two are equal until the organized layout moves
+    /// one. Recorded with the mirrored sources under `PROVENANCE.json`'s
+    /// `sources`, since a receiver routes an edit to either back the same way.
+    pub carried: BTreeMap<String, String>,
 }
 ```
 
@@ -509,12 +485,21 @@ chunks that tangle tests and say `proves=` it — are run in the projected
 workspace, and how they are run differs by seat: a shell-out to `cargo`
 everywhere a person or the publish pipeline projects, a closure in the
 projector's own tests, and nothing at all when a caller only wants to
-look at a tree. The three callers that build options by literal — the
-CLI, the publish pipeline, the receiver — all want the shell-out, so
+look at a tree. The CLI and the publish pipeline want the shell-out, so
 that is what [`project_publication_repo`](#the-projection-as-an-outline)
 does, and `project_publication_repo_with` takes the runner for a caller
 that wants another. A runner is handed one target at a time and answers
 with what the harness printed, by name.
+
+The receiver is the fourth seat, and it wants none of the three. It
+rebuilds the projection a contributor cloned in order to diff against it
+([`receiving.md`](receiving.md) § "The reference"), and the tree it needs
+is the one the clone holds — status marks included, since those are
+projected bytes too. Running the proofs again would cost a full `cargo
+test` of the published crates per receive and could only reproduce what
+the clone's `PROVENANCE.json` already records; skipping them would draw
+every proven row as `not run` and report the README as changed. So it
+hands the projector the clone's own record, and the projector replays it.
 
 <a name="chunk-proofs"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#proofs`</sub>
 
@@ -534,6 +519,12 @@ pub enum Proofs {
     /// A caller-supplied runner. The projector's own tests use one, so
     /// the derivation is exercised without a shell-out.
     With(ProofRunner),
+    /// Run nothing, and replay what an earlier projection recorded, by
+    /// test id — the receiver rebuilding the projection a clone was taken
+    /// from, out of that clone's `PROVENANCE.json`. A test the record does
+    /// not name reads `not run`, as under `Skip`; nothing is refused,
+    /// because nothing ran.
+    Recorded(BTreeMap<String, ProofOutcome>),
 }
 
 /// A runner: given the projected repository and one target, the outcome
@@ -547,6 +538,7 @@ impl fmt::Debug for Proofs {
             Proofs::Cargo => "Cargo",
             Proofs::Skip => "Skip",
             Proofs::With(_) => "With(..)",
+            Proofs::Recorded(_) => "Recorded(..)",
         })
     }
 }
@@ -582,13 +574,23 @@ impl ProofOutcome {
             ProofOutcome::Failed => "failed",
         }
     }
+
+    /// The outcome `as_str` spells `s` as — how `PROVENANCE.json` records
+    /// it. `None` for any other word.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "passed" => Some(ProofOutcome::Passed),
+            "failed" => Some(ProofOutcome::Failed),
+            _ => None,
+        }
+    }
 }
 ```
 
 ## The projection, as an outline
 
 The entry point reads as the whole algorithm: parse the publication,
-settle the license and the overlay, open the report, run the guards,
+settle the license, the overlay and the build policy, open the report, run the guards,
 select and check the vocabulary modules, discover the literate
 documents, resolve the documents the publication named and check
 that what they declare is closed over the crate set,
@@ -605,7 +607,7 @@ the projection's own documents and a rewrite that is not in those
 documents does not survive it — and the fragments below hang off this
 outline in that order.
 
-<a name="chunk-project-publication-repo"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#project-publication-repo` · assembles [read-publication](#chunk-read-publication) · [resolve-license](#chunk-resolve-license) · [resolve-overlay](#chunk-resolve-overlay) · [open-report](#chunk-open-report) · [gather-manifests-and-guard](#chunk-gather-manifests-and-guard) · [refuse-on-violations](#chunk-refuse-on-violations) · [select-modules](#chunk-select-modules) · [discover-literate-docs](#chunk-discover-literate-docs) · [select-documents](#chunk-select-documents) · [resolve-prebuilt](#chunk-resolve-prebuilt) · [prepare-output-dir](#chunk-prepare-output-dir) · [vendor-crates](#chunk-vendor-crates) · [vendor-modules](#chunk-vendor-modules) · [copy-docs-and-scaffold](#chunk-copy-docs-and-scaffold) · [sever-doc-links-call](#chunk-sever-doc-links-call) · [restore-overlay-and-commit](#chunk-restore-overlay-and-commit)</sub>
+<a name="chunk-project-publication-repo"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#project-publication-repo` · assembles [read-publication](#chunk-read-publication) · [resolve-license](#chunk-resolve-license) · [resolve-overlay](#chunk-resolve-overlay) · [read-build-policy](#chunk-read-build-policy) · [open-report](#chunk-open-report) · [gather-manifests-and-guard](#chunk-gather-manifests-and-guard) · [refuse-on-violations](#chunk-refuse-on-violations) · [select-modules](#chunk-select-modules) · [discover-literate-docs](#chunk-discover-literate-docs) · [select-documents](#chunk-select-documents) · [resolve-prebuilt](#chunk-resolve-prebuilt) · [prepare-output-dir](#chunk-prepare-output-dir) · [vendor-crates](#chunk-vendor-crates) · [vendor-modules](#chunk-vendor-modules) · [copy-docs-and-scaffold](#chunk-copy-docs-and-scaffold) · [sever-doc-links-call](#chunk-sever-doc-links-call) · [restore-overlay-and-commit](#chunk-restore-overlay-and-commit)</sub>
 
 ```rust {#project-publication-repo}
 /// Project the publication decision doc at `region_doc` into a standalone repo
@@ -629,11 +631,28 @@ pub fn project_publication_repo_with(
     opts: &RepoProjectOptions,
     proofs: &Proofs,
 ) -> Result<RepoProjectReport> {
+    project_publication_repo_in(region_doc, output_dir, workspace, opts, proofs, &Vocabulary::shipped())
+}
+
+/// As [`project_publication_repo_with`], reading the publication and every
+/// document it names against `vocabulary` — the modules this build compiled
+/// plus the ones a caller named (`collection` § "The vocabulary a
+/// publication is read in").
+pub fn project_publication_repo_in(
+    region_doc: &Path,
+    output_dir: &Path,
+    workspace: &Path,
+    opts: &RepoProjectOptions,
+    proofs: &Proofs,
+    vocabulary: &Vocabulary,
+) -> Result<RepoProjectReport> {
     <<read-publication>>
 
     <<resolve-license>>
 
     <<resolve-overlay>>
+
+    <<read-build-policy>>
 
     <<open-report>>
 
@@ -664,13 +683,16 @@ pub fn project_publication_repo_with(
 
 A publication doc is a folio document whose header states `a x0k:Publication`
 (the header is parsed by the shared colophon parser,
-[`colophon.md`](../folio/colophon.md)). Membership is crate-granular:
-`publishes` is the in-set, `excludes` the severances, and an in-set
-with no crate is a refusal rather than an empty repository — a
-publication that ships only vocabulary modules is not a buildable
-repository, and this projector makes nothing else. Modules ride along
-in the same edge; nothing severs a module, so `excludes` may not name
-one.
+[`colophon.md`](../folio/colophon.md)). `publishes` is the in-set and
+`excludes` the severances. The in-set may hold crates, and when it does
+the projection is a Cargo workspace exactly as it always was; it may
+equally hold only documents — a collection of reports, or Python beside
+the chapters that generate it — and then the repository is those
+documents, what they tangle to, and the vocabulary they are written in,
+with no manifest at all. What it may not be is empty: a publication
+that names nothing is refused rather than projected as an empty
+repository. Modules ride along in the same edge; nothing severs a
+module, so `excludes` may not name one.
 
 `excludes` has a third grain, finer than a crate. A feature can sever a
 crate's *dependency*, but it cannot keep the source of a
@@ -689,10 +711,17 @@ code.
 <a name="chunk-read-publication"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#read-publication`</sub>
 
 ```rust {#read-publication}
+// Every write below is joined onto the output directory, and the tangler
+// reports what it wrote as absolute paths that are matched against it: a
+// relative `--output-dir` is made absolute once, here, so nothing later
+// compares a relative prefix with an absolute path.
+let output_dir = &absolute_dir(output_dir)
+    .with_context(|| format!("resolving output dir {}", output_dir.display()))?;
 let content = std::fs::read_to_string(region_doc)
     .with_context(|| format!("reading publication doc {}", region_doc.display()))?;
-let (env, _body) =
-    parse_envelope(&content).map_err(|e| anyhow!("the publication doc has no readable header: {e}"))?;
+let (env, _body) = vocabulary
+    .read(&content)
+    .map_err(|e| anyhow!("the publication doc has no readable header: {e}"))?;
 if env.doc_type != DocType::Publication {
     bail!(
         "document is not a publication (type is `{}`)",
@@ -700,18 +729,42 @@ if env.doc_type != DocType::Publication {
     );
 }
 
-// `docs` is always empty here: `member_names` refuses a *literate*
-// document URI outside `excludes`. `documents` is the other grain —
-// decision documents this publication names, whole or by section.
+// `docs` is always empty here: `member_names` reads every document id
+// under `publishes` — an `x0k:implementation/` chapter's included — as a
+// document selection, the grain `documents` holds: documents this
+// publication names, whole or by section, in any namespace the vocabulary
+// declares. Which of them are chapters is the literate set's to say.
 // `severed: _` — `publishes` never carries a fragment (member_names
 // refuses one), so this is always empty here; the severances come from the
 // `severs` edge read below.
 let Members { crates, modules, docs: _, documents, severed: _ } =
-    member_names(env.edges.get("x0k:publishes"), "publishes")?;
-if crates.is_empty() {
-    bail!("publication has an empty `publishes` membership (no crate)");
+    member_names(env.edges.get("x0k:publishes"), "publishes", vocabulary)?;
+if crates.is_empty() && modules.is_empty() && documents.is_empty() {
+    bail!(
+        "publication has an empty `publishes` membership — it names no crate, no \
+         vocabulary module and no document, so there is nothing to project"
+    );
 }
-let excluded = member_names(env.edges.get("x0k:excludes"), "excludes")?;
+// Whether the projection is a Cargo workspace. Without a published crate
+// there is no manifest to write, no lockfile to resolve and no `cargo`
+// step for CI to run — and no reason to ask Cargo where packages live.
+let cargo = !crates.is_empty();
+// An entry point is where a reader starts, so it is a member: a document
+// named there that `publishes` does not name is a start the projection
+// would not carry.
+let entry_points = member_names(env.edges.get("x0k:entryPoint"), "entryPoint", vocabulary)?;
+if let Some(entry) = entry_points
+    .documents
+    .iter()
+    .find(|entry| !documents.iter().any(|d| d.reference == entry.reference))
+{
+    bail!(
+        "`entryPoint` names `{}`, which `publishes` does not — an entry point is where \
+         a reader starts, so it is a member",
+        entry.reference
+    );
+}
+let excluded = member_names(env.edges.get("x0k:excludes"), "excludes", vocabulary)?;
 if let Some(m) = excluded.modules.first() {
     bail!(
         "`excludes` names vocabulary module `{m}` — nothing severs a module; \
@@ -726,7 +779,7 @@ let excluded: BTreeSet<String> = excluded.crates.into_iter().collect();
 // severs nothing while the publication's prose goes on telling the
 // audience that a feature still live in `default` is unsupported. The same
 // rule an `excludes` document id matching no document already gets.
-let severed = member_names(env.edges.get("x0k:severs"), "severs")?.severed;
+let severed = member_names(env.edges.get("x0k:severs"), "severs", vocabulary)?.severed;
 let published_set: BTreeSet<&str> = crates.iter().map(String::as_str).collect();
 for sev in &severed {
     if !published_set.contains(sev.krate.as_str()) {
@@ -757,13 +810,17 @@ let published: BTreeSet<String> = crates.iter().cloned().collect();
 // The palette the icons on the contents page and the affordance pages
 // are bound with — the profile's four roles as colours, per scheme.
 // Read now; required only once a row has a mark to show.
-let palette = header_palette(&content)?;
+let palette = colophon_palette(&env)?;
 
 // Where this corpus keeps its chapters, its decisions and its concept
 // pages. Read once, from the corpus being projected, and carried to every
-// step that resolves a path (`region_project::CorpusLayout`).
+// step that resolves a path (`collection::CorpusLayout`).
 let layout = CorpusLayout::read(workspace);
-let packages = SourcePackages::read(workspace)?;
+let packages = if cargo {
+    SourcePackages::read(workspace)?
+} else {
+    SourcePackages::none(workspace)?
+};
 ```
 
 The layout deserves a sentence, because it is the only thing here the
@@ -771,10 +828,20 @@ projector used to *assume*. A publication's chapters were discovered by
 walking a compiled-in `knowledge/implementation/`, and a named document
 was found by joining its class onto a compiled-in `decisions/`. Both are
 now read from the corpus's own class registry
-(`x0k:implementation/tangle/region-project`, "The corpus layout"), which
+(`x0k:implementation/tangle/collection`, "The corpus layout"), which
 is `x0k:architecture/monorepo-layout` §5's one resolver table for a folio
 document. The projector therefore has no opinion about where a corpus
-keeps things; it has a reader for the table that says.
+keeps things; it has a reader for the table that says — and when the
+table does not place a named document, the id the document's own header
+declares does, wherever in the collection it sits.
+
+The header is read in a `vocabulary` (`collection` § "The
+vocabulary a publication is read in"): the modules this build compiled,
+plus whatever directories the caller named with `--vocabulary`. That
+is what lets a collection typed in its own module be published at all,
+and it is the one reading every later step uses — the members, the
+literate set, the named documents — so the projector never reads one
+document two ways.
 
 The license has exactly two carriers, and neither is a default. The
 publication doc's `x0k:license` field is authoritative; a caller's explicit
@@ -832,6 +899,25 @@ regenerated wholesale.
 // are preserved exactly as found on re-projection; everything else is
 // authoritative from the corpus.
 let overlay = overlay_paths(&env)?;
+```
+
+How the projected repository is built is the publication's to say —
+its toolchain and floor, the Git revisions it admits, its supply-chain
+policy, the marks its rows show — and a publication that says nothing
+gets the neutral answer to each
+([§ "The publication's build policy"](#the-publications-build-policy)).
+It is read here, before any guard, because the first guard to need it
+is the manifest reader's: a Git dependency is admitted only at a
+revision the publication pins.
+
+<a name="chunk-read-build-policy"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#read-build-policy`</sub>
+
+```rust {#read-build-policy}
+// The publication's own build policy, or the neutral default for each
+// item it does not state. The pins go to the manifest reader, which
+// refuses any other Git source.
+let policy = BuildPolicy::read(&env, &content, workspace)?;
+let packages = SourcePackages { git_pins: policy.git_pins.clone(), ..packages };
 ```
 
 The report is opened before the guards run so that violations have
@@ -1012,8 +1098,7 @@ if published.contains("x0k-ontology") && modules.is_empty() {
 report.module_version = if modules.is_empty() {
     None
 } else {
-    let entry = member_names(env.edges.get("x0k:entryPoint"), "entryPoint")?;
-    Some(match entry.crates.first() {
+    Some(match entry_points.crates.first() {
         Some(c) => {
             let v = versions.get(c).ok_or_else(|| {
                 anyhow!(
@@ -1046,7 +1131,15 @@ declares one — and a crate that declares none inherits 2021.
 <a name="chunk-discover-literate-docs"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#discover-literate-docs`</sub>
 
 ```rust {#discover-literate-docs}
-let literate = discover_literate_docs(workspace, &layout, &packages, &published, &excluded_docs)?;
+let (literate, named_chapters) = discover_literate_docs(
+    workspace, vocabulary, &packages, &published, &excluded_docs, &documents,
+)?;
+// A chapter the publication named ships in the literate set; what is left
+// of the named documents is projected as documents.
+let documents: Vec<DocSelection> = documents
+    .into_iter()
+    .filter(|sel| sel.id.fragment.is_some() || !named_chapters.contains(&sel.id.to_string()))
+    .collect();
 let literate_set: BTreeSet<String> = literate
     .iter()
     .map(|d| d.rel.to_string_lossy().to_string())
@@ -1071,15 +1164,42 @@ and a refusal must land before the output directory is touched.
 <a name="chunk-select-documents"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#select-documents`</sub>
 
 ```rust {#select-documents}
-let projected_docs = project_named_documents(workspace, &layout, &documents)?;
-affordance_closure(&projected_docs, &published, &excluded)?;
-let mut affordances = affordance_records(&projected_docs, workspace, &literate, &mut report)?;
+let projected_docs = project_named_documents(workspace, &layout, vocabulary, &documents)?;
+affordance_closure(&projected_docs, vocabulary, &published, &excluded)?;
+// Every document the projection ships, as `(path, text)`: the chapters as
+// the corpus holds them, the named documents as they were cut.
+let mut instance_sources: Vec<(String, String)> = literate.iter().map(|doc|
+    Ok((doc.rel.to_string_lossy().to_string(), std::fs::read_to_string(workspace.join(&doc.rel))?)))
+    .collect::<Result<_>>()?;
+instance_sources.extend(projected_docs.iter().map(|doc| (doc.rel.to_string_lossy().to_string(), doc.text.clone())));
+// What those documents need that is not a document: the modules of the
+// collection's own vocabulary they are written in, and the source files
+// their `from=` mirrors quote. Both refuse here, before anything is written.
+let collection_vocabulary = collection_modules(vocabulary, &instance_sources, &vocab_modules)?;
+if !collection_vocabulary.is_empty() && published.contains(ONTOLOGY_CRATE) {
+    bail!(
+        "the publication ships `{ONTOLOGY_CRATE}`, whose modules travel inside it, and its \
+         documents are written in a vocabulary of the collection's own ({}) — carrying both \
+         is not supported yet",
+        collection_vocabulary.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(", ")
+    );
+}
+report.sources = mirrored_sources(workspace, &packages, &published, &literate_set, &instance_sources)?;
+// What the crates and documents read that is neither: a tree the
+// publication names to ship as the collection holds it.
+report.carried = carried_files(&env, workspace, &packages, &literate_set)?
+    .into_iter()
+    .filter(|file| !report.sources.contains(file))
+    .map(|file| (file.clone(), file))
+    .collect();
+let mut affordances =
+    affordance_records(&projected_docs, vocabulary, workspace, &literate, &mut report)?;
 let vocabulary_overview = if vocab_modules.is_empty() {
     None
 } else {
     Some(vocabulary_overview(&vocab_modules, palette.as_ref())?)
 };
-let icons = read_icons(workspace, &layout, &packages, &affordances, palette.clone())?;
+let icons = read_icons(workspace, &layout, vocabulary, &packages, &affordances, palette.clone(), &policy.marks)?;
 ```
 
 The records the contents page's affordance rows are drawn from are read
@@ -1152,6 +1272,7 @@ let vendor_ctx = VendorCtx {
     crates_io: &crates_io,
     literate_set: &literate_set,
     declared_severances: &declared_severances,
+    rust_version: policy.rust_version.is_some(),
 };
 let mut severed_features: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 for name in &crates {
@@ -1243,6 +1364,27 @@ if let Some((version, _)) = &report.module_version {
     }
     report.modules_dir = Some(modules_rel.to_string_lossy().to_string());
 }
+// The collection's own modules, byte for byte as the `--vocabulary`
+// directories hold them — not stamped, not judged by our module contract —
+// beside ours when ours ship at the root (never inside the vocabulary
+// crate: the select step refused that pairing).
+if !collection_vocabulary.is_empty() {
+    let modules_dir = output_dir.join(MODULES_DIR);
+    std::fs::create_dir_all(&modules_dir)?;
+    for m in &collection_vocabulary {
+        let path = modules_dir.join(format!("{}.ttl", m.name));
+        std::fs::write(&path, &m.text)
+            .with_context(|| format!("writing vocabulary module {}", path.display()))?;
+        if let Some(shapes) = &m.shapes {
+            let dir = output_dir.join(SHAPES_DIR);
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join(format!("{}.ttl", m.name)), shapes)?;
+        }
+        tracing::info!(module = %m.name, "region_repo.collection_module.written");
+    }
+    report.vocabulary = collection_vocabulary.iter().map(|m| m.name.clone()).collect();
+    report.vocabulary_dir = Some(MODULES_DIR.to_string());
+}
 ```
 
 The literate documents that back the published crates come next — they
@@ -1290,26 +1432,37 @@ let affordance_pages: BTreeMap<String, (String, String)> = affordances
     .map(|r| (r.id.clone(), (r.title.clone(), r.document.clone())))
     .collect();
 let links = ChapterLinks { uri_to_rel: &uri_to_rel, affordances: &affordance_pages };
-let mut instance_sources: Vec<(String, String)> = literate.iter().map(|doc|
-    Ok((doc.rel.to_string_lossy().to_string(), std::fs::read_to_string(workspace.join(&doc.rel))?)))
-    .collect::<Result<_>>()?;
-instance_sources.extend(projected_docs.iter().map(|doc| (doc.rel.to_string_lossy().to_string(), doc.text.clone())));
 let source_refs: Vec<_> = instance_sources.iter().map(|(id, text)| (id.as_str(), text.as_str())).collect();
 let base = selected_vocabulary_model(&vocab_modules)?;
 let instances = crate::instance_rendering::InstancePresentation::collect(&source_refs, &base);
-// The prefixes this build predeclares that the published vocabulary does
-// not: a projected document using one says where it points itself.
-let undeclared = undeclared_prefixes(&base);
+// The prefixes the documents were read with that the published vocabulary
+// does not predeclare: a projected document using one says where it points
+// itself.
+let undeclared = undeclared_prefixes(&base, &vocabulary.prefixes());
 let mut path_map = weave_literate_docs(workspace, output_dir, &literate, &links, &instances, &undeclared, &mut report)?;
 write_projected_documents(output_dir, &projected_docs, &instances, &undeclared, &mut path_map, &mut report)?;
+write_mirrored_sources(workspace, output_dir, &report.sources)?;
+write_carried_files(workspace, output_dir, &report.carried)?;
 
-emit_workspace_manifest(output_dir, &crates, &edition)?;
+if cargo {
+    emit_workspace_manifest(output_dir, &crates, &edition, &policy, &packages)?;
+}
 emit_licenses(output_dir, &crates, &license_bodies)?;
-emit_ci_and_guard(output_dir, opts.emit_github, &layout)?;
+let ci = CiPlan::of(
+    cargo,
+    &published,
+    &literate,
+    &layout,
+    report.vocabulary_dir.as_deref(),
+    !report.sources.is_empty(),
+);
+emit_ci_and_guard(output_dir, opts.emit_github, &ci, &policy)?;
 // `.direnv/` is a contributor's shell state; without the entry `tools/ci`
 // reports it as drift to anyone running CI from a direnv checkout.
 std::fs::write(output_dir.join(".gitignore"), "/target\n**/target\n.direnv/\n")?;
-generate_lockfile(output_dir)?;
+if cargo {
+    generate_lockfile(output_dir)?;
+}
 run_proofs(output_dir, &mut affordances, proofs, &mut report)?;
 weave_affordance_pages(output_dir, &projected_docs, &affordances, icons.as_ref())?;
 emit_provenance(
@@ -1321,10 +1474,23 @@ emit_provenance(
     license_source,
     &source_licenses,
 )?;
+// The named chapters no crate vendors are tangled where they now stand —
+// the projection is a tangle root from the moment it names its provenance —
+// so what they generate, and the sidecar recording it, are the bytes the
+// `tools/ci` re-tangle will write.
+retangle_named_chapters(output_dir, &literate)?;
+// The tangler reads the staged publication in the vocabulary it was built
+// with; a publication written in a named one says where those prefixes
+// point in the copy it reads.
+let beyond_build = undeclared_prefixes(
+    &x0k_ontology::concept_facts::OntologyModel::shipped(),
+    &vocabulary.prefixes(),
+);
 let publication_pages =
     tangle_publication_doc(
         region_doc, workspace, output_dir, &overlay, &layout, palette.as_ref(),
         prebuilt.as_ref().is_some_and(|plan| plan.npm.is_some()),
+        &beyond_build,
     )?;
 write_readme_contents(
     output_dir,
@@ -1801,8 +1967,14 @@ fn render_by_area(
         // The area heads its own section under the crate its chapters back;
         // an area whose documents name no single crate heads under its path.
         let crates: BTreeSet<&str> = members.iter().filter_map(|d| d.crate_name.as_deref()).collect();
-        let heading = match crates.iter().copied().collect::<Vec<_>>()[..] {
-            [one] => format!("`{one}`"),
+        // Under its own directory when its documents share one — a chapter
+        // a collection filed outside the implementation root is headed
+        // where it lives, not where our corpus would have put it.
+        let parents: BTreeSet<&Path> = members.iter().filter_map(|d| d.rel.parent()).collect();
+        let crates: Vec<&str> = crates.into_iter().collect();
+        let heading = match (crates.as_slice(), parents.len()) {
+            ([one], _) => format!("`{one}`"),
+            (_, 1) => format!("`{}/`", parents.iter().next().unwrap().display()),
             _ => format!("`{}/{area}/`", layout.implementation_root().display()),
         };
         out.push_str(&format!("### {heading}\n\n"));
@@ -2003,6 +2175,24 @@ preserving something the publication did not mean.
 <a name="chunk-overlay-paths"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#overlay-paths`</sub>
 
 ```rust {#overlay-paths}
+/// `path` made absolute against the current directory, its `.` and `..`
+/// resolved by name — the directory may not exist yet, so it cannot be
+/// canonicalized; a root reached through a symlink is matched by its
+/// canonical spelling where the tangler's paths are compared.
+fn absolute_dir(path: &Path) -> Result<PathBuf> {
+    let mut out = PathBuf::new();
+    for part in std::path::absolute(path)?.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    Ok(out)
+}
+
 /// Read the `x0k:overlay` list from the publication header and validate each
 /// entry as a plain projected-repo-relative path (no absolute paths, no `..`,
 /// no trailing slash — a directory is named by its bare path).
@@ -2028,6 +2218,187 @@ fn overlay_paths(env: &Colophon) -> Result<Vec<String>> {
         }
     }
     Ok(out)
+}
+```
+
+## The publication's build policy
+
+A projected repository is built with something, pinned to something,
+and checked against something, and none of it is the projector's to
+decide. Which toolchain CI runs, the oldest Rust the manifests promise,
+which Git revisions a dependency may come from, what the supply-chain
+check allows, which marks a row of the contents page shows: each is a
+choice a publisher makes for their own repository, so each is something
+the publication states. The projector reads the statement, and where a
+publication states nothing it takes the neutral answer — the one that
+adds no claim the publisher did not make.
+
+| What | Stated by | Neutral when unstated |
+| --- | --- | --- |
+| The toolchain floor (`rust-version`) | `x0k:rustVersion "1.89"` | the source workspace's own `[workspace.package] rust-version`, else none |
+| The pinned toolchain (`rust-toolchain.toml`) | `x0k:rustToolchain "1.95.0"` | the source workspace's own `rust-toolchain.toml` as found, else none |
+| The Git sources a dependency may take | `x0k:gitPin "<url>?rev=<commit>"`, once per pin | none: a Git dependency is refused |
+| The supply-chain policy (`deny.toml`) | a chunk the publication routes to `deny.toml` | none, and no `cargo deny` step |
+| The marks a row shows beside its status | `x0k:marks <document>, …` | none: a row shows only an affordance's own icon |
+| The branch a publish pushes | `x0k:publishBranch "main"` ([publishing](publishing.md)) | the remote's default branch |
+| Where a publish pushes | `x0k:publishRemote "<url>"`, or `--remote` for one run ([publishing](publishing.md)) | the publication's `x0k:repository`, else the `x0k:publishedOn` surface mapped in `config/x0k-tangle.toml`, else none: `--really` refuses |
+| The registry a publish uploads crates to | `x0k:publishRegistry "crates.io"` ([publishing](publishing.md)) | none: no crate is uploaded |
+| The licence | `x0k:license`, any SPDX expression (above) | none: the projection refuses |
+
+The scalars are header statements, one value each, because a header is
+where a publication already says what it is released under and where it
+lives. The supply-chain policy is a table, too long and too commented
+for a header literal, so it is a fenced block in the publication routed
+`file="deny.toml"` the way `x0k:overlay` seeds are routed — but where an
+overlay seed is handed to the public side once, the policy is
+regenerated on every projection, because it is the publisher's
+standing answer, under review in their corpus, not a file the public
+side tends. Its `@generated` line comes off like the MkDocs hook's: the
+file reads as the policy itself.
+
+The resolved workspace dependencies are not on the list, because they
+were never a choice. A published crate that inherits a key
+(`anyhow.workspace = true`) inherits what the workspace it lives in
+declares, so the standalone workspace declares exactly that value —
+read from the source workspace's own `[workspace.dependencies]`, never
+from a table here that mirrors it and drifts from it. A key the source
+workspace does not declare refuses, naming it.
+
+<a name="chunk-build-policy"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#build-policy`</sub>
+
+```rust {#build-policy}
+/// The projected repository's supply-chain policy file. A publication that
+/// routes a chunk here states a policy, and the CI script and workflow run
+/// `cargo deny` against it; one that routes none states none.
+const SUPPLY_CHAIN_POLICY: &str = "deny.toml";
+
+/// How the projected repository is built, pinned and checked: each item the
+/// publication states, or the neutral default where it states nothing.
+#[derive(Debug, Clone, Default)]
+struct BuildPolicy {
+    /// The toolchain floor (`workspace.package.rust-version`): the header's
+    /// `x0k:rustVersion`, else the source workspace's own, else none.
+    rust_version: Option<String>,
+    /// What `rust-toolchain.toml` pins.
+    toolchain: Toolchain,
+    /// The Git revisions a published crate may depend on (`x0k:gitPin`).
+    git_pins: Vec<GitPin>,
+    /// The publication tangles its own `deny.toml`.
+    supply_chain: bool,
+    /// The documents whose sections declare the marks a row shows
+    /// (`x0k:marks`), in the order the header names them.
+    marks: Vec<String>,
+}
+
+/// What the projection pins its toolchain to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum Toolchain {
+    /// `x0k:rustToolchain` names a channel; the projector writes its
+    /// toolchain file around it.
+    Stated(String),
+    /// The source workspace pins its own, and the projection carries that
+    /// file as found.
+    Workspace { file: String, text: String },
+    /// Nothing pins one, so the projection pins none.
+    #[default]
+    Unpinned,
+}
+
+/// One Git revision a published crate may depend on: `<url>?rev=<commit>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitPin {
+    url: String,
+    rev: String,
+}
+
+impl GitPin {
+    fn parse(raw: &str) -> Result<Self> {
+        let refuse = || {
+            anyhow!(
+                "`x0k:gitPin` entry `{raw}` is not `<url>?rev=<commit>` — a pin names one \
+                 repository at one revision"
+            )
+        };
+        let (url, rev) = raw.trim().split_once("?rev=").ok_or_else(refuse)?;
+        if url.is_empty()
+            || url.contains(char::is_whitespace)
+            || rev.is_empty()
+            || !rev.chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            return Err(refuse());
+        }
+        Ok(Self { url: url.to_string(), rev: rev.to_string() })
+    }
+
+    /// The `source` Cargo writes into a lockfile for a package at this pin.
+    fn lock_source(&self) -> String {
+        format!("git+{}?rev={}#{}", self.url, self.rev, self.rev)
+    }
+}
+
+impl BuildPolicy {
+    /// Read the policy from the publication's header and body, falling back
+    /// to the source workspace for the two things a workspace states itself.
+    fn read(env: &Colophon, publication: &str, workspace: &Path) -> Result<Self> {
+        let rust_version = match header_literal(env, "x0k:rustVersion") {
+            Some(floor) => Some(floor),
+            None => workspace_rust_version(workspace)?,
+        };
+        let toolchain = match header_literal(env, "x0k:rustToolchain") {
+            Some(channel) => Toolchain::Stated(channel),
+            None => workspace_toolchain(workspace)?,
+        };
+        let git_pins = header_literals(env, "x0k:gitPin")
+            .iter()
+            .map(|raw| GitPin::parse(raw))
+            .collect::<Result<Vec<_>>>()?;
+        let supply_chain = routes_a_chunk_to(publication, SUPPLY_CHAIN_POLICY);
+        let marks = env.edges.get("x0k:marks").cloned().unwrap_or_default();
+        Ok(Self { rust_version, toolchain, git_pins, supply_chain, marks })
+    }
+}
+
+/// Whether a fenced block in `publication` is routed `file="<target>"`.
+/// Read off the fences, not through the tangler's parse, which reads the
+/// header in the shipped prefixes alone and so refuses a publication typed
+/// in a vocabulary of its own.
+fn routes_a_chunk_to(publication: &str, target: &str) -> bool {
+    use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag};
+    Parser::new(publication).any(|event| {
+        matches!(event, Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))
+            if crate::parser::parse_info_string(&info).file.as_deref() == Some(Path::new(target)))
+    })
+}
+
+/// The source workspace's own toolchain floor, when its root manifest
+/// states one.
+fn workspace_rust_version(workspace: &Path) -> Result<Option<String>> {
+    let path = workspace.join("Cargo.toml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    let doc = text
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("parsing {}", path.display()))?;
+    Ok(doc
+        .get("workspace")
+        .and_then(|w| w.get("package"))
+        .and_then(|p| p.get("rust-version"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
+}
+
+/// The source workspace's own toolchain file, under either name rustup reads.
+fn workspace_toolchain(workspace: &Path) -> Result<Toolchain> {
+    for file in ["rust-toolchain.toml", "rust-toolchain"] {
+        let path = workspace.join(file);
+        if path.is_file() {
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            return Ok(Toolchain::Workspace { file: file.to_string(), text });
+        }
+    }
+    Ok(Toolchain::Unpinned)
 }
 ```
 
@@ -2163,8 +2534,24 @@ fn clear_regenerated_region(output_dir: &Path) -> Result<()> {
 Member URIs are split by their kind prefix: `x0k:software-module/`
 names a crate (an `excludes` entry may carry a `#feature` suffix
 naming the severance, and only the crate name matters here) and
-`x0k:ontology-module/` names a vocabulary module. Any other URI under
-a membership edge is an error naming it.
+`x0k:ontology-module/` names a vocabulary module. Everything else a
+membership edge names is a *document*, by its id, and the id may be in
+any namespace the vocabulary declares — ours (`x0k:design/…`,
+`x0k:wiki/…`), or a collection's own (`acme:report/q3`, under
+`--vocabulary`). That is what lets a collection that is not ours be
+published: its documents are named the way it names them, and found by
+the id their headers declare
+([§ "Documents the publication names"](#documents-the-publication-names)).
+
+Which documents an edge may name differs by edge. `publishes` and
+`entryPoint` name documents that cross. `excludes` names a literate
+chapter held back: in our namespace that is an `x0k:implementation/`
+id and nothing else — any other `x0k:` id there is a mistake to name,
+and refused — while in a collection's own namespace the projector
+cannot tell a chapter by its prefix, so the id is matched against the
+chapters' own headers like any other, and one that matches no chapter
+is refused for severing nothing. An id in no namespace the vocabulary
+declares is refused on every edge, saying so.
 
 A header spells the `#` that opens a fragment as `%23`, because the id's
 IRI already holds its one fragment (`https://0k.computer/ontology#design/…`),
@@ -2223,9 +2610,10 @@ fn fragment_separator(u: &str) -> String {
 /// Read a membership edge (`publishes`, `excludes`, `entryPoint`): crates
 /// lose their `x0k:software-module/` prefix (and any `#feature` suffix),
 /// vocabulary modules their `x0k:ontology-module/` prefix, and — under
-/// `excludes` only — literate documents keep their whole URI. Any other
-/// x0k id under `publishes` is a document selection.
-fn member_names(uris: Option<&Vec<String>>, edge: &str) -> Result<Members> {
+/// `excludes` only — literate documents keep their whole URI. Any other id
+/// under `publishes` or `entryPoint`, in a namespace `vocabulary`
+/// declares, is a document selection.
+fn member_names(uris: Option<&Vec<String>>, edge: &str, vocabulary: &Vocabulary) -> Result<Members> {
     let mut out = Members::default();
     for u in uris.into_iter().flatten() {
         let u = &fragment_separator(u);
@@ -2263,11 +2651,13 @@ fn member_names(uris: Option<&Vec<String>>, edge: &str) -> Result<Members> {
             }
         } else if let Some(m) = u.strip_prefix(ONTOLOGY_MODULE_PREFIX) {
             out.modules.push(m.to_string());
-        } else if u.starts_with(IMPLEMENTATION_DOC_PREFIX) {
-            // Only a severance. In `publishes` a document would be
-            // meaningless — documents are not selected, they follow the
-            // crate they tangle to — and silently accepting one there would
-            // read as a membership the projector does not honour.
+        } else if u.starts_with(IMPLEMENTATION_DOC_PREFIX) && edge != "publishes" {
+            // A severance, or (under `publishes`, below) a selection. A
+            // chapter that tangles into a Cargo crate is not selected — it
+            // follows the crate — and the literate set refuses one named
+            // there; a chapter that tangles to anything else has no crate
+            // to follow, and naming it is how it ships. Anywhere else a
+            // chapter id would read as a membership nobody honours.
             if edge != "excludes" {
                 bail!(
                     "`{edge}` member `{u}` is a literate document; documents are \
@@ -2276,24 +2666,36 @@ fn member_names(uris: Option<&Vec<String>>, edge: &str) -> Result<Members> {
                 );
             }
             out.docs.push(u.clone());
-        } else if edge == "publishes" && u.starts_with("x0k:") {
+        } else if matches!(edge, "publishes" | "entryPoint") {
             // A document, addressed the way the format already addresses
             // one: the transclusion reference `<id>#<heading-path>`, with
             // no anchor meaning the whole document. One address, two
             // directions — the string that pulls a section into a document
-            // is the string that projects one out of a region.
-            let id: EntityId = u.parse().map_err(|e| {
-                anyhow!("`publishes` member `{u}` is not a readable x0k id: {e}")
+            // is the string that projects one out of a region. The id is in
+            // any namespace a loaded module declares.
+            let id: EntityId = vocabulary.parse_id(u).map_err(|e| {
+                anyhow!(
+                    "`{edge}` member `{u}` is not a document id in any namespace the \
+                     vocabulary declares: {e} — a collection's own namespace is \
+                     declared by its module, named with `--vocabulary`"
+                )
             })?;
             out.documents.push(DocSelection {
                 reference: u.clone(),
                 id,
             });
+        } else if edge == "excludes" && !u.starts_with("x0k:") && vocabulary.parse_id(u).is_ok() {
+            // A chapter in a collection's own namespace: its prefix cannot
+            // say it is one, so its header does — the literate set's walk
+            // matches it by id, and refuses an id no chapter declares.
+            out.docs.push(u.clone());
         } else {
             bail!(
                 "`{edge}` member `{u}` is not an x0k:software-module/, an \
                  x0k:ontology-module/, (under `excludes`) an \
-                 x0k:implementation/, or (under `publishes`) a document URI"
+                 x0k:implementation/ or a chapter in a collection's own \
+                 namespace, or (under `publishes`) a document id in a \
+                 namespace the vocabulary declares"
             );
         }
     }
@@ -2331,62 +2733,14 @@ fn header_literal(env: &Colophon, predicate: &str) -> Option<String> {
 ```
 
 Two statements are structures rather than scalars — the `x0k:palette`
-below and the `x0k:prebuilt` of [the prebuilt lane](#the-prebuilt-lane) —
-and each is one `rdf:JSON` literal whose text is the structure. Both want
-the same thing from the header: that literal, read as the consumer's own
-type. That is one function, and it refuses a structure stated twice or
-stated as anything but JSON, because either would leave the reader to
-guess which declaration was meant.
-
-<a name="chunk-header-json"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#header-json`</sub>
-
-```rust {#header-json}
-/// The one `rdf:JSON` literal the header states for `predicate`, read as
-/// `T` — `None` when the header states none. A second value, a literal of
-/// another datatype, or JSON that does not read as `T` refuses, naming why.
-fn header_json<T: serde::de::DeserializeOwned>(env: &Colophon, predicate: &str) -> Result<Option<T>> {
-    let values = env.properties.get(predicate).map(Vec::as_slice).unwrap_or_default();
-    let literal = match values {
-        [] => return Ok(None),
-        [one] => one,
-        many => bail!("the header states `{predicate}` {} times; state it once", many.len()),
-    };
-    if literal.datatype != RDF_JSON {
-        bail!("the header's `{predicate}` is not an `rdf:JSON` literal (datatype `{}`)", literal.datatype);
-    }
-    serde_json::from_str(&literal.value)
-        .map(Some)
-        .map_err(|e| anyhow!("the header's `{predicate}` does not read: {e}"))
-}
-```
-
-The first of the two is the publication's own in a stronger sense: the
-`x0k:palette` statement binds the icon profile's four paint roles to colours, once per
-scheme, and it is the only palette a projected repository has — there is
-no theme document in reach, which is why the profile lets a publication
-carry one (`x0k:design/icon-profile` § "The paints"). Its shape is the
-binder's own type, so the crate that binds the icons reads it directly;
-a statement that is not four roles per scheme refuses, naming why, rather
-than binding a mark to nothing.
-
-<a name="chunk-header-palette"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#header-palette`</sub>
-
-```rust {#header-palette}
-/// Read the publication header's `x0k:palette` — the icon profile's four
-/// roles bound to colours, per scheme — as the binder's own type. `None`
-/// when the header states none; a statement that does not read as one
-/// refuses, naming why.
-pub fn header_palette(content: &str) -> Result<Option<Palette>> {
-    let (env, _) = parse_envelope(content)
-        .map_err(|e| anyhow!("the publication doc has no readable header: {e}"))?;
-    header_json::<Palette>(&env, "x0k:palette").map_err(|e| {
-        anyhow!(
-            "the publication's `x0k:palette` does not read as the icon profile's four \
-             roles (ink, line, paper, accent) per scheme (light, dark): {e}"
-        )
-    })
-}
-```
+and the `x0k:prebuilt` of [the prebuilt lane](#the-prebuilt-lane) —
+and each is one `rdf:JSON` literal whose text is the structure. Both are
+read by one function, `header_json`, which refuses a structure stated
+twice or stated as anything but JSON. It and the palette's reader,
+`header_palette`, live with the `icon` verb in
+[`cli-faces.md`](cli-faces.md) § "The icons", because that verb reads a
+publication's palette too and ships where this chapter does not; the
+projector imports both from there.
 
 ## Vendoring a crate
 
@@ -2425,6 +2779,9 @@ struct VendorCtx<'a> {
     literate_set: &'a BTreeSet<String>,
     /// Features this publication severs by declaration, by crate.
     declared_severances: &'a BTreeMap<String, BTreeSet<String>>,
+    /// The standalone workspace declares a toolchain floor for crates to
+    /// inherit.
+    rust_version: bool,
 }
 
 /// Cargo owns source residency; publication identities remain package names.
@@ -2433,9 +2790,32 @@ struct SourcePackages {
     workspace: PathBuf,
     roots: BTreeMap<String, PathBuf>,
     workspace_dependencies: Option<toml_edit::Table>,
+    /// The Git revisions the publication pins; a Git dependency at any other
+    /// source refuses. Empty until the build policy is read.
+    git_pins: Vec<GitPin>,
 }
 
 impl SourcePackages {
+    /// No packages: what a publication that ships no crate resolves
+    /// against. Cargo is never asked — the collection need not be a Cargo
+    /// workspace, nor hold a lockfile, to publish its documents.
+    fn none(workspace: &Path) -> Result<Self> {
+        Ok(Self {
+            workspace: workspace.canonicalize()?,
+            roots: BTreeMap::new(),
+            workspace_dependencies: None,
+            git_pins: Vec::new(),
+        })
+    }
+
+    /// Whether a chapter's `folio:tangleCrate` names a Cargo package: one of
+    /// the workspace's members, or any directory holding a manifest — the
+    /// second for a collection whose packages were never read because the
+    /// publication ships none of them.
+    fn is_cargo_target(&self, path: &str) -> bool {
+        self.chapter_package(path).is_some() || self.workspace.join(path).join("Cargo.toml").is_file()
+    }
+
     fn read(workspace: &Path) -> Result<Self> {
         let workspace = workspace.canonicalize()?;
         let mut roots = BTreeMap::new();
@@ -2483,7 +2863,25 @@ impl SourcePackages {
                 }
             }
         }
-        Ok(Self { workspace, roots, workspace_dependencies })
+        Ok(Self { workspace, roots, workspace_dependencies, git_pins: Vec::new() })
+    }
+
+    /// The value the source workspace declares for an inherited dependency
+    /// key, as the standalone workspace writes it: an inline table in
+    /// `toml_edit`'s own spacing, whatever spacing the source used.
+    fn workspace_dependency(&self, key: &str) -> Option<String> {
+        let mut value = match self.workspace_dependencies.as_ref()?.get(key)? {
+            toml_edit::Item::Value(value) => value.clone(),
+            toml_edit::Item::Table(table) => {
+                toml_edit::Value::InlineTable(table.clone().into_inline_table())
+            }
+            _ => return None,
+        };
+        value.decor_mut().clear();
+        if let Some(table) = value.as_inline_table_mut() {
+            table.fmt();
+        }
+        Some(value.to_string())
     }
 
     fn root(&self, name: &str) -> Result<&Path> {
@@ -2541,10 +2939,15 @@ impl SourcePackages {
                         }
                     }
                     if let Some(git) = dep.get("git").and_then(|v| v.as_str()) {
-                        if git != "https://github.com/dialog-db/dialog-db"
-                            || dep.get("rev").and_then(|v| v.as_str()) != Some("3fac7ad3e691d401fb5c18c18ffb23de74342742")
-                            || dep.get("branch").is_some() || dep.get("tag").is_some() {
-                            bail!("dependency '{key}' is not the publication's approved Dialog Git revision");
+                        let rev = dep.get("rev").and_then(|v| v.as_str());
+                        let pinned = dep.get("branch").is_none() && dep.get("tag").is_none()
+                            && packages.git_pins.iter()
+                                .any(|pin| pin.url == git && Some(pin.rev.as_str()) == rev);
+                        if !pinned {
+                            bail!("dependency '{key}' takes Git source `{git}`{}, which is not a \
+                                revision this publication pins — state it in the publication's \
+                                header as `x0k:gitPin \"{git}?rev=<commit>\"` and depend on that `rev`",
+                                rev.map(|r| format!(" at `{r}`")).unwrap_or_default());
                         }
                     }
                     let Some(relative) = dep.get("path").and_then(|v| v.as_str()) else { continue; };
@@ -2603,6 +3006,33 @@ fn manifest_access(doc: &toml_edit::DocumentMut) -> String {
         .and_then(|a| a.as_str())
         .unwrap_or("public")
         .to_string()
+}
+```
+
+The receiver needs the same residency from the other side. A projection
+flattens every vendored crate to `<name>/` at its root, wherever the crate
+lives in the source tree; a hand-written edit a contributor makes under
+`<name>/` has to go back to that crate's real directory, and only Cargo's
+own answer — the one the projector vendored from — says where that is. So
+the map is offered as it was read, relative to the workspace:
+
+<a name="chunk-source-package-roots"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#source-package-roots`</sub>
+
+```rust {#source-package-roots}
+/// Each workspace package's root, relative to `workspace`, by package
+/// name: where the projector vendors `<name>/` from. Read the way the
+/// projector reads it, so the receiver routes an edit back to the
+/// directory the crate came out of.
+pub(crate) fn source_package_roots(workspace: &Path) -> Result<BTreeMap<String, PathBuf>> {
+    let packages = SourcePackages::read(workspace)?;
+    Ok(packages
+        .roots
+        .iter()
+        .map(|(name, root)| {
+            let rel = root.strip_prefix(&packages.workspace).unwrap_or(root);
+            (name.clone(), rel.to_path_buf())
+        })
+        .collect())
 }
 ```
 
@@ -2761,6 +3191,10 @@ publication act always sets, because the source tree's
 `LicenseRef-Proprietary` is exactly what must not ship, and `edition`
 and `rust-version`, which every published crate inherits from the
 standalone workspace so the toolchain floor is declared in one place.
+A publication with no floor to state declares none, and then a crate's
+`rust-version.workspace = true` would name a key the standalone
+workspace does not have — so the inheriting line comes off, while a
+floor the crate states as its own literal stays.
 The corpus-only `[package.metadata.x0k]` table (module naming, access
 class) is stripped: it is monorepo registry vocabulary, and it would
 ship inside every crates.io tarball otherwise.
@@ -2792,7 +3226,16 @@ if let Some(pkg) = doc.get_mut("package").and_then(|p| p.as_table_mut()) {
     let mut inherit = toml_edit::InlineTable::new();
     inherit.insert("workspace", toml_edit::Value::from(true));
     pkg.insert("edition", toml_edit::value(inherit.clone()));
-    pkg.insert("rust-version", toml_edit::value(inherit));
+    if ctx.rust_version {
+        pkg.insert("rust-version", toml_edit::value(inherit));
+    } else if pkg
+        .get("rust-version")
+        .and_then(|v| v.as_table_like())
+        .is_some_and(|t| t.contains_key("workspace"))
+    {
+        // No floor in the standalone workspace to inherit.
+        pkg.remove("rust-version");
+    }
     // `[package.metadata.x0k]` is corpus registry vocabulary, not crates.io's.
     let metadata_empty = pkg
         .get_mut("metadata")
@@ -3416,7 +3859,10 @@ multi-line or non-canonical Turtle, this reader is what to replace.
 An import must be another x0k-hosted module (`https://0k.computer/ontology/<name>`);
 a foreign IRI refuses, because admitting foreign terms into the closure
 is the trust question the ADR leaves open. The file's bytes are kept
-so the write is the tree's file plus one line.
+so the write is the tree's file plus one line. All of this is the
+contract of *our* modules, the ones a publication names under
+`publishes`; a collection's own modules travel by another rule
+([§ "A collection's own vocabulary"](#a-collections-own-vocabulary)).
 
 <a name="chunk-vocab-module"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#vocab-module`</sub>
 
@@ -3904,20 +4350,432 @@ impl VocabModule {
 }
 ```
 
+## A collection's own vocabulary
+
+Everything above is *our* vocabulary: modules named under `publishes`,
+read from our ontology directories, stamped with the publication's
+version, refused if they import outside the x0k-hosted set or carry an
+instance fact, and carried inside `x0k-ontology` when that crate ships.
+A collection typed in a module of its own — `acme:Report` — is read
+against that module through `--vocabulary`, and until now the module
+stayed behind: the projection declared `acme:` in every document and
+gave its reader no way to know what an `acme:Report` is. `check` in the
+projected repository could not read a single header.
+
+So the modules a projection's documents need travel with them. *Need*
+is read off the documents themselves: every prefix a shipped document's
+header or graph blocks write a name in, matched against the namespace
+each module of the `--vocabulary` directories declares. A module that
+supplies one ships, and so does everything it imports there, because a
+module directory has to load on its own — that is what `--vocabulary`
+asks of one, and what the projected `check --vocabulary` will ask of
+this one. A module this build already compiled is not shipped for being
+used (`x0k:` needs no file), only for being imported. The files cross
+byte for byte: none of our module contract applies to someone else's
+module — no stamp, no instance refusal, no x0k-hosted import rule —
+because that contract is how *we* version and disclose ours, and the
+collection's module is the collection's.
+
+They land in `ontology/modules/` at the projection root, beside ours when
+ours ship there, and `PROVENANCE.json` names them under `vocabulary`.
+A publication that ships `x0k-ontology` carries our modules inside that
+crate, where a build script compiles every file it finds; a collection's
+module there would be compiled into our vocabulary crate, so that pairing
+refuses until something needs it.
+
+<a name="chunk-collection-vocabulary"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#collection-vocabulary`</sub>
+
+```rust {#collection-vocabulary}
+/// A module of a collection's own vocabulary, as a `--vocabulary`
+/// directory holds it.
+struct CollectionModule {
+    name: String,
+    iri: String,
+    imports: Vec<String>,
+    /// The prefixes its namespace is written with.
+    prefixes: BTreeSet<String>,
+    text: String,
+    shapes: Option<String>,
+}
+
+/// The collection modules the shipped `documents` need: each module of the
+/// vocabulary's directories whose namespace a document writes a name in,
+/// with its imports there, in name order. A module this build compiled
+/// ships only when imported; one the publication already ships as ours,
+/// by name, does not ship twice.
+fn collection_modules(
+    vocabulary: &Vocabulary,
+    documents: &[(String, String)],
+    ours: &[VocabModule],
+) -> Result<Vec<CollectionModule>> {
+    use x0k_ontology::concept_facts::OntologyModel;
+    if vocabulary.dirs().is_empty() {
+        return Ok(Vec::new());
+    }
+    let compiled: BTreeSet<String> =
+        OntologyModel::shipped().modules().into_iter().map(|m| m.iri).collect();
+    let mut available: BTreeMap<String, CollectionModule> = BTreeMap::new();
+    for dir in vocabulary.dirs() {
+        let model = OntologyModel::load(dir)
+            .map_err(|e| anyhow!("loading a vocabulary from {}: {e}", dir.display()))?;
+        let namespaces = model.extension_namespaces();
+        let shapes_dir = x0k_ontology::load::shapes_dir_for(dir);
+        for module in model.modules() {
+            if available.contains_key(&module.iri) {
+                continue; // the first directory named wins, as in reading
+            }
+            let path = dir.join(format!("{}.ttl", module.name));
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading vocabulary module {}", path.display()))?;
+            let shapes = std::fs::read_to_string(shapes_dir.join(format!("{}.ttl", module.name))).ok();
+            let prefixes = namespaces
+                .iter()
+                .filter(|(_, namespace)| Some(namespace) == module.namespace.as_ref())
+                .map(|(prefix, _)| prefix.clone())
+                .collect();
+            available.insert(
+                module.iri.clone(),
+                CollectionModule {
+                    name: module.name,
+                    iri: module.iri,
+                    imports: module.imports,
+                    prefixes,
+                    text,
+                    shapes,
+                },
+            );
+        }
+    }
+    let used: BTreeSet<String> = documents.iter().flat_map(|(_, text)| document_prefixes(text)).collect();
+    let mut pending: Vec<String> = available
+        .values()
+        .filter(|m| !compiled.contains(&m.iri) && m.prefixes.iter().any(|p| used.contains(p)))
+        .map(|m| m.iri.clone())
+        .collect();
+    let mut shipping: BTreeSet<String> = BTreeSet::new();
+    while let Some(iri) = pending.pop() {
+        if !shipping.insert(iri.clone()) {
+            continue;
+        }
+        if let Some(module) = available.get(&iri) {
+            pending.extend(module.imports.iter().cloned());
+        }
+    }
+    let ours: BTreeSet<&str> = ours.iter().map(|m| m.name.as_str()).collect();
+    let mut out: Vec<CollectionModule> = available
+        .into_values()
+        .filter(|m| shipping.contains(&m.iri) && !ours.contains(m.name.as_str()))
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Every prefix a document's header and graph blocks write a name in.
+fn document_prefixes(text: &str) -> BTreeSet<String> {
+    use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+    let mut used = BTreeSet::new();
+    let mut inside = false;
+    let mut block = String::new();
+    for event in Parser::new(text) {
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                inside = is_marker(&info, "folio:document") || is_marker(&info, "folio:graph");
+                block.clear();
+            }
+            Event::Text(t) if inside => block.push_str(&t),
+            Event::End(TagEnd::CodeBlock) if inside => {
+                used.extend(turtle_prefixes_used(&block));
+                inside = false;
+            }
+            _ => {}
+        }
+    }
+    used
+}
+```
+
+## The source a mirror quotes
+
+A document can quote code it does not own: a `from=` chunk names a file
+and a symbol, and `check` holds the chunk's body to what the file says.
+A chapter's mirror of its own crate's source travels with the crate. A
+mirror of anything else — the Python module a page explains, a script
+beside the documents — used to travel without its source, and the
+projection's `check` then failed on a file that was never there. The
+source ships now, at the path the mirror names, so the mirror resolves in
+the repository exactly as it did in the collection.
+
+What cannot ship is refused by name, before anything is written: a source
+inside a crate the publication does not publish (shipping the file would
+publish part of that crate), a `@generated` source whose chapter does not
+ship (the copy would be generated code with no document behind it), and
+a path the collection does not hold at all. A generated source whose
+chapter does ship needs nothing: the chapter produces it.
+
+<a name="chunk-mirrored-sources"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#mirrored-sources`</sub>
+
+```rust {#mirrored-sources}
+/// The hand-written files the shipped `documents`' `from=` mirrors quote
+/// that no published crate carries, collection-relative. Refuses a source in
+/// an unpublished crate, a generated source whose chapter does not ship, and
+/// a source the collection does not hold.
+fn mirrored_sources(
+    workspace: &Path,
+    packages: &SourcePackages,
+    published: &BTreeSet<String>,
+    literate_set: &BTreeSet<String>,
+    documents: &[(String, String)],
+) -> Result<BTreeSet<String>> {
+    let mut sources = BTreeSet::new();
+    for (doc, text) in documents {
+        let Ok(parsed) = parse_document(text) else { continue };
+        for chunk in parsed.chunks.values().flatten() {
+            let Some(from) = &chunk.from else { continue };
+            let rel = from.to_string_lossy().to_string();
+            let path = workspace.join(from);
+            // The innermost package holding the file: a workspace whose root
+            // is itself a package holds every file, and owns none of them
+            // ahead of a member.
+            let owner = path.canonicalize().ok().and_then(|abs| {
+                packages
+                    .roots
+                    .iter()
+                    .filter(|(_, root)| abs.starts_with(root))
+                    .max_by_key(|(_, root)| root.components().count())
+                    .map(|(name, _)| name.clone())
+            });
+            match owner {
+                Some(name) if published.contains(&name) => continue,
+                Some(name) => bail!(
+                    "{doc} mirrors `{rel}` (chunk `{}`), which is source of `{name}` — a crate this \
+                     publication does not publish; shipping the file would publish part of it",
+                    chunk.name
+                ),
+                None => {}
+            }
+            if !path.is_file() {
+                bail!(
+                    "{doc} mirrors `{rel}` (chunk `{}`), which the collection does not hold — a \
+                     mirror the repository cannot resolve",
+                    chunk.name
+                );
+            }
+            if let Some(source) = generated_source(&path) {
+                if literate_set.contains(&source) {
+                    continue;
+                }
+                bail!(
+                    "{doc} mirrors `{rel}` (chunk `{}`), which is generated from {source} — a \
+                     chapter this publication does not ship, so the copy would be generated code \
+                     with no document behind it",
+                    chunk.name
+                );
+            }
+            sources.insert(rel);
+        }
+    }
+    Ok(sources)
+}
+
+/// Copy each mirrored source to its own path in the projection.
+fn write_mirrored_sources(workspace: &Path, output_dir: &Path, sources: &BTreeSet<String>) -> Result<()> {
+    for rel in sources {
+        let dst = output_dir.join(rel);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(workspace.join(rel), &dst).with_context(|| format!("copying mirrored source {rel}"))?;
+        tracing::info!(path = %rel, "region_repo.mirrored_source.copied");
+    }
+    Ok(())
+}
+
+/// Tangle each named chapter no crate vendors, in place in the projection.
+fn retangle_named_chapters(output_dir: &Path, literate: &[LiterateDoc]) -> Result<()> {
+    for doc in literate.iter().filter(|d| d.retangle) {
+        tangle_document(&output_dir.join(&doc.rel), output_dir, &PipelineRegistry::default())
+            .with_context(|| format!("tangling {} in the projection", doc.rel.display()))?;
+        tracing::info!(doc = %doc.id, "region_repo.chapter.retangled");
+    }
+    Ok(())
+}
+```
+
+## The files a publication carries
+
+A crate can read files that are neither its own source nor a document:
+a vendored tree it builds programs with, data its tests are held to. In
+the collection they sit beside the crate, and the crate finds them there;
+a projection that leaves them behind builds and then fails every test
+that reads one. A mirror cannot reach them — nothing quotes a compiler
+seed — and widening a crate to swallow a tree it does not own would
+change what the crate is. So the publication says it outright:
+`x0k:carries` names collection-relative paths, each a file or a
+directory, and the projection ships them as the collection holds them,
+at the same path. `x0k-plan-vm` is the case that asked: its evaluator
+compiles with the Gallowglass fork at `third-party/gallowglass`, and its
+contract tests read the specification text beside their chapter.
+
+A directory carries the files its version control tracks — what
+`jj file list` or `git ls-files` answers for it — so a build product or a
+cache beside the tree never rides along; a collection under neither is
+walked whole, `.git` and `target` aside. The rules a mirror's source
+answers to hold here too, and refuse before anything is written: a path
+that is not plain and relative, a path the collection does not hold, a
+path inside a crate or holding one (a crate ships by `publishes`, whole
+or not at all), and a `@generated` file whose chapter does not ship. A
+generated file whose chapter does ship is left to the chapter, which
+writes it. A carried file is hand-written source to a receiver: it is
+recorded with the mirrored sources in `PROVENANCE.json`'s `sources`,
+projected path to collection path, and an edit to it is routed back to
+where it came from.
+
+<a name="chunk-carried-files"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#carried-files`</sub>
+
+```rust {#carried-files}
+/// The files the publication's `x0k:carries` paths name, collection-relative
+/// and sorted: each file named, and every tracked file under each directory
+/// named. Refuses a path that is not plain and relative, one the collection
+/// does not hold, one inside a crate or holding one, and a `@generated` file
+/// whose chapter does not ship; a generated file whose chapter ships is left
+/// to that chapter.
+fn carried_files(
+    env: &Colophon,
+    workspace: &Path,
+    packages: &SourcePackages,
+    literate_set: &BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    let mut files = BTreeSet::new();
+    for raw in header_literals(env, "x0k:carries") {
+        let rel = raw.trim().trim_end_matches('/').to_string();
+        let path = Path::new(&rel);
+        // Plain: relative, nothing but named components, and spelled in
+        // characters a version-control query reads as a path.
+        let plain = !rel.is_empty()
+            && path.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+            && rel.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'));
+        if !plain {
+            bail!("`x0k:carries` entry `{raw}` is not a plain collection-relative path");
+        }
+        let abs = workspace.join(path);
+        if !abs.exists() {
+            bail!("`x0k:carries` names `{rel}`, which the collection does not hold");
+        }
+        let canonical = abs.canonicalize()?;
+        if let Some((name, _)) = packages
+            .roots
+            .iter()
+            .find(|(_, root)| canonical.starts_with(root) || root.starts_with(&canonical))
+        {
+            bail!(
+                "`x0k:carries` names `{rel}`, which lies in or holds crate `{name}` — a crate \
+                 ships by `publishes`, whole, never as carried files"
+            );
+        }
+        for file in tracked_files(workspace, &rel)? {
+            if let Some(source) = generated_source(&workspace.join(&file)) {
+                if literate_set.contains(&source) {
+                    continue;
+                }
+                bail!(
+                    "`x0k:carries` would ship `{file}`, which is generated from {source} — a \
+                     chapter this publication does not ship"
+                );
+            }
+            files.insert(file);
+        }
+    }
+    Ok(files)
+}
+
+/// The files under `rel` the collection's version control tracks,
+/// collection-relative: `jj file list`, else `git ls-files`, else (a
+/// collection under neither) a walk that skips `.git` and `target`.
+fn tracked_files(workspace: &Path, rel: &str) -> Result<Vec<String>> {
+    let queries: [(&str, &[&str]); 2] = [("jj", &["file", "list", "--"]), ("git", &["ls-files", "--"])];
+    for (tool, args) in queries {
+        let Ok(out) = std::process::Command::new(tool)
+            .current_dir(workspace)
+            .args(args)
+            .arg(rel)
+            .output()
+        else {
+            continue;
+        };
+        if !out.status.success() {
+            continue;
+        }
+        let files: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect();
+        if files.is_empty() {
+            bail!("`x0k:carries` names `{rel}`, under which {tool} tracks no file");
+        }
+        return Ok(files);
+    }
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(workspace.join(rel))
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|e| !matches!(e.file_name().to_str(), Some(".git" | "target")))
+    {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            files.push(entry.path().strip_prefix(workspace)?.to_string_lossy().to_string());
+        }
+    }
+    Ok(files)
+}
+
+/// Copy each carried file from the collection to its projected path.
+fn write_carried_files(workspace: &Path, output_dir: &Path, carried: &BTreeMap<String, String>) -> Result<()> {
+    for (projected, source) in carried {
+        let dst = output_dir.join(projected);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(workspace.join(source), &dst).with_context(|| format!("copying carried file {source}"))?;
+    }
+    tracing::info!(files = carried.len(), "region_repo.carried.copied");
+    Ok(())
+}
+```
+
 ## The literate documents
 
-The literate set is discovered in two passes. First, every document
-under the corpus's implementation root whose `folio:tangleCrate` names a
-published crate — the tangled chapters, each with a sidecar. Then the
-*areas* those chapters live in (one directory below that root) admit
-their prose-only chapters: a document in such an area with no
-tangle configuration at all is an overview or protocol description that the
-tangled chapters cite (`tangle/protocol.md` is the one the crate chapter
-tells a newcomer to read first), and it ships with them. A document
-that *does* tangle, to a crate that is not published (`tangle/bundle.md`
-→ `x0k-tangle-bundle`), stays out: its area is published but its
-subject is not. The set is sorted by path so `PROVENANCE.json` is
-stable across runs.
+The literate set is discovered in one walk of the collection — every
+Markdown file under the workspace, as the named documents are found
+(`collection::collection_documents`), so a chapter is found by the id
+its header declares wherever its authors filed it, and an `excludes` id in
+any namespace matches it there. The walk sorts what it finds three ways.
+First, every document whose `folio:tangleCrate` names a published crate
+— the tangled chapters, each with a sidecar. Then the *areas* those
+chapters live in (the directory each sits in) admit their prose-only
+chapters: a document in such an area with no tangle configuration at all
+is an overview or protocol description that the tangled chapters cite
+(`tangle/protocol.md` is the one the crate chapter tells a newcomer to
+read first), and it ships with them. A document that *does* tangle, to a
+crate that is not published (`tangle/bundle.md` → `x0k-tangle-bundle`),
+stays out: its area is published but its subject is not.
+
+Third, a chapter whose target is **not a Cargo crate** — a `.py` or a
+`.ts` file, a Gallowglass seed, anything a tangle configuration can name
+that no `Cargo.toml` owns. It has no crate to follow, so it ships when
+the publication names it under `publishes`, by its id, and then it ships
+whole: the chapter, and everything it tangles to, re-tangled inside the
+projection so the `tools/ci` re-tangle finds the tree exactly as it left
+it. One that sits in a published area unnamed is refused by name — the
+alternative, which this projector used to do, is to leave it out without
+a word while the area around it ships, and a reader of that area would
+never learn the chapter existed. A publication answers the refusal by
+naming the chapter or by excluding it; either is a decision on the
+record. A chapter named under `publishes` that tangles into a Cargo
+crate is left to the named-document step, which refuses it: it follows
+its crate.
+
+The set is sorted by path so `PROVENANCE.json` is stable across runs.
 
 Each document arrives carrying what the contents page will say about
 it — the crate its chapters back, the title it heads with, its
@@ -3940,6 +4798,10 @@ and unioned in.
 struct LiterateDoc {
     rel: PathBuf,
     tangled: bool,
+    /// A chapter the publication named whose target no Cargo crate owns:
+    /// nothing vendors its outputs, so the projection tangles it in place,
+    /// and its sidecar is the one that tangle writes.
+    retangle: bool,
     crate_name: Option<String>,
     title: String,
     summary: Option<String>,
@@ -3979,41 +4841,50 @@ fn heading_title(body: &str, rel: &Path) -> String {
         .unwrap_or_else(|| doc_stem(rel))
 }
 
-/// Discover the literate set: docs whose `folio:tangleCrate` names a published
-/// crate, plus the prose-only docs (no tangle configuration) in the same area
-/// directories under the corpus's implementation root. Docs that tangle to
-/// an unpublished crate stay out even when their area is published.
+/// What a candidate chapter's header says it tangles to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChapterTarget {
+    /// No tangle configuration: a prose-only chapter.
+    Prose,
+    /// A Cargo crate — published or not, `crate_name` says which.
+    Cargo,
+    /// Anything no `Cargo.toml` owns: a `.py`, a `.ts`, a seed.
+    Other,
+}
+
+/// Discover the literate set and the named chapters it claimed: docs whose
+/// `folio:tangleCrate` names a published crate, the prose-only docs (no
+/// tangle configuration) in the same area directories, and the chapters
+/// `named` selects whose target is not a Cargo crate. Docs that tangle to an
+/// unpublished crate stay out even when their area is published; a
+/// non-Cargo chapter in a published area that nobody named is refused.
 fn discover_literate_docs(
     workspace: &Path,
-    layout: &CorpusLayout,
+    vocabulary: &Vocabulary,
     packages: &SourcePackages,
     published: &BTreeSet<String>,
     excluded_docs: &BTreeSet<String>,
-) -> Result<Vec<LiterateDoc>> {
-    let impl_root = workspace.join(layout.implementation_root());
-    if !impl_root.is_dir() {
-        return Ok(Vec::new());
-    }
+    named: &[DocSelection],
+) -> Result<(Vec<LiterateDoc>, BTreeSet<String>)> {
+    // A section is cut from a document, never a chapter selected whole.
+    let named: BTreeSet<String> = named
+        .iter()
+        .filter(|sel| sel.id.fragment.is_none())
+        .map(|sel| sel.id.to_string())
+        .collect();
     // An excluded id that matches no document excludes nothing, silently —
     // which is the shape of the defect this severance exists to close. Track
     // what was matched and refuse a name that hit nothing.
     let mut unmatched: BTreeSet<String> = excluded_docs.clone();
-    // Each candidate, paired with whether its header declares a tangle configuration at
-    // all — the fact that separates a prose-only chapter from one that tangles
-    // to a crate this publication does not ship.
-    let mut candidates: Vec<(LiterateDoc, bool)> = Vec::new();
-    for entry in walkdir::WalkDir::new(&impl_root)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if entry.file_type().is_dir() || entry.path().extension().map(|e| e != "md").unwrap_or(true)
-        {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+    // Each candidate, paired with what its header says it tangles to — the
+    // fact that separates a prose-only chapter from one that tangles to a
+    // crate this publication does not ship, and both from one no crate owns.
+    let mut candidates: Vec<(LiterateDoc, ChapterTarget)> = Vec::new();
+    for path in crate::collection::collection_documents(workspace) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Ok((env, body)) = parse_envelope(&text) else {
+        let Ok((env, body)) = vocabulary.read(&text) else {
             continue;
         };
         if excluded_docs.contains(&env.id) {
@@ -4021,55 +4892,91 @@ fn discover_literate_docs(
             tracing::info!(doc = %env.id, "region_repo.document.excluded");
             continue;
         }
-        let rel = entry.path().strip_prefix(workspace).unwrap().to_path_buf();
+        let rel = path.strip_prefix(workspace).unwrap_or(&path).to_path_buf();
+        let crate_path = env.tangle.as_ref().and_then(|t| t.crate_name.as_deref());
+        let target = match (&env.tangle, crate_path) {
+            (None, _) => ChapterTarget::Prose,
+            (Some(_), Some(path)) if packages.is_cargo_target(path) => ChapterTarget::Cargo,
+            (Some(_), _) => ChapterTarget::Other,
+        };
         // The edges the chapter declares in its prose, unioned with the
         // header's: a link is the edge, written where the sentence needs
         // it (`x0k_folio::document_edges`).
         let edges = x0k_folio::document_edges(&env.edges, &body);
         let doc = LiterateDoc {
             title: heading_title(&body, &rel),
-            crate_name: env.tangle.as_ref().and_then(|t| t.crate_name.as_deref())
-                .and_then(|path| packages.chapter_package(path)),
+            crate_name: crate_path.and_then(|path| packages.chapter_package(path)),
             summary: env.summary.clone(),
             id: env.id.clone(),
             presupposes: edges.get("x0k:presupposes").cloned().unwrap_or_default(),
             realizes: edges.get("x0k:realizes").cloned().unwrap_or_default(),
             tangled: false,
+            retangle: false,
             rel,
         };
-        candidates.push((doc, env.tangle.is_some()));
+        candidates.push((doc, target));
     }
     if !unmatched.is_empty() {
         bail!(
-            "`excludes` names literate document(s) no document under {}/ declares \
-             as its id: {unmatched:?} — an id that matches nothing severs nothing",
-            layout.implementation_root().display()
+            "`excludes` names literate document(s) no document in the collection declares \
+             as its id: {unmatched:?} — an id that matches nothing severs nothing"
         );
     }
     let ships = |doc: &LiterateDoc| doc.crate_name.as_deref().is_some_and(|c| published.contains(c));
     let areas: BTreeSet<PathBuf> = candidates
         .iter()
-        .filter(|(doc, has_tangle)| *has_tangle && ships(doc))
+        .filter(|(doc, target)| *target == ChapterTarget::Cargo && ships(doc))
         .filter_map(|(doc, _)| doc.rel.parent().map(Path::to_path_buf))
         .collect();
-    let mut docs: Vec<LiterateDoc> = candidates
-        .into_iter()
-        .filter_map(|(mut doc, has_tangle)| {
-            if has_tangle {
-                if !ships(&doc) {
-                    return None;
+    let in_area = |doc: &LiterateDoc| doc.rel.parent().is_some_and(|a| areas.contains(a));
+    let mut claimed: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut unnamed: Vec<String> = Vec::new();
+    let mut docs: Vec<LiterateDoc> = Vec::new();
+    for (mut doc, target) in candidates {
+        match target {
+            ChapterTarget::Prose => {
+                if in_area(&doc) {
+                    docs.push(doc);
+                }
+            }
+            ChapterTarget::Cargo => {
+                if ships(&doc) {
+                    doc.tangled = true;
+                    docs.push(doc);
+                }
+            }
+            ChapterTarget::Other if named.contains(&doc.id) => {
+                if let Some(first) = claimed.insert(doc.id.clone(), doc.rel.clone()) {
+                    bail!(
+                        "`publishes` names `{}`, and both {} and {} declare it as their id — \
+                         an id addresses one document",
+                        doc.id,
+                        first.display(),
+                        doc.rel.display()
+                    );
                 }
                 doc.tangled = true;
-                return Some(doc);
+                doc.retangle = true;
+                docs.push(doc);
             }
-            doc.rel
-                .parent()
-                .is_some_and(|a| areas.contains(a))
-                .then_some(doc)
-        })
-        .collect();
+            ChapterTarget::Other => {
+                if in_area(&doc) {
+                    unnamed.push(format!("{} ({})", doc.id, doc.rel.display()));
+                }
+            }
+        }
+    }
+    if !unnamed.is_empty() {
+        bail!(
+            "chapter(s) tangling to something no Cargo crate owns sit beside chapters this \
+             publication ships, and it neither publishes nor excludes them: {} — name each \
+             under `publishes` to ship it with what it tangles to, or under `excludes` to \
+             hold it back",
+            unnamed.join(", ")
+        );
+    }
     docs.sort_by(|a, b| a.rel.cmp(&b.rel));
-    Ok(docs)
+    Ok((docs, claimed.into_keys().collect()))
 }
 ```
 
@@ -4201,8 +5108,10 @@ fn weave_literate_docs(
 
         // Sidecar: <stem>.tangle-map.json next to the doc, hashed over the
         // text the projection holds.
+        // A chapter the projection re-tangles gets the sidecar that tangle
+        // writes, so none is carried for it.
         let sidecar = src.with_extension("tangle-map.json");
-        if doc.tangled && sidecar.is_file() {
+        if doc.tangled && !doc.retangle && sidecar.is_file() {
             copy_sidecar_rewriting_source(&sidecar, workspace, output_dir, &woven)?;
         }
     }
@@ -4369,7 +5278,10 @@ struct DocSelection {
 }
 ```
 
-Resolution is by name and never by discovery. The id's class picks a
+Resolution is by name and never by discovery: a document crosses because
+its id was written, and the id is what finds it. The layout is asked
+first, because it is where our own corpus keeps things and asking it walks
+almost nothing. The id's class picks a
 directory through the class registry — `design` for a design,
 `commitments` for the class the corpus pluralised — and the identifier is
 the file stem,
@@ -4378,6 +5290,17 @@ subdirectories without changing its id. Every candidate's own header
 id must agree, so a stem collision across topics is caught rather than
 guessed at, and a document that has been renamed refuses rather than
 resolving to a stranger with the same filename.
+
+The layout is a first guess, never the answer that refuses. A collection
+that is not ours keeps its documents wherever it keeps them, under names
+that need not be their ids, and a registry it never wrote — or the
+built-in one standing in for it — knows none of that. So a document the
+layout does not place is looked for across the whole collection by the id
+its header declares (`collection::documents_declaring`), the way a
+literate chapter has always been found. A name is refused only when
+*nothing in the collection* declares it, and the refusal says where the
+layout looked as well; two documents declaring one id are refused by
+name, both of them, because an id addresses one document.
 
 One class lives elsewhere. A **concept page**, `x0k:wiki/<stem>`, is the
 document a chapter `presupposes` — what a reader needs to understand
@@ -4402,32 +5325,59 @@ than a section of it.
 fn resolve_named_document(
     workspace: &Path,
     layout: &CorpusLayout,
+    vocabulary: &Vocabulary,
     sel: &DocSelection,
 ) -> Result<PathBuf> {
     let want = sel.id.without_fragment().to_string();
+    // Where the layout looked and what it found there, for the refusal
+    // should the collection not answer either.
+    let looked = match layout_document(workspace, layout, vocabulary, sel, &want)? {
+        Ok(path) => return Ok(path),
+        Err(looked) => looked,
+    };
+    let mut declaring = documents_declaring(workspace, vocabulary, &BTreeSet::from([want.clone()]))
+        .remove(&want)
+        .unwrap_or_default();
+    match declaring.len() {
+        1 => Ok(declaring.remove(0)),
+        0 => bail!(
+            "`publishes` names `{}`, and {looked}, and no document anywhere in the \
+             collection declares `{want}` as its id — a name that selects nothing is \
+             the defect",
+            sel.reference
+        ),
+        n => bail!(
+            "`publishes` names `{}`, and {n} documents in the collection declare `{want}` \
+             as their id: {declaring:?} — an id addresses one document",
+            sel.reference
+        ),
+    }
+}
+
+/// The layout's answer for a named document: `Ok(Ok(path))` when it places
+/// the document, `Ok(Err(where it looked))` when it does not, and an error
+/// when its own directories hold two documents declaring the id.
+fn layout_document(
+    workspace: &Path,
+    layout: &CorpusLayout,
+    vocabulary: &Vocabulary,
+    sel: &DocSelection,
+    want: &str,
+) -> Result<std::result::Result<PathBuf, String>> {
     let stem = format!("{}.md", sel.id.identifier);
     let class = &sel.id.class;
     if class == "wiki" {
         let wiki_root = layout.class_dir("wiki");
         let path = workspace.join(&wiki_root).join(&stem);
         if !path.is_file() {
-            bail!(
-                "`publishes` names `{}`, and there is no {}/{stem} — a name that \
-                 selects nothing is the defect",
-                sel.reference,
-                wiki_root.display()
-            );
+            return Ok(Err(format!("there is no {}/{stem}", wiki_root.display())));
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading concept page {}", path.display()))?;
-        if !parse_envelope(&text).map(|(env, _)| env.id == want).unwrap_or(false) {
-            bail!(
-                "`publishes` names `{}`, and {} does not declare `{want}` as its id",
-                sel.reference,
-                path.display()
-            );
+        if !vocabulary.read(&text).map(|(env, _)| env.id == want).unwrap_or(false) {
+            return Ok(Err(format!("{} does not declare `{want}` as its id", path.display())));
         }
-        return Ok(path);
+        return Ok(Ok(path));
     }
     let mut hits: Vec<PathBuf> = Vec::new();
     // What the registry says, then the class name and its plural under the
@@ -4446,19 +5396,17 @@ fn resolve_named_document(
             };
             // The header's own id is the identity; the filename is a
             // convenience that a move may have left behind.
-            if parse_envelope(&text).map(|(env, _)| env.id == want).unwrap_or(false) {
+            if vocabulary.read(&text).map(|(env, _)| env.id == want).unwrap_or(false) {
                 hits.push(entry.path().to_path_buf());
             }
         }
     }
     match hits.len() {
-        1 => Ok(hits.remove(0)),
-        0 => bail!(
-            "`publishes` names `{}`, and no document under {}/ declares \
-             `{want}` as its id — a name that selects nothing is the defect",
-            sel.reference,
+        1 => Ok(Ok(hits.remove(0))),
+        0 => Ok(Err(format!(
+            "no document under {}/ declares `{want}` as its id",
             layout.decisions_root().display()
-        ),
+        ))),
         n => bail!(
             "`publishes` names `{}`, and {n} documents declare `{want}` as their \
              id: {hits:?} — an id addresses one document",
@@ -4499,6 +5447,7 @@ struct ProjectedDoc {
 fn project_named_documents(
     workspace: &Path,
     layout: &CorpusLayout,
+    vocabulary: &Vocabulary,
     selections: &[DocSelection],
 ) -> Result<Vec<ProjectedDoc>> {
     let mut out = Vec::new();
@@ -4511,12 +5460,25 @@ fn project_named_documents(
                 sel.id.without_fragment()
             );
         }
-        let path = resolve_named_document(workspace, layout, sel)?;
+        let path = resolve_named_document(workspace, layout, vocabulary, sel)?;
         let source_rel = path.strip_prefix(workspace).unwrap_or(&path).to_path_buf();
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading named document {}", path.display()))?;
-        let (env, body) = parse_envelope(&content)
+        let (env, body) = vocabulary
+            .read(&content)
             .map_err(|e| anyhow!("`{}` has no readable header: {e}", source_rel.display()))?;
+        // A chapter follows the crate it tangles to and is never named —
+        // the rule `member_names` holds for an `x0k:implementation/` id,
+        // held here by the header for an id whose prefix cannot say so.
+        if env.tangle.as_ref().is_some_and(|t| t.crate_name.is_some()) {
+            bail!(
+                "`publishes` member `{}` is a literate document ({} tangles to a crate); \
+                 documents are not selected but follow the crate they tangle to, so only \
+                 `excludes` may name one",
+                sel.reference,
+                source_rel.display()
+            );
+        }
         let Some(anchor) = sel.id.fragment.clone() else {
             out.push(ProjectedDoc {
                 rel: source_rel.clone(),
@@ -4667,7 +5629,13 @@ prefix gains an `@prefix` line for it at its top, naming the namespace
 this build gives it. The IRIs do not change, only who declares the
 prefix, and a prefix both vocabularies predeclare is left alone. Other
 Turtle blocks — vocabulary chunks a chapter tangles into files — are not
-touched, because their bytes are the tangled output.
+touched, because their bytes are the tangled output. "This build's
+prefixes" means the ones the documents were read with: a collection read
+under `--vocabulary` wrote `acme:` because its module predeclares it, and
+its projected documents declare `acme:` the same way. The publication
+doc itself gets the same treatment once, in the copy the README is
+tangled from, because the tangler that reads it knows only the
+vocabulary it was built with.
 
 Use is detected in the text: a prefixed name outside string literals,
 IRIs and comments. That is enough here, because an unneeded `@prefix`
@@ -4677,12 +5645,16 @@ scanner leans to finding one too many.
 <a name="chunk-declare-undeclared-prefixes"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#declare-undeclared-prefixes`</sub>
 
 ```rust {#declare-undeclared-prefixes}
-/// The prefixes this build predeclares that `projected` — the vocabulary
-/// a publication ships — does not, as `(prefix, namespace)`.
-fn undeclared_prefixes(projected: &x0k_ontology::concept_facts::OntologyModel) -> Vec<(String, String)> {
+/// The prefixes in `reading` — what the documents were read with: this
+/// build's, plus a named vocabulary's — that `projected`, the vocabulary a
+/// publication ships, does not predeclare, as `(prefix, namespace)`.
+fn undeclared_prefixes(
+    projected: &x0k_ontology::concept_facts::OntologyModel,
+    reading: &[(String, String)],
+) -> Vec<(String, String)> {
     let declared: BTreeSet<String> =
         predeclared_prefixes(projected).into_iter().map(|(prefix, _)| prefix).collect();
-    shipped_prefixes()
+    reading
         .iter()
         .filter(|(prefix, _)| !declared.contains(prefix))
         .cloned()
@@ -4845,13 +5817,15 @@ not: a name that promises what the region does not hold is the defect.
 /// documents (whole or cut to a section), before anything is written.
 fn affordance_closure(
     docs: &[ProjectedDoc],
+    vocabulary: &Vocabulary,
     published: &BTreeSet<String>,
     excluded: &BTreeSet<String>,
 ) -> Result<()> {
     let classes: HashSet<String> = HashSet::from(["affordance".to_string()]);
     let mut violations: Vec<String> = Vec::new();
     for doc in docs {
-        let (_, body) = parse_envelope(&doc.text)
+        let (_, body) = vocabulary
+            .read(&doc.text)
             .map_err(|e| anyhow!("projected document `{}` lost its header: {e}", doc.reference))?;
         for record in x0k_folio::extract_from_markdown(&body, &classes) {
             // A malformed block is the extractor's report, not this guard's.
@@ -5203,6 +6177,7 @@ fn read_declarations(
 /// one name, so that refuses.
 fn affordance_records(
     docs: &[ProjectedDoc],
+    vocabulary: &Vocabulary,
     workspace: &Path,
     literate: &[LiterateDoc],
     report: &mut RepoProjectReport,
@@ -5214,7 +6189,8 @@ fn affordance_records(
     // to the records once they are all known.
     let mut proofs: Vec<(String, Proof)> = Vec::new();
     for doc in docs {
-        let (_, body) = parse_envelope(&doc.text)
+        let (_, body) = vocabulary
+            .read(&doc.text)
             .map_err(|e| anyhow!("projected document `{}` lost its header: {e}", doc.reference))?;
         let rel = doc.rel.to_string_lossy().to_string();
         // A projected section is named by its own heading, which is what
@@ -5364,7 +6340,12 @@ whatever the table says; so is a named test the run never reported,
 which is a test that has been renamed away from under its chunk. Under
 [`Proofs::Skip`](#contract) nothing runs, nothing is recorded, and the
 page cannot read `proven` anywhere: that is the honest reading of a
-tree whose tests were not asked.
+tree whose tests were not asked. Under `Proofs::Recorded` nothing runs
+either, and each test the record names gets the outcome recorded for it,
+on its record and in the report, exactly as a run would have put it there
+— a replay draws the page the run drew. A test the record does not name
+stays unrecorded and reads `not run`; a replay refuses nothing, because a
+refusal is a verdict about a run and there was none.
 
 <a name="chunk-run-proofs"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#run-proofs`</sub>
 
@@ -5386,6 +6367,18 @@ fn run_proofs(
             if listed > 0 {
                 tracing::warn!(proofs = listed, "region_repo.proofs.skipped");
             }
+            return Ok(());
+        }
+        Proofs::Recorded(recorded) => {
+            for record in records.iter_mut() {
+                for id in record.test_ids() {
+                    if let Some(outcome) = recorded.get(&id) {
+                        record.outcomes.insert(id.clone(), *outcome);
+                        report.proofs.insert(id, *outcome);
+                    }
+                }
+            }
+            tracing::info!(replayed = report.proofs.len(), "region_repo.proofs.replayed");
             return Ok(());
         }
     };
@@ -5794,8 +6787,13 @@ declaration, already on the record; the marks a row shows that are not
 its own — a person, an agent, the pair; the three status rings; the
 three test rings — are declared where the [icon
 design](x0k:design/icon-profile) places them, on the page that is the
-class and in the section that defines the word, and the projector reads
-those pages from the workspace by that table. Every declaration goes
+class and in the section that defines the word. Which documents define
+the words is the publication's to say: its `x0k:marks` names them, and
+each status or test mark is the icon under the section headed by its
+word in the first of them that has one. A publication that names none
+shows no marks beside a row — only an affordance's own icon, which is
+the affordance's and not a policy — and reads no class page for an
+actor mark either: the marks travel together or not at all. Every declaration goes
 through the profile's checker: a drawing outside the profile refuses the
 projection naming the rule and the element, because a silently clamped
 mark is a mark whose author believes it looks different than it does,
@@ -5834,8 +6832,9 @@ enum MarkSource {
     /// `ontology/classes/<Class>.md` — the page that is the class, one
     /// section.
     Class(&'static str),
-    /// A section of a document, by the document's id and its heading.
-    Section { document: &'static str, heading: &'static str },
+    /// The section headed by this word, in the first document the
+    /// publication's `x0k:marks` names that has one.
+    Word(&'static str),
 }
 
 /// The marks, under the name a row asks for each by: the class of an
@@ -5844,19 +6843,13 @@ const MARKS: &[(&str, MarkSource)] = &[
     ("Human", MarkSource::Class("Human")),
     ("AIAgent", MarkSource::Class("AIAgent")),
     ("Actor", MarkSource::Class("Actor")),
-    ("proven", MarkSource::Section { document: STATUS_DESIGN, heading: "proven" }),
-    ("declared", MarkSource::Section { document: STATUS_DESIGN, heading: "declared" }),
-    ("claimed", MarkSource::Section { document: STATUS_DESIGN, heading: "claimed" }),
-    ("passed", MarkSource::Section { document: TEST_STATUS_CHAPTER, heading: "passed" }),
-    ("failed", MarkSource::Section { document: TEST_STATUS_CHAPTER, heading: "failed" }),
-    ("not run", MarkSource::Section { document: TEST_STATUS_CHAPTER, heading: "not run" }),
+    ("proven", MarkSource::Word("proven")),
+    ("declared", MarkSource::Word("declared")),
+    ("claimed", MarkSource::Word("claimed")),
+    ("passed", MarkSource::Word("passed")),
+    ("failed", MarkSource::Word("failed")),
+    ("not run", MarkSource::Word("not run")),
 ];
-/// The design that defines the three status words, and declares their
-/// marks with them.
-const STATUS_DESIGN: &str = "x0k:design/publish-a-region-as-a-repository";
-/// This chapter, which derives what a test did and declares the marks
-/// with the outcomes (§ "Test status: passed, failed, not run").
-const TEST_STATUS_CHAPTER: &str = "x0k:implementation/tangle/region-repo";
 
 /// The class whose mark an actor set shows: a person, an agent, or the
 /// genus for a claim on both. Any actor kind that is not `human` is
@@ -5907,17 +6900,21 @@ impl Icons {
 
 /// Read every icon the rows may show and check each: the records' own
 /// from the records, the marks from the pages the design places them
-/// on. `None` when the publication names no affordance — there is
-/// nothing to show, and no palette is asked for. A publication whose
-/// rows show marks and whose header binds them to nothing refuses.
+/// on, the status and test marks in the documents `marks` names. `None`
+/// when there is nothing to show — no affordance, or no affordance with
+/// a mark and no marks named — and then no palette is asked for. A
+/// publication whose rows show marks and whose header binds them to
+/// nothing refuses.
 fn read_icons(
     workspace: &Path,
     layout: &CorpusLayout,
+    vocabulary: &Vocabulary,
     packages: &SourcePackages,
     records: &[AffordanceRecord],
     palette: Option<Palette>,
+    marks: &[String],
 ) -> Result<Option<Icons>> {
-    if records.is_empty() {
+    if records.is_empty() || (marks.is_empty() && records.iter().all(|r| r.icons.is_empty())) {
         return Ok(None);
     }
     let Some(palette) = palette else {
@@ -5936,11 +6933,15 @@ fn read_icons(
         let icon = check_declared(&place, &rec.icons)?;
         by_name.insert(rec.id.clone(), (Label::for_entity(&rec.id, &rec.title), icon));
     }
-    let classes = source_ontology_directory(workspace, packages, "classes");
-    for (name, source) in MARKS {
-        let (label, svgs, place) = mark_declaration(workspace, layout, &classes, name, source)?;
-        let icon = check_declared(&place, &svgs)?;
-        by_name.insert(name.to_string(), (label, icon));
+    // A publication that names no documents for its marks shows none.
+    if !marks.is_empty() {
+        let classes = source_ontology_directory(workspace, packages, "classes");
+        for (name, source) in MARKS {
+            let (label, svgs, place) =
+                mark_declaration(workspace, layout, vocabulary, &classes, marks, name, source)?;
+            let icon = check_declared(&place, &svgs)?;
+            by_name.insert(name.to_string(), (label, icon));
+        }
     }
     Ok(Some(Icons { by_name, palette }))
 }
@@ -5967,7 +6968,9 @@ fn check_declared(place: &str, svgs: &[String]) -> Result<Accepted> {
 fn mark_declaration(
     workspace: &Path,
     layout: &CorpusLayout,
+    vocabulary: &Vocabulary,
     classes: &Path,
+    marks: &[String],
     name: &str,
     source: &MarkSource,
 ) -> Result<(Label, Vec<String>, String)> {
@@ -5988,15 +6991,28 @@ fn mark_declaration(
             let label = Label::for_entity(&format!("x0k:class/{class}"), &title);
             (label, format!("# {title}\n\n{body}"), title, rel)
         }
-        MarkSource::Section { document, heading } => {
-            let path = find_document(workspace, layout, document)
-                .with_context(|| format!("locating the document declaring the `{name}` mark"))?;
-            let text = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading {}", path.display()))?;
-            let body = strip_header(&text);
-            let rel = path.strip_prefix(workspace).unwrap_or(&path).display().to_string();
+        MarkSource::Word(heading) => {
             let entity = format!("x0k:{ICON_CLASS}/{}", x0k_folio::transclusion::heading_slug(heading));
-            (Label::for_entity(&entity, heading), body, heading.to_string(), format!("{rel} § {heading}"))
+            let label = Label::for_entity(&entity, heading);
+            let mut looked = Vec::new();
+            for document in marks {
+                let path = find_document(workspace, layout, vocabulary, document)
+                    .with_context(|| format!("locating `{document}`, which `x0k:marks` names"))?;
+                let text = std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading {}", path.display()))?;
+                let body = strip_header(&text);
+                let rel = path.strip_prefix(workspace).unwrap_or(&path).display().to_string();
+                let svgs = declared_icons(&body, heading);
+                if !svgs.is_empty() {
+                    return Ok((label, svgs, format!("{rel} § {heading}")));
+                }
+                looked.push(rel);
+            }
+            bail!(
+                "repository projection refused — the `{name}` mark is declared by no `svg x0k:icon` \
+                 block under a `{heading}` section of the documents `x0k:marks` names ({})",
+                looked.join(", ")
+            );
         }
     };
     let svgs = declared_icons(&body, &heading);
@@ -6029,7 +7045,12 @@ fn declared_icons(body: &str, heading: &str) -> Vec<String> {
 /// The tree file declaring `id`: under the implementation root for a
 /// literate document, found by its header; under a class directory for
 /// the rest, by the lookup a named document gets.
-fn find_document(workspace: &Path, layout: &CorpusLayout, id: &str) -> Result<PathBuf> {
+fn find_document(
+    workspace: &Path,
+    layout: &CorpusLayout,
+    vocabulary: &Vocabulary,
+    id: &str,
+) -> Result<PathBuf> {
     if id.starts_with(IMPLEMENTATION_DOC_PREFIX) {
         let root = workspace.join(layout.implementation_root());
         for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
@@ -6039,7 +7060,7 @@ fn find_document(workspace: &Path, layout: &CorpusLayout, id: &str) -> Result<Pa
             let Ok(text) = std::fs::read_to_string(entry.path()) else {
                 continue;
             };
-            if parse_envelope(&text).map(|(env, _)| env.id == id).unwrap_or(false) {
+            if vocabulary.read(&text).map(|(env, _)| env.id == id).unwrap_or(false) {
                 return Ok(entry.path().to_path_buf());
             }
         }
@@ -6049,8 +7070,8 @@ fn find_document(workspace: &Path, layout: &CorpusLayout, id: &str) -> Result<Pa
         );
     }
     let entity: EntityId =
-        id.parse().map_err(|e| anyhow!("`{id}` is not a readable x0k id: {e}"))?;
-    resolve_named_document(workspace, layout, &DocSelection { reference: id.to_string(), id: entity })
+        vocabulary.parse_id(id).map_err(|e| anyhow!("`{id}` is not a readable id: {e}"))?;
+    resolve_named_document(workspace, layout, vocabulary, &DocSelection { reference: id.to_string(), id: entity })
 }
 
 /// Write the icons the rows and pages use — each record's own, the actor
@@ -6101,8 +7122,13 @@ fn write_icons(
 ## Scaffolding
 
 The workspace manifest lists the published crates, declares the
-edition and toolchain floor every crate inherits, and resolves the
-inherited dependency keys from the fixed table above.
+edition every crate inherits and the toolchain floor when the
+publication has one, and resolves each inherited dependency key to the
+value the source workspace declares for it — only the keys the
+vendored crates actually inherit, because an entry nobody references is
+a pin a reader would take for a real dependency (the last one that
+shipped, `thiserror = "1.0"`, advertised a major version the lockfile
+did not even contain).
 
 It also carries the dev profile a clone builds with. Without one, a
 plain `cargo build` in the projected repository is opt-level 0 across
@@ -6116,19 +7142,33 @@ amortized.
 <a name="chunk-emit-workspace-manifest"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#emit-workspace-manifest`</sub>
 
 ```rust {#emit-workspace-manifest}
-fn emit_workspace_manifest(output_dir: &Path, crates: &[String], edition: &str) -> Result<()> {
+fn emit_workspace_manifest(
+    output_dir: &Path,
+    crates: &[String],
+    edition: &str,
+    policy: &BuildPolicy,
+    packages: &SourcePackages,
+) -> Result<()> {
     let inherited = inherited_dep_keys(output_dir, crates)?;
     let mut s = String::from("[workspace]\nresolver = \"2\"\nmembers = [\n");
     for c in crates {
         s.push_str(&format!("    \"{c}\",\n"));
     }
     s.push_str("]\n\n[workspace.package]\n");
-    s.push_str(&format!("edition = \"{edition}\"\nrust-version = \"{RUST_VERSION}\"\n"));
+    s.push_str(&format!("edition = \"{edition}\"\n"));
+    if let Some(floor) = &policy.rust_version {
+        s.push_str(&format!("rust-version = \"{floor}\"\n"));
+    }
     s.push_str("\n[workspace.dependencies]\n");
-    for (k, v) in RESOLVED_WORKSPACE_DEPS {
-        if inherited.contains(*k) {
-            s.push_str(&format!("{k} = {v}\n"));
-        }
+    for key in &inherited {
+        let value = packages.workspace_dependency(key).ok_or_else(|| {
+            anyhow!(
+                "a published crate inherits `{key}` (`{key}.workspace = true`), and the \
+                 workspace it was projected from declares no `{key}` under \
+                 `[workspace.dependencies]` to resolve it to"
+            )
+        })?;
+        s.push_str(&format!("{key} = {value}\n"));
     }
     s.push_str("\n[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n");
     std::fs::write(output_dir.join("Cargo.toml"), s)?;
@@ -6172,19 +7212,24 @@ fn inherited_dep_keys(output_dir: &Path, crates: &[String]) -> Result<BTreeSet<S
 
 The license bodies follow from the SPDX expression, read as an
 expression: identifiers joined by `OR` / `AND`, optionally
-parenthesized. Each identifier maps to exactly one file — `MIT` to
-`LICENSE-MIT`, `Apache-2.0` to `LICENSE-APACHE`, `MPL-2.0` to
-`LICENSE-MPL` — and an identifier with no entry in that table is a
-refusal, never a silently missing body: a manifest saying `MIT-0` or
-`LicenseRef-Something` with no text behind it would be a repository
-lying about its terms. The earlier substring match (`contains("MIT")`)
-is exactly what the table replaces; it would have let `MIT-0` through
-as MIT and `Apache` trip on any identifier that mentioned it. `WITH`
-exceptions are refused for the same reason — the projector carries no
-exception texts. The projector never fakes a license body either:
-MIT's text is short and canonical and is emitted verbatim; Apache-2.0
-and MPL-2.0 get a clearly-marked placeholder naming the canonical
-text, filled in by the maintainer at the ratify-and-publish step.
+parenthesized. Which licence a publication is released under is the
+publisher's choice and any SPDX identifier is one to make; the
+projector's part is only that each identifier gets exactly one file
+and a body or an honest placeholder in it. `MIT` maps to `LICENSE-MIT`,
+`Apache-2.0` to `LICENSE-APACHE`, `MPL-2.0` to `LICENSE-MPL`, and any
+other identifier to `LICENSE-<identifier>`. The projector never fakes a
+license body: MIT's text is short and canonical and is emitted
+verbatim; every other identifier gets a clearly-marked placeholder
+naming where the canonical text is, filled in by the maintainer at the
+ratify-and-publish step. The earlier substring match (`contains("MIT")`)
+is what the expression reading replaced; it would have shipped the MIT
+text for `MIT-0` and let `Apache` trip on any identifier that mentioned
+it — now `MIT-0` is its own identifier with its own placeholder. Two
+things still refuse, because no placeholder could be honest about them:
+a `LicenseRef-`/`DocumentRef-` names a licence only its author holds
+the text of, and a `WITH` exception names a text the projector does
+not carry; and a token that is not an SPDX identifier at all is refused
+as one.
 
 MIT's text opens with a copyright line, and a copyright line names a
 holder: the header's `x0k:copyright` key. Its absence under `MIT` is a
@@ -6199,16 +7244,17 @@ revision the act projected.
 /// `(file name, body)` for every license identifier in the SPDX
 /// expression `expr`. Parsed as an expression — identifiers joined by
 /// `OR` / `AND`, parentheses tolerated — not substring-matched, so `MIT`
-/// never trips `Apache` and `MIT-0` is not `MIT`. An identifier with no
-/// body here, or a `WITH` exception, refuses: a projection must never
-/// carry a license field its tree has no text for. `MIT` needs the
-/// `copyright` holder for its notice line; without one it refuses too.
+/// never trips `Apache` and `MIT-0` is not `MIT`. Any SPDX identifier is
+/// accepted: MIT gets its text, every other identifier a placeholder
+/// naming its canonical text. A `LicenseRef-`/`DocumentRef-`, a `WITH`
+/// exception, or a token that is no SPDX identifier refuses. `MIT` needs
+/// the `copyright` holder for its notice line; without one it refuses too.
 fn license_files(
     expr: &str,
     copyright: Option<&str>,
     year: i32,
-) -> Result<Vec<(&'static str, String)>> {
-    let mut out: Vec<(&'static str, String)> = Vec::new();
+) -> Result<Vec<(String, String)>> {
+    let mut out: Vec<(String, String)> = Vec::new();
     let mut expect_exception = false;
     for token in expr
         .split_whitespace()
@@ -6222,9 +7268,11 @@ fn license_files(
                  identifier the projector has a body for"
             );
         }
+        // SPDX writes its operators all upper or all lower case; either
+        // spelling is an operator, never an identifier.
         match token {
-            "OR" | "AND" => continue,
-            "WITH" => {
+            "OR" | "AND" | "or" | "and" => continue,
+            "WITH" | "with" => {
                 expect_exception = true;
                 continue;
             }
@@ -6239,18 +7287,24 @@ fn license_files(
                          the header"
                     );
                 };
-                ("LICENSE-MIT", MIT_LICENSE.replace("{copyright}", &format!("{year} {holder}")))
+                ("LICENSE-MIT".to_string(), MIT_LICENSE.replace("{copyright}", &format!("{year} {holder}")))
             }
-            // The projector never fakes a license body: Apache-2.0 and
-            // MPL-2.0 get a clearly-marked placeholder naming the canonical
+            // The projector never fakes a license body: every identifier but
+            // MIT gets a clearly-marked placeholder naming the canonical
             // text, filled in by the maintainer at the ratify-and-publish
             // step (the publication stays `proposed`).
-            "Apache-2.0" => ("LICENSE-APACHE", APACHE_PLACEHOLDER.to_string()),
-            "MPL-2.0" => ("LICENSE-MPL", MPL_PLACEHOLDER.to_string()),
+            "Apache-2.0" => ("LICENSE-APACHE".to_string(), APACHE_PLACEHOLDER.to_string()),
+            "MPL-2.0" => ("LICENSE-MPL".to_string(), MPL_PLACEHOLDER.to_string()),
+            other if other.starts_with("LicenseRef-") || other.starts_with("DocumentRef-") => bail!(
+                "license expression `{expr}`: `{other}` names a licence only its author holds the \
+                 text of, and the projector never emits a license field its tree has no text for"
+            ),
+            other if spdx_identifier(other) => (
+                format!("LICENSE-{other}"),
+                SPDX_PLACEHOLDER.replace("{id}", other),
+            ),
             other => bail!(
-                "license expression `{expr}`: no license body for identifier `{other}` \
-                 (known: MIT, Apache-2.0, MPL-2.0) — the projector never emits a license \
-                 field its tree has no text for"
+                "license expression `{expr}`: `{other}` is not an SPDX license identifier"
             ),
         };
         if !out.iter().any(|(f, _)| *f == entry.0) {
@@ -6261,6 +7315,15 @@ fn license_files(
         bail!("license expression `{expr}` names no license identifier");
     }
     Ok(out)
+}
+
+/// Whether `token` has the shape of an SPDX license identifier: letters,
+/// digits, `.`, `-` and `+`, opening on a letter or digit. The shape and not
+/// the list — the list moves, and a publisher naming a licence newer than
+/// this build is still naming a licence.
+fn spdx_identifier(token: &str) -> bool {
+    token.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && token.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
 }
 
 /// The projection year, from the system clock (UTC): the year the
@@ -6291,7 +7354,7 @@ field and no license text is the same lie as a repository without one.
 <a name="chunk-emit-licenses"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#emit-licenses`</sub>
 
 ```rust {#emit-licenses}
-fn emit_licenses(output_dir: &Path, crates: &[String], bodies: &[(&str, String)]) -> Result<()> {
+fn emit_licenses(output_dir: &Path, crates: &[String], bodies: &[(String, String)]) -> Result<()> {
     for (file, body) in bodies {
         std::fs::write(output_dir.join(file), body)?;
         for c in crates {
@@ -6401,19 +7464,33 @@ public side from its first projection and left behind by every palette
 after it. A role the palette does not carry refuses, naming the
 reference, and so does a diagram in a publication with no palette.
 
+The supply-chain policy is the last thing a publication may route, and
+the one that is not prose: a chunk routed to `deny.toml` is the
+publication's own `cargo deny` policy
+([§ "The publication's build policy"](#the-publications-build-policy)).
+It is corpus-owned like the README — rewritten on every projection —
+but it reaches the repository without the `@generated` line, the way
+the MkDocs hook does: it is configuration a tool reads, and it reads as
+the policy itself.
+
 <a name="chunk-tangle-readme"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#tangle-readme`</sub>
 
 ```rust {#tangle-readme}
 /// Tangle the publication doc's own tangle configuration into the projection:
 /// its `root: README.md` chunk becomes `<output_dir>/README.md`, and any
 /// chunk routed (`file="…"`) to a declared overlay path seeds that path
-/// when it is absent, and any chunk routed to `assets/diagrams/<stem>.svg`
-/// is bound to `palette` once per scheme. The doc is copied to its corpus-relative path inside
+/// when it is absent, any chunk routed to `assets/diagrams/<stem>.svg`
+/// is bound to `palette` once per scheme, and a chunk routed to `deny.toml`
+/// is the publication's supply-chain policy. The doc is copied to its corpus-relative path inside
 /// the projection for the duration of the tangle so the `@generated`
 /// header names that path and every write stays under the projection
 /// root; the copy and its sidecar are removed afterwards (the publication
 /// doc is corpus-private, and `tools/ci` in the projection never
-/// re-tangles the README).
+/// re-tangles the README). The staged copy declares `staging` — the
+/// prefixes the publication was read with that this build's tangler does
+/// not predeclare — in its header, so the tangler reads what the projector
+/// read; with none it is the doc's own bytes.
+#[allow(clippy::too_many_arguments)]
 fn tangle_publication_doc(
     region_doc: &Path,
     workspace: &Path,
@@ -6422,6 +7499,7 @@ fn tangle_publication_doc(
     layout: &CorpusLayout,
     palette: Option<&Palette>,
     npm_page: bool,
+    staging: &[(String, String)],
 ) -> Result<Vec<PathBuf>> {
     let rel = region_doc
         .canonicalize()
@@ -6441,8 +7519,15 @@ fn tangle_publication_doc(
     if let Some(parent) = copy.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::copy(region_doc, &copy)
-        .with_context(|| format!("staging {} for the README tangle", rel.display()))?;
+    if staging.is_empty() {
+        std::fs::copy(region_doc, &copy)
+            .with_context(|| format!("staging {} for the README tangle", rel.display()))?;
+    } else {
+        let text = std::fs::read_to_string(region_doc)
+            .with_context(|| format!("reading {} for the README tangle", rel.display()))?;
+        std::fs::write(&copy, declare_undeclared_prefixes(&text, staging))
+            .with_context(|| format!("staging {} for the README tangle", rel.display()))?;
+    }
 
     // Overlay files present before the tangle are the public side's; the
     // tangle may overwrite them, and they go back afterwards.
@@ -6476,10 +7561,20 @@ fn tangle_publication_doc(
     let tangled = tangled.with_context(|| {
         format!("tangling the README from publication doc {}", rel.display())
     })?;
+    // The tangler names what it wrote by absolute path, under the root as it
+    // resolved it; the output directory is absolute already, and its
+    // canonical spelling covers a root reached through a symlink.
+    let canonical = output_dir.canonicalize().unwrap_or_else(|_| output_dir.to_path_buf());
     let outputs: Vec<PathBuf> = tangled
         .identity_outputs
         .iter()
-        .map(|o| o.path.strip_prefix(output_dir).unwrap_or(&o.path).to_path_buf())
+        .map(|o| {
+            o.path
+                .strip_prefix(output_dir)
+                .or_else(|_| o.path.strip_prefix(&canonical))
+                .unwrap_or(&o.path)
+                .to_path_buf()
+        })
         .collect();
     let readme = Path::new("README.md");
     // A publication may tangle root-level Markdown: the README, a declared
@@ -6498,17 +7593,19 @@ fn tangle_publication_doc(
     // The one package path a publication may write: the npm wrapper's page
     // on the registry, and only when it declares a wrapper to have one.
     let registry_page = |p: &Path| npm_page && p == Path::new("npm/README.md");
+    // The publication's own supply-chain policy.
+    let supply_chain = |p: &Path| p == Path::new(SUPPLY_CHAIN_POLICY);
     let stray: Vec<&PathBuf> = outputs
         .iter()
         .filter(|p| !(p.as_path() == readme || is_overlay(p) || root_markdown(p) || diagram(p)
-            || registry_page(p)
+            || registry_page(p) || supply_chain(p)
             || (p.parent() == Some(Path::new("guides")) && p.extension().is_some_and(|e| e == "md"))))
         .collect();
     if !outputs.iter().any(|p| p == readme) || !stray.is_empty() {
         bail!(
             "publication {} must tangle `README.md` (a tangle configuration with \
              `folio:tangleRoot \"README.md\"` and one named markdown chunk) plus, at most, other \
-             root-level Markdown documents — its declared overlay paths {:?} are \
+             root-level Markdown documents and its `deny.toml` — its declared overlay paths {:?} are \
              seeded once, any other root-level Markdown is regenerated every \
              projection; it tangled {:?}",
             rel.display(),
@@ -6537,6 +7634,18 @@ fn tangle_publication_doc(
         };
         std::fs::write(&path, body)?;
         tracing::info!(path = %seed.display(), "region_repo.overlay.seeded");
+    }
+    // The supply-chain policy is regenerated every time, but reads as the
+    // policy itself: the `@generated` line comes off, as the MkDocs hook's does.
+    for policy in outputs.iter().filter(|p| supply_chain(p) && !is_overlay(p)) {
+        let path = output_dir.join(policy);
+        let text = std::fs::read_to_string(&path)?;
+        if let Some((first, rest)) = text.split_once('\n') {
+            if first.contains("@generated by x0k-tangle") {
+                std::fs::write(&path, rest)?;
+            }
+        }
+        tracing::info!(path = %policy.display(), "region_repo.supply_chain.tangled");
     }
     // A diagram is bound to the palette like the icons: its `{{role}}`
     // references become the scheme's colours, once per scheme, and the
@@ -6595,14 +7704,16 @@ fn bind_diagram(text: &str, roles: &RoleBinding) -> Result<String> {
 ```
 
 The CI contract is two forge-agnostic scripts: `tools/ci` builds, tests,
-lints, documents, re-tangles with the bundle's own freshly built
-`x0k-tangle`, and fails on any change to the tree;
+lints, documents, re-tangles — with the bundle's own freshly built
+`x0k-tangle` when the bundle carries it, with the released one otherwise
+([§ "The CI plan"](#the-ci-plan)) — and fails on any change to the tree;
 `tools/x0k-guard-generated` refuses commits that edit an `@generated`
 file over a range. The GitHub workflow files only call those scripts,
 which is why they are optional.
 
-Beside them the projection pins a toolchain, in `rust-toolchain.toml`
-rather than a workflow step. A workflow step would pin only the one
+Beside them the projection pins a toolchain when the publication has
+one to pin ([§ "The publication's build policy"](#the-publications-build-policy)),
+in `rust-toolchain.toml` rather than a workflow step. A workflow step would pin only the one
 forge whose wrappers are optional, and the contract is that any runner
 calls `tools/ci`; a `rust-toolchain.toml` pins every runner *and* the
 contributor running the same script locally, which is the point — the
@@ -6618,39 +7729,163 @@ declared floor. That pairing is the whole of the MSRV claim — a pinned
 modern toolchain proves the code compiles *at all*, and only the lint
 proves it compiles for the oldest reader the manifest invites.
 
+The two checks a publication can ask for are part of the same scripts,
+present exactly when it asks. A publication that pins Git revisions
+gets `tools/check-git-pins`, which refuses a lockfile resolving any Git
+source but those revisions — `cargo deny` matches a Git URL, never a
+commit — and `tools/ci` runs it first. A publication that tangles a
+`deny.toml` gets the `cargo deny` step in `tools/ci` and the
+`supply-chain` job, on a weekly timer, in the workflow; one that does
+not gets neither, rather than a `cargo deny` run against a policy
+nobody wrote, whose defaults would refuse every licence in the graph.
+
+### The CI plan
+
+Not every projection is a Cargo workspace, and not every one carries the
+tangler. `tools/ci` is therefore assembled from what this projection
+holds, and the [`CiPlan`] below is that inventory. The Cargo steps run
+when a crate ships, and the toolchain file is written only then — a
+repository of reports has no toolchain to pin. The tangler is built from
+source when the projection ships `x0k-tangle` itself, which is the
+bootstrap circle the opening of this chapter describes; anywhere else
+`cargo run -p x0k-tangle` names a package the repository does not
+contain, so CI installs the **released** tangler instead, pinned to the
+version that made the projection — the one whose output the committed
+tree is — through the release's own installer, which refuses an archive
+whose SHA-256 the release's `SHA256SUMS` does not list. It lands under
+`target/`, which the repository ignores, so installing it is not drift.
+`FOLIO_VERSION` in the environment moves the pin and `X0K_TANGLE` names a
+tangler already installed; either is the runner's explicit act.
+
+The pin is this crate's own version, `env!("CARGO_PKG_VERSION")` as
+`x0k-tangle` was compiled, and nothing else: not a constant, not the
+version of the binary that linked this library. The installer fetches by
+*release* number, so the pin is right exactly when `x0k-tangle` carries
+the number of the release its binary ships in, and that is the release
+rule: cutting a release sets `x0k-tangle`'s version to the release's
+number, whether or not its own surface moved, and nothing in this chapter
+changes. A projection made by an unreleased build pins a release that
+does not exist yet, which is the one honest answer — its output is what
+that release will produce.
+
+The re-tangle names the corpus's implementation root, as it always has,
+when every tangled chapter lives under it; a chapter filed elsewhere is
+named by its path, and a projection with nothing to tangle and no crate
+skips the step. Last, a projection that carries what only
+`x0k-tangle check` can see — a vocabulary of the collection's own, or a
+`from=` mirror of a source file — runs `check` over the whole tree, with
+the shipped modules named, so a header in a term no module declares or
+a mirror that no longer shows its source fails CI. A projection that
+carries neither runs no `check` step, which keeps the script every
+earlier projection committed unchanged.
+
+<a name="chunk-ci-plan"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#ci-plan`</sub>
+
+```rust {#ci-plan}
+/// What `tools/ci` has to do for this projection — assembled from what it
+/// ships, so a projection that is not a Cargo workspace, or does not carry
+/// the tangler, gets steps that can run in it.
+struct CiPlan {
+    /// A crate ships: build, test, lint and document it, and pin its
+    /// toolchain when the publication has one to pin.
+    cargo: bool,
+    /// The projection ships `x0k-tangle`: CI builds it from source. `None`
+    /// means it installs this released version instead.
+    installed_tangler: Option<&'static str>,
+    /// What the re-tangle names, as shell words; `None` skips it.
+    tangle: Option<String>,
+    /// `x0k-tangle check`'s options when CI runs it; `None` when the
+    /// projection carries nothing only `check` can see.
+    check: Option<String>,
+}
+
+/// The crate whose source, when a publication ships it, is the tangler CI
+/// runs.
+const TANGLER_CRATE: &str = "x0k-tangle";
+
+impl CiPlan {
+    fn of(
+        cargo: bool,
+        published: &BTreeSet<String>,
+        literate: &[LiterateDoc],
+        layout: &CorpusLayout,
+        vocabulary_dir: Option<&str>,
+        mirrors: bool,
+    ) -> CiPlan {
+        let root = layout.implementation_root();
+        let tangled: Vec<&Path> = literate.iter().filter(|d| d.tangled).map(|d| d.rel.as_path()).collect();
+        let tangle = if tangled.iter().all(|p| p.starts_with(root)) {
+            // The step every Cargo projection has always run.
+            (cargo || !tangled.is_empty()).then(|| sh_word(&root.display().to_string()))
+        } else {
+            Some(tangled.iter().map(|p| sh_word(&p.display().to_string())).collect::<Vec<_>>().join(" "))
+        };
+        let check = match vocabulary_dir {
+            Some(dir) => Some(format!("--vocabulary {} ", sh_word(dir))),
+            None => mirrors.then(String::new),
+        };
+        CiPlan {
+            cargo,
+            installed_tangler: (!published.contains(TANGLER_CRATE)).then_some(env!("CARGO_PKG_VERSION")),
+            tangle,
+            check,
+        }
+    }
+}
+
+/// `word` as one POSIX shell word: as it is when it is plainly a path,
+/// single-quoted otherwise.
+fn sh_word(word: &str) -> String {
+    if !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || "._/-+".contains(c)) {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
+    }
+}
+```
+
 <a name="chunk-emit-ci-and-guard"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#emit-ci-and-guard`</sub>
 
 ```rust {#emit-ci-and-guard}
-fn emit_ci_and_guard(output_dir: &Path, emit_github: bool, layout: &CorpusLayout) -> Result<()> {
+fn emit_ci_and_guard(
+    output_dir: &Path,
+    emit_github: bool,
+    plan: &CiPlan,
+    policy: &BuildPolicy,
+) -> Result<()> {
     // The CI contract is two forge-agnostic scripts any runner calls:
     // `tools/ci` (build + test + clippy + doc + re-tangle-and-diff) and
     // `tools/x0k-guard-generated` (refuse hand-edits to @generated files over
     // a commit range). Forge workflow files are thin wrappers over these.
-    // `rust-toolchain.toml` pins what all of them run on.
-    std::fs::write(
-        output_dir.join("rust-toolchain.toml"),
-        TOOLCHAIN_FILE.replace("{channel}", PINNED_TOOLCHAIN),
-    )?;
-    // Supply-chain policy: generated scaffolding, not an overlay. The
-    // projector regenerates every non-overlay path, so a hand-added
-    // `deny.toml` in the public repo would be deleted on the next
-    // projection; as scaffolding the policy lives in the corpus under
-    // review, and every projection carries the same one.
-    std::fs::write(output_dir.join("deny.toml"), DENY_CONFIG)?;
+    // A toolchain file, when the publication has one and ships a crate for
+    // it to build, pins what all of them run on.
+    match &policy.toolchain {
+        _ if !plan.cargo => {}
+        Toolchain::Stated(channel) => std::fs::write(
+            output_dir.join("rust-toolchain.toml"),
+            TOOLCHAIN_FILE.replace("{channel}", channel),
+        )?,
+        Toolchain::Workspace { file, text } => std::fs::write(output_dir.join(file), text)?,
+        Toolchain::Unpinned => {}
+    }
     let tools = output_dir.join("tools");
     std::fs::create_dir_all(&tools)?;
-    std::fs::write(tools.join("check-git-pins"), GIT_PIN_CHECK)?;
+    if !policy.git_pins.is_empty() {
+        std::fs::write(tools.join("check-git-pins"), git_pin_check(&policy.git_pins))?;
+    }
+    // A MkDocs site's hook, not a step of any gate. The tangled file's
+    // `@generated` line names this document's corpus path, so it comes off,
+    // as no other script under `tools/` carries one.
+    let hook = match MKDOCS_HOOK.split_once('\n') {
+        Some((first, rest)) if first.contains("@generated by x0k-tangle") => rest,
+        _ => MKDOCS_HOOK,
+    };
+    std::fs::write(tools.join("mkdocs_folio.py"), hook)?;
     let mut mode_755 = vec![tools.join("x0k-guard-generated"), tools.join("ci")];
     std::fs::write(&mode_755[0], GUARD_SCRIPT)?;
     // The chapters are written at their corpus-relative paths, so the
     // directory the re-tangle walks is the corpus's, not a constant.
-    std::fs::write(
-        &mode_755[1],
-        CI_SCRIPT.replace(
-            "{literate_root}",
-            &layout.implementation_root().display().to_string(),
-        ),
-    )?;
+    std::fs::write(&mode_755[1], ci_script(plan, policy))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -6663,10 +7898,73 @@ fn emit_ci_and_guard(output_dir: &Path, emit_github: bool, layout: &CorpusLayout
     if emit_github {
         let wf_dir = output_dir.join(".github/workflows");
         std::fs::create_dir_all(&wf_dir)?;
-        std::fs::write(wf_dir.join("ci.yml"), CI_WORKFLOW)?;
+        std::fs::write(wf_dir.join("ci.yml"), ci_workflow(policy))?;
         std::fs::write(wf_dir.join("guard-generated.yml"), GUARD_WORKFLOW)?;
     }
     Ok(())
+}
+
+/// `tools/ci`, with the steps `plan` says this projection needs and the
+/// checks the publication's policy asks for: the Git pin check when it pins
+/// a revision, `cargo deny` when it states a supply-chain policy.
+fn ci_script(plan: &CiPlan, policy: &BuildPolicy) -> String {
+    let tangler = match plan.installed_tangler {
+        None => "cargo run --locked -q -p x0k-tangle --bin x0k-tangle --".to_string(),
+        Some(_) => "\"$tangler\"".to_string(),
+    };
+    let needs_tangler = plan.tangle.is_some() || plan.check.is_some();
+    let mut script = String::from(CI_SHEBANG);
+    script.push_str(if plan.cargo { CI_PURPOSE_CARGO } else { CI_PURPOSE_DOCUMENTS });
+    script.push_str("set -eu\n");
+    if !policy.git_pins.is_empty() {
+        script.push_str(CI_GIT_PIN_STEP);
+    }
+    if plan.cargo {
+        script.push_str(CI_CARGO_STEPS);
+    }
+    if policy.supply_chain {
+        script.push_str(CI_SUPPLY_CHAIN_STEP);
+    }
+    if let (Some(version), true) = (plan.installed_tangler, needs_tangler) {
+        script.push_str(&CI_INSTALL_TANGLER.replace("{version}", version));
+    }
+    if let Some(paths) = &plan.tangle {
+        script.push_str(match plan.installed_tangler {
+            None => CI_RETANGLE_FROM_SOURCE,
+            Some(_) => CI_RETANGLE,
+        });
+        script.push_str(&format!("{tangler} tangle {paths} --workspace .\n"));
+    }
+    if let Some(options) = &plan.check {
+        script.push_str(CI_CHECK);
+        script.push_str(&format!("{tangler} check {options}--workspace . .\n"));
+    }
+    script.push_str(CI_CLEAN_TREE);
+    script
+}
+
+/// The CI workflow, with the supply-chain job and its timer when the
+/// publication states a supply-chain policy.
+fn ci_workflow(policy: &BuildPolicy) -> String {
+    let (schedule, job) = if policy.supply_chain {
+        (CI_WORKFLOW_SCHEDULE, CI_WORKFLOW_SUPPLY_CHAIN_JOB)
+    } else {
+        ("", "")
+    };
+    CI_WORKFLOW.replace("{schedule}", schedule).replace("{supply_chain_job}", job)
+}
+
+/// `tools/check-git-pins` for `pins`: every Git `source` in `Cargo.lock`
+/// must be one of them, exactly.
+fn git_pin_check(pins: &[GitPin]) -> String {
+    let allowed: Vec<String> = pins.iter().map(GitPin::lock_source).collect();
+    // One pin compares whole; several are looked up in the space-separated list.
+    let unpinned = if allowed.len() == 1 {
+        "source != allowed"
+    } else {
+        "index(\" \" allowed \" \", \" \" source \" \") == 0"
+    };
+    GIT_PIN_CHECK.replace("{allowed}", &allowed.join(" ")).replace("{unpinned}", unpinned)
 }
 ```
 
@@ -6694,7 +7992,7 @@ fn emit_provenance(
     license_source: LicenseSource,
     source_licenses: &BTreeMap<String, String>,
 ) -> Result<()> {
-    let prov = serde_json::json!({
+    let mut prov = serde_json::json!({
         "schema": "x0k.provenance/v1",
         "publication_uri": publication_uri,
         "corpus_rev": report.corpus_rev,
@@ -6782,6 +8080,26 @@ LICENSE-* files beside this record.",
             "declared": source_licenses,
         },
     });
+    // What only a projection beyond the Cargo case carries is recorded only
+    // when it carries it, so every earlier record reads as it did: the
+    // collection's own vocabulary and where it went, and the mirrored
+    // sources — projected path → collection path, the shape `path_map` has,
+    // so a receiver routes an edit to one back where it came from.
+    if !report.vocabulary.is_empty() {
+        prov["vocabulary"] = serde_json::json!(report.vocabulary);
+        prov["vocabulary_dir"] = serde_json::json!(report.vocabulary_dir);
+    }
+    // The carried files are sources in the same sense — hand-written, routed
+    // back by path — so they join the mirrored ones in the one map.
+    let sources: BTreeMap<String, String> = report
+        .sources
+        .iter()
+        .map(|s| (s.clone(), s.clone()))
+        .chain(report.carried.iter().map(|(projected, source)| (projected.clone(), source.clone())))
+        .collect();
+    if !sources.is_empty() {
+        prov["sources"] = serde_json::json!(sources);
+    }
     std::fs::write(
         output_dir.join("PROVENANCE.json"),
         serde_json::to_string_pretty(&prov)?,
@@ -7095,7 +8413,7 @@ directory exists.
 <a name="chunk-resolve-prebuilt"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#resolve-prebuilt`</sub>
 
 ```rust {#resolve-prebuilt}
-let prebuilt = resolve_prebuilt(&env, &packages, &versions, &crates_io)?;
+let prebuilt = resolve_prebuilt(&env, &entry_points, &packages, &versions, &crates_io)?;
 report.prebuilt = prebuilt.as_ref().map(PrebuiltPlan::summary);
 ```
 
@@ -7107,6 +8425,7 @@ report.prebuilt = prebuilt.as_ref().map(PrebuiltPlan::summary);
 /// projector that had never heard of this lane.
 fn resolve_prebuilt(
     env: &Colophon,
+    entry: &Members,
     packages: &SourcePackages,
     versions: &BTreeMap<String, String>,
     crates_io: &CratesIoMeta,
@@ -7165,7 +8484,6 @@ number names it?*
 <a name="chunk-resolve-prebuilt-binaries"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#resolve-prebuilt-binaries`</sub>
 
 ```rust {#resolve-prebuilt-binaries}
-let entry = member_names(env.edges.get("x0k:entryPoint"), "entryPoint")?;
 let entry_crate = entry.crates.first().cloned().ok_or_else(|| {
     anyhow!(
         "`x0k:prebuilt` needs an `entryPoint` crate: its manifest `version` is what the \
@@ -9114,7 +10432,8 @@ fn git_commit_projection(
 ## The emitted texts
 
 The license bodies, the CI script, its two workflow wrappers, and the
-generated-file guard are committed into every projection verbatim.
+generated-file guard are committed into every projection, verbatim but
+for the steps the publication's build policy adds or leaves out.
 
 <a name="chunk-license-texts"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#license-texts`</sub>
 
@@ -9149,22 +10468,38 @@ Apache License 2.0 text from https://www.apache.org/licenses/LICENSE-2.0.txt\n";
 const MPL_PLACEHOLDER: &str = "Mozilla Public License Version 2.0\n\n\
 This is a placeholder. Before publication, replace this file with the canonical\n\
 MPL-2.0 text from https://www.mozilla.org/media/MPL/2.0/index.txt\n";
+
+/// Any other SPDX identifier's placeholder, `{id}` the identifier.
+const SPDX_PLACEHOLDER: &str = "{id}\n\n\
+This is a placeholder. Before publication, replace this file with the canonical\n\
+{id} text from https://spdx.org/licenses/{id}.html\n";
 ```
 
 <a name="chunk-ci-script"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#ci-script`</sub>
 
 ```rust {#ci-script}
-/// The forge-agnostic CI entry point committed into the projected repo. Any
-/// runner — GitHub Actions, a bare cron job, a pre-push hook — calls this one
-/// script; the emitted workflow files are thin wrappers over it.
-const CI_SCRIPT: &str = r#"#!/bin/sh
-# Forge-agnostic CI for this projected repo: build, test, and prove the
+// The forge-agnostic CI entry point committed into the projected repo. Any
+// runner — GitHub Actions, a bare cron job, a pre-push hook — calls this one
+// script; the emitted workflow files are thin wrappers over it. It is
+// assembled by [`ci_script`] from the pieces below, in this order.
+const CI_SHEBANG: &str = "#!/bin/sh\n";
+
+/// What the script proves, for a projection that is a Cargo workspace.
+const CI_PURPOSE_CARGO: &str = r#"# Forge-agnostic CI for this projected repo: build, test, and prove the
 # committed @generated code is byte-identical to a fresh tangle of the
 # literate sources. Any runner calls this script; nothing here is specific
 # to a hosting forge.
-set -eu
-sh tools/check-git-pins
-# `--locked`: Cargo.lock is committed, and a lock cargo would rewrite is
+"#;
+
+/// What the script proves, for a projection that ships no crate.
+const CI_PURPOSE_DOCUMENTS: &str = r#"# Forge-agnostic CI for this projected repo: prove the committed
+# @generated files are byte-identical to a fresh tangle of the literate
+# sources, and that every document reads in the vocabulary it ships with.
+# Any runner calls this script; nothing here is specific to a hosting forge.
+"#;
+
+/// The Cargo half: build, test, lint, document.
+const CI_CARGO_STEPS: &str = r#"# `--locked`: Cargo.lock is committed, and a lock cargo would rewrite is
 # drift the diff below must see, not silently absorb.
 cargo build --workspace --locked
 cargo test --workspace --locked
@@ -9177,7 +10512,65 @@ cargo clippy --workspace --locked --all-targets -- -D warnings
 # The prose ships as the crate documentation, so a link in it that resolves to
 # nothing is a broken promise, not a cosmetic warning.
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --locked --no-deps
-# Supply-chain policy (deny.toml): advisories, licences, duplicate bans,
+"#;
+
+/// The released tangler, for a projection that does not carry its source.
+/// `{version}` is the version that made the projection.
+const CI_INSTALL_TANGLER: &str = r#"# The tangler. This repository does not carry its source, so CI runs the
+# x0k-tangle release this projection was made with, installed under target/
+# by the release's own installer, which refuses an archive whose SHA-256 the
+# release's SHA256SUMS does not list. FOLIO_VERSION moves the pin;
+# X0K_TANGLE names a tangler already installed.
+FOLIO_VERSION="${FOLIO_VERSION:-{version}}"
+tangler="${X0K_TANGLE:-}"
+if [ -z "$tangler" ]; then
+  tangler="$PWD/target/x0k-folio-$FOLIO_VERSION/x0k-tangle"
+  if [ ! -x "$tangler" ]; then
+    curl -fsSL https://0k.computer/folio/install.sh |
+      FOLIO_VERSION="$FOLIO_VERSION" FOLIO_INSTALL_DIR="${tangler%/*}" sh
+  fi
+fi
+if [ ! -x "$tangler" ]; then
+  echo "error: no x0k-tangle at $tangler (installing x0k-folio $FOLIO_VERSION failed)" >&2
+  exit 1
+fi
+"#;
+
+/// The re-tangle, by the tangler built from this repository's source.
+const CI_RETANGLE_FROM_SOURCE: &str = r#"# Re-tangle every literate document (the tangler discovers the ones with a
+# tangle configuration). A tangle failure fails CI — it is never swallowed.
+# `cargo run` finds the binary wherever CARGO_TARGET_DIR put it.
+"#;
+
+/// The re-tangle, by the installed tangler.
+const CI_RETANGLE: &str = r#"# Re-tangle every literate document (the tangler discovers the ones with a
+# tangle configuration). A tangle failure fails CI — it is never swallowed.
+"#;
+
+/// The read-only check, for a projection carrying a vocabulary of its own
+/// or a `from=` mirror.
+const CI_CHECK: &str = r#"# Read every document's header in the vocabulary this repository ships, and
+# every `from=` mirror against the source it quotes: a term no module
+# declares, or a mirror that no longer shows what its source holds, fails.
+"#;
+
+/// The drift gate every projection ends on.
+const CI_CLEAN_TREE: &str = r#"# The committed @generated code and .tangle-map.json sidecars must be exactly
+# what the tangler just wrote: any modified or untracked file is drift.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "error: re-tangling the literate sources changed the tree:" >&2
+  git status --porcelain >&2
+  git --no-pager diff >&2
+  exit 1
+fi
+"#;
+
+/// `tools/ci`'s first step when the publication pins Git revisions.
+const CI_GIT_PIN_STEP: &str = "sh tools/check-git-pins\n";
+
+/// `tools/ci`'s `cargo deny` step, when the publication states a
+/// supply-chain policy.
+const CI_SUPPLY_CHAIN_STEP: &str = r#"# Supply-chain policy (deny.toml): advisories, licences, duplicate bans,
 # sources. cargo-deny is the ONLY check here that can see YANKED crates —
 # cargo-audit needs a git-format registry index and cargo has defaulted to the
 # sparse one since 1.70 — so this is the mechanized guard on both the yanked
@@ -9197,160 +10590,37 @@ if command -v cargo-deny >/dev/null 2>&1; then
 else
   echo "note: skipping cargo-deny (install it: cargo install cargo-deny)" >&2
 fi
-# Re-tangle every literate document (the tangler discovers the ones with a
-# tangle configuration). A tangle failure fails CI — it is never swallowed.
-# `cargo run` finds the binary wherever CARGO_TARGET_DIR put it.
-cargo run --locked -q -p x0k-tangle --bin x0k-tangle -- tangle {literate_root} --workspace .
-# The committed @generated code and .tangle-map.json sidecars must be exactly
-# what the tangler just wrote: any modified or untracked file is drift.
-if [ -n "$(git status --porcelain)" ]; then
-  echo "error: re-tangling the literate sources changed the tree:" >&2
-  git status --porcelain >&2
-  git --no-pager diff >&2
-  exit 1
-fi
 "#;
 ```
 
-The supply-chain policy is the fourth emitted text. It answers four
-standing questions — is anything we ship vulnerable, unsound,
-unmaintained or *yanked*; is every dependency's licence one an MIT
-release may carry; has the graph grown a duplicate nobody accepted; does
-everything come from crates.io or the reviewed Dialog revision. The
-nine-crate projection adds Dialog's crypto, storage, and query dependencies.
-The policy names the exact duplicate versions observed in that closure;
-BSD-3-Clause and Zlib cover its compression, crypto, and hash-table crates.
-These allowances do not suppress advisory findings or permit other Git sources.
-
-Two entries carry their weight by being *unusual*, and both are
-commented in the file so a later tidy-up does not remove them. The
-`Unicode-3.0` allowance is there because `unicode-ident` requires it
-through an `AND`, not an `OR`, so it is an obligation and not a choice.
-And LGPL is deliberately *absent*: `r-efi` offers it as one of three
-legs, so leaving it out of the allowlist is what proves the permissive
-leg is always the one taken — a crate whose only option were LGPL would
-fail loudly instead of quietly relicensing the bundle's obligations.
-
-The candid part: the `[bans] skip` list names three duplicate crates at
-exact versions, and the projection regenerates its lockfile on every
-run, so those pins go stale as the registry moves and
-`multiple-versions = "deny"` will eventually fail on a version that has
-merely drifted. That is the intended failure — a duplicate the policy
-has not seen should stop and be looked at — but it means the list is
-maintenance, not a set-and-forget.
+The Git pin check is the fourth emitted text, a template the
+publication's pins fill: `{allowed}` is the lockfile `source` of each
+pin, and `{unpinned}` the test that a resolved source is none of them.
+The supply-chain policy it sits beside is not an emitted text at all —
+it is the publication's own `deny.toml`, tangled from the publication
+([§ "The publication's build policy"](#the-publications-build-policy)).
 
 <a name="chunk-deny-config"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#deny-config`</sub>
 
 ```rust {#deny-config}
-/// `deny.toml` — the projected repository's supply-chain policy, committed as
-/// generated scaffolding so the policy lives in the corpus under review rather
-/// than drifting on the public side. `tools/ci` runs it when `cargo-deny` is
-/// installed.
-/// Cargo-deny matches Git URLs, not an exact approved commit. With Cargo's
-/// locked checks this pins both direct manifests and the resolved Git closure.
+/// `tools/check-git-pins` — refuses a `Cargo.lock` resolving any Git source
+/// but the publication's pinned revisions. `cargo deny` matches Git URLs, not
+/// an exact commit; with Cargo's locked checks this pins both the direct
+/// manifests and the resolved Git closure. Filled by [`git_pin_check`].
 const GIT_PIN_CHECK: &str = r#"#!/bin/sh
 set -eu
-awk -v allowed='git+https://github.com/dialog-db/dialog-db?rev=3fac7ad3e691d401fb5c18c18ffb23de74342742#3fac7ad3e691d401fb5c18c18ffb23de74342742' '
+awk -v allowed='{allowed}' '
 /^[[:space:]]*source[[:space:]]*=[[:space:]]*"git\+/ {
     source = $0
     sub(/^[^"]*"/, "", source)
     sub(/"[[:space:]]*$/, "", source)
-    if (source != allowed) {
+    if ({unpinned}) {
         print "error: Cargo.lock contains an unapproved Git source or revision" > "/dev/stderr"
         failed = 1
     }
 }
 END { exit failed }
 ' Cargo.lock
-"#;
-
-const DENY_CONFIG: &str = r#"# cargo-deny policy for the x0k-folio publication.
-#
-# Four questions, each with a standing answer:
-#   advisories — is anything we ship vulnerable, unsound, unmaintained or yanked?
-#   licenses   — is every dependency's licence one an MIT release may carry?
-#   bans       — has the dependency graph grown a duplicate we did not accept?
-#   sources    — do dependencies come from crates.io or the pinned Dialog source?
-#
-# Exceptions below name exact versions observed in the nine-crate publication.
-# Re-run this policy on every projected lockfile; this comment is not an audit.
-
-[graph]
-# The published manifests sever `plugins` (x0k-folio) and `motifs`
-# (x0k-tangle): both are declared-but-empty and out of `default`, so the
-# default feature set IS the shipped surface. Checking all-features would
-# audit a graph nobody can build.
-all-features = false
-
-[advisories]
-db-path = "~/.cargo/advisory-db"
-db-urls = ["https://github.com/RustSec/advisory-db"]
-# A yanked dependency in a lockfile we are publishing is a release blocker,
-# not a note. This is the check `cargo audit` could not run here: it needs a
-# git-format registry index, and this machine has only the sparse index.
-yanked = "deny"
-# Report unmaintained crates anywhere in the graph, not just direct deps.
-# Measured clean today; this is the tripwire for when it stops being clean.
-unmaintained = "all"
-# No ignores. The graph is clean, so an empty ignore list is honest and any
-# future entry has to be argued for in a diff.
-ignore = []
-
-[licenses]
-# Our packages retain their publication license. Dependencies retain theirs:
-# Dialog's MPL-2.0 is admitted without relicensing its upstream files.
-# For dual-licensed dependencies this allowlist selects an accepted OR leg.
-allow = [
-    "MIT",
-    "MPL-2.0",
-    "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
-    "BSD-3-Clause", # brotli/alloc, subtle and Dalek crypto in Dialog
-    "Zlib",        # foldhash used by Dialog's hashbrown
-    "BSL-1.0",
-    "CC0-1.0",
-    "MIT-0",
-    "Unicode-3.0",
-    "Unlicense",
-]
-# NOT allowed, deliberately: LGPL-2.1-or-later. `r-efi` 5.3.0/6.0.0 offer it
-# as one of three options (MIT OR Apache-2.0 OR LGPL-2.1-or-later); omitting
-# it from this list is what proves we always take the permissive leg. If a
-# crate ever appears whose ONLY option is LGPL, this check fails loudly
-# instead of silently relicensing our obligations.
-confidence-threshold = 0.93
-
-[bans]
-# Dependencies in the pinned Dialog tree and the format/parser tree use
-# different compatible-major API families. Keep the older versions explicitly
-# enumerated; another version is a new finding rather than a permanent warn.
-multiple-versions = "deny"
-wildcards = "deny"
-skip = [
-    { crate = "syn@2.0.119" },       # derive macros versus newer macro tooling
-    { crate = "cpufeatures@0.2.17" },# AES/SHA/Dalek versus blake3
-    { crate = "getrandom@0.2.17" }, # pinned Dialog/crypto versus tempfile/uuid
-    { crate = "getrandom@0.3.4" },  # oxrdf's rand backend
-    { crate = "r-efi@5.3.0" },      # getrandom 0.3's UEFI backend
-    { crate = "hashbrown@0.14.5" }, # dashmap versus indexmap/rkyv
-    { crate = "hashbrown@0.16.1" }, # pinned Dialog search tree
-    { crate = "rand@0.8.8" },       # pinned Dialog versus oxrdf
-    { crate = "rand_chacha@0.3.1" },# rand 0.8 versus 0.9
-    { crate = "rand_core@0.6.4" },  # Dialog and crypto versus rand 0.9
-    { crate = "thiserror@1.0.69" }, # pidlock/rexie versus Dialog 2.x
-    { crate = "thiserror-impl@1.0.69" },
-    { crate = "windows-sys@0.48.0" }, # dirs-sys versus tokio/rustix
-]
-
-[sources]
-# Only the reviewed Dialog upstream may come from Git. Require a revision;
-# tools/check-git-pins also checks the exact approved revision in Cargo.lock.
-unknown-registry = "deny"
-unknown-git = "deny"
-required-git-spec = "rev"
-allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/dialog-db/dialog-db"]
 "#;
 ```
 
@@ -9380,17 +10650,24 @@ const CI_WORKFLOW: &str = r#"name: ci
 on:
   push:
   pull_request:
-  schedule:
-    # A new advisory invalidates a dependency graph that nothing has changed,
-    # so supply-chain runs on a timer as well as on every push.
-    - cron: "0 6 * * 1"
-jobs:
+{schedule}jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - run: ./tools/ci
-  supply-chain:
+{supply_chain_job}"#;
+
+/// The workflow's timer, when the publication states a supply-chain policy.
+const CI_WORKFLOW_SCHEDULE: &str = r#"  schedule:
+    # A new advisory invalidates a dependency graph that nothing has changed,
+    # so supply-chain runs on a timer as well as on every push.
+    - cron: "0 6 * * 1"
+"#;
+
+/// The workflow's `cargo deny` job, when the publication states a
+/// supply-chain policy.
+const CI_WORKFLOW_SUPPLY_CHAIN_JOB: &str = r#"  supply-chain:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -9443,6 +10720,156 @@ exit $fail
 "#;
 ```
 
+### The MkDocs hook
+
+A folio document is Markdown, and a reader should be able to put it into
+the site generator they already use and see its fenced blocks as code.
+GitHub and Docusaurus read a fence's language as the first word of its
+info string and keep the rest as metadata, so they show folio's blocks as
+written. Python-Markdown, under MkDocs, does not: both of its fence
+extensions, `fenced_code` and `pymdownx.superfences`, accept an opening of
+a language and an optional attribute list in braces, and nothing else. A
+typed block's opening, `turtle folio:document` or `turtle folio:graph`, is
+a language and a marker word, so neither reads it as a fence: the block
+falls through to inline code, and on a full page the prose after it runs
+into it. `fenced_code` refuses a chunk's opening,
+`python {#backoff from="pkg/retry.py"}`, the same way; `superfences`
+accepts it.
+
+The format does not change to suit one renderer. The projection ships a
+hook for MkDocs' own `hooks:` setting instead. It runs on each page's
+Markdown before the fence extension does and rewrites folio's fence
+openings into the form both extensions read: a typed block becomes a plain
+fence of its language, and a chunk becomes `{.python #backoff}`, code in
+its language under the chunk's id, with the attributes that say where the
+code came from left out of the page. Nothing else moves. It finds fences
+the way CommonMark does — a run of three or more backticks or tildes
+indented at most three spaces, closed by a run of the same character at
+least as long — so a fence inside a longer fence is content, and a line
+indented four spaces, which is indented code, is never an opening. A fence
+nested in a list item under four or more spaces is left as written; folio
+puts none there.
+
+A page may hide its header: `folio_header: hide` in its front matter, or
+under `extra:` for the whole site, with the page's own setting winning.
+Then the page's first fenced block, when its info string is exactly
+`turtle folio:document`, is dropped with everything in it. Only the
+header: a graph block is part of what the page says, not what the
+document claims about itself.
+
+The hook is tangled into this crate beside the module, compiled into the
+projector, and committed into every projection as `tools/mkdocs_folio.py`,
+without the `@generated` line its tangled copy carries. The corpus's
+publication gate builds a fixture with it under both fence extensions, and
+without it to show the gap it closes, before any projection goes out.
+
+<a name="chunk-mkdocs-hook"></a><sub>[`templates/mkdocs_folio.py`](../../crates/x0k-tangle/templates/mkdocs_folio.py) · `#mkdocs-hook`</sub>
+
+```python {#mkdocs-hook file="templates/mkdocs_folio.py"}
+"""MkDocs hook: show a folio document's fenced blocks as code.
+
+Python-Markdown accepts a fence opening of a language and, optionally, an
+attribute list in braces. folio writes two other forms, and both fall through
+to inline code that runs on into the prose after the block:
+
+- a typed block, ``turtle folio:document`` (the header) or
+  ``turtle folio:graph``: a language and a marker word;
+- a chunk, ``python {#backoff from="pkg/retry.py" symbol="Backoff.next"}``:
+  a language and then the attributes.
+
+This hook rewrites those openings before Markdown runs, and nothing else:
+a typed block becomes a plain ``turtle`` fence, and a chunk becomes
+``{.python #backoff}``, which pymdownx.superfences and fenced_code both read
+as Python code with the chunk's id. The other attributes name where the
+code came from and are not shown. Fences inside another fence, and indented
+code, are left alone.
+
+Copy this file into your site and name it in ``mkdocs.yml``, by its path
+relative to that file::
+
+    hooks:
+      - mkdocs_folio.py
+
+To drop the header instead of showing it, set ``folio_header: hide`` in a
+page's front matter, or under ``extra:`` for the whole site; a page's own
+setting wins. Only the page's first fenced block is dropped, and only when its
+info string is exactly ``turtle folio:document``.
+"""
+
+import re
+
+_OPENING = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*?)\s*$")
+_TYPED = re.compile(r"^([\w+.-]+)[ \t]+[A-Za-z][\w-]*:[\w/-]+$")
+_CHUNK = re.compile(r"^([\w+.-]+)[ \t]*\{[ \t]*#([^\s}\"']+)[^}]*\}$")
+_HEADER = "turtle folio:document"
+
+
+def _closes(line, fence):
+    match = _OPENING.match(line.rstrip("\r\n"))
+    return (
+        match is not None
+        and match.group(2)[0] == fence[0]
+        and len(match.group(2)) >= len(fence)
+        and match.group(3) == ""
+    )
+
+
+def _opening(indent, fence, info):
+    typed = _TYPED.match(info)
+    if typed:
+        return f"{indent}{fence}{typed.group(1)}"
+    chunk = _CHUNK.match(info)
+    if chunk:
+        return f"{indent}{fence}{{.{chunk.group(1)} #{chunk.group(2)}}}"
+    return None
+
+
+def rewrite(markdown, drop_header=False):
+    """Return ``markdown`` with folio's fence openings in a form Markdown reads."""
+    out = []
+    fence = None  # the opening run of the fence we are inside, if any
+    dropping = False
+    seen_fence = False
+    for line in markdown.splitlines(keepends=True):
+        if fence is not None:
+            if _closes(line, fence):
+                fence = None
+                if dropping:
+                    dropping = False
+                    continue
+            if not dropping:
+                out.append(line)
+            continue
+        match = _OPENING.match(line.rstrip("\r\n"))
+        if match is None or (match.group(2)[0] == "`" and "`" in match.group(3)):
+            out.append(line)
+            continue
+        indent, fence, info = match.groups()
+        first, seen_fence = not seen_fence, True
+        if drop_header and first and info == _HEADER:
+            dropping = True
+            continue
+        opening = _opening(indent, fence, info)
+        if opening is None:
+            out.append(line)
+        else:
+            ending = line[len(line.rstrip("\r\n")):]
+            out.append(opening + ending)
+    return "".join(out)
+
+
+def on_page_markdown(markdown, page, config, files):
+    setting = page.meta.get("folio_header", (config.get("extra") or {}).get("folio_header"))
+    return rewrite(markdown, drop_header=setting == "hide")
+```
+
+<a name="chunk-mkdocs-hook-text"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#mkdocs-hook-text`</sub>
+
+```rust {#mkdocs-hook-text}
+/// The hook above, as the projector commits it into `tools/mkdocs_folio.py`.
+const MKDOCS_HOOK: &str = include_str!("../templates/mkdocs_folio.py");
+```
+
 ## Tests
 
 The license-expression reader is the one piece of this module with
@@ -9476,6 +10903,7 @@ mod tests {
                 "x0k:software-module/x0k-fact-projection#seam",
             ])),
             "severs",
+            &Vocabulary::shipped(),
         )
         .expect("severances parse");
         assert_eq!(
@@ -9493,6 +10921,7 @@ mod tests {
         let encoded = member_names(
             Some(&uris(&["x0k:software-module/x0k-fact-projection%23envelope"])),
             "severs",
+            &Vocabulary::shipped(),
         )
         .expect("an encoded severance parses");
         assert_eq!(
@@ -9530,7 +10959,11 @@ mod tests {
         assert_eq!(projected, expected);
         // The prefix tables themselves: what the projection must declare is
         // what this build predeclares beyond the published vocabulary.
-        assert!(undeclared_prefixes(&x0k_ontology::concept_facts::OntologyModel::shipped()).is_empty());
+        assert!(undeclared_prefixes(
+            &x0k_ontology::concept_facts::OntologyModel::shipped(),
+            x0k_folio::colophon::shipped_prefixes(),
+        )
+        .is_empty());
     }
 
     /// A fragment outside `severs` is a mistake to name, not a suffix to
@@ -9547,6 +10980,7 @@ mod tests {
             let err = member_names(
                 Some(&uris(&["x0k:software-module/x0k-folio#plugins"])),
                 edge,
+                &Vocabulary::shipped(),
             )
             .expect_err("a fragment is only legal under `severs`");
             let msg = err.to_string();
@@ -9561,6 +10995,7 @@ mod tests {
         let err = member_names(
             Some(&uris(&["x0k:software-module/x0k-folio"])),
             "severs",
+            &Vocabulary::shipped(),
         )
         .expect_err("a severance needs a feature");
         assert!(err.to_string().contains("carries no `#<feature>` fragment"), "{err}");
@@ -9569,32 +11004,51 @@ mod tests {
     #[test]
     fn license_files_reads_the_expression_not_substrings() {
         let mit = license_files("MIT", HOLDER, 2026).unwrap();
-        assert_eq!(mit.iter().map(|(f, _)| *f).collect::<Vec<_>>(), ["LICENSE-MIT"]);
+        assert_eq!(mit.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>(), ["LICENSE-MIT"]);
         assert!(mit[0].1.starts_with("MIT License\n\nCopyright (c) 2026 0k.computer\n"));
 
         let dual = license_files("MIT OR Apache-2.0", HOLDER, 2026).unwrap();
         assert_eq!(
-            dual.iter().map(|(f, _)| *f).collect::<Vec<_>>(),
+            dual.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>(),
             ["LICENSE-MIT", "LICENSE-APACHE"]
         );
 
         let parenthesized = license_files("(MIT OR Apache-2.0) AND MPL-2.0", HOLDER, 2026).unwrap();
         assert_eq!(
-            parenthesized.iter().map(|(f, _)| *f).collect::<Vec<_>>(),
+            parenthesized.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>(),
             ["LICENSE-MIT", "LICENSE-APACHE", "LICENSE-MPL"]
         );
     }
 
+    /// Any SPDX identifier is the publisher's to name. One the projector
+    /// carries no text for gets its own file holding a placeholder that
+    /// names the canonical text — and `MIT-0` is still not `MIT`.
     #[test]
-    fn license_files_refuses_unknown_identifiers_and_exceptions() {
-        let err = license_files("MIT-0", HOLDER, 2026).unwrap_err().to_string();
-        assert!(err.contains("`MIT-0`"), "names the identifier: {err}");
+    fn any_spdx_identifier_gets_its_own_file_and_never_another_s_text() {
+        let mit0 = license_files("MIT-0", None, 2026).unwrap();
+        assert_eq!(mit0.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>(), ["LICENSE-MIT-0"]);
+        assert!(mit0[0].1.starts_with("MIT-0\n\nThis is a placeholder."), "{}", mit0[0].1);
+        assert!(mit0[0].1.contains("https://spdx.org/licenses/MIT-0.html"), "{}", mit0[0].1);
+        assert!(!mit0[0].1.contains("Permission is hereby granted"), "never the MIT text");
+
+        let bsd = license_files("BSD-3-Clause or GPL-2.0+", None, 2026).unwrap();
+        assert_eq!(
+            bsd.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>(),
+            ["LICENSE-BSD-3-Clause", "LICENSE-GPL-2.0+"],
+            "either operator spelling joins identifiers"
+        );
+    }
+
+    #[test]
+    fn license_files_refuses_references_exceptions_and_non_identifiers() {
         let err = license_files("LicenseRef-Proprietary", HOLDER, 2026).unwrap_err().to_string();
         assert!(err.contains("LicenseRef-Proprietary"), "{err}");
         let err = license_files("Apache-2.0 WITH LLVM-exception", HOLDER, 2026)
             .unwrap_err()
             .to_string();
         assert!(err.contains("exception"), "{err}");
+        let err = license_files("MIT/X11", HOLDER, 2026).unwrap_err().to_string();
+        assert!(err.contains("`MIT/X11` is not an SPDX license identifier"), "{err}");
         assert!(license_files("OR", HOLDER, 2026).is_err(), "no identifier at all refuses");
     }
 
@@ -9605,6 +11059,67 @@ mod tests {
         assert!(license_files("MIT", Some("  "), 2026).is_err(), "blank holder refuses");
         // Apache-2.0 alone carries no notice line and needs no holder.
         assert!(license_files("Apache-2.0", None, 2026).is_ok());
+    }
+
+    /// An inherited key resolves to what the source workspace declares,
+    /// in `toml_edit`'s spacing whatever the source's: the projection does
+    /// not churn when somebody reformats the root manifest.
+    #[test]
+    fn an_inherited_dependency_resolves_to_the_workspace_s_own_value() {
+        let root = "[workspace.dependencies]\nanyhow = \"1.0\"\nclap = {version = \"4\", features = [\"derive\"]}\n\n[workspace.dependencies.tracing-subscriber]\nversion = \"0.3\"\nfeatures = [\"env-filter\"]\n"
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        let packages = SourcePackages {
+            workspace: PathBuf::from("/nowhere"),
+            roots: BTreeMap::new(),
+            workspace_dependencies: root["workspace"]["dependencies"].as_table().cloned(),
+            git_pins: Vec::new(),
+        };
+        assert_eq!(packages.workspace_dependency("anyhow").as_deref(), Some("\"1.0\""));
+        assert_eq!(
+            packages.workspace_dependency("clap").as_deref(),
+            Some("{ version = \"4\", features = [\"derive\"] }")
+        );
+        assert_eq!(
+            packages.workspace_dependency("tracing-subscriber").as_deref(),
+            Some("{ version = \"0.3\", features = [\"env-filter\"] }")
+        );
+        assert_eq!(packages.workspace_dependency("serde"), None);
+    }
+
+    #[test]
+    fn a_git_pin_is_one_repository_at_one_revision() {
+        let pin = GitPin::parse("https://example.org/dep?rev=0123abcd").unwrap();
+        assert_eq!(pin.lock_source(), "git+https://example.org/dep?rev=0123abcd#0123abcd");
+        for bad in ["https://example.org/dep", "https://example.org/dep?rev=", "?rev=0123", "https://example.org/dep?rev=main~1"] {
+            let err = GitPin::parse(bad).unwrap_err().to_string();
+            assert!(err.contains("`x0k:gitPin`"), "{bad}: {err}");
+        }
+    }
+
+    /// Several pins: the check admits each and nothing else.
+    #[test]
+    fn the_pin_check_admits_every_pin_and_only_the_pins() {
+        let pins = [
+            GitPin::parse("https://example.org/one?rev=aaaa").unwrap(),
+            GitPin::parse("https://example.org/two?rev=bbbb").unwrap(),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("check"), git_pin_check(&pins)).unwrap();
+        for (source, admitted) in [
+            ("git+https://example.org/one?rev=aaaa#aaaa", true),
+            ("git+https://example.org/two?rev=bbbb#bbbb", true),
+            ("git+https://example.org/two?rev=aaaa#aaaa", false),
+            ("git+https://example.org/one", false),
+        ] {
+            std::fs::write(
+                dir.path().join("Cargo.lock"),
+                format!("version = 4\n[[package]]\nname = \"dep\"\nversion = \"0.1.0\"\nsource = \"{source}\"\n"),
+            )
+            .unwrap();
+            let status = std::process::Command::new("sh").arg("check").current_dir(dir.path()).status().unwrap();
+            assert_eq!(status.success(), admitted, "{source}");
+        }
     }
 
     #[test]
@@ -9620,6 +11135,7 @@ mod tests {
             id: format!("x0k:implementation/{}", doc_member_key(&rel)),
             rel,
             tangled: true,
+            retangle: false,
             crate_name: Some("demo-crate".to_string()),
             title: title.to_string(),
             summary: summary.map(str::to_string),
@@ -10098,8 +11614,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use x0k_folio::colophon::{expand_compact, parse_envelope, shipped_prefixes, turtle_name, DocType};
-use x0k_tangle::region_repo::{project_publication_repo_with, ProofOutcome, ProofTarget, Proofs};
-use x0k_tangle::{tangle_document, PipelineRegistry, RepoProjectOptions};
+use x0k_tangle::region_repo::{
+    project_publication_repo_in, project_publication_repo_with, ProofOutcome, ProofTarget, Proofs,
+};
+use x0k_tangle::{
+    receive_repo, tangle_document, PipelineRegistry, ReceiveOptions, RepoProjectOptions, Vocabulary,
+};
 ```
 
 The fixture documents are string constants so a test can read as one
@@ -10171,6 +11691,11 @@ fn publication_publishing(crates: &[&str], documents: &[&str]) -> String {
 /// bound the way the real ones are.
 const PALETTE: &str = "    x0k:palette '{\"light\":{\"ink\":\"#111111\",\"line\":\"#b88e44\",\"paper\":\"#fffff8\",\"accent\":\"#b88e44\"},\"dark\":{\"ink\":\"#e2e8f0\",\"line\":\"#96b4dc\",\"paper\":\"#1e293b\",\"accent\":\"#96b4dc\"}}'^^rdf:JSON ;\n";
 
+/// The publication's `x0k:marks` statement: the two documents the fixture
+/// declares the status and test marks in, as the `x0k-folio` publication
+/// names its own. A test of a publication that names none drops it.
+const MARKS: &str = "    x0k:marks design:publish-a-region-as-a-repository, implementation:tangle\\/region-repo ;\n";
+
 /// The statement that closes the fixture publication's header. A test that
 /// adds a statement puts it ahead of this line ([`with_statements`]).
 const HEADER_LAST: &str = "    folio:tangleRoot \"README.md\" .\n";
@@ -10214,7 +11739,7 @@ fn publication_full(
         statements.push_str("    x0k:entryPoint x0k:software-module\\/demo-crate ;\n");
     }
     format!(
-        "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n{statements}{PALETTE}{HEADER_LAST}```\n\n```markdown {{#readme}}\n# Demo\n\nA demo publication.\n\n## What is here\n\n<!-- x0k:contents -->\n\n## Afterwards\n\nText after the contents.\n```\n"
+        "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n{statements}{PALETTE}{MARKS}{HEADER_LAST}```\n\n```markdown {{#readme}}\n# Demo\n\nA demo publication.\n\n## What is here\n\n<!-- x0k:contents -->\n\n## Afterwards\n\nText after the contents.\n```\n"
     )
 }
 ```
@@ -11152,6 +12677,636 @@ fn a_named_document_no_corpus_document_declares_is_refused() {
 }
 ```
 
+### A collection that is not ours
+
+Everything above names documents in our namespace and keeps them where
+our corpus keeps them. A collection somebody else wrote does neither: its
+documents are typed in its own module, named in its own namespace, and
+filed wherever its authors file things. `acme` is the smallest such
+collection — a module declaring a namespace and one class, three reports
+in three unrelated directories (one under a `docs/` of its own), and a
+publication naming two of them by id. Nothing here has a registry, so the
+layout the projector tries first is the built-in one, and it places none
+of the three: every member is found by the id its header declares.
+
+The module is handed over as `--vocabulary` hands it, a directory of
+module files read beside the compiled set, and the projection is judged
+on what crossed and where: the two named reports at the paths they have
+in the collection, each declaring the `acme:` prefix the repository's own
+vocabulary does not; the third report nowhere. Under the organized layout
+the report under `docs/` stays under `docs/` — that directory is the
+collection's, not the `docs/` convention our corpus's registry declares.
+
+<a name="chunk-modules-outside-collection"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-outside-collection`</sub>
+
+```rust {#modules-outside-collection file="tests/region_repo_modules.rs"}
+/// The `acme` module, as an outside collection would write it: its own
+/// namespace and one class, beside a `core` stub so the directory loads
+/// on its own (the shape `check --vocabulary` reads).
+fn acme_vocabulary() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("core.ttl"),
+        "<https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("acme.ttl"),
+        concat!(
+            "<https://0k.computer/ontology/acme> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+            "<https://0k.computer/ontology/acme> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .\n",
+            "<https://0k.computer/ontology/acme> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://acme.example/ontology/\" .\n",
+            "<https://acme.example/ontology/Report> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+            "<https://acme.example/ontology/Report> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/acme> .\n",
+            "<https://acme.example/ontology/Report> <http://www.w3.org/2000/01/rdf-schema#label> \"Report\" .\n",
+        ),
+    )
+    .unwrap();
+    dir
+}
+
+/// The three `acme` reports: `(path, id, a line only that report says)`.
+/// Two are published; the draft is not.
+const ACME_REPORTS: [(&str, &str, &str); 3] = [
+    ("field-notes/2026/quarterly.md", "acme:report\\/q3", "What the third quarter showed."),
+    ("docs/annual/summary-of-the-year.md", "acme:report\\/annual-2026", "The year, in one page."),
+    ("field-notes/drafts/unfinished.md", "acme:report\\/draft", "Not ready for anyone."),
+];
+
+/// A workspace holding the `acme` reports beside the demo crate, and a
+/// publication naming two of them, by id, in `acme`'s own namespace.
+fn acme_workspace(statements: &str) -> tempfile::TempDir {
+    let ws = workspace(&[], true);
+    for (rel, id, line) in ACME_REPORTS {
+        let path = ws.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!("# A report\n\n```turtle folio:document\n{id} a acme:Report ;\n    x0k:status \"draft\" .\n```\n\n{line}\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_statements(&publication(&["demo-crate"], &[], true), statements),
+    )
+    .unwrap();
+    ws
+}
+
+const ACME_PUBLISHES: &str = "    x0k:publishes acme:report\\/q3, acme:report\\/annual-2026 ;\n";
+
+fn project_acme(ws: &Path, out: &Path) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
+    let vocabulary = acme_vocabulary();
+    project_publication_repo_in(
+        &ws.join(PUB_REL),
+        out,
+        ws,
+        &RepoProjectOptions { license: None, git_init: false, allow_dirty: false, emit_github: false },
+        &runner_reporting(ProofOutcome::Passed),
+        &Vocabulary::load(&[vocabulary.path().to_path_buf()])?,
+    )
+}
+
+#[test]
+fn a_collection_in_its_own_namespace_publishes_its_documents_by_id() {
+    let ws = acme_workspace(ACME_PUBLISHES);
+    let out = tempfile::tempdir().unwrap();
+    let report = project_acme(ws.path(), out.path()).expect("the acme collection projects");
+
+    for (rel, id, line) in &ACME_REPORTS[..2] {
+        let reference = id.replace('\\', "");
+        assert_eq!(report.documents.get(&reference), Some(&rel.to_string()), "{:?}", report.documents);
+        let text = std::fs::read_to_string(out.path().join(rel)).expect("the report crossed where it lives");
+        assert!(text.contains(line), "{text}");
+        // The repository's vocabulary does not declare `acme:`, so the
+        // report says where it points.
+        assert!(text.contains("@prefix acme: <https://acme.example/ontology/> .\n"), "{text}");
+    }
+    // Named by nobody, so it stays.
+    assert!(!out.path().join(ACME_REPORTS[2].0).exists());
+    assert!(!tree_carries(out.path(), ACME_REPORTS[2].2));
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    assert_eq!(prov["path_map"][ACME_REPORTS[0].0], serde_json::json!(ACME_REPORTS[0].0));
+
+    // The organized layout leaves a collection's own `docs/` where it is.
+    let ws = acme_workspace(&format!("{ACME_PUBLISHES}    x0k:repositoryLayout \"organized\" ;\n"));
+    let out = tempfile::tempdir().unwrap();
+    project_acme(ws.path(), out.path()).expect("the organized acme projection");
+    assert!(out.path().join(ACME_REPORTS[1].0).is_file(), "the collection's docs/ is not ours to rename");
+    assert!(!out.path().join("assets/diagrams/annual/summary-of-the-year.md").exists());
+}
+
+#[test]
+fn a_member_no_document_in_the_collection_declares_is_refused_by_name() {
+    let ws = acme_workspace("    x0k:publishes acme:report\\/q4 ;\n");
+    let out = tempfile::tempdir().unwrap();
+    let err = format!("{:#}", project_acme(ws.path(), out.path()).expect_err("q4 was never written"));
+    assert!(err.contains("`acme:report/q4`"), "names the member: {err}");
+    assert!(err.contains("no document anywhere in the collection declares"), "{err}");
+    assert!(!out.path().join("README.md").exists(), "refused before anything was written");
+
+    // An entry point is a member: one `publishes` does not name is refused.
+    let ws = acme_workspace(&format!("{ACME_PUBLISHES}    x0k:entryPoint acme:report\\/draft ;\n"));
+    let err = format!("{:#}", project_acme(ws.path(), out.path()).expect_err("the draft is not published"));
+    assert!(err.contains("`entryPoint` names `acme:report/draft`"), "{err}");
+}
+```
+
+### A collection with no crate
+
+Every collection above sits beside `demo-crate`. These have no crate at
+all: a workspace with no `Cargo.toml` anywhere, which used to be refused
+before a file was read. The first is reports alone — the `acme` reports
+filed where their authors file them, and a publication naming two.
+What crosses is the two reports and the module they are typed in, with
+everything it imports from the directory it came from (the `core` stub
+beside it, without which the directory does not load on its own); what
+does not is every trace of Cargo — no manifest, no lockfile, no
+toolchain, no `cargo` step. Its `tools/ci` installs the released tangler
+this projection was made with, never builds one, and reads every header
+against the shipped modules.
+
+<a name="chunk-modules-no-crate"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-no-crate`</sub>
+
+```rust {#modules-no-crate file="tests/region_repo_modules.rs"}
+/// A collection with no crate: the `acme` reports, and a publication naming
+/// two of them. `statements` are the publication's further header lines.
+fn documents_only_workspace(statements: &str) -> tempfile::TempDir {
+    let ws = tempfile::tempdir().unwrap();
+    for (rel, id, line) in ACME_REPORTS {
+        let path = ws.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!("# A report\n\n```turtle folio:document\n{id} a acme:Report ;\n    x0k:status \"draft\" .\n```\n\n{line}\n"),
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(ws.path().join("publications")).unwrap();
+    std::fs::write(
+        ws.path().join("publications/field-notes.md"),
+        format!(
+            "# Field notes\n\n```turtle folio:document\npublication:field-notes a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"Apache-2.0\" ;\n{statements}    folio:tangleRoot \"README.md\" .\n```\n\n```markdown {{#readme}}\n# Field notes\n\nThe reports worth reading.\n```\n"
+        ),
+    )
+    .unwrap();
+    ws
+}
+
+fn project_documents_only(
+    ws: &Path,
+    out: &Path,
+    vocabulary: &Path,
+) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
+    project_publication_repo_in(
+        &ws.join("publications/field-notes.md"),
+        out,
+        ws,
+        &RepoProjectOptions { license: None, git_init: false, allow_dirty: false, emit_github: false },
+        &Proofs::Skip,
+        &Vocabulary::load(&[vocabulary.to_path_buf()])?,
+    )
+}
+
+#[test]
+fn a_collection_of_documents_alone_projects_with_the_vocabulary_it_is_written_in() {
+    let ws = documents_only_workspace(ACME_PUBLISHES);
+    let vocabulary = acme_vocabulary();
+    let out = tempfile::tempdir().unwrap();
+    let report = project_documents_only(ws.path(), out.path(), vocabulary.path())
+        .expect("a publication of documents alone projects");
+
+    assert!(report.crates.is_empty());
+    for (rel, _, line) in &ACME_REPORTS[..2] {
+        let text = std::fs::read_to_string(out.path().join(rel)).expect("the report crossed");
+        assert!(text.contains(line), "{text}");
+    }
+    assert!(!out.path().join(ACME_REPORTS[2].0).exists(), "the draft was named by nobody");
+    // Nothing of Cargo.
+    for absent in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"] {
+        assert!(!out.path().join(absent).exists(), "{absent} in a projection with no crate");
+    }
+    // The module the reports are typed in, and the one it imports, byte for
+    // byte; recorded where `check` will be pointed at them.
+    for module in ["acme", "core"] {
+        assert_eq!(
+            std::fs::read(out.path().join(format!("ontology/modules/{module}.ttl"))).unwrap(),
+            std::fs::read(vocabulary.path().join(format!("{module}.ttl"))).unwrap(),
+            "{module}.ttl crossed as written"
+        );
+    }
+    assert_eq!(report.vocabulary, vec!["acme".to_string(), "core".to_string()]);
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap()).unwrap();
+    assert_eq!(prov["vocabulary"], serde_json::json!(["acme", "core"]));
+    assert_eq!(prov["vocabulary_dir"], serde_json::json!("ontology/modules"));
+
+    let ci = std::fs::read_to_string(out.path().join("tools/ci")).unwrap();
+    assert!(!ci.contains("cargo "), "no Cargo step in a projection with no crate:\n{ci}");
+    assert!(
+        ci.contains(&format!("FOLIO_VERSION=\"${{FOLIO_VERSION:-{}}}\"", env!("CARGO_PKG_VERSION"))),
+        "the tangler is pinned to the version that projected:\n{ci}"
+    );
+    assert!(ci.contains("https://0k.computer/folio/install.sh"), "{ci}");
+    assert!(ci.contains("\"$tangler\" check --vocabulary ontology/modules --workspace . .\n"), "{ci}");
+    // Nothing tangles here, so nothing is re-tangled.
+    assert!(!ci.contains("\"$tangler\" tangle"), "{ci}");
+}
+
+#[test]
+fn a_document_in_no_module_the_vocabulary_holds_ships_no_module() {
+    // The publication names one report and the reports are typed in `acme`;
+    // a directory that also holds a module nobody writes in ships only what
+    // the reports need.
+    let ws = documents_only_workspace("    x0k:publishes acme:report\\/q3 ;\n");
+    let vocabulary = acme_vocabulary();
+    std::fs::write(
+        vocabulary.path().join("unused.ttl"),
+        concat!(
+            "<https://0k.computer/ontology/unused> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+            "<https://0k.computer/ontology/unused> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://unused.example/ontology/\" .\n",
+        ),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project_documents_only(ws.path(), out.path(), vocabulary.path()).expect("projects");
+    assert_eq!(report.vocabulary, vec!["acme".to_string(), "core".to_string()]);
+    assert!(!out.path().join("ontology/modules/unused.ttl").exists());
+}
+```
+
+The second is code beside its documents, and none of it Rust: a page that
+quotes a function out of `pkg/mod.py` with a `from=` mirror, and a
+chapter that tangles `pkg/gen.py`. Neither has a crate to follow, so
+both are named. Both files ship — the quoted one as written, the
+generated one tangled in the projection with its sidecar — and `tools/ci`
+re-tangles the chapter by its path and runs `check`, which holds the
+mirror to its source.
+
+<a name="chunk-modules-python-collection"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-python-collection`</sub>
+
+```rust {#modules-python-collection file="tests/region_repo_modules.rs"}
+/// A collection with no crate: `pkg/mod.py` by hand, a page mirroring a
+/// function out of it, and a chapter tangling `pkg/gen.py`.
+fn python_workspace(publishes: &str) -> tempfile::TempDir {
+    let ws = tempfile::tempdir().unwrap();
+    let root = ws.path();
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::write(root.join("pkg/mod.py"), "def area(w, h):\n    return w * h\n").unwrap();
+    std::fs::create_dir_all(root.join("notes")).unwrap();
+    std::fs::write(
+        root.join("notes/area.md"),
+        "# Area\n\n```turtle folio:document\ndesign:area a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\nThe whole of it:\n\n```python {#area from=\"pkg/mod.py\" symbol=\"area\"}\ndef area(w, h):\n    return w * h\n```\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("chapters")).unwrap();
+    std::fs::write(
+        root.join("chapters/gen.md"),
+        "# The generated half\n\n```turtle folio:document\nimplementation:pkg\\/gen a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"The constant the package exports.\" ;\n    folio:tangleCrate \"pkg\" ;\n    folio:tangleRoot \"gen.py\" .\n```\n\n```python {#root}\ndef answer():\n    return 42\n```\n",
+    )
+    .unwrap();
+    tangle_document(&root.join("chapters/gen.md"), root, &PipelineRegistry::default())
+        .expect("the chapter tangles in its collection");
+    std::fs::create_dir_all(root.join("publications")).unwrap();
+    std::fs::write(
+        root.join("publications/pkg.md"),
+        format!(
+            "# pkg\n\n```turtle folio:document\npublication:pkg a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"Apache-2.0\" ;\n    x0k:publishes {publishes} ;\n    folio:tangleRoot \"README.md\" .\n```\n\n```markdown {{#readme}}\n# pkg\n\nA package and its pages.\n\n<!-- x0k:contents -->\n```\n"
+        ),
+    )
+    .unwrap();
+    ws
+}
+
+fn project_python(ws: &Path, out: &Path) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
+    project_publication_repo_in(
+        &ws.join("publications/pkg.md"),
+        out,
+        ws,
+        &RepoProjectOptions { license: None, git_init: false, allow_dirty: false, emit_github: false },
+        &Proofs::Skip,
+        &Vocabulary::shipped(),
+    )
+}
+
+#[test]
+fn a_chapter_tangling_python_and_a_mirror_of_python_ship_whole() {
+    let ws = python_workspace("design:area, implementation:pkg\\/gen");
+    let out = tempfile::tempdir().unwrap();
+    let report = project_python(ws.path(), out.path()).expect("the package projects");
+
+    // The mirror's source, as written, at the path the mirror names.
+    assert_eq!(
+        std::fs::read(out.path().join("pkg/mod.py")).unwrap(),
+        std::fs::read(ws.path().join("pkg/mod.py")).unwrap()
+    );
+    assert_eq!(report.sources.iter().collect::<Vec<_>>(), vec!["pkg/mod.py"]);
+    // The chapter, what it tangles to, and the sidecar that tangle wrote.
+    assert!(report.literate_docs.contains(&std::path::PathBuf::from("chapters/gen.md")), "{:?}", report.literate_docs);
+    let generated = std::fs::read_to_string(out.path().join("pkg/gen.py")).expect("the chapter's output ships");
+    assert!(generated.contains("from chapters/gen.md"), "{generated}");
+    assert!(generated.contains("return 42"), "{generated}");
+    assert!(out.path().join("chapters/gen.tangle-map.json").is_file());
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap()).unwrap();
+    assert_eq!(prov["sources"], serde_json::json!({ "pkg/mod.py": "pkg/mod.py" }));
+
+    let ci = std::fs::read_to_string(out.path().join("tools/ci")).unwrap();
+    assert!(ci.contains("\"$tangler\" tangle chapters/gen.md --workspace .\n"), "{ci}");
+    assert!(ci.contains("\"$tangler\" check --workspace . .\n"), "{ci}");
+    assert!(!ci.contains("cargo "), "{ci}");
+}
+
+#[test]
+fn a_mirror_of_a_file_the_collection_does_not_hold_is_refused_by_name() {
+    let ws = python_workspace("design:area");
+    std::fs::remove_file(ws.path().join("pkg/mod.py")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let err = format!("{:#}", project_python(ws.path(), out.path()).expect_err("nothing to mirror"));
+    assert!(err.contains("`pkg/mod.py`") && err.contains("does not hold"), "{err}");
+    assert!(!out.path().join("README.md").exists(), "refused before anything was written");
+}
+```
+
+The same collection carries a tree nothing quotes
+([§ "The files a publication carries"](#the-files-a-publication-carries)):
+`vendor/tree`, a text file and a binary one a directory down, with a
+build product beside them that must not cross. The tempdir is under no
+version control, so the walk decides what the tree holds. Carrying
+`pkg` instead is refused, because `pkg/gen.py` is the output of a
+chapter this publication does not name.
+
+<a name="chunk-modules-carried-tree"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-carried-tree`</sub>
+
+```rust {#modules-carried-tree file="tests/region_repo_modules.rs"}
+/// The Python collection with a `vendor/tree` beside it, and a publication
+/// naming `publishes` and carrying `carries` (a Turtle literal list).
+fn carrying_workspace(publishes: &str, carries: &str) -> tempfile::TempDir {
+    let ws = python_workspace(&format!("{publishes} ;\n    x0k:carries {carries}"));
+    let tree = ws.path().join("vendor/tree");
+    std::fs::create_dir_all(tree.join("dist")).unwrap();
+    std::fs::create_dir_all(tree.join("target")).unwrap();
+    std::fs::write(tree.join("seed.txt"), "the seed, as text\n").unwrap();
+    std::fs::write(tree.join("dist/seed.bin"), [0u8, 159, 146, 150, 255]).unwrap();
+    std::fs::write(tree.join("target/build.o"), "a build product").unwrap();
+    ws
+}
+
+#[test]
+fn a_carried_tree_ships_as_the_collection_holds_it() {
+    let ws = carrying_workspace("design:area", "\"vendor/tree\"");
+    let out = tempfile::tempdir().unwrap();
+    let report = project_python(ws.path(), out.path()).expect("the tree is carried");
+    for rel in ["vendor/tree/seed.txt", "vendor/tree/dist/seed.bin"] {
+        assert_eq!(
+            std::fs::read(out.path().join(rel)).unwrap(),
+            std::fs::read(ws.path().join(rel)).unwrap(),
+            "{rel} crossed byte for byte"
+        );
+    }
+    assert!(!out.path().join("vendor/tree/target").exists(), "a build product is not carried");
+    assert_eq!(
+        report.carried.keys().collect::<Vec<_>>(),
+        vec!["vendor/tree/dist/seed.bin", "vendor/tree/seed.txt"]
+    );
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap()).unwrap();
+    assert_eq!(prov["sources"]["vendor/tree/seed.txt"], serde_json::json!("vendor/tree/seed.txt"));
+    assert_eq!(prov["sources"]["pkg/mod.py"], serde_json::json!("pkg/mod.py"), "the mirror is still a source");
+}
+
+#[test]
+fn a_carried_path_that_is_not_plain_not_held_or_an_unshipped_output_is_refused() {
+    for (carries, expected) in [
+        ("\"../outside\"", "not a plain collection-relative path"),
+        ("\"vendor/absent\"", "does not hold"),
+        ("\"pkg\"", "generated from chapters/gen.md"),
+    ] {
+        let ws = carrying_workspace("design:area", carries);
+        let out = tempfile::tempdir().unwrap();
+        let err = format!("{:#}", project_python(ws.path(), out.path()).expect_err(carries));
+        assert!(err.contains(expected), "{carries}: {err}");
+        assert!(!out.path().join("README.md").exists(), "{carries}: refused before anything was written");
+    }
+}
+```
+
+A chapter whose target no crate owns, sitting in an area the publication
+ships, used to be left out without a word. It is refused now, by id, and
+the publication's answer — excluding it here — is what lets the
+projection through. The demo area gains a chapter tangling a Python
+script beside `demo-crate`'s two.
+
+<a name="chunk-modules-unnamed-chapter"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-unnamed-chapter`</sub>
+
+```rust {#modules-unnamed-chapter file="tests/region_repo_modules.rs"}
+const SCRIPT_ID: &str = "x0k:implementation/demo/script";
+
+fn with_script_chapter(ws: &Path) {
+    std::fs::write(
+        ws.join("knowledge/implementation/demo/script.md"),
+        format!(
+            "# The release script\n\n```turtle folio:document\n{} a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    folio:tangleRoot \"tools/release.py\" .\n```\n\n```python {{#root}}\nprint(\"release\")\n```\n",
+            turtle_id(SCRIPT_ID)
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_chapter_no_crate_owns_beside_shipped_chapters_is_refused_until_named_or_excluded() {
+    let ws = workspace(&[], true);
+    with_script_chapter(ws.path());
+    let err = project_err(ws.path());
+    assert!(err.contains(SCRIPT_ID), "names the chapter: {err}");
+    assert!(err.contains("knowledge/implementation/demo/script.md"), "{err}");
+    assert!(err.contains("neither publishes nor excludes"), "{err}");
+
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_excluding(&["demo-crate"], &[], true, &[SCRIPT_ID]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("excluded, it is a decision on the record");
+    assert!(report.excluded_docs.contains(&SCRIPT_ID.to_string()));
+    assert!(!out.path().join("tools/release.py").exists());
+}
+
+#[test]
+fn a_relative_output_dir_projects() {
+    let ws = workspace(&[], true);
+    let out = tempfile::tempdir().unwrap();
+    // The same directory, named relative to where the test runs.
+    let cwd = std::env::current_dir().unwrap();
+    let common = cwd.ancestors().find(|a| out.path().starts_with(a)).expect("one filesystem root");
+    let mut relative = std::path::PathBuf::new();
+    for _ in cwd.strip_prefix(common).unwrap().components() {
+        relative.push("..");
+    }
+    relative.push(out.path().strip_prefix(common).unwrap());
+    assert!(relative.is_relative());
+    project(ws.path(), &relative).expect("a relative output dir projects");
+    assert!(out.path().join("README.md").is_file());
+}
+```
+
+### A publication's own build policy
+
+The fixture publication above states the policy the `x0k-folio`
+publication states for its marks, and nothing else of ours. An outside
+publication may state none of it, and then every item takes its neutral
+default ([§ "The publication's build policy"](#the-publications-build-policy)):
+no toolchain pinned and no floor claimed, no supply-chain policy and no
+step that would run one, no Git pin check, no status or actor mark
+beside a row — only the affordance's own icon — and the licence it
+names, here `Apache-2.0` with no copyright holder, which that licence's
+text does not ask for. Stating one item carries exactly that item; a
+workspace that pins its own toolchain has it carried as found. A stated
+Git pin is the only Git source the projection admits, both in the
+manifests and in the lockfile `tools/check-git-pins` reads, and a
+publication's own `deny.toml` reaches the repository as the policy
+itself, with the `cargo deny` step that runs it.
+
+<a name="chunk-modules-build-policy"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-build-policy`</sub>
+
+```rust {#modules-build-policy file="tests/region_repo_modules.rs"}
+/// The shippable affordance's publication as somebody else would write
+/// it: `Apache-2.0` with no holder, and not one policy statement beyond
+/// `statements`.
+fn policy_free_publication(statements: &str) -> String {
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    let doc = publication_publishing(&["demo-crate"], &[reference.as_str()])
+        .replace(
+            "    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n",
+            "    x0k:license \"Apache-2.0\" ;\n",
+        )
+        .replace(MARKS, "");
+    with_statements(&doc, statements)
+}
+
+fn read(out: &Path, rel: &str) -> String {
+    std::fs::read_to_string(out.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+}
+
+#[test]
+fn a_publication_stating_no_policy_projects_with_the_neutral_defaults() {
+    let ws = workspace(&[], true);
+    std::fs::write(ws.path().join(PUB_REL), policy_free_publication("")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("a publication stating no policy projects");
+
+    // No toolchain pinned, no floor claimed, and no crate inheriting one.
+    assert!(!out.path().join("rust-toolchain.toml").exists());
+    let root = read(out.path(), "Cargo.toml");
+    assert!(root.contains("[workspace.package]\nedition = \"2021\"\n\n"), "{root}");
+    assert!(!root.contains("rust-version"), "{root}");
+    let manifest = read(out.path(), "demo-crate/Cargo.toml");
+    assert!(!manifest.contains("rust-version"), "{manifest}");
+    // No supply-chain policy, no step that would run one, no pin check.
+    assert!(!out.path().join("deny.toml").exists());
+    assert!(!out.path().join("tools/check-git-pins").exists());
+    let ci = read(out.path(), "tools/ci");
+    assert!(!ci.contains("check-git-pins") && !ci.contains("cargo deny"), "{ci}");
+    // Nothing of ours crosses into somebody else's repository.
+    for ours in ["dialog-db", "Dialog", "x0k-folio publication"] {
+        assert!(!tree_carries(out.path(), ours), "`{ours}` crossed into an outside publication");
+    }
+    // The licence it names, and no holder asked of it.
+    assert_eq!(report.license, "Apache-2.0");
+    assert!(out.path().join("LICENSE-APACHE").is_file());
+    assert!(!out.path().join("LICENSE-MIT").exists());
+    assert!(manifest.contains("license = \"Apache-2.0\""), "{manifest}");
+    // The row shows the affordance's own mark, and no actor or status mark.
+    assert_eq!(report.figures.keys().collect::<Vec<_>>(), ["read-a-line"], "{:?}", report.figures);
+    let page = read(out.path(), SHIPPABLE_PAGE);
+    assert!(!page.contains("human-light.svg") && !page.contains("claimed-light.svg"), "{page}");
+}
+
+#[test]
+fn a_policy_the_publication_states_is_the_one_the_projection_carries() {
+    // A floor, and only a floor.
+    let ws = workspace(&[], true);
+    std::fs::write(ws.path().join(PUB_REL), policy_free_publication("    x0k:rustVersion \"1.70\" ;\n")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+    let root = read(out.path(), "Cargo.toml");
+    assert!(root.contains("[workspace.package]\nedition = \"2021\"\nrust-version = \"1.70\"\n"), "{root}");
+    let manifest = read(out.path(), "demo-crate/Cargo.toml");
+    assert!(manifest.contains("rust-version = { workspace = true }"), "{manifest}");
+    assert!(!out.path().join("rust-toolchain.toml").exists(), "a floor pins no toolchain");
+
+    // A toolchain, stated: the projection pins that channel.
+    std::fs::write(ws.path().join(PUB_REL), policy_free_publication("    x0k:rustToolchain \"1.80.0\" ;\n")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+    let toolchain = read(out.path(), "rust-toolchain.toml");
+    assert!(toolchain.contains("[toolchain]\nchannel = \"1.80.0\"\n"), "{toolchain}");
+    assert!(!read(out.path(), "Cargo.toml").contains("rust-version"));
+
+    // Unstated, a workspace's own toolchain file is carried as found.
+    std::fs::write(ws.path().join(PUB_REL), policy_free_publication("")).unwrap();
+    std::fs::write(ws.path().join("rust-toolchain.toml"), "[toolchain]\nchannel = \"1.81.0\"\n").unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+    assert_eq!(read(out.path(), "rust-toolchain.toml"), "[toolchain]\nchannel = \"1.81.0\"\n");
+}
+
+/// The one Git revision the Git tests pin, and a supply-chain policy a
+/// publication might state for it.
+const PIN: &str = "https://github.com/dialog-db/dialog-db?rev=3fac7ad3e691d401fb5c18c18ffb23de74342742";
+const DENY_POLICY: &str = "[sources]\nunknown-git = \"deny\"\nallow-git = [\"https://github.com/dialog-db/dialog-db\"]\n";
+
+#[test]
+fn a_stated_git_pin_is_the_only_git_source_the_projection_admits() {
+    let ws = workspace(&[], true);
+    let doc = with_statements(&publication(&["demo-crate"], &[], true), &format!("    x0k:gitPin \"{PIN}\" ;\n"));
+    std::fs::write(ws.path().join(PUB_REL), format!("{doc}\n```toml {{#deny file=\"deny.toml\"}}\n{DENY_POLICY}```\n")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).unwrap();
+    // The publication's policy, as the policy itself.
+    assert_eq!(read(out.path(), "deny.toml"), DENY_POLICY);
+    let ci = read(out.path(), "tools/ci");
+    assert!(ci.contains("set -eu\nsh tools/check-git-pins\n"), "{ci}");
+    assert!(ci.contains("cargo deny --offline check"), "{ci}");
+    let approved = "git+https://github.com/dialog-db/dialog-db?rev=3fac7ad3e691d401fb5c18c18ffb23de74342742#3fac7ad3e691d401fb5c18c18ffb23de74342742";
+    for (source, expected) in [
+        (approved.to_string(), true),
+        (approved.replace("3fac7ad3e691d401fb5c18c18ffb23de74342742", "0000000000000000000000000000000000000000"), false),
+        (approved.replace("dialog-db/dialog-db", "someone/another"), false),
+    ] {
+        std::fs::write(out.path().join("Cargo.lock"), format!("version = 4\n[[package]]\nname = \"dialog-query\"\nversion = \"0.1.0\"\nsource = \"{source}\"\n")).unwrap();
+        let status = std::process::Command::new("sh").arg("tools/check-git-pins")
+            .current_dir(out.path()).output().unwrap().status;
+        assert_eq!(status.success(), expected, "{source}");
+    }
+}
+
+#[test]
+fn a_git_dependency_the_publication_does_not_pin_is_refused_before_resolution() {
+    let ws = workspace(&[], true);
+    let manifest = ws.path().join("demo-crate/Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(manifest, format!("{text}\ndialog-query = {{ git = \"https://github.com/dialog-db/dialog-db\", rev = \"0000000000000000000000000000000000000000\" }}\n")).unwrap();
+    // Pinned at another revision.
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_statements(&publication(&["demo-crate"], &[], true), &format!("    x0k:gitPin \"{PIN}\" ;\n")),
+    )
+    .unwrap();
+    let error = project_err(ws.path());
+    assert!(error.contains("not a revision this publication pins"), "{error}");
+    assert!(error.contains("at `0000000000000000000000000000000000000000`"), "{error}");
+    // Pinned nowhere: the same refusal, naming the statement that would admit it.
+    std::fs::write(ws.path().join(PUB_REL), publication(&["demo-crate"], &[], true)).unwrap();
+    let error = project_err(ws.path());
+    assert!(error.contains("x0k:gitPin \"https://github.com/dialog-db/dialog-db?rev=<commit>\""), "{error}");
+}
+```
+
 What a publication affords is derived from the modules it publishes, so a
 declaration it discloses may not name a module the audience will not have.
 The fleet affordance names a crate this publication does not ship, and
@@ -11790,6 +13945,100 @@ fn skipped_proofs_are_listed_and_prove_nothing() {
     assert!(page.contains("<code>a_line_is_read</code> · <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/not-run-dark.svg\"><img alt=\"not run\" src=\"../../../../affordances/not-run-light.svg\" height=\"16\"></picture> not run ·"), "{page}");
     assert!(out.path().join("affordances/not-run-light.svg").exists() && !out.path().join("affordances/passed-light.svg").exists());
     assert!(!report.proofs_run && report.proofs.is_empty());
+}
+```
+
+A replay draws what the run drew. The fixture is projected once with the
+green runner and once replaying that run's record: the README, the
+affordance page and the marks are byte for byte the same, the report carries
+the same outcomes, and `proofs_run` says that nothing ran. A record naming no
+test draws what a skip draws.
+
+<a name="chunk-modules-proof-recorded"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-proof-recorded`</sub>
+
+```rust {#modules-proof-recorded file="tests/region_repo_modules.rs"}
+fn projected(out: &Path, path: &str) -> String {
+    std::fs::read_to_string(out.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+#[test]
+fn a_recorded_run_replays_to_the_page_the_run_drew() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let ran = tempfile::tempdir().unwrap();
+    let run = project(ws.path(), ran.path()).expect("projection");
+    assert_eq!(run.proofs.get(PROOF_TEST), Some(&ProofOutcome::Passed), "{:?}", run.proofs);
+
+    let replayed = tempfile::tempdir().unwrap();
+    let replay = project_with(ws.path(), replayed.path(), &Proofs::Recorded(run.proofs.clone()))
+        .expect("projection");
+    assert_eq!(replay.proofs, run.proofs, "the record is the report");
+    assert!(!replay.proofs_run, "nothing ran");
+    for page in ["README.md", SHIPPABLE_PAGE, "affordances/proven-light.svg", "affordances/passed-light.svg"] {
+        assert_eq!(projected(ran.path(), page), projected(replayed.path(), page), "{page}");
+    }
+
+    let skipped = tempfile::tempdir().unwrap();
+    project_with(ws.path(), skipped.path(), &Proofs::Skip).expect("projection");
+    let unnamed = tempfile::tempdir().unwrap();
+    let none = project_with(ws.path(), unnamed.path(), &Proofs::Recorded(Default::default()))
+        .expect("projection");
+    assert!(none.proofs.is_empty() && !none.proofs_run);
+    for page in ["README.md", SHIPPABLE_PAGE] {
+        assert_eq!(projected(skipped.path(), page), projected(unnamed.path(), page), "{page}");
+    }
+}
+```
+
+The receiver is the caller the replay exists for, so the pin that matters is
+end to end and needs a cargo that would say no. The fixture's proof is made
+to panic, and the clone is projected with the green runner, so its
+`PROVENANCE.json` records the test as passed while a real `cargo test` would
+fail it. Receiving that clone builds the reference projection; if the
+receiver ran the proofs, the reference would be refused over the red test and
+the receive with it. It succeeds, and finds the clone unchanged — the
+replayed marks are the clone's marks.
+
+<a name="chunk-modules-proof-receive"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-proof-receive`</sub>
+
+```rust {#modules-proof-receive file="tests/region_repo_modules.rs"}
+#[test]
+fn receiving_a_clone_replays_its_proofs_and_runs_none() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let chapter = ws.path().join(PROOF_REL);
+    let text = std::fs::read_to_string(&chapter).unwrap();
+    let failing = text.replace(
+        "assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");",
+        "panic!(\"a receive ran the proofs\");",
+    );
+    assert_ne!(failing, text, "the proof is made to fail under cargo");
+    std::fs::write(&chapter, failing).unwrap();
+    tangle_document(&chapter, ws.path(), &PipelineRegistry::default()).expect("tangle proof");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let clone = tempfile::tempdir().unwrap();
+    project(ws.path(), clone.path()).expect("projection");
+    let prov: serde_json::Value =
+        serde_json::from_str(&projected(clone.path(), "PROVENANCE.json")).unwrap();
+    assert_eq!(prov["proofs"][PROOF_TEST], serde_json::json!("passed"));
+
+    let scratch = tempfile::tempdir().unwrap();
+    let opts = ReceiveOptions { scratch: Some(scratch.path().to_path_buf()), ..Default::default() };
+    let report = receive_repo(clone.path(), ws.path(), &opts)
+        .expect("the reference replays the clone's record rather than running cargo");
+    let changed: Vec<&str> = report.changes.iter().map(|c| c.path.as_str()).collect();
+    assert!(changed.is_empty(), "an untouched clone reads as untouched: {changed:?}");
 }
 ```
 
@@ -12650,7 +14899,7 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 }
 ```
 
-<a name="chunk-modules-root"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-root` · assembles [modules-doc](#chunk-modules-doc) · [modules-uses](#chunk-modules-uses) · [modules-consts](#chunk-modules-consts) · [modules-publication-fixture](#chunk-modules-publication-fixture) · [modules-write-crate](#chunk-modules-write-crate) · [modules-workspace](#chunk-modules-workspace) · [modules-project-helpers](#chunk-modules-project-helpers) · [modules-closed-selection](#chunk-modules-closed-selection) · [modules-shapes-travel](#chunk-modules-shapes-travel) · [modules-import-outside-selection](#chunk-modules-import-outside-selection) · [modules-import-absent](#chunk-modules-import-absent) · [modules-instance-line](#chunk-modules-instance-line) · [modules-not-in-tree](#chunk-modules-not-in-tree) · [modules-ontology-without-module](#chunk-modules-ontology-without-module) · [modules-stamp-fallback](#chunk-modules-stamp-fallback) · [modules-no-module-still-lists](#chunk-modules-no-module-still-lists) · [modules-layout-published](#chunk-modules-layout-published) · [modules-layout-unpublished](#chunk-modules-layout-unpublished) · [modules-excluded-document](#chunk-modules-excluded-document) · [modules-unrecognised-excludes](#chunk-modules-unrecognised-excludes) · [modules-document-under-publishes](#chunk-modules-document-under-publishes) · [modules-excluded-matches-nothing](#chunk-modules-excluded-matches-nothing) · [modules-named-section](#chunk-modules-named-section) · [modules-named-whole-document](#chunk-modules-named-whole-document) · [modules-unnamed-document](#chunk-modules-unnamed-document) · [modules-anchor-matches-nothing](#chunk-modules-anchor-matches-nothing) · [modules-document-id-matches-nothing](#chunk-modules-document-id-matches-nothing) · [modules-affordance-closure-refused](#chunk-modules-affordance-closure-refused) · [modules-affordance-closure-excluded](#chunk-modules-affordance-closure-excluded) · [modules-reading-order](#chunk-modules-reading-order) · [modules-reading-order-unshipped-doc](#chunk-modules-reading-order-unshipped-doc) · [modules-reading-order-unshipped-area](#chunk-modules-reading-order-unshipped-area) · [modules-concept-groups](#chunk-modules-concept-groups) · [modules-group-unshipped-member](#chunk-modules-group-unshipped-member) · [modules-group-unnamed-document](#chunk-modules-group-unnamed-document) · [modules-group-claimed-twice](#chunk-modules-group-claimed-twice) · [modules-group-mixed-forms](#chunk-modules-group-mixed-forms) · [modules-no-contents-marker](#chunk-modules-no-contents-marker) · [modules-document-without-summary](#chunk-modules-document-without-summary) · [modules-affordance-rows](#chunk-modules-affordance-rows) · [modules-affordance-actor-set](#chunk-modules-affordance-actor-set) · [modules-affordance-none](#chunk-modules-affordance-none) · [modules-affordance-old-marker](#chunk-modules-affordance-old-marker) · [modules-proof-fixture](#chunk-modules-proof-fixture) · [modules-proof-proven](#chunk-modules-proof-proven) · [modules-proof-refused](#chunk-modules-proof-refused) · [modules-proof-skipped](#chunk-modules-proof-skipped) · [modules-proof-cargo](#chunk-modules-proof-cargo) · [modules-proof-unpublished](#chunk-modules-proof-unpublished) · [modules-rests-on](#chunk-modules-rests-on) · [modules-rests-on-unpublished](#chunk-modules-rests-on-unpublished) · [modules-woven-chapter](#chunk-modules-woven-chapter) · [modules-affordance-page](#chunk-modules-affordance-page) · [modules-icon-refusals](#chunk-modules-icon-refusals) · [prebuilt-fixture](#chunk-prebuilt-fixture) · [prebuilt-inert](#chunk-prebuilt-inert) · [prebuilt-emitted](#chunk-prebuilt-emitted) · [prebuilt-registry-page](#chunk-prebuilt-registry-page) · [prebuilt-ci-untouched](#chunk-prebuilt-ci-untouched) · [prebuilt-refusals](#chunk-prebuilt-refusals) · [prebuilt-wrapper-test](#chunk-prebuilt-wrapper-test) · [prebuilt-installer](#chunk-prebuilt-installer)</sub>
+<a name="chunk-modules-root"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-root` · assembles [modules-doc](#chunk-modules-doc) · [modules-uses](#chunk-modules-uses) · [modules-consts](#chunk-modules-consts) · [modules-publication-fixture](#chunk-modules-publication-fixture) · [modules-write-crate](#chunk-modules-write-crate) · [modules-workspace](#chunk-modules-workspace) · [modules-project-helpers](#chunk-modules-project-helpers) · [modules-closed-selection](#chunk-modules-closed-selection) · [modules-shapes-travel](#chunk-modules-shapes-travel) · [modules-import-outside-selection](#chunk-modules-import-outside-selection) · [modules-import-absent](#chunk-modules-import-absent) · [modules-instance-line](#chunk-modules-instance-line) · [modules-not-in-tree](#chunk-modules-not-in-tree) · [modules-ontology-without-module](#chunk-modules-ontology-without-module) · [modules-stamp-fallback](#chunk-modules-stamp-fallback) · [modules-no-module-still-lists](#chunk-modules-no-module-still-lists) · [modules-layout-published](#chunk-modules-layout-published) · [modules-layout-unpublished](#chunk-modules-layout-unpublished) · [modules-excluded-document](#chunk-modules-excluded-document) · [modules-unrecognised-excludes](#chunk-modules-unrecognised-excludes) · [modules-document-under-publishes](#chunk-modules-document-under-publishes) · [modules-excluded-matches-nothing](#chunk-modules-excluded-matches-nothing) · [modules-named-section](#chunk-modules-named-section) · [modules-named-whole-document](#chunk-modules-named-whole-document) · [modules-unnamed-document](#chunk-modules-unnamed-document) · [modules-anchor-matches-nothing](#chunk-modules-anchor-matches-nothing) · [modules-document-id-matches-nothing](#chunk-modules-document-id-matches-nothing) · [modules-outside-collection](#chunk-modules-outside-collection) · [modules-no-crate](#chunk-modules-no-crate) · [modules-python-collection](#chunk-modules-python-collection) · [modules-carried-tree](#chunk-modules-carried-tree) · [modules-unnamed-chapter](#chunk-modules-unnamed-chapter) · [modules-build-policy](#chunk-modules-build-policy) · [modules-affordance-closure-refused](#chunk-modules-affordance-closure-refused) · [modules-affordance-closure-excluded](#chunk-modules-affordance-closure-excluded) · [modules-reading-order](#chunk-modules-reading-order) · [modules-reading-order-unshipped-doc](#chunk-modules-reading-order-unshipped-doc) · [modules-reading-order-unshipped-area](#chunk-modules-reading-order-unshipped-area) · [modules-concept-groups](#chunk-modules-concept-groups) · [modules-group-unshipped-member](#chunk-modules-group-unshipped-member) · [modules-group-unnamed-document](#chunk-modules-group-unnamed-document) · [modules-group-claimed-twice](#chunk-modules-group-claimed-twice) · [modules-group-mixed-forms](#chunk-modules-group-mixed-forms) · [modules-no-contents-marker](#chunk-modules-no-contents-marker) · [modules-document-without-summary](#chunk-modules-document-without-summary) · [modules-affordance-rows](#chunk-modules-affordance-rows) · [modules-affordance-actor-set](#chunk-modules-affordance-actor-set) · [modules-affordance-none](#chunk-modules-affordance-none) · [modules-affordance-old-marker](#chunk-modules-affordance-old-marker) · [modules-proof-fixture](#chunk-modules-proof-fixture) · [modules-proof-proven](#chunk-modules-proof-proven) · [modules-proof-refused](#chunk-modules-proof-refused) · [modules-proof-skipped](#chunk-modules-proof-skipped) · [modules-proof-recorded](#chunk-modules-proof-recorded) · [modules-proof-receive](#chunk-modules-proof-receive) · [modules-proof-cargo](#chunk-modules-proof-cargo) · [modules-proof-unpublished](#chunk-modules-proof-unpublished) · [modules-rests-on](#chunk-modules-rests-on) · [modules-rests-on-unpublished](#chunk-modules-rests-on-unpublished) · [modules-woven-chapter](#chunk-modules-woven-chapter) · [modules-affordance-page](#chunk-modules-affordance-page) · [modules-icon-refusals](#chunk-modules-icon-refusals) · [prebuilt-fixture](#chunk-prebuilt-fixture) · [prebuilt-inert](#chunk-prebuilt-inert) · [prebuilt-emitted](#chunk-prebuilt-emitted) · [prebuilt-registry-page](#chunk-prebuilt-registry-page) · [prebuilt-ci-untouched](#chunk-prebuilt-ci-untouched) · [prebuilt-refusals](#chunk-prebuilt-refusals) · [prebuilt-wrapper-test](#chunk-prebuilt-wrapper-test) · [prebuilt-installer](#chunk-prebuilt-installer)</sub>
 
 ```rust {#modules-root file="tests/region_repo_modules.rs"}
 <<modules-doc>>
@@ -12707,6 +14956,18 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 
 <<modules-document-id-matches-nothing>>
 
+<<modules-outside-collection>>
+
+<<modules-no-crate>>
+
+<<modules-python-collection>>
+
+<<modules-carried-tree>>
+
+<<modules-unnamed-chapter>>
+
+<<modules-build-policy>>
+
 <<modules-affordance-closure-refused>>
 
 <<modules-affordance-closure-excluded>>
@@ -12747,6 +15008,10 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 
 <<modules-proof-skipped>>
 
+<<modules-proof-recorded>>
+
+<<modules-proof-receive>>
+
 <<modules-proof-cargo>>
 
 <<modules-proof-unpublished>>
@@ -12780,7 +15045,7 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [header-literal](#chunk-header-literal) · [header-json](#chunk-header-json) · [header-palette](#chunk-header-palette) · [manifest-readers](#chunk-manifest-readers) · [path-deps](#chunk-path-deps) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [sever-doc-links](#chunk-sever-doc-links) · [demote-in-chapters](#chunk-demote-in-chapters) · [demote-in-unowned-sources](#chunk-demote-in-unowned-sources) · [severed-items](#chunk-severed-items) · [demote-severed-links](#chunk-demote-severed-links) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [declare-undeclared-prefixes](#chunk-declare-undeclared-prefixes) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [icons](#chunk-icons) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [prebuilt-decl](#chunk-prebuilt-decl) · [prebuilt-table](#chunk-prebuilt-table) · [prebuilt-header-types](#chunk-prebuilt-header-types) · [prebuilt-summary](#chunk-prebuilt-summary) · [prebuilt-plan](#chunk-prebuilt-plan) · [resolve-prebuilt-fn](#chunk-resolve-prebuilt-fn) · [crate-binaries](#chunk-crate-binaries) · [github-project](#chunk-github-project) · [emit-prebuilt](#chunk-emit-prebuilt) · [emit-npm-wrapper](#chunk-emit-npm-wrapper) · [npm-manifest](#chunk-npm-manifest) · [npm-check-script](#chunk-npm-check-script) · [release-workflow](#chunk-release-workflow) · [installer-script](#chunk-installer-script) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [release-script](#chunk-release-script) · [release-vendor-script](#chunk-release-vendor-script) · [npm-check-text](#chunk-npm-check-text) · [npm-resolve-text](#chunk-npm-resolve-text) · [npm-install-text](#chunk-npm-install-text) · [npm-shim-text](#chunk-npm-shim-text) · [npm-pin-text](#chunk-npm-pin-text) · [npm-test-text](#chunk-npm-test-text) · [release-workflow-text](#chunk-release-workflow-text) · [installer-text](#chunk-installer-text) · [installer-step-text](#chunk-installer-step-text) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [build-policy](#chunk-build-policy) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [header-literal](#chunk-header-literal) · [manifest-readers](#chunk-manifest-readers) · [source-package-roots](#chunk-source-package-roots) · [path-deps](#chunk-path-deps) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [sever-doc-links](#chunk-sever-doc-links) · [demote-in-chapters](#chunk-demote-in-chapters) · [demote-in-unowned-sources](#chunk-demote-in-unowned-sources) · [severed-items](#chunk-severed-items) · [demote-severed-links](#chunk-demote-severed-links) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [collection-vocabulary](#chunk-collection-vocabulary) · [mirrored-sources](#chunk-mirrored-sources) · [carried-files](#chunk-carried-files) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [declare-undeclared-prefixes](#chunk-declare-undeclared-prefixes) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [icons](#chunk-icons) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [ci-plan](#chunk-ci-plan) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [prebuilt-decl](#chunk-prebuilt-decl) · [prebuilt-table](#chunk-prebuilt-table) · [prebuilt-header-types](#chunk-prebuilt-header-types) · [prebuilt-summary](#chunk-prebuilt-summary) · [prebuilt-plan](#chunk-prebuilt-plan) · [resolve-prebuilt-fn](#chunk-resolve-prebuilt-fn) · [crate-binaries](#chunk-crate-binaries) · [github-project](#chunk-github-project) · [emit-prebuilt](#chunk-emit-prebuilt) · [emit-npm-wrapper](#chunk-emit-npm-wrapper) · [npm-manifest](#chunk-npm-manifest) · [npm-check-script](#chunk-npm-check-script) · [release-workflow](#chunk-release-workflow) · [installer-script](#chunk-installer-script) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [mkdocs-hook-text](#chunk-mkdocs-hook-text) · [release-script](#chunk-release-script) · [release-vendor-script](#chunk-release-vendor-script) · [npm-check-text](#chunk-npm-check-text) · [npm-resolve-text](#chunk-npm-resolve-text) · [npm-install-text](#chunk-npm-install-text) · [npm-shim-text](#chunk-npm-shim-text) · [npm-pin-text](#chunk-npm-pin-text) · [npm-test-text](#chunk-npm-test-text) · [release-workflow-text](#chunk-release-workflow-text) · [installer-text](#chunk-installer-text) · [installer-step-text](#chunk-installer-step-text) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -12803,6 +15068,8 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 
 <<overlay-paths>>
 
+<<build-policy>>
+
 <<previous-provenance-field>>
 
 <<overlay-stash>>
@@ -12815,11 +15082,9 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 
 <<header-literal>>
 
-<<header-json>>
-
-<<header-palette>>
-
 <<manifest-readers>>
+
+<<source-package-roots>>
 
 <<path-deps>>
 
@@ -12840,6 +15105,12 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 <<vocab-module>>
 
 <<modules-rel-dir>>
+
+<<collection-vocabulary>>
+
+<<mirrored-sources>>
+
+<<carried-files>>
 
 <<discover-literate-docs-fn>>
 
@@ -12882,6 +15153,8 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 <<tangle-readme>>
 
 <<write-readme-contents>>
+
+<<ci-plan>>
 
 <<emit-ci-and-guard>>
 
@@ -12937,6 +15210,8 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 
 <<guard-script>>
 
+<<mkdocs-hook-text>>
+
 <<release-script>>
 
 <<release-vendor-script>>
@@ -12969,7 +15244,8 @@ carried example and pins the contract from the outside: the license
 comes from the publication doc and is recorded, with exactly the
 bodies its expression names (`LICENSE-MIT` alone for `MIT`; a scratch
 `MIT OR Apache-2.0` publication keeps the dual path covered, and an
-identifier with no body refuses); a publication without a license
+identifier the projector carries no text for, `MIT-0`, gets its own
+placeholder and never the MIT text); a publication without a license
 refuses; the README is byte-for-byte the tangled chunk of the
 publication doc under the `@generated` header with its contents
 marker replaced by the generated page, and no corpus identifiers in
@@ -13355,45 +15631,6 @@ fn configured_relocated_corpus_selects_and_retangles_its_chapters() {
     assert_eq!(std::fs::read(out.path().join("demo-crate/src/lib.rs")).unwrap(), before);
 }
 
-#[test]
-fn projected_policy_admits_only_the_reviewed_dialog_git_revision() {
-    let ws = workspace(&[], true);
-    let out = tempfile::tempdir().unwrap();
-    project(ws.path(), out.path()).unwrap();
-    let policy = std::fs::read_to_string(out.path().join("deny.toml")).unwrap();
-    for license in ["MPL-2.0", "BSD-2-Clause", "BSD-3-Clause", "Zlib"] {
-        assert!(policy.contains(&format!("\"{license}\"")));
-    }
-    assert!(policy.contains("multiple-versions = \"deny\""));
-    assert!(policy.contains("wildcards = \"deny\""));
-    assert!(policy.contains("ignore = []"));
-    assert!(policy.contains("hashbrown@0.16.1"));
-    assert!(policy.contains("required-git-spec = \"rev\""));
-    assert!(policy.contains("allow-git = [\"https://github.com/dialog-db/dialog-db\"]"));
-    assert!(std::fs::read_to_string(out.path().join("tools/ci")).unwrap().contains("sh tools/check-git-pins"));
-    let approved = "git+https://github.com/dialog-db/dialog-db?rev=3fac7ad3e691d401fb5c18c18ffb23de74342742#3fac7ad3e691d401fb5c18c18ffb23de74342742";
-    for (source, expected) in [
-        (approved.to_string(), true),
-        (approved.replace("3fac7ad3e691d401fb5c18c18ffb23de74342742", "0000000000000000000000000000000000000000"), false),
-        (approved.replace("dialog-db/dialog-db", "someone/another"), false),
-    ] {
-        std::fs::write(out.path().join("Cargo.lock"), format!("version = 4\n[[package]]\nname = \"dialog-query\"\nversion = \"0.1.0\"\nsource = \"{source}\"\n")).unwrap();
-        let status = std::process::Command::new("sh").arg("tools/check-git-pins")
-            .current_dir(out.path()).output().unwrap().status;
-        assert_eq!(status.success(), expected, "{source}");
-    }
-}
-
-
-#[test]
-fn a_changed_dialog_manifest_pin_is_rejected_before_dependency_resolution() {
-    let ws = workspace(&[], true);
-    let manifest = ws.path().join("demo-crate/Cargo.toml");
-    let text = std::fs::read_to_string(&manifest).unwrap();
-    std::fs::write(manifest, format!("{text}\ndialog-query = {{ git = \"https://github.com/dialog-db/dialog-db\", rev = \"0000000000000000000000000000000000000000\" }}\n")).unwrap();
-    let error = project_err(ws.path());
-    assert!(error.contains("approved Dialog Git revision"), "{error}");
-}
 
 ```
 
@@ -13405,6 +15642,8 @@ The split changes where a reader starts; the map still accounts for everything s
 ## Organized repository layout
 
 The publication can select `x0k:repositoryLayout "organized"`. A final structured projection maps packages, chapters and assets, then regenerates source headers and sidecars from the moved literate owners. Canonical provenance values remain unchanged; public path-map keys move. Overlay files are restored afterward. Unknown layouts and colliding destinations refuse. Markdown links are parsed outside code; authored command examples belong to the publication source.
+
+What moves is read from the layout, not written in. The literate root becomes `implementation/` and the projector's own icons `assets/icons/` in every projection; our corpus's decisions root and concept pages become `decisions/` and `background/` only because its registry declares them (`OrganizedRoots`). A collection whose registry declares nothing keeps its own paths — a `docs/` or `wiki/` of its own is its, not ours to rename.
 
 <a name="chunk-organized-layout"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#organized-layout`</sub>
 
@@ -13427,18 +15666,55 @@ fn organized_repository_layout(env: &Colophon) -> Result<bool> {
     }
 }
 
-fn organized_path(path: &Path, crates: &[String], implementation: &Path) -> PathBuf {
+/// Where the organized layout moves things from. The literate root and the
+/// projector's own icon directory are every projection's. The corpus's own
+/// roots — its decisions and its concept pages, renamed `decisions/` and
+/// `background/`, and the `wiki/` and `docs/` conventions beside them — are
+/// only a corpus's whose registry declares it; an outside collection's paths
+/// are taken as they are, never renamed on a guess.
+struct OrganizedRoots {
+    implementation: PathBuf,
+    /// `(source prefix, destination)`, tried in order.
+    moves: Vec<(PathBuf, &'static str)>,
+}
+
+impl OrganizedRoots {
+    /// The roots `layout` gives: the corpus's own moves when a registry
+    /// declares the corpus, the projector's alone otherwise.
+    fn of(layout: &CorpusLayout) -> OrganizedRoots {
+        let mut roots = OrganizedRoots::outside(layout.implementation_root());
+        if layout.declared_corpus_root().is_some() {
+            roots.moves = vec![
+                (layout.decisions_root().to_path_buf(), "decisions"),
+                (layout.class_dir("wiki"), "background"),
+                (PathBuf::from("wiki"), "background"),
+                (PathBuf::from(AFFORDANCES_DIR), "assets/icons"),
+                (PathBuf::from("docs"), "assets/diagrams"),
+            ];
+        }
+        roots
+    }
+
+    /// A collection no registry declares: the literate root moves to
+    /// `implementation/` and the projector's icons to `assets/icons/`, and
+    /// nothing of the collection's own is renamed.
+    fn outside(implementation: &Path) -> OrganizedRoots {
+        OrganizedRoots {
+            implementation: implementation.to_path_buf(),
+            moves: vec![(PathBuf::from(AFFORDANCES_DIR), "assets/icons")],
+        }
+    }
+}
+
+fn organized_path(path: &Path, crates: &[String], roots: &OrganizedRoots) -> PathBuf {
     if path == Path::new("x0k-ontology/ontology/overview.svg")
         || path == Path::new("ontology/overview.svg") {
         return PathBuf::from("assets/diagrams/vocabulary.svg");
     }
-    if let Ok(tail) = path.strip_prefix(implementation) {
+    if let Ok(tail) = path.strip_prefix(&roots.implementation) {
         return Path::new("implementation").join(tail);
     }
-    for (source, destination) in [
-        ("corpora/x0k/decisions", "decisions"), ("corpora/x0k/wiki", "background"),
-        ("wiki", "background"), ("affordances", "assets/icons"), ("docs", "assets/diagrams"),
-    ] {
+    for (source, destination) in &roots.moves {
         if let Ok(tail) = path.strip_prefix(source) { return Path::new(destination).join(tail); }
     }
     if path == Path::new("CONTRIBUTING.md") { return PathBuf::from("guides/CONTRIBUTING.md"); }
@@ -13459,13 +15735,13 @@ fn normalized_relative(path: &Path) -> Option<PathBuf> {
     Some(result)
 }
 
-fn organized_link(target: &str, old: &Path, new: &Path, crates: &[String], implementation: &Path) -> Option<String> {
+fn organized_link(target: &str, old: &Path, new: &Path, crates: &[String], roots: &OrganizedRoots) -> Option<String> {
     if target.starts_with(['#', '/']) || target.contains(':') { return None; }
     let end = target.find(['#', '?']).unwrap_or(target.len());
     let path = &target[..end];
     if path.is_empty() { return None; }
     let resolved = normalized_relative(&old.parent().unwrap_or(Path::new("")).join(path))?;
-    let relocated = organized_path(&resolved, crates, implementation);
+    let relocated = organized_path(&resolved, crates, roots);
     let relative = crate::region_gfm::relative_link(&new.to_string_lossy(), &relocated.to_string_lossy());
     Some(format!("{relative}{}", &target[end..]))
 }
@@ -13473,7 +15749,7 @@ fn organized_link(target: &str, old: &Path, new: &Path, crates: &[String], imple
 /// Preserve descriptors and whitespace, rewriting only each candidate URL.
 /// URL tokens can contain commas (notably data URLs); only trailing commas
 /// terminate a descriptor-free candidate.
-fn organized_srcset(value: &str, old: &Path, new: &Path, crates: &[String], implementation: &Path) -> String {
+fn organized_srcset(value: &str, old: &Path, new: &Path, crates: &[String], roots: &OrganizedRoots) -> String {
     let bytes = value.as_bytes();
     let mut cursor = 0;
     let mut edits = Vec::new();
@@ -13484,7 +15760,7 @@ fn organized_srcset(value: &str, old: &Path, new: &Path, crates: &[String], impl
         let mut end = cursor;
         while end > start && bytes[end-1] == b',' { end -= 1; }
         if start < end {
-            if let Some(url) = organized_link(&value[start..end], old, new, crates, implementation) {
+            if let Some(url) = organized_link(&value[start..end], old, new, crates, roots) {
                 edits.push((start, end, url));
             }
         }
@@ -13508,7 +15784,7 @@ fn organized_srcset(value: &str, old: &Path, new: &Path, crates: &[String], impl
 
 /// Operate on parsed Markdown links, reference definitions and rendered HTML.
 /// Code blocks and code spans are not URL-bearing document markup.
-fn organized_markdown(text: &str, old: &Path, new: &Path, crates: &[String], implementation: &Path) -> String {
+fn organized_markdown(text: &str, old: &Path, new: &Path, crates: &[String], roots: &OrganizedRoots) -> String {
     use pulldown_cmark::{Event, Parser, Tag};
     let parser = Parser::new_ext(text, pulldown_cmark::Options::all());
     let mut edits: BTreeMap<usize, (usize, String)> = BTreeMap::new();
@@ -13516,7 +15792,7 @@ fn organized_markdown(text: &str, old: &Path, new: &Path, crates: &[String], imp
         let span = definition.span.clone();
         let slice = &text[span.clone()];
         if let Some(start) = slice.find("]:").and_then(|at| slice[at+2..].find(definition.dest.as_ref()).map(|p| at+2+p)) {
-            if let Some(value) = organized_link(&definition.dest, old, new, crates, implementation) {
+            if let Some(value) = organized_link(&definition.dest, old, new, crates, roots) {
                 edits.insert(span.start+start, (span.start+start+definition.dest.len(), value));
             }
         }
@@ -13526,7 +15802,7 @@ fn organized_markdown(text: &str, old: &Path, new: &Path, crates: &[String], imp
             Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
                 let slice = &text[span.clone()];
                 if let Some(start) = slice.find("](").and_then(|at| slice[at+2..].find(dest_url.as_ref()).map(|p| at+2+p)) {
-                    if let Some(value) = organized_link(&dest_url, old, new, crates, implementation) {
+                    if let Some(value) = organized_link(&dest_url, old, new, crates, roots) {
                         edits.insert(span.start+start, (span.start+start+dest_url.len(), value));
                     }
                 }
@@ -13543,8 +15819,8 @@ fn organized_markdown(text: &str, old: &Path, new: &Path, crates: &[String], imp
                             let end = start+length;
                             let target = &slice[start..end];
                             let value = if attribute == "srcset" {
-                                Some(organized_srcset(target, old, new, crates, implementation))
-                            } else { organized_link(target, old, new, crates, implementation) };
+                                Some(organized_srcset(target, old, new, crates, roots))
+                            } else { organized_link(target, old, new, crates, roots) };
                             if let Some(value) = value { edits.insert(span.start+start, (span.start+end, value)); }
                             offset = end+1;
                         }
@@ -13564,8 +15840,9 @@ fn organize_repository(
     path_map: &mut BTreeMap<String, String>, layout: &CorpusLayout,
 ) -> Result<()> {
     let implementation = layout.implementation_root();
+    let roots = OrganizedRoots::of(layout);
     let crates = report.crates.clone();
-    let map = |path: &Path| organized_path(path, &crates, implementation);
+    let map = |path: &Path| organized_path(path, &crates, &roots);
     // Plan the whole move before writing; two sources never silently overwrite.
     let mut files = BTreeMap::new();
     for entry in walkdir::WalkDir::new(root).into_iter().filter_entry(|entry|
@@ -13588,15 +15865,18 @@ fn organize_repository(
         if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
         std::fs::write(path, bytes)?;
     }
-    // Cargo paths are structural, not global text replacements.
+    // Cargo paths are structural, not global text replacements. A
+    // projection that ships no crate has no manifest to rewrite.
     let manifest_path = root.join("Cargo.toml");
-    let mut workspace = std::fs::read_to_string(&manifest_path)?.parse::<toml_edit::DocumentMut>()?;
-    if let Some(members) = workspace["workspace"]["members"].as_array_mut() {
-        for member in members.iter_mut() {
-            if let Some(name) = member.as_str() { *member = toml_edit::Value::from(map(Path::new(name)).to_string_lossy().to_string()); }
+    if manifest_path.is_file() {
+        let mut workspace = std::fs::read_to_string(&manifest_path)?.parse::<toml_edit::DocumentMut>()?;
+        if let Some(members) = workspace["workspace"]["members"].as_array_mut() {
+            for member in members.iter_mut() {
+                if let Some(name) = member.as_str() { *member = toml_edit::Value::from(map(Path::new(name)).to_string_lossy().to_string()); }
+            }
         }
+        std::fs::write(manifest_path, workspace.to_string())?;
     }
-    std::fs::write(manifest_path, workspace.to_string())?;
     for package in &crates {
         let old = Path::new(package).join("Cargo.toml");
         let new = map(&old);
@@ -13604,7 +15884,7 @@ fn organize_repository(
         let mut manifest = std::fs::read_to_string(&path)?.parse::<toml_edit::DocumentMut>()?;
         for field in ["readme", "license-file"] {
             if let Some(target) = manifest["package"].get(field).and_then(|v| v.as_str()) {
-                if let Some(value) = organized_link(target, &old, &new, &crates, implementation) {
+                if let Some(value) = organized_link(target, &old, &new, &crates, &roots) {
                     manifest["package"][field] = toml_edit::value(value);
                 }
             }
@@ -13616,7 +15896,7 @@ fn organize_repository(
     for (old, new, bytes) in &captured {
         if new.extension().is_none_or(|ext| ext != "md") { continue; }
         let text = String::from_utf8(bytes.clone()).context("Markdown must be UTF-8")?;
-        let mut text = organized_markdown(&text, old, new, &crates, implementation);
+        let mut text = organized_markdown(&text, old, new, &crates, &roots);
         if let Ok(parsed) = parse_document(&text) {
             if let Some(package) = parsed.tangle_crate.as_deref() {
                 let projected = map(Path::new(package)).to_string_lossy().to_string();
@@ -13628,14 +15908,19 @@ fn organize_repository(
     }
     let ci_path = root.join("tools/ci");
     let ci = std::fs::read_to_string(&ci_path)?;
-    let old_command = format!("-- tangle {} --workspace .", implementation.display());
-    std::fs::write(ci_path, ci.replace(&old_command, "-- tangle implementation --workspace ."))?;
+    // The re-tangle names the literate root whichever tangler runs it.
+    let old_command = format!(" tangle {} --workspace .", implementation.display());
+    std::fs::write(ci_path, ci.replace(&old_command, " tangle implementation --workspace ."))?;
     // Remove sidecars so no stale source/config/output hash can short-circuit.
     for (_, new, _) in &captured {
         if new.to_string_lossy().ends_with(".tangle-map.json") { std::fs::remove_file(root.join(new))?; }
     }
-    crate::tangle_directory(&root.join("implementation"), root, &crate::PipelineRegistry::default())?;
+    if root.join("implementation").is_dir() {
+        crate::tangle_directory(&root.join("implementation"), root, &crate::PipelineRegistry::default())?;
+    }
     report.literate_docs = report.literate_docs.iter().map(|path| map(path)).collect();
+    report.carried = std::mem::take(&mut report.carried).into_iter().map(|(projected, source)|
+        (map(Path::new(&projected)).to_string_lossy().to_string(), source)).collect();
     for path in report.documents.values_mut().chain(report.figures.values_mut()).chain(report.dropped_generated.iter_mut()) {
         *path = map(Path::new(path)).to_string_lossy().to_string();
     }
@@ -13731,7 +16016,7 @@ mod organized_layout_tests {
         let old = Path::new("corpora/x0k/implementation/demo/intro.md");
         let new = Path::new("implementation/demo/intro.md");
         let crates = vec!["demo".to_string()];
-        let implementation = Path::new("corpora/x0k/implementation");
+        let implementation = &OrganizedRoots::outside(Path::new("corpora/x0k/implementation"));
         let tick = char::from(96);
         let source = format!(
             "[crate](../../../../demo/src/lib.rs#part)\n[ref][r]\n\n[r]: ../../../../demo/Cargo.toml\n\
@@ -13751,7 +16036,7 @@ mod organized_layout_tests {
     fn organized_srcset_rewrites_each_candidate_and_preserves_descriptors() {
         let old = Path::new("corpora/x0k/implementation/demo/page.md");
         let new = Path::new("implementation/demo/page.md");
-        let implementation = Path::new("corpora/x0k/implementation");
+        let implementation = &OrganizedRoots::outside(Path::new("corpora/x0k/implementation"));
         let source = "<source srcset=\"../../../../affordances/a.svg 1x, ../../../../affordances/b.svg 2x\">";
         let mapped = organized_markdown(source, old, new, &[], implementation);
         assert_eq!(mapped, "<source srcset=\"../../assets/icons/a.svg 1x, ../../assets/icons/b.svg 2x\">");
@@ -13825,7 +16110,9 @@ fn organized_layout_retangles_and_preserves_canonical_source_mapping() {
     tangle_document(&chapter, root, &PipelineRegistry::default()).unwrap();
     assert_eq!(before, std::fs::read(sidecar_path).unwrap());
     assert_eq!(code, std::fs::read_to_string(root.join("crates/demo-crate/src/lib.rs")).unwrap());
-    assert!(std::fs::read_to_string(root.join("tools/ci")).unwrap().contains("-- tangle implementation --workspace ."));
+    // The re-tangle names the relaid root. The demo publication does not
+    // ship the tangler, so its CI runs the installed one.
+    assert!(std::fs::read_to_string(root.join("tools/ci")).unwrap().contains("\"$tangler\" tangle implementation --workspace ."));
     let second = tempfile::tempdir().unwrap();
     project(ws.path(), second.path()).unwrap();
     assert_eq!(std::fs::read(root.join("PROVENANCE.json")).unwrap(), std::fs::read(second.path().join("PROVENANCE.json")).unwrap());

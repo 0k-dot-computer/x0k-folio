@@ -21,13 +21,14 @@ pub struct Host {
     pub version: &'static str,
     /// The one-line description at the top of `--help`.
     pub about: &'static str,
-    /// The registry `tangle` and `workspace` dispatch through.
+    /// The registry `tangle` dispatches through.
     pub registry: fn() -> PipelineRegistry,
-    /// An environment variable `workspace` falls back to before the
-    /// current directory when `--root` is not given.
+    /// An environment variable the corpus build's whole-tree sweep falls
+    /// back to before the current directory when it is not handed a root.
+    /// A build without that sweep reads nothing from it.
     pub root_env: Option<&'static str>,
-    /// Whether a `workspace` sweep whose only errors are output-path
-    /// collisions fails the run. A collision needs a person to pick the
+    /// Whether that sweep fails the run when its only errors are
+    /// output-path collisions. A collision needs a person to pick the
     /// source of truth; a host whose build pipelines run the sweep may
     /// report it loudly and pass.
     pub collisions_fatal: bool,
@@ -39,7 +40,7 @@ impl Host {
     pub const PROTOCOL: Host = Host {
         name: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
-        about: "Literate programming tangler: documents to code, and code quoted back into documents",
+        about: "Literate programming tangler: documents to code, code quoted back into documents, and a collection published as a repository",
         registry: <PipelineRegistry as Default>::default,
         root_env: None,
         collisions_fatal: true,
@@ -47,12 +48,6 @@ impl Host {
 }
 
 #[derive(Parser)]
-#[command(
-    after_help = "Commands marked [corpus-only] read the publication corpus \
-(decisions/publications/ and the decision documents it names). They are not \
-runnable from a projected repository, which carries only the literate documents \
-under knowledge/implementation/ — everything else here works there."
-)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -211,179 +206,28 @@ enum Command {
         #[arg(long)]
         output_dir: Option<PathBuf>,
     },
-    /// [corpus-only] Project a publication region into a self-contained,
-    /// navigable multi-page web artifact.
-    ///
-    /// `region` is the publication decision doc
-    /// (`decisions/publications/<slug>.md`, `type: publication`). Its
-    /// `publishes:` membership + `entryPoint:` define the region; each member's
-    /// decision doc is woven (wrapping the single-doc weaver), cross-doc links
-    /// are rewritten to artifact-relative paths, and a site nav is injected.
-    ///
-    /// Reads `decisions/publications/` and the decision documents it names,
-    /// so it needs a corpus checkout; a projected repository carries only
-    /// `knowledge/implementation/` and this verb refuses there.
-    WeaveRegion {
-        /// Path to the publication decision doc.
-        region: PathBuf,
-        /// Directory to write the artifact into (created if absent).
-        #[arg(long)]
-        output_dir: PathBuf,
-        /// Workspace root the `decisions/<subtype>/...` tree hangs off of
-        /// (defaults to current directory). Member sources + motif scanning
-        /// resolve against this.
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Skip motif wasm bundling (page/nav/link-rewrite core only). Motif
-        /// refs are still reported but no `.wasm`/`host.js` is emitted.
-        #[arg(long)]
-        no_motifs: bool,
-    },
-    /// [corpus-only] Project a publication region into a standalone,
-    /// buildable Cargo repository.
-    ///
-    /// Literate `.md` source + committed tangled code + workspace manifest +
-    /// the publication's declared license + README + CI, git-init'd. Sibling
-    /// to `weave-region` (which emits an HTML reader site).
-    ///
-    /// Reads `decisions/publications/` and the decision documents it names,
-    /// so it needs a corpus checkout; a projected repository carries only
-    /// `knowledge/implementation/` and this verb refuses there.
-    ProjectRepo {
-        /// Path to the publication decision doc (`type: publication`).
-        region: PathBuf,
-        /// Directory to write the standalone repo into (created if absent).
-        #[arg(long)]
-        output_dir: PathBuf,
-        /// Workspace root the published crates resolve against (defaults to cwd).
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Explicit SPDX license override. Without this flag the license comes
-        /// from the publication header's `x0k:license` (the manifest
-        /// is authoritative); with neither, the projection refuses. There is
-        /// no silent default.
-        #[arg(long)]
-        license: Option<String>,
-        /// Do not `git init` / commit the output dir.
-        #[arg(long)]
-        no_git: bool,
-        /// Do not emit `.github/workflows/` wrappers (the forge-agnostic
-        /// `tools/ci` + `tools/x0k-guard-generated` are always emitted).
-        #[arg(long)]
-        no_github: bool,
-        /// Bypass leak / closure / publish-exclusion guards (escape hatch).
-        #[arg(long)]
-        allow_dirty: bool,
-    },
-    /// [corpus-only] Publish pipeline for a projected repository: project,
-    /// prove, rehearse, and (only under --really) publish.
-    ///
-    /// Projects with guards on, builds + tests the projection standalone,
-    /// asks the crates.io index which crate versions it already serves,
-    /// rehearses with one `cargo publish --dry-run --workspace` excluding
-    /// those, and reports. The real `cargo publish` of the rest and
-    /// the `git push` to the publication's configured remote run ONLY under
-    /// `--really` (operator-only; refuses unless the rehearsal passed).
-    ///
-    /// Reads `decisions/publications/` and the decision documents it names,
-    /// so it needs a corpus checkout; a projected repository carries only
-    /// `knowledge/implementation/` and this verb refuses there.
-    PublishRepo {
-        /// Path to the publication decision doc (`type: publication`).
-        region: PathBuf,
-        /// Directory to project the repo into (created if absent).
-        #[arg(long)]
-        output_dir: PathBuf,
-        /// Workspace root the published crates resolve against (defaults to cwd).
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Explicit SPDX license override (default: the publication doc's
-        /// `license:` field is authoritative).
-        #[arg(long)]
-        license: Option<String>,
-        /// Do not emit `.github/workflows/` wrappers.
-        #[arg(long)]
-        no_github: bool,
-        /// Actually publish to crates.io and push to the configured remote.
-        /// Operator-only.
-        #[arg(long)]
-        really: bool,
-    },
-    /// [corpus-only] Receive changes made in a projected repository (a
-    /// contributor's clone) back into the corpus as a proposed change.
-    ///
-    /// Diffs the clone against a reference projection at the clone's
-    /// `corpus_rev`, classifies every changed path, writes unified diffs +
-    /// `receipt.json`, and — under `--apply` — patches the working copy
-    /// (never commits). Exits non-zero when any change was refused (an
-    /// `@generated` edit).
-    ///
-    /// Reads `decisions/publications/` and the decision documents it names,
-    /// so it needs a corpus checkout; a projected repository carries only
-    /// `knowledge/implementation/` and this verb refuses there.
-    ReceiveRepo {
-        /// The contributor's clone of the projected repository.
-        clone: PathBuf,
-        /// Workspace root the patches apply to (defaults to cwd).
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Directory for the patch set + receipt.json (default: temp).
-        #[arg(long)]
-        out: Option<PathBuf>,
-        /// Apply the receivable patches to the working copy. Refused when a
-        /// target path already has uncommitted changes.
-        #[arg(long)]
-        apply: bool,
-        /// Publication doc override (default: resolved from the clone's
-        /// PROVENANCE.json `publication_uri` under decisions/publications/).
-        #[arg(long)]
-        publication: Option<PathBuf>,
-        /// Root for the reference projection's temp dir (must be outside the
-        /// workspace; default: the system temp dir).
-        #[arg(long)]
-        scratch: Option<PathBuf>,
-    },
     /// List chunks and their targets in a document
     List {
         /// Path to a literate document
         path: PathBuf,
     },
-    /// Tangle every dirty literate document this binary's registry
-    /// can handle.
-    ///
-    /// Walks every literate root the registry's plugins claim and
-    /// re-tangles docs whose source or outputs drifted from the recorded
-    /// sidecar. `x0k-tangle` ships only the built-in
-    /// `PipelineRegistry::default()`, which carries only the
-    /// `identity-tangle` plugin and its roots (`knowledge/implementation/**`);
-    /// a doc that declares another pipeline lands in the `errored` bucket as
-    /// "unknown pipeline kind". A host that registers more plugins links
-    /// this same CLI with its own registry.
-    Workspace {
-        /// Workspace root (defaults to the current directory)
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Overwrite outputs holding content this tangler did not write
-        #[arg(long)]
-        force: bool,
-    },
+    #[command(flatten)]
+    Repository(crate::RepositoryCommand),
+    #[cfg(feature = "corpus")]
+    #[command(flatten)]
+    Corpus(crate::CorpusCommand),
 }
 
 /// Parse the process arguments and run the verb they name, as `host`.
 pub fn run(host: &Host) -> Result<()> {
     crate::init_diagnostics();
-    let mut command = Cli::command()
+    let command = Cli::command()
         .name(host.name)
         .bin_name(host.name)
         .version(host.version)
         .about(host.about);
-    if let Some(var) = host.root_env {
-        command = command.mut_subcommand("workspace", |sub| {
-            sub.mut_arg("root", |arg| {
-                arg.help(format!("Workspace root (defaults to ${var}, else the current directory)"))
-            })
-        });
-    }
+    #[cfg(feature = "corpus")]
+    let command = crate::corpus_help(command, host);
     let cli = Cli::from_arg_matches(&command.get_matches()).unwrap_or_else(|e| e.exit());
 
     match cli.command {
@@ -657,7 +501,7 @@ pub fn run(host: &Host) -> Result<()> {
             if let (Some(out), Some(palette)) = (out, palette) {
                 let content = std::fs::read_to_string(&palette)
                     .with_context(|| format!("reading {}", palette.display()))?;
-                let palette = crate::region_repo::header_palette(&content)?.ok_or_else(|| {
+                let palette = crate::faces::header_palette(&content)?.ok_or_else(|| {
                     anyhow::anyhow!("{} carries no `x0k:palette` in its header", palette.display())
                 })?;
                 written = crate::faces::write_icon_files(&report, &palette, &out)?.len();
@@ -710,266 +554,6 @@ pub fn run(host: &Host) -> Result<()> {
             }
         }
 
-        Command::WeaveRegion {
-            region,
-            output_dir,
-            workspace,
-            no_motifs,
-        } => {
-            let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let report = crate::project_publication(&region, &output_dir, &ws, no_motifs)?;
-            eprintln!(
-                "wove region {} → {} ({} page(s), {} media ref(s), {} unresolved link(s))",
-                region.display(),
-                output_dir.join(&report.entry_rel_path).display(),
-                report.page_count,
-                report.media_refs.len(),
-                report.unresolved_links.len(),
-            );
-            if !report.unresolved_links.is_empty() {
-                for href in &report.unresolved_links {
-                    eprintln!("  unresolved link: {href}");
-                }
-            }
-            if !report.degraded_embeds.is_empty() {
-                eprintln!(
-                    "  {} embed(s) show their static fallback label",
-                    report.degraded_embeds.len()
-                );
-            }
-            eprintln!(
-                "  atlas.json: {} node(s), {} edge(s), {} thread(s) [{}]",
-                report.atlas_node_count,
-                report.atlas_edge_count,
-                report.atlas_threads.len(),
-                report.atlas_threads.join(", "),
-            );
-            eprintln!(
-                "  presentation: render-vello wasm {}, narrative {}",
-                if report.wasm_bundled {
-                    format!("bundled ({} KiB)", report.wasm_bytes / 1024)
-                } else {
-                    "MISSING (set X0K_RENDER_VELLO_WASM_DIR or build it)".to_string()
-                },
-                if report.narrative_bundled {
-                    "bundled"
-                } else {
-                    "stub (no sidecar)"
-                },
-            );
-            if !report.atlas_unresolved_years.is_empty() {
-                for uri in &report.atlas_unresolved_years {
-                    eprintln!("  atlas: unresolved year for {uri}");
-                }
-            }
-        }
-
-        Command::ProjectRepo {
-            region,
-            output_dir,
-            workspace,
-            license,
-            no_git,
-            no_github,
-            allow_dirty,
-        } => {
-            let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let opts = crate::RepoProjectOptions {
-                license,
-                git_init: !no_git,
-                allow_dirty,
-                emit_github: !no_github,
-            };
-            let report = crate::project_publication_repo(&region, &output_dir, &ws, &opts)?;
-            eprintln!(
-                "projected repo {} → {} ({} crate(s), {} literate doc(s), license {} [{}]{})",
-                region.display(),
-                output_dir.display(),
-                report.crates.len(),
-                report.literate_docs.len(),
-                report.license,
-                match report.license_source {
-                    crate::LicenseSource::PublicationDoc => "from publication doc",
-                    crate::LicenseSource::Override => "explicit override",
-                },
-                if report.committed {
-                    ", committed"
-                } else if !no_git {
-                    ", unchanged (no new commit)"
-                } else {
-                    ""
-                },
-            );
-            if !report.excluded.is_empty() {
-                eprintln!("  publish-excluded: {}", report.excluded.join(", "));
-            }
-            for v in report
-                .leak_violations
-                .iter()
-                .chain(report.closure_violations.iter())
-            {
-                eprintln!("  WARNING: {v}");
-            }
-        }
-
-        Command::PublishRepo {
-            region,
-            output_dir,
-            workspace,
-            license,
-            no_github,
-            really,
-        } => {
-            let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let opts = crate::PublishRepoOptions {
-                license,
-                emit_github: !no_github,
-                really,
-            };
-            let report = crate::publish_repo(&region, &output_dir, &ws, &opts)?;
-            eprintln!(
-                "publish-repo {} → {} (license {})",
-                region.display(),
-                output_dir.display(),
-                report.projection.license,
-            );
-            eprintln!(
-                "  build: {}  test: {}",
-                if report.build_ok { "ok" } else { "FAILED" },
-                if report.test_ok { "ok" } else { "FAILED" },
-            );
-            eprintln!("  publish order: {}", report.publish_order.join(" → "));
-            eprintln!("  registry (crates.io index):");
-            let width = report.plan.iter().map(|c| c.name.len() + c.version.len()).max().unwrap_or(0);
-            for c in &report.plan {
-                use crate::publish_repo::CrateDisposition as D;
-                let said = match c.disposition {
-                    D::Unpublishable => "never attempted (publish = false)",
-                    D::AlreadyPublished => "already published — skipped",
-                    D::Pending => "not on the index — will publish",
-                };
-                let pad = width - c.name.len() - c.version.len();
-                eprintln!("    {} {}{:pad$}  {said}", c.name, c.version, "");
-            }
-            let pending: Vec<&str> = report
-                .plan
-                .iter()
-                .filter(|c| c.disposition == crate::publish_repo::CrateDisposition::Pending)
-                .map(|c| c.name.as_str())
-                .collect();
-            if pending.is_empty() {
-                eprintln!("  to publish: nothing — the index already serves every publishable crate's version");
-            } else {
-                eprintln!("  to publish: {}", pending.join(" → "));
-            }
-            if let Some(r) = &report.rehearsal {
-                eprintln!(
-                    "  dry-run ({} pending): {}",
-                    pending.len(),
-                    if r.ok { "ok" } else { "FAILED" }
-                );
-                if !r.ok {
-                    for line in r.output_tail.lines() {
-                        eprintln!("      {line}");
-                    }
-                }
-            }
-            if !report.build_ok || !report.test_ok {
-                eprintln!("  stopped: the projection must build and test green before any rehearsal");
-                std::process::exit(1);
-            }
-            match (&report.surface, &report.remote) {
-                (Some(s), Some(r)) => eprintln!("  remote: {s} → {r}"),
-                (Some(s), None) => eprintln!(
-                    "  remote: {s} has no [publish.remotes] entry in config/x0k-tangle.toml"
-                ),
-                (None, _) => eprintln!("  remote: publication has no publishedOn edge"),
-            }
-            if report.published || report.pushed {
-                eprintln!(
-                    "  PUBLISHED: crates.io={} push={}",
-                    report.published, report.pushed
-                );
-            } else if !really {
-                eprintln!("  stopped before publishing (pass --really to publish; operator-only)");
-            }
-        }
-
-        Command::ReceiveRepo {
-            clone,
-            workspace,
-            out,
-            apply,
-            publication,
-            scratch,
-        } => {
-            let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let opts = crate::ReceiveOptions {
-                apply,
-                out_dir: out.clone(),
-                publication,
-                scratch,
-            };
-            let report = crate::receive_repo(&clone, &ws, &opts)?;
-            eprintln!(
-                "receive-repo {} ({}): clone rev {} vs reference {}{}",
-                clone.display(),
-                report.publication_uri,
-                if report.clone_rev.is_empty() { "(none)" } else { &report.clone_rev },
-                if report.reference_rev.is_empty() { "(none)" } else { &report.reference_rev },
-                if report.rev_exact { "" } else { "  [REV SKEW: diff includes the corpus's own drift, reversed]" },
-            );
-            for c in &report.changes {
-                let class = match c.class {
-                    crate::receive::Class::Literate => "literate (received)",
-                    crate::receive::Class::Source => "source (received)",
-                    crate::receive::Class::Generated => "GENERATED (refused)",
-                    crate::receive::Class::ProjectionLocal => "overlay (projection-local, not received)",
-                    crate::receive::Class::ProjectionOwned => "projection-owned (not received)",
-                };
-                let size = c.patch.as_ref().map(|p| p.lines().count()).unwrap_or(0);
-                match (&c.target, &c.produced_by) {
-                    (Some(t), _) => eprintln!("  {:<9} {}  {class}  → {t}  ({size} patch lines)", c.kind, c.path),
-                    (None, Some(o)) => eprintln!(
-                        "  {:<9} {}  {class}  produced by {}{}",
-                        c.kind,
-                        c.path,
-                        o.doc,
-                        if o.chunks.is_empty() { String::new() } else { format!(" chunks {}", o.chunks.join(", ")) }
-                    ),
-                    (None, None) => eprintln!("  {:<9} {}  {class}", c.kind, c.path),
-                }
-            }
-            eprintln!(
-                "  {} change(s): {} received, {} refused{}{}",
-                report.changes.len(),
-                report.received(),
-                report.refused(),
-                match &out {
-                    Some(d) => format!("; patch set in {}", d.display()),
-                    None => String::new(),
-                },
-                if report.applied { format!("; applied to working copy (dirty check: {})", report.dirty_check) } else { "" .to_string() },
-            );
-            if report.refused() > 0 {
-                std::process::exit(1);
-            }
-        }
-
-        Command::Workspace { root, force } => {
-            let ws = resolve_workspace_root(root, host.root_env)?;
-            let registry = (host.registry)();
-            let settings = clobber_settings(force);
-            let report = crate::tangle_workspace_with(&ws, &registry, &settings)?;
-            print_workspace_summary(&ws, &report);
-            let fatal = report.errored.iter().any(|(_, e)| {
-                host.collisions_fatal || !e.to_string().contains("output path collision")
-            });
-            if fatal {
-                std::process::exit(1);
-            }
-        }
-
         Command::List { path } => {
             let content = std::fs::read_to_string(&path)?;
             let parsed = crate::parser::parse_document(&content)?;
@@ -1016,30 +600,18 @@ pub fn run(host: &Host) -> Result<()> {
                 );
             }
         }
+
+        Command::Repository(verb) => crate::run_repository(verb)?,
+
+        #[cfg(feature = "corpus")]
+        Command::Corpus(verb) => crate::run_corpus(verb, host)?,
     }
 
     Ok(())
 }
 
-/// Resolve a workspace root from the CLI flag, else the host's root
-/// variable when it names one and it is set, else the current directory.
-fn resolve_workspace_root(flag: Option<PathBuf>, env: Option<&str>) -> Result<PathBuf> {
-    let from_env = env
-        .and_then(|var| std::env::var(var).ok())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    let raw = match flag.or(from_env) {
-        Some(p) => p,
-        None => std::env::current_dir()?,
-    };
-    // Canonicalize so the tree being written is named, not implied by
-    // cwd. The library refuses writes outside this root regardless.
-    std::fs::canonicalize(&raw)
-        .with_context(|| format!("resolving workspace root {}", raw.display()))
-}
-
 /// The run-scoped settings a `--force` flag decides.
-fn clobber_settings(force: bool) -> crate::TangleSettings {
+pub(crate) fn clobber_settings(force: bool) -> crate::TangleSettings {
     crate::TangleSettings {
         clobber: if force {
             crate::ClobberPolicy::Force
@@ -1047,51 +619,6 @@ fn clobber_settings(force: bool) -> crate::TangleSettings {
             crate::ClobberPolicy::Refuse
         },
         ..Default::default()
-    }
-}
-
-/// Pretty-print a `WorkspaceTangleReport` to stderr.
-fn print_workspace_summary(
-    workspace_root: &std::path::Path,
-    report: &crate::WorkspaceTangleReport,
-) {
-    eprintln!("tangle workspace summary:");
-    eprintln!("  tangled:    {}", report.tangled.len());
-    eprintln!("  up-to-date: {}", report.up_to_date.len());
-    eprintln!("  errored:    {}", report.errored.len());
-
-    for tr in &report.tangled {
-        let rel_source = tr
-            .source_path
-            .strip_prefix(workspace_root)
-            .unwrap_or(&tr.source_path)
-            .display();
-        let total_outputs = tr.pipeline_outputs.len();
-        let first = tr.pipeline_outputs.first().map(|o| o.path.clone());
-        if let Some(first) = first {
-            let rel_first = first
-                .strip_prefix(workspace_root)
-                .unwrap_or(&first)
-                .display()
-                .to_string();
-            if total_outputs > 1 {
-                eprintln!(
-                    "  {} → {} (+{} more)",
-                    rel_source,
-                    rel_first,
-                    total_outputs - 1
-                );
-            } else {
-                eprintln!("  {} → {}", rel_source, rel_first);
-            }
-        } else {
-            eprintln!("  {} → (no outputs)", rel_source);
-        }
-    }
-
-    for (path, err) in &report.errored {
-        let rel = path.strip_prefix(workspace_root).unwrap_or(path).display();
-        eprintln!("  ERROR {}: {}", rel, err);
     }
 }
 

@@ -12,8 +12,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use x0k_folio::colophon::{expand_compact, parse_envelope, shipped_prefixes, turtle_name, DocType};
-use x0k_tangle::region_repo::{project_publication_repo_with, ProofOutcome, ProofTarget, Proofs};
-use x0k_tangle::{tangle_document, PipelineRegistry, RepoProjectOptions};
+use x0k_tangle::region_repo::{
+    project_publication_repo_in, project_publication_repo_with, ProofOutcome, ProofTarget, Proofs,
+};
+use x0k_tangle::{
+    receive_repo, tangle_document, PipelineRegistry, ReceiveOptions, RepoProjectOptions, Vocabulary,
+};
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-modules");
 /// Shapes for those fixtures: `document` constrains one predicate, `core`
@@ -64,6 +68,11 @@ fn publication_publishing(crates: &[&str], documents: &[&str]) -> String {
 /// bound the way the real ones are.
 const PALETTE: &str = "    x0k:palette '{\"light\":{\"ink\":\"#111111\",\"line\":\"#b88e44\",\"paper\":\"#fffff8\",\"accent\":\"#b88e44\"},\"dark\":{\"ink\":\"#e2e8f0\",\"line\":\"#96b4dc\",\"paper\":\"#1e293b\",\"accent\":\"#96b4dc\"}}'^^rdf:JSON ;\n";
 
+/// The publication's `x0k:marks` statement: the two documents the fixture
+/// declares the status and test marks in, as the `x0k-folio` publication
+/// names its own. A test of a publication that names none drops it.
+const MARKS: &str = "    x0k:marks design:publish-a-region-as-a-repository, implementation:tangle\\/region-repo ;\n";
+
 /// The statement that closes the fixture publication's header. A test that
 /// adds a statement puts it ahead of this line ([`with_statements`]).
 const HEADER_LAST: &str = "    folio:tangleRoot \"README.md\" .\n";
@@ -107,7 +116,7 @@ fn publication_full(
         statements.push_str("    x0k:entryPoint x0k:software-module\\/demo-crate ;\n");
     }
     format!(
-        "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n{statements}{PALETTE}{HEADER_LAST}```\n\n```markdown {{#readme}}\n# Demo\n\nA demo publication.\n\n## What is here\n\n<!-- x0k:contents -->\n\n## Afterwards\n\nText after the contents.\n```\n"
+        "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n{statements}{PALETTE}{MARKS}{HEADER_LAST}```\n\n```markdown {{#readme}}\n# Demo\n\nA demo publication.\n\n## What is here\n\n<!-- x0k:contents -->\n\n## Afterwards\n\nText after the contents.\n```\n"
     )
 }
 
@@ -836,6 +845,539 @@ fn a_named_document_no_corpus_document_declares_is_refused() {
     assert!(err.contains("selects nothing"), "{err}");
 }
 
+/// The `acme` module, as an outside collection would write it: its own
+/// namespace and one class, beside a `core` stub so the directory loads
+/// on its own (the shape `check --vocabulary` reads).
+fn acme_vocabulary() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("core.ttl"),
+        "<https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("acme.ttl"),
+        concat!(
+            "<https://0k.computer/ontology/acme> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+            "<https://0k.computer/ontology/acme> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .\n",
+            "<https://0k.computer/ontology/acme> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://acme.example/ontology/\" .\n",
+            "<https://acme.example/ontology/Report> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+            "<https://acme.example/ontology/Report> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/acme> .\n",
+            "<https://acme.example/ontology/Report> <http://www.w3.org/2000/01/rdf-schema#label> \"Report\" .\n",
+        ),
+    )
+    .unwrap();
+    dir
+}
+
+/// The three `acme` reports: `(path, id, a line only that report says)`.
+/// Two are published; the draft is not.
+const ACME_REPORTS: [(&str, &str, &str); 3] = [
+    ("field-notes/2026/quarterly.md", "acme:report\\/q3", "What the third quarter showed."),
+    ("docs/annual/summary-of-the-year.md", "acme:report\\/annual-2026", "The year, in one page."),
+    ("field-notes/drafts/unfinished.md", "acme:report\\/draft", "Not ready for anyone."),
+];
+
+/// A workspace holding the `acme` reports beside the demo crate, and a
+/// publication naming two of them, by id, in `acme`'s own namespace.
+fn acme_workspace(statements: &str) -> tempfile::TempDir {
+    let ws = workspace(&[], true);
+    for (rel, id, line) in ACME_REPORTS {
+        let path = ws.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!("# A report\n\n```turtle folio:document\n{id} a acme:Report ;\n    x0k:status \"draft\" .\n```\n\n{line}\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_statements(&publication(&["demo-crate"], &[], true), statements),
+    )
+    .unwrap();
+    ws
+}
+
+const ACME_PUBLISHES: &str = "    x0k:publishes acme:report\\/q3, acme:report\\/annual-2026 ;\n";
+
+fn project_acme(ws: &Path, out: &Path) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
+    let vocabulary = acme_vocabulary();
+    project_publication_repo_in(
+        &ws.join(PUB_REL),
+        out,
+        ws,
+        &RepoProjectOptions { license: None, git_init: false, allow_dirty: false, emit_github: false },
+        &runner_reporting(ProofOutcome::Passed),
+        &Vocabulary::load(&[vocabulary.path().to_path_buf()])?,
+    )
+}
+
+#[test]
+fn a_collection_in_its_own_namespace_publishes_its_documents_by_id() {
+    let ws = acme_workspace(ACME_PUBLISHES);
+    let out = tempfile::tempdir().unwrap();
+    let report = project_acme(ws.path(), out.path()).expect("the acme collection projects");
+
+    for (rel, id, line) in &ACME_REPORTS[..2] {
+        let reference = id.replace('\\', "");
+        assert_eq!(report.documents.get(&reference), Some(&rel.to_string()), "{:?}", report.documents);
+        let text = std::fs::read_to_string(out.path().join(rel)).expect("the report crossed where it lives");
+        assert!(text.contains(line), "{text}");
+        // The repository's vocabulary does not declare `acme:`, so the
+        // report says where it points.
+        assert!(text.contains("@prefix acme: <https://acme.example/ontology/> .\n"), "{text}");
+    }
+    // Named by nobody, so it stays.
+    assert!(!out.path().join(ACME_REPORTS[2].0).exists());
+    assert!(!tree_carries(out.path(), ACME_REPORTS[2].2));
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    assert_eq!(prov["path_map"][ACME_REPORTS[0].0], serde_json::json!(ACME_REPORTS[0].0));
+
+    // The organized layout leaves a collection's own `docs/` where it is.
+    let ws = acme_workspace(&format!("{ACME_PUBLISHES}    x0k:repositoryLayout \"organized\" ;\n"));
+    let out = tempfile::tempdir().unwrap();
+    project_acme(ws.path(), out.path()).expect("the organized acme projection");
+    assert!(out.path().join(ACME_REPORTS[1].0).is_file(), "the collection's docs/ is not ours to rename");
+    assert!(!out.path().join("assets/diagrams/annual/summary-of-the-year.md").exists());
+}
+
+#[test]
+fn a_member_no_document_in_the_collection_declares_is_refused_by_name() {
+    let ws = acme_workspace("    x0k:publishes acme:report\\/q4 ;\n");
+    let out = tempfile::tempdir().unwrap();
+    let err = format!("{:#}", project_acme(ws.path(), out.path()).expect_err("q4 was never written"));
+    assert!(err.contains("`acme:report/q4`"), "names the member: {err}");
+    assert!(err.contains("no document anywhere in the collection declares"), "{err}");
+    assert!(!out.path().join("README.md").exists(), "refused before anything was written");
+
+    // An entry point is a member: one `publishes` does not name is refused.
+    let ws = acme_workspace(&format!("{ACME_PUBLISHES}    x0k:entryPoint acme:report\\/draft ;\n"));
+    let err = format!("{:#}", project_acme(ws.path(), out.path()).expect_err("the draft is not published"));
+    assert!(err.contains("`entryPoint` names `acme:report/draft`"), "{err}");
+}
+
+/// A collection with no crate: the `acme` reports, and a publication naming
+/// two of them. `statements` are the publication's further header lines.
+fn documents_only_workspace(statements: &str) -> tempfile::TempDir {
+    let ws = tempfile::tempdir().unwrap();
+    for (rel, id, line) in ACME_REPORTS {
+        let path = ws.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!("# A report\n\n```turtle folio:document\n{id} a acme:Report ;\n    x0k:status \"draft\" .\n```\n\n{line}\n"),
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(ws.path().join("publications")).unwrap();
+    std::fs::write(
+        ws.path().join("publications/field-notes.md"),
+        format!(
+            "# Field notes\n\n```turtle folio:document\npublication:field-notes a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"Apache-2.0\" ;\n{statements}    folio:tangleRoot \"README.md\" .\n```\n\n```markdown {{#readme}}\n# Field notes\n\nThe reports worth reading.\n```\n"
+        ),
+    )
+    .unwrap();
+    ws
+}
+
+fn project_documents_only(
+    ws: &Path,
+    out: &Path,
+    vocabulary: &Path,
+) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
+    project_publication_repo_in(
+        &ws.join("publications/field-notes.md"),
+        out,
+        ws,
+        &RepoProjectOptions { license: None, git_init: false, allow_dirty: false, emit_github: false },
+        &Proofs::Skip,
+        &Vocabulary::load(&[vocabulary.to_path_buf()])?,
+    )
+}
+
+#[test]
+fn a_collection_of_documents_alone_projects_with_the_vocabulary_it_is_written_in() {
+    let ws = documents_only_workspace(ACME_PUBLISHES);
+    let vocabulary = acme_vocabulary();
+    let out = tempfile::tempdir().unwrap();
+    let report = project_documents_only(ws.path(), out.path(), vocabulary.path())
+        .expect("a publication of documents alone projects");
+
+    assert!(report.crates.is_empty());
+    for (rel, _, line) in &ACME_REPORTS[..2] {
+        let text = std::fs::read_to_string(out.path().join(rel)).expect("the report crossed");
+        assert!(text.contains(line), "{text}");
+    }
+    assert!(!out.path().join(ACME_REPORTS[2].0).exists(), "the draft was named by nobody");
+    // Nothing of Cargo.
+    for absent in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"] {
+        assert!(!out.path().join(absent).exists(), "{absent} in a projection with no crate");
+    }
+    // The module the reports are typed in, and the one it imports, byte for
+    // byte; recorded where `check` will be pointed at them.
+    for module in ["acme", "core"] {
+        assert_eq!(
+            std::fs::read(out.path().join(format!("ontology/modules/{module}.ttl"))).unwrap(),
+            std::fs::read(vocabulary.path().join(format!("{module}.ttl"))).unwrap(),
+            "{module}.ttl crossed as written"
+        );
+    }
+    assert_eq!(report.vocabulary, vec!["acme".to_string(), "core".to_string()]);
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap()).unwrap();
+    assert_eq!(prov["vocabulary"], serde_json::json!(["acme", "core"]));
+    assert_eq!(prov["vocabulary_dir"], serde_json::json!("ontology/modules"));
+
+    let ci = std::fs::read_to_string(out.path().join("tools/ci")).unwrap();
+    assert!(!ci.contains("cargo "), "no Cargo step in a projection with no crate:\n{ci}");
+    assert!(
+        ci.contains(&format!("FOLIO_VERSION=\"${{FOLIO_VERSION:-{}}}\"", env!("CARGO_PKG_VERSION"))),
+        "the tangler is pinned to the version that projected:\n{ci}"
+    );
+    assert!(ci.contains("https://0k.computer/folio/install.sh"), "{ci}");
+    assert!(ci.contains("\"$tangler\" check --vocabulary ontology/modules --workspace . .\n"), "{ci}");
+    // Nothing tangles here, so nothing is re-tangled.
+    assert!(!ci.contains("\"$tangler\" tangle"), "{ci}");
+}
+
+#[test]
+fn a_document_in_no_module_the_vocabulary_holds_ships_no_module() {
+    // The publication names one report and the reports are typed in `acme`;
+    // a directory that also holds a module nobody writes in ships only what
+    // the reports need.
+    let ws = documents_only_workspace("    x0k:publishes acme:report\\/q3 ;\n");
+    let vocabulary = acme_vocabulary();
+    std::fs::write(
+        vocabulary.path().join("unused.ttl"),
+        concat!(
+            "<https://0k.computer/ontology/unused> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+            "<https://0k.computer/ontology/unused> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://unused.example/ontology/\" .\n",
+        ),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project_documents_only(ws.path(), out.path(), vocabulary.path()).expect("projects");
+    assert_eq!(report.vocabulary, vec!["acme".to_string(), "core".to_string()]);
+    assert!(!out.path().join("ontology/modules/unused.ttl").exists());
+}
+
+/// A collection with no crate: `pkg/mod.py` by hand, a page mirroring a
+/// function out of it, and a chapter tangling `pkg/gen.py`.
+fn python_workspace(publishes: &str) -> tempfile::TempDir {
+    let ws = tempfile::tempdir().unwrap();
+    let root = ws.path();
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::write(root.join("pkg/mod.py"), "def area(w, h):\n    return w * h\n").unwrap();
+    std::fs::create_dir_all(root.join("notes")).unwrap();
+    std::fs::write(
+        root.join("notes/area.md"),
+        "# Area\n\n```turtle folio:document\ndesign:area a x0k:Design ;\n    x0k:status \"proposed\" .\n```\n\nThe whole of it:\n\n```python {#area from=\"pkg/mod.py\" symbol=\"area\"}\ndef area(w, h):\n    return w * h\n```\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("chapters")).unwrap();
+    std::fs::write(
+        root.join("chapters/gen.md"),
+        "# The generated half\n\n```turtle folio:document\nimplementation:pkg\\/gen a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    x0k:summary \"The constant the package exports.\" ;\n    folio:tangleCrate \"pkg\" ;\n    folio:tangleRoot \"gen.py\" .\n```\n\n```python {#root}\ndef answer():\n    return 42\n```\n",
+    )
+    .unwrap();
+    tangle_document(&root.join("chapters/gen.md"), root, &PipelineRegistry::default())
+        .expect("the chapter tangles in its collection");
+    std::fs::create_dir_all(root.join("publications")).unwrap();
+    std::fs::write(
+        root.join("publications/pkg.md"),
+        format!(
+            "# pkg\n\n```turtle folio:document\npublication:pkg a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"Apache-2.0\" ;\n    x0k:publishes {publishes} ;\n    folio:tangleRoot \"README.md\" .\n```\n\n```markdown {{#readme}}\n# pkg\n\nA package and its pages.\n\n<!-- x0k:contents -->\n```\n"
+        ),
+    )
+    .unwrap();
+    ws
+}
+
+fn project_python(ws: &Path, out: &Path) -> anyhow::Result<x0k_tangle::RepoProjectReport> {
+    project_publication_repo_in(
+        &ws.join("publications/pkg.md"),
+        out,
+        ws,
+        &RepoProjectOptions { license: None, git_init: false, allow_dirty: false, emit_github: false },
+        &Proofs::Skip,
+        &Vocabulary::shipped(),
+    )
+}
+
+#[test]
+fn a_chapter_tangling_python_and_a_mirror_of_python_ship_whole() {
+    let ws = python_workspace("design:area, implementation:pkg\\/gen");
+    let out = tempfile::tempdir().unwrap();
+    let report = project_python(ws.path(), out.path()).expect("the package projects");
+
+    // The mirror's source, as written, at the path the mirror names.
+    assert_eq!(
+        std::fs::read(out.path().join("pkg/mod.py")).unwrap(),
+        std::fs::read(ws.path().join("pkg/mod.py")).unwrap()
+    );
+    assert_eq!(report.sources.iter().collect::<Vec<_>>(), vec!["pkg/mod.py"]);
+    // The chapter, what it tangles to, and the sidecar that tangle wrote.
+    assert!(report.literate_docs.contains(&std::path::PathBuf::from("chapters/gen.md")), "{:?}", report.literate_docs);
+    let generated = std::fs::read_to_string(out.path().join("pkg/gen.py")).expect("the chapter's output ships");
+    assert!(generated.contains("from chapters/gen.md"), "{generated}");
+    assert!(generated.contains("return 42"), "{generated}");
+    assert!(out.path().join("chapters/gen.tangle-map.json").is_file());
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap()).unwrap();
+    assert_eq!(prov["sources"], serde_json::json!({ "pkg/mod.py": "pkg/mod.py" }));
+
+    let ci = std::fs::read_to_string(out.path().join("tools/ci")).unwrap();
+    assert!(ci.contains("\"$tangler\" tangle chapters/gen.md --workspace .\n"), "{ci}");
+    assert!(ci.contains("\"$tangler\" check --workspace . .\n"), "{ci}");
+    assert!(!ci.contains("cargo "), "{ci}");
+}
+
+#[test]
+fn a_mirror_of_a_file_the_collection_does_not_hold_is_refused_by_name() {
+    let ws = python_workspace("design:area");
+    std::fs::remove_file(ws.path().join("pkg/mod.py")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let err = format!("{:#}", project_python(ws.path(), out.path()).expect_err("nothing to mirror"));
+    assert!(err.contains("`pkg/mod.py`") && err.contains("does not hold"), "{err}");
+    assert!(!out.path().join("README.md").exists(), "refused before anything was written");
+}
+
+/// The Python collection with a `vendor/tree` beside it, and a publication
+/// naming `publishes` and carrying `carries` (a Turtle literal list).
+fn carrying_workspace(publishes: &str, carries: &str) -> tempfile::TempDir {
+    let ws = python_workspace(&format!("{publishes} ;\n    x0k:carries {carries}"));
+    let tree = ws.path().join("vendor/tree");
+    std::fs::create_dir_all(tree.join("dist")).unwrap();
+    std::fs::create_dir_all(tree.join("target")).unwrap();
+    std::fs::write(tree.join("seed.txt"), "the seed, as text\n").unwrap();
+    std::fs::write(tree.join("dist/seed.bin"), [0u8, 159, 146, 150, 255]).unwrap();
+    std::fs::write(tree.join("target/build.o"), "a build product").unwrap();
+    ws
+}
+
+#[test]
+fn a_carried_tree_ships_as_the_collection_holds_it() {
+    let ws = carrying_workspace("design:area", "\"vendor/tree\"");
+    let out = tempfile::tempdir().unwrap();
+    let report = project_python(ws.path(), out.path()).expect("the tree is carried");
+    for rel in ["vendor/tree/seed.txt", "vendor/tree/dist/seed.bin"] {
+        assert_eq!(
+            std::fs::read(out.path().join(rel)).unwrap(),
+            std::fs::read(ws.path().join(rel)).unwrap(),
+            "{rel} crossed byte for byte"
+        );
+    }
+    assert!(!out.path().join("vendor/tree/target").exists(), "a build product is not carried");
+    assert_eq!(
+        report.carried.keys().collect::<Vec<_>>(),
+        vec!["vendor/tree/dist/seed.bin", "vendor/tree/seed.txt"]
+    );
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("PROVENANCE.json")).unwrap()).unwrap();
+    assert_eq!(prov["sources"]["vendor/tree/seed.txt"], serde_json::json!("vendor/tree/seed.txt"));
+    assert_eq!(prov["sources"]["pkg/mod.py"], serde_json::json!("pkg/mod.py"), "the mirror is still a source");
+}
+
+#[test]
+fn a_carried_path_that_is_not_plain_not_held_or_an_unshipped_output_is_refused() {
+    for (carries, expected) in [
+        ("\"../outside\"", "not a plain collection-relative path"),
+        ("\"vendor/absent\"", "does not hold"),
+        ("\"pkg\"", "generated from chapters/gen.md"),
+    ] {
+        let ws = carrying_workspace("design:area", carries);
+        let out = tempfile::tempdir().unwrap();
+        let err = format!("{:#}", project_python(ws.path(), out.path()).expect_err(carries));
+        assert!(err.contains(expected), "{carries}: {err}");
+        assert!(!out.path().join("README.md").exists(), "{carries}: refused before anything was written");
+    }
+}
+
+const SCRIPT_ID: &str = "x0k:implementation/demo/script";
+
+fn with_script_chapter(ws: &Path) {
+    std::fs::write(
+        ws.join("knowledge/implementation/demo/script.md"),
+        format!(
+            "# The release script\n\n```turtle folio:document\n{} a x0k:Implementation ;\n    x0k:status \"draft\" ;\n    folio:tangleRoot \"tools/release.py\" .\n```\n\n```python {{#root}}\nprint(\"release\")\n```\n",
+            turtle_id(SCRIPT_ID)
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_chapter_no_crate_owns_beside_shipped_chapters_is_refused_until_named_or_excluded() {
+    let ws = workspace(&[], true);
+    with_script_chapter(ws.path());
+    let err = project_err(ws.path());
+    assert!(err.contains(SCRIPT_ID), "names the chapter: {err}");
+    assert!(err.contains("knowledge/implementation/demo/script.md"), "{err}");
+    assert!(err.contains("neither publishes nor excludes"), "{err}");
+
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_excluding(&["demo-crate"], &[], true, &[SCRIPT_ID]),
+    )
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("excluded, it is a decision on the record");
+    assert!(report.excluded_docs.contains(&SCRIPT_ID.to_string()));
+    assert!(!out.path().join("tools/release.py").exists());
+}
+
+#[test]
+fn a_relative_output_dir_projects() {
+    let ws = workspace(&[], true);
+    let out = tempfile::tempdir().unwrap();
+    // The same directory, named relative to where the test runs.
+    let cwd = std::env::current_dir().unwrap();
+    let common = cwd.ancestors().find(|a| out.path().starts_with(a)).expect("one filesystem root");
+    let mut relative = std::path::PathBuf::new();
+    for _ in cwd.strip_prefix(common).unwrap().components() {
+        relative.push("..");
+    }
+    relative.push(out.path().strip_prefix(common).unwrap());
+    assert!(relative.is_relative());
+    project(ws.path(), &relative).expect("a relative output dir projects");
+    assert!(out.path().join("README.md").is_file());
+}
+
+/// The shippable affordance's publication as somebody else would write
+/// it: `Apache-2.0` with no holder, and not one policy statement beyond
+/// `statements`.
+fn policy_free_publication(statements: &str) -> String {
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    let doc = publication_publishing(&["demo-crate"], &[reference.as_str()])
+        .replace(
+            "    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n",
+            "    x0k:license \"Apache-2.0\" ;\n",
+        )
+        .replace(MARKS, "");
+    with_statements(&doc, statements)
+}
+
+fn read(out: &Path, rel: &str) -> String {
+    std::fs::read_to_string(out.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+}
+
+#[test]
+fn a_publication_stating_no_policy_projects_with_the_neutral_defaults() {
+    let ws = workspace(&[], true);
+    std::fs::write(ws.path().join(PUB_REL), policy_free_publication("")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let report = project(ws.path(), out.path()).expect("a publication stating no policy projects");
+
+    // No toolchain pinned, no floor claimed, and no crate inheriting one.
+    assert!(!out.path().join("rust-toolchain.toml").exists());
+    let root = read(out.path(), "Cargo.toml");
+    assert!(root.contains("[workspace.package]\nedition = \"2021\"\n\n"), "{root}");
+    assert!(!root.contains("rust-version"), "{root}");
+    let manifest = read(out.path(), "demo-crate/Cargo.toml");
+    assert!(!manifest.contains("rust-version"), "{manifest}");
+    // No supply-chain policy, no step that would run one, no pin check.
+    assert!(!out.path().join("deny.toml").exists());
+    assert!(!out.path().join("tools/check-git-pins").exists());
+    let ci = read(out.path(), "tools/ci");
+    assert!(!ci.contains("check-git-pins") && !ci.contains("cargo deny"), "{ci}");
+    // Nothing of ours crosses into somebody else's repository.
+    for ours in ["dialog-db", "Dialog", "x0k-folio publication"] {
+        assert!(!tree_carries(out.path(), ours), "`{ours}` crossed into an outside publication");
+    }
+    // The licence it names, and no holder asked of it.
+    assert_eq!(report.license, "Apache-2.0");
+    assert!(out.path().join("LICENSE-APACHE").is_file());
+    assert!(!out.path().join("LICENSE-MIT").exists());
+    assert!(manifest.contains("license = \"Apache-2.0\""), "{manifest}");
+    // The row shows the affordance's own mark, and no actor or status mark.
+    assert_eq!(report.figures.keys().collect::<Vec<_>>(), ["read-a-line"], "{:?}", report.figures);
+    let page = read(out.path(), SHIPPABLE_PAGE);
+    assert!(!page.contains("human-light.svg") && !page.contains("claimed-light.svg"), "{page}");
+}
+
+#[test]
+fn a_policy_the_publication_states_is_the_one_the_projection_carries() {
+    // A floor, and only a floor.
+    let ws = workspace(&[], true);
+    std::fs::write(ws.path().join(PUB_REL), policy_free_publication("    x0k:rustVersion \"1.70\" ;\n")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+    let root = read(out.path(), "Cargo.toml");
+    assert!(root.contains("[workspace.package]\nedition = \"2021\"\nrust-version = \"1.70\"\n"), "{root}");
+    let manifest = read(out.path(), "demo-crate/Cargo.toml");
+    assert!(manifest.contains("rust-version = { workspace = true }"), "{manifest}");
+    assert!(!out.path().join("rust-toolchain.toml").exists(), "a floor pins no toolchain");
+
+    // A toolchain, stated: the projection pins that channel.
+    std::fs::write(ws.path().join(PUB_REL), policy_free_publication("    x0k:rustToolchain \"1.80.0\" ;\n")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+    let toolchain = read(out.path(), "rust-toolchain.toml");
+    assert!(toolchain.contains("[toolchain]\nchannel = \"1.80.0\"\n"), "{toolchain}");
+    assert!(!read(out.path(), "Cargo.toml").contains("rust-version"));
+
+    // Unstated, a workspace's own toolchain file is carried as found.
+    std::fs::write(ws.path().join(PUB_REL), policy_free_publication("")).unwrap();
+    std::fs::write(ws.path().join("rust-toolchain.toml"), "[toolchain]\nchannel = \"1.81.0\"\n").unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).expect("projection");
+    assert_eq!(read(out.path(), "rust-toolchain.toml"), "[toolchain]\nchannel = \"1.81.0\"\n");
+}
+
+/// The one Git revision the Git tests pin, and a supply-chain policy a
+/// publication might state for it.
+const PIN: &str = "https://github.com/dialog-db/dialog-db?rev=3fac7ad3e691d401fb5c18c18ffb23de74342742";
+const DENY_POLICY: &str = "[sources]\nunknown-git = \"deny\"\nallow-git = [\"https://github.com/dialog-db/dialog-db\"]\n";
+
+#[test]
+fn a_stated_git_pin_is_the_only_git_source_the_projection_admits() {
+    let ws = workspace(&[], true);
+    let doc = with_statements(&publication(&["demo-crate"], &[], true), &format!("    x0k:gitPin \"{PIN}\" ;\n"));
+    std::fs::write(ws.path().join(PUB_REL), format!("{doc}\n```toml {{#deny file=\"deny.toml\"}}\n{DENY_POLICY}```\n")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project(ws.path(), out.path()).unwrap();
+    // The publication's policy, as the policy itself.
+    assert_eq!(read(out.path(), "deny.toml"), DENY_POLICY);
+    let ci = read(out.path(), "tools/ci");
+    assert!(ci.contains("set -eu\nsh tools/check-git-pins\n"), "{ci}");
+    assert!(ci.contains("cargo deny --offline check"), "{ci}");
+    let approved = "git+https://github.com/dialog-db/dialog-db?rev=3fac7ad3e691d401fb5c18c18ffb23de74342742#3fac7ad3e691d401fb5c18c18ffb23de74342742";
+    for (source, expected) in [
+        (approved.to_string(), true),
+        (approved.replace("3fac7ad3e691d401fb5c18c18ffb23de74342742", "0000000000000000000000000000000000000000"), false),
+        (approved.replace("dialog-db/dialog-db", "someone/another"), false),
+    ] {
+        std::fs::write(out.path().join("Cargo.lock"), format!("version = 4\n[[package]]\nname = \"dialog-query\"\nversion = \"0.1.0\"\nsource = \"{source}\"\n")).unwrap();
+        let status = std::process::Command::new("sh").arg("tools/check-git-pins")
+            .current_dir(out.path()).output().unwrap().status;
+        assert_eq!(status.success(), expected, "{source}");
+    }
+}
+
+#[test]
+fn a_git_dependency_the_publication_does_not_pin_is_refused_before_resolution() {
+    let ws = workspace(&[], true);
+    let manifest = ws.path().join("demo-crate/Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(manifest, format!("{text}\ndialog-query = {{ git = \"https://github.com/dialog-db/dialog-db\", rev = \"0000000000000000000000000000000000000000\" }}\n")).unwrap();
+    // Pinned at another revision.
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_statements(&publication(&["demo-crate"], &[], true), &format!("    x0k:gitPin \"{PIN}\" ;\n")),
+    )
+    .unwrap();
+    let error = project_err(ws.path());
+    assert!(error.contains("not a revision this publication pins"), "{error}");
+    assert!(error.contains("at `0000000000000000000000000000000000000000`"), "{error}");
+    // Pinned nowhere: the same refusal, naming the statement that would admit it.
+    std::fs::write(ws.path().join(PUB_REL), publication(&["demo-crate"], &[], true)).unwrap();
+    let error = project_err(ws.path());
+    assert!(error.contains("x0k:gitPin \"https://github.com/dialog-db/dialog-db?rev=<commit>\""), "{error}");
+}
+
 #[test]
 fn a_published_affordance_naming_an_unshipped_module_is_refused() {
     let ws = workspace(&[], true);
@@ -1293,6 +1835,77 @@ fn skipped_proofs_are_listed_and_prove_nothing() {
     assert!(page.contains("<code>a_line_is_read</code> · <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"../../../../affordances/not-run-dark.svg\"><img alt=\"not run\" src=\"../../../../affordances/not-run-light.svg\" height=\"16\"></picture> not run ·"), "{page}");
     assert!(out.path().join("affordances/not-run-light.svg").exists() && !out.path().join("affordances/passed-light.svg").exists());
     assert!(!report.proofs_run && report.proofs.is_empty());
+}
+
+fn projected(out: &Path, path: &str) -> String {
+    std::fs::read_to_string(out.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+#[test]
+fn a_recorded_run_replays_to_the_page_the_run_drew() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let ran = tempfile::tempdir().unwrap();
+    let run = project(ws.path(), ran.path()).expect("projection");
+    assert_eq!(run.proofs.get(PROOF_TEST), Some(&ProofOutcome::Passed), "{:?}", run.proofs);
+
+    let replayed = tempfile::tempdir().unwrap();
+    let replay = project_with(ws.path(), replayed.path(), &Proofs::Recorded(run.proofs.clone()))
+        .expect("projection");
+    assert_eq!(replay.proofs, run.proofs, "the record is the report");
+    assert!(!replay.proofs_run, "nothing ran");
+    for page in ["README.md", SHIPPABLE_PAGE, "affordances/proven-light.svg", "affordances/passed-light.svg"] {
+        assert_eq!(projected(ran.path(), page), projected(replayed.path(), page), "{page}");
+    }
+
+    let skipped = tempfile::tempdir().unwrap();
+    project_with(ws.path(), skipped.path(), &Proofs::Skip).expect("projection");
+    let unnamed = tempfile::tempdir().unwrap();
+    let none = project_with(ws.path(), unnamed.path(), &Proofs::Recorded(Default::default()))
+        .expect("projection");
+    assert!(none.proofs.is_empty() && !none.proofs_run);
+    for page in ["README.md", SHIPPABLE_PAGE] {
+        assert_eq!(projected(skipped.path(), page), projected(unnamed.path(), page), "{page}");
+    }
+}
+
+#[test]
+fn receiving_a_clone_replays_its_proofs_and_runs_none() {
+    let ws = workspace(&[], true);
+    declare_proof(ws.path(), "x0k:affordance/read_a_line");
+    let chapter = ws.path().join(PROOF_REL);
+    let text = std::fs::read_to_string(&chapter).unwrap();
+    let failing = text.replace(
+        "assert_eq!(demo_crate::parse_line(\" a \\nb\"), \"a\");",
+        "panic!(\"a receive ran the proofs\");",
+    );
+    assert_ne!(failing, text, "the proof is made to fail under cargo");
+    std::fs::write(&chapter, failing).unwrap();
+    tangle_document(&chapter, ws.path(), &PipelineRegistry::default()).expect("tangle proof");
+    let reference = format!("{DESIGN_ID}#{SHIPPABLE}");
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        publication_publishing(&["demo-crate"], &[reference.as_str()]),
+    )
+    .unwrap();
+    let clone = tempfile::tempdir().unwrap();
+    project(ws.path(), clone.path()).expect("projection");
+    let prov: serde_json::Value =
+        serde_json::from_str(&projected(clone.path(), "PROVENANCE.json")).unwrap();
+    assert_eq!(prov["proofs"][PROOF_TEST], serde_json::json!("passed"));
+
+    let scratch = tempfile::tempdir().unwrap();
+    let opts = ReceiveOptions { scratch: Some(scratch.path().to_path_buf()), ..Default::default() };
+    let report = receive_repo(clone.path(), ws.path(), &opts)
+        .expect("the reference replays the clone's record rather than running cargo");
+    let changed: Vec<&str> = report.changes.iter().map(|c| c.path.as_str()).collect();
+    assert!(changed.is_empty(), "an untouched clone reads as untouched: {changed:?}");
 }
 
 #[test]
@@ -2335,46 +2948,6 @@ fn configured_relocated_corpus_selects_and_retangles_its_chapters() {
 }
 
 #[test]
-fn projected_policy_admits_only_the_reviewed_dialog_git_revision() {
-    let ws = workspace(&[], true);
-    let out = tempfile::tempdir().unwrap();
-    project(ws.path(), out.path()).unwrap();
-    let policy = std::fs::read_to_string(out.path().join("deny.toml")).unwrap();
-    for license in ["MPL-2.0", "BSD-2-Clause", "BSD-3-Clause", "Zlib"] {
-        assert!(policy.contains(&format!("\"{license}\"")));
-    }
-    assert!(policy.contains("multiple-versions = \"deny\""));
-    assert!(policy.contains("wildcards = \"deny\""));
-    assert!(policy.contains("ignore = []"));
-    assert!(policy.contains("hashbrown@0.16.1"));
-    assert!(policy.contains("required-git-spec = \"rev\""));
-    assert!(policy.contains("allow-git = [\"https://github.com/dialog-db/dialog-db\"]"));
-    assert!(std::fs::read_to_string(out.path().join("tools/ci")).unwrap().contains("sh tools/check-git-pins"));
-    let approved = "git+https://github.com/dialog-db/dialog-db?rev=3fac7ad3e691d401fb5c18c18ffb23de74342742#3fac7ad3e691d401fb5c18c18ffb23de74342742";
-    for (source, expected) in [
-        (approved.to_string(), true),
-        (approved.replace("3fac7ad3e691d401fb5c18c18ffb23de74342742", "0000000000000000000000000000000000000000"), false),
-        (approved.replace("dialog-db/dialog-db", "someone/another"), false),
-    ] {
-        std::fs::write(out.path().join("Cargo.lock"), format!("version = 4\n[[package]]\nname = \"dialog-query\"\nversion = \"0.1.0\"\nsource = \"{source}\"\n")).unwrap();
-        let status = std::process::Command::new("sh").arg("tools/check-git-pins")
-            .current_dir(out.path()).output().unwrap().status;
-        assert_eq!(status.success(), expected, "{source}");
-    }
-}
-
-
-#[test]
-fn a_changed_dialog_manifest_pin_is_rejected_before_dependency_resolution() {
-    let ws = workspace(&[], true);
-    let manifest = ws.path().join("demo-crate/Cargo.toml");
-    let text = std::fs::read_to_string(&manifest).unwrap();
-    std::fs::write(manifest, format!("{text}\ndialog-query = {{ git = \"https://github.com/dialog-db/dialog-db\", rev = \"0000000000000000000000000000000000000000\" }}\n")).unwrap();
-    let error = project_err(ws.path());
-    assert!(error.contains("approved Dialog Git revision"), "{error}");
-}
-
-#[test]
 fn organized_layout_retangles_and_preserves_canonical_source_mapping() {
     let ws = workspace(&[], true);
     let publication_path = ws.path().join(PUB_REL);
@@ -2399,7 +2972,9 @@ fn organized_layout_retangles_and_preserves_canonical_source_mapping() {
     tangle_document(&chapter, root, &PipelineRegistry::default()).unwrap();
     assert_eq!(before, std::fs::read(sidecar_path).unwrap());
     assert_eq!(code, std::fs::read_to_string(root.join("crates/demo-crate/src/lib.rs")).unwrap());
-    assert!(std::fs::read_to_string(root.join("tools/ci")).unwrap().contains("-- tangle implementation --workspace ."));
+    // The re-tangle names the relaid root. The demo publication does not
+    // ship the tangler, so its CI runs the installed one.
+    assert!(std::fs::read_to_string(root.join("tools/ci")).unwrap().contains("\"$tangler\" tangle implementation --workspace ."));
     let second = tempfile::tempdir().unwrap();
     project(ws.path(), second.path()).unwrap();
     assert_eq!(std::fs::read(root.join("PROVENANCE.json")).unwrap(), std::fs::read(second.path().join("PROVENANCE.json")).unwrap());

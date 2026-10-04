@@ -12,11 +12,9 @@ An author, or the composing loop, hands a drawing to the checker and is
 told it is accepted or which rule it broke and where — never handed back
 a silently altered drawing.
 
-<a name="folio-instance-78306b3a6166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1"></a><sub data-instance-iri="x0k:affordance/check_an_icon_against_the_profile" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/check_an_icon_against_the_profile</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1">source declaration</a> · the graph block at line 18 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md:15</sub><a name="folio-source-78306b3a6166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1"></a>
+<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/check_an_icon_against_the_profile" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md"><strong>Affordance</strong> · Check an icon against the profile · <code>https://0k.computer/ontology#affordance/check_an_icon_against_the_profile</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f616e5f69636f6e5f616761696e73745f7468655f70726f66696c65-1"></a>
 
 ```turtle folio:graph
-@prefix actor: <https://0k.computer/ontology#actor/> .
-@prefix software-module: <https://0k.computer/ontology#software-module/> .
 affordance:check_an_icon_against_the_profile a x0k:Affordance ;
     x0k:status "wip" ;
     x0k:claimedFor actor:human,

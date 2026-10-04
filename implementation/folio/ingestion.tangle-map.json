@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/ingestion.md",
-  "source_hash": "86edfd086692294a",
+  "source_hash": "acc7a496171a8160",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-folio-ingest/src/backend.rs",
-          "hash": "be4ba1cda186a6f1"
+          "hash": "15c38ac297367ec1"
         },
         {
           "path": "crates/x0k-folio-ingest/src/checkpoint.rs",
@@ -17,7 +17,7 @@
         },
         {
           "path": "crates/x0k-folio-ingest/Cargo.toml",
-          "hash": "ef22df5bf9b010ca"
+          "hash": "bf79d9691db23af2"
         },
         {
           "path": "crates/x0k-folio-ingest/src/lib.rs",
@@ -33,11 +33,11 @@
         },
         {
           "path": "crates/x0k-folio-ingest/tests/standalone.rs",
-          "hash": "cfe427b87aaaef00"
+          "hash": "4552ad7a31d6ffb9"
         },
         {
           "path": "crates/x0k-folio-ingest/src/delivery.rs",
-          "hash": "cf1ed5f3bbe9d598"
+          "hash": "5912a60ebf35f102"
         }
       ]
     }

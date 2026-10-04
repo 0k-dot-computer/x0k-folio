@@ -2,7 +2,7 @@
 name = "x0k-icon"
 version = "0.2.0"
 edition = { workspace = true }
-description = "The icon profile's one implementation: parse, validate, bind and emit a constrained, role-painted SVG mark for every surface."
+description = "Icons declared inside folio documents: parses a small SVG drawn on a fixed grid in four named paint roles, refuses one that breaks the icon rules, binds the roles to a palette, and writes it as per-colour-scheme files, inline SVG, a sprite, or outlines for a native painter."
 license = "MIT"
 keywords = ["svg", "icons", "themes", "publishing"]
 categories = ["parser-implementations", "rendering::data-formats"]

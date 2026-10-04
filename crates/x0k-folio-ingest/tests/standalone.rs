@@ -286,6 +286,35 @@ async fn a_backend_slower_than_any_grace_still_acknowledges_every_source_when_wa
         "waiting for the backend acknowledges every source");
     assert_eq!(view.facts().len(), 3);
 }
+#[test]
+fn a_closed_ingest_through_the_direct_paths_waits_for_the_store_not_a_clock() {
+    struct Slow { view: MemorySink, delay: std::time::Duration }
+    impl FactSink for Slow {
+        fn replace(&mut self, entity:&str,facts:&[FactEntry],cause:&str)->Result<usize> {
+            std::thread::sleep(self.delay);
+            self.view.replace(entity,facts,cause)
+        }
+        fn retract(&mut self,facts:&[FactEntry],cause:&str)->Result<usize> { self.view.retract(facts,cause) }
+        fn retains_history(&self)->bool { false }
+    }
+    // Longer than the thirty seconds the direct paths used to allow.
+    let delay = std::time::Duration::from_secs(31);
+    let view = MemorySink::default();
+    let mut backends = vec![
+        Backend::new("slow", Slow { view: view.clone(), delay }).waiting_for_quiescence(),
+    ];
+    let fact = FactEntry::new("urn:a", "urn:label", FactValue::Text("A".into()));
+    let batches = vec![("urn:a".to_string(), vec![fact])];
+    let started = std::time::Instant::now();
+    let fan_out = x0k_folio_ingest::backend::replace_document(
+        &mut backends, &std::collections::BTreeSet::new(), &batches, None, "file-content:a");
+    let elapsed = started.elapsed();
+    assert!(fan_out.acked.contains("slow"),
+        "a quiescent backend's write was abandoned after {elapsed:.1?}, before the store went quiet");
+    assert!(elapsed < delay + std::time::Duration::from_secs(5),
+        "a {delay:?} write took {elapsed:.1?}: the call waited past the store going quiet");
+    assert_eq!(view.facts().len(), 1);
+}
 #[tokio::test]
 async fn identity_failure_and_loss_do_not_reuse_acks_and_new_store_replays_only_itself() {
     use std::sync::atomic::AtomicUsize;

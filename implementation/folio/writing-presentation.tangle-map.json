@@ -1,0 +1,17 @@
+{
+  "source": "implementation/folio/writing-presentation.md",
+  "source_hash": "7c6c66b8bb04d315",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "3a99ae0c130e0fbf",
+      "outputs": [
+        {
+          "path": "crates/x0k-folio/src/writing_presentation.rs",
+          "hash": "cf99f4772865d7f2"
+        }
+      ]
+    }
+  ]
+}

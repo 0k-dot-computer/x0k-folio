@@ -218,7 +218,7 @@ impl std::error::Error for LoadError {}
 get the folded model or the reason it is not one. Shapes are the second half
 of the same vocabulary and live in a sibling directory — the layout the
 corpus has, and the layout a projection records in `PROVENANCE.json`'s
-`modules_dir` ([`region-repo.md`](../tangle/region-repo.md)) — so the caller
+`modules_dir` — so the caller
 names the half the record names and the loader finds the other.
 
 <a name="chunk-load"></a><sub>[`src/load.rs`](../../crates/x0k-ontology/src/load.rs) · `#load`</sub>
@@ -262,7 +262,7 @@ impl OntologyModel {
 One caller has no directory to be handed: the build script, which runs
 wherever the crate was unpacked. A packaged crate has to be self-contained,
 so the repository projector vendors a copy of the module files inside the
-crate ([`region-repo.md`](../tangle/region-repo.md)) and a published tarball
+crate and a published tarball
 builds from that; the monorepo has no in-crate copy and reads the canonical
 directory from the repository. The in-crate copy wins when it exists, which
 is the only rule that makes both builds work without a feature flag.

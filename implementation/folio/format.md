@@ -59,6 +59,8 @@ The crate reads as chapters, each owning one idea:
   canonical home per paragraph, degrade-to-link on any failure.
 - [`html-canonical.md`](html-canonical.md) — one true serialization,
   idempotent, behavior-stripped.
+- [`writing-presentation.md`](writing-presentation.md) — editable heading runs
+  with exact Markdown source and submitted-layout decoding.
 - [`canonical-patch.md`](canonical-patch.md) — one patch grammar over
   both body dialects: structural addresses, attributes before text.
 - [`projection.md`](projection.md) — the Loro round trip, behind the
@@ -136,6 +138,7 @@ pub mod document_vocabulary;
 pub mod entity_id;
 pub mod envelope_check;
 pub mod html_canonical;
+pub mod writing_presentation;
 pub mod inline_entity;
 pub mod layout;
 // Unconditional: this is the half of materialization the published build

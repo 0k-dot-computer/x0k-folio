@@ -12,7 +12,15 @@
 //! - an overlay path is projection-local; scaffolding is projection-owned;
 //! - `--apply` patches the working copy, and refuses when the target is
 //!   already dirty;
-//! - a workspace with no VCS still receives, with `rev_exact: false`.
+//! - the receipt records what `--apply` did — landed, or refused and why;
+//! - a workspace with no VCS still receives, with `rev_exact: false`;
+//! - a Cargo workspace with nested crates, a root manifest and a vocabulary
+//!   module is received at the commit the clone records, a hand-written
+//!   edit routed to the crate's real directory;
+//! - the recorded commit, not the (possibly moved) revision, pins the
+//!   reference;
+//! - under the organized layout every edit routes back to its corpus
+//!   path, and the received patches apply there.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -85,8 +93,12 @@ fn workspace(with_git: bool) -> tempfile::TempDir {
 }
 
 fn project(ws: &Path, clone: &Path) {
+    project_doc(ws, clone, PUB_REL)
+}
+
+fn project_doc(ws: &Path, clone: &Path, publication: &str) {
     project_publication_repo(
-        &ws.join(PUB_REL),
+        &ws.join(publication),
         clone,
         ws,
         &RepoProjectOptions {
@@ -276,6 +288,43 @@ fn apply_patches_the_working_copy_and_refuses_a_dirty_target() {
     assert!(err.to_string().contains(DOC_REL), "{err}");
 }
 
+fn read_receipt(out: &Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(out.join("receipt.json")).expect("receipt.json"))
+        .expect("receipt parses")
+}
+
+#[test]
+fn the_receipt_records_what_apply_did() {
+    let ws = workspace(true);
+    let clone = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    project(ws.path(), clone.path());
+    let clone_doc = clone.path().join(DOC_REL);
+    let fixed = std::fs::read_to_string(&clone_doc)
+        .unwrap()
+        .replace("is the whole contract", "is the entire contract");
+    std::fs::write(&clone_doc, fixed).unwrap();
+
+    let landed = tempfile::tempdir().unwrap();
+    let opts = scratch_opts(scratch.path(), true, Some(landed.path().to_path_buf()));
+    let report = receive_repo(clone.path(), ws.path(), &opts).expect("receive --apply");
+    assert!(report.applied);
+    let receipt = read_receipt(landed.path());
+    assert_eq!(receipt["report"]["applied"], true, "{receipt:#}");
+    assert_eq!(receipt["report"]["apply_error"], serde_json::Value::Null, "{receipt:#}");
+    assert_eq!(receipt["report"]["dirty_check"], "git", "{receipt:#}");
+
+    // The target is now dirty: the apply refuses, and the receipt says so.
+    let refused = tempfile::tempdir().unwrap();
+    let opts = scratch_opts(scratch.path(), true, Some(refused.path().to_path_buf()));
+    let err = receive_repo(clone.path(), ws.path(), &opts).expect_err("dirty target refuses --apply");
+    let receipt = read_receipt(refused.path());
+    assert_eq!(receipt["report"]["applied"], false, "{receipt:#}");
+    let recorded = receipt["report"]["apply_error"].as_str().expect("the failure is recorded");
+    assert!(recorded.contains("refusing --apply") && recorded.contains(DOC_REL), "{recorded}");
+    assert_eq!(recorded, format!("{err:#}"), "the receipt carries the error the run exits with");
+}
+
 #[test]
 fn without_a_vcs_the_reference_is_the_current_tree_and_says_so() {
     let ws = workspace(false);
@@ -291,4 +340,269 @@ fn without_a_vcs_the_reference_is_the_current_tree_and_says_so() {
     assert_eq!(report.clone_rev, "");
     assert_eq!(report.changes.len(), 1);
     assert_eq!(report.changes[0].class, Class::Source);
+}
+
+const NESTED_CRATE: &str = "crates/app/demo-crate";
+const NESTED_CORE: &str = "crates/core/demo-core";
+/// The publication in a directory of its own, as ours are kept.
+const NESTED_PUB_REL: &str = "decisions/publications/demo/demo.md";
+const MODULE_FIXTURE: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-modules/core.ttl");
+
+const NESTED_PUB: &str = "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n    x0k:publishes x0k:software-module\\/demo-crate,\n        x0k:software-module\\/demo-core,\n        x0k:ontology-module\\/core ;\n    x0k:entryPoint x0k:software-module\\/demo-crate ;\n    folio:tangleRoot \"README.md\" .\n```\n\n```markdown {#readme}\n# Demo\n\nA demo publication.\n\n<!-- x0k:contents -->\n```\n";
+
+/// A Cargo workspace laid out like the monorepo: a root manifest, published
+/// crates at nested paths (one path-depending on the other), an unpublished
+/// member, the chapter tangled into the nested crate by the real tangler, and
+/// the vocabulary module under `corpora/x0k/ontology/modules`. Committed, so
+/// the projection records a commit. `organized` selects the publication's
+/// organized repository layout (`crates/<name>/`, `implementation/…`).
+fn nested_workspace(organized: bool) -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let ws = tmp.path();
+    std::fs::write(
+        ws.join("Cargo.toml"),
+        format!(
+            "[workspace]\nresolver = \"2\"\nmembers = [\n    \"{NESTED_CRATE}\",\n    \"{NESTED_CORE}\",\n    \"tools/helper\",\n]\n"
+        ),
+    )
+    .unwrap();
+    let members = [
+        (
+            NESTED_CRATE,
+            "demo-crate",
+            "demo-core = { path = \"../../core/demo-core\" }\n",
+            "src/hand.rs",
+            "/// Hand-written, not tangled.\npub fn hand() -> u8 {\n    demo_core::one()\n}\n",
+        ),
+        (
+            NESTED_CORE,
+            "demo-core",
+            "",
+            "src/lib.rs",
+            "/// What the demo crate builds on.\npub fn one() -> u8 {\n    1\n}\n",
+        ),
+        ("tools/helper", "helper", "", "src/main.rs", "fn main() {}\n"),
+    ];
+    for (dir, name, deps, file, body) in members {
+        std::fs::create_dir_all(ws.join(dir).join("src")).unwrap();
+        std::fs::write(
+            ws.join(dir).join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nlicense = \"LicenseRef-Proprietary\"\n\n[package.metadata.x0k]\naccess = \"public\"\n\n[dependencies]\n{deps}"
+            ),
+        )
+        .unwrap();
+        std::fs::write(ws.join(dir).join(file), body).unwrap();
+    }
+    let doc = DOC.replace(
+        "folio:tangleCrate \"demo-crate\"",
+        &format!("folio:tangleCrate \"{NESTED_CRATE}\""),
+    );
+    assert_ne!(doc, DOC, "the chapter names the nested crate");
+    std::fs::create_dir_all(ws.join(DOC_REL).parent().unwrap()).unwrap();
+    std::fs::write(ws.join(DOC_REL), doc).unwrap();
+    std::fs::create_dir_all(ws.join(NESTED_PUB_REL).parent().unwrap()).unwrap();
+    let publication = if organized {
+        NESTED_PUB.replace(
+            "    folio:tangleRoot",
+            "    x0k:repositoryLayout \"organized\" ;\n    folio:tangleRoot",
+        )
+    } else {
+        NESTED_PUB.to_string()
+    };
+    std::fs::write(ws.join(NESTED_PUB_REL), publication).unwrap();
+    let modules = ws.join("corpora/x0k/ontology/modules");
+    std::fs::create_dir_all(&modules).unwrap();
+    std::fs::copy(MODULE_FIXTURE, modules.join("core.ttl")).unwrap();
+    tangle_document(&ws.join(DOC_REL), ws, &PipelineRegistry::default()).expect("tangle");
+    assert!(
+        std::fs::read_to_string(ws.join(NESTED_CRATE).join("src/lib.rs"))
+            .unwrap()
+            .starts_with("// @generated"),
+        "fixture tangles a generated output into the nested crate"
+    );
+    std::fs::write(ws.join(".gitignore"), "/target\n").unwrap();
+    git(ws, &["init", "-q"]);
+    git(ws, &["add", "-A"]);
+    git(ws, &["commit", "-q", "-m", "corpus"]);
+    tmp
+}
+
+#[test]
+fn nested_crates_under_a_root_manifest_are_received_at_the_exact_commit() {
+    let ws = nested_workspace(false);
+    let clone = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    project_doc(ws.path(), clone.path(), NESTED_PUB_REL);
+    assert!(clone.path().join("demo-crate/src/hand.rs").is_file(), "vendored flat by name");
+    assert!(clone.path().join("demo-core/src/lib.rs").is_file(), "the dependency ships");
+    assert!(clone.path().join("ontology/modules/core.ttl").is_file(), "the module ships");
+    let prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(clone.path().join("PROVENANCE.json")).unwrap())
+            .unwrap();
+    let commit = prov["corpus_commit"].as_str().expect("provenance records the commit").to_string();
+    assert_eq!(commit.len(), 40, "a git sha: {prov}");
+
+    // The corpus moves on after the projection.
+    let doc = ws.path().join(DOC_REL);
+    std::fs::write(
+        &doc,
+        std::fs::read_to_string(&doc).unwrap() + "\nA paragraph the maintainer added later.\n",
+    )
+    .unwrap();
+    let hand_src = ws.path().join(NESTED_CRATE).join("src/hand.rs");
+    std::fs::write(
+        &hand_src,
+        std::fs::read_to_string(&hand_src).unwrap() + "// maintainer note, added later\n",
+    )
+    .unwrap();
+    git(ws.path(), &["commit", "-q", "-am", "drift"]);
+
+    // Carol's three edits.
+    let edit = |rel: &str, from: &str, to: &str| {
+        let path = clone.path().join(rel);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(from), "{rel} holds `{from}`");
+        std::fs::write(&path, text.replace(from, to)).unwrap();
+    };
+    edit(DOC_REL, "is the whole contract", "is the entire contract");
+    edit("demo-crate/src/hand.rs", "demo_core::one()\n", "demo_core::one() + 1\n");
+    edit("demo-crate/src/lib.rs", "unwrap_or(\"\").trim()", "unwrap_or(\"\").trim_end()");
+
+    let report = receive_repo(
+        clone.path(),
+        ws.path(),
+        &scratch_opts(scratch.path(), false, Some(out.path().to_path_buf())),
+    )
+    .expect("receive");
+    assert!(report.rev_exact, "reference built at the clone's commit");
+    assert_eq!(report.changes.len(), 3, "only Carol's three: {:#?}", report.changes);
+    let change = |p: &str| {
+        report
+            .changes
+            .iter()
+            .find(|c| c.path == p)
+            .unwrap_or_else(|| panic!("{p} not in report: {:#?}", report.changes))
+    };
+
+    let literate = change(DOC_REL);
+    assert_eq!(literate.class, Class::Literate);
+    assert_eq!(literate.target.as_deref(), Some(DOC_REL));
+    let patch = literate.patch.as_deref().unwrap();
+    assert!(patch.contains("+is the entire contract."), "{patch}");
+    assert!(!patch.contains("maintainer added later"), "drift must not appear reversed");
+
+    let source = change("demo-crate/src/hand.rs");
+    assert_eq!(source.class, Class::Source);
+    let real = format!("{NESTED_CRATE}/src/hand.rs");
+    assert_eq!(source.target.as_deref(), Some(real.as_str()), "routed to the crate's real path");
+    let patch = source.patch.as_deref().unwrap();
+    assert!(patch.starts_with(&format!("--- a/{real}\n+++ b/{real}\n")), "{patch}");
+    assert!(!patch.contains("maintainer note"), "drift must not appear reversed");
+
+    let generated = change("demo-crate/src/lib.rs");
+    assert_eq!(generated.class, Class::Generated);
+    let origin = generated.produced_by.as_ref().expect("origin named");
+    assert_eq!(origin.doc, DOC_REL);
+    assert_eq!(origin.chunks, vec!["parse-line".to_string()]);
+
+    assert_eq!(report.received(), 2);
+    assert_eq!(report.refused(), 1);
+    let receipt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path().join("receipt.json")).unwrap())
+            .unwrap();
+    assert_eq!(receipt["report"]["reference_commit"], commit.as_str());
+}
+
+#[test]
+fn the_recorded_commit_pins_the_reference_when_the_revision_has_moved() {
+    let ws = workspace(true);
+    let clone = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    project(ws.path(), clone.path());
+    let prov_path = clone.path().join("PROVENANCE.json");
+    let mut prov: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&prov_path).unwrap()).unwrap();
+    assert_eq!(prov["corpus_commit"], prov["corpus_rev"], "git records one sha twice");
+    prov["corpus_rev"] = serde_json::json!("HEAD");
+    std::fs::write(&prov_path, serde_json::to_string_pretty(&prov).unwrap()).unwrap();
+
+    let doc = ws.path().join(DOC_REL);
+    std::fs::write(
+        &doc,
+        std::fs::read_to_string(&doc).unwrap() + "\nA paragraph the maintainer added later.\n",
+    )
+    .unwrap();
+    git(ws.path(), &["commit", "-q", "-am", "drift"]);
+
+    let clone_doc = clone.path().join(DOC_REL);
+    let fixed = std::fs::read_to_string(&clone_doc)
+        .unwrap()
+        .replace("is the whole contract", "is the entire contract");
+    std::fs::write(&clone_doc, fixed).unwrap();
+
+    let report = receive_repo(clone.path(), ws.path(), &scratch_opts(scratch.path(), false, None))
+        .expect("receive");
+    assert!(report.rev_exact);
+    assert_eq!(report.changes.len(), 1, "{:#?}", report.changes);
+    let patch = report.changes[0].patch.as_deref().unwrap();
+    assert!(patch.contains("+is the entire contract."), "{patch}");
+    assert!(!patch.contains("maintainer added later"), "built from the commit, not from HEAD");
+}
+
+#[test]
+fn the_organized_layout_routes_every_edit_back_to_its_corpus_path() {
+    let ws = nested_workspace(true);
+    let clone = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    project_doc(ws.path(), clone.path(), NESTED_PUB_REL);
+    let chapter = "implementation/demo/colophon.md";
+    assert!(clone.path().join(chapter).is_file(), "the chapter is organized");
+    assert!(clone.path().join("crates/demo-crate/src/hand.rs").is_file(), "the crate is organized");
+
+    let edit = |rel: &str, from: &str, to: &str| {
+        let path = clone.path().join(rel);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(from), "{rel} holds `{from}`");
+        std::fs::write(&path, text.replace(from, to)).unwrap();
+    };
+    edit(chapter, "is the whole contract", "is the entire contract");
+    edit("crates/demo-crate/src/hand.rs", "demo_core::one()\n", "demo_core::one() + 1\n");
+    edit("crates/demo-crate/src/lib.rs", "unwrap_or(\"\").trim()", "unwrap_or(\"\").trim_end()");
+
+    let report = receive_repo(clone.path(), ws.path(), &scratch_opts(scratch.path(), true, None))
+        .expect("receive --apply");
+    assert!(report.rev_exact);
+    assert_eq!(report.changes.len(), 3, "only Carol's three: {:#?}", report.changes);
+    let change = |p: &str| {
+        report
+            .changes
+            .iter()
+            .find(|c| c.path == p)
+            .unwrap_or_else(|| panic!("{p} not in report: {:#?}", report.changes))
+    };
+    let literate = change(chapter);
+    assert_eq!(literate.class, Class::Literate);
+    assert_eq!(literate.target.as_deref(), Some(DOC_REL), "routed through path_map");
+    let source = change("crates/demo-crate/src/hand.rs");
+    assert_eq!(source.class, Class::Source);
+    let real = format!("{NESTED_CRATE}/src/hand.rs");
+    assert_eq!(source.target.as_deref(), Some(real.as_str()));
+    let generated = change("crates/demo-crate/src/lib.rs");
+    assert_eq!(generated.class, Class::Generated, "a generated edit is refused, not scaffolding");
+    let origin = generated.produced_by.as_ref().expect("origin named");
+    assert_eq!(origin.doc, DOC_REL, "named at its corpus path");
+    assert_eq!(origin.chunks, vec!["parse-line".to_string()]);
+
+    assert!(report.applied);
+    let doc = std::fs::read_to_string(ws.path().join(DOC_REL)).unwrap();
+    assert!(doc.contains("is the entire contract"), "the chapter patch applied to the corpus doc");
+    assert!(
+        doc.contains(&format!("folio:tangleCrate \"{NESTED_CRATE}\"")),
+        "the organized relocation did not leak back: {doc}"
+    );
+    let hand = std::fs::read_to_string(ws.path().join(&real)).unwrap();
+    assert!(hand.contains("demo_core::one() + 1"), "the source patch applied at the crate's real path");
 }

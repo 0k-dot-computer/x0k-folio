@@ -23,7 +23,7 @@ and signed in it also runs `gh attestation verify` against the release's SLSA
 build provenance and refuses if that fails; without it, it prints one line
 saying the check was skipped and the command that runs it. It installs to
 `~/.local/bin` with no `sudo` (`FOLIO_INSTALL_DIR` moves it), pins a release
-when told to (`curl -fsSL https://0k.computer/folio/install.sh | FOLIO_VERSION=0.1.1 sh`),
+when told to (`curl -fsSL https://0k.computer/folio/install.sh | FOLIO_VERSION=0.4.0 sh`),
 and its last lines say what it installed, where, and whether that directory
 is on your `PATH`. **Windows is not covered by the script**:
 take the `.zip` from [the release page](https://github.com/0k-dot-computer/x0k-folio/releases),
@@ -77,7 +77,7 @@ The binaries the script installs come from the release lane in this
 repository: `.github/workflows/release.yml` builds a static binary per
 platform on a tag, attests each with SLSA build provenance, and attaches
 them — with one `SHA256SUMS` and `install.sh` itself — to the tag's release.
-[v0.3.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.3.0) is such a release: a static binary for five platforms,
+[v0.4.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.4.0) is such a release: a static binary for five platforms,
 `install.sh`, the source closure below, and one `SHA256SUMS`, attested at
 build.
 
@@ -89,8 +89,8 @@ attested like the binaries: the repository at that tag, every crate its
 with no network, and no GitHub, at all:
 
 ```sh
-tar -xzf x0k-folio-v0.3.0-vendor.tar.gz
-cd x0k-folio-v0.3.0
+tar -xzf x0k-folio-v0.4.0-vendor.tar.gz
+cd x0k-folio-v0.4.0
 cargo build --offline --locked --release -p x0k-tangle -p x0k-folio-cli
 ```
 
@@ -108,10 +108,9 @@ Five verbs are the ones you will use, and each has a `--help`:
 | `x0k-tangle affordances <path…>` | print every affordance the documents declare, as JSON |
 | `x0k-tangle weave <doc> --output-dir <dir>` | render one document as an HTML page |
 
-`index`, `list` and `workspace` also run here, and `x0k-tangle
---help` lists them; `weave-region`, `project-repo`, `publish-repo` and
-`receive-repo` are marked `[corpus-only]` and refuse, because they read the
-private corpus this repository was projected from. In this checkout `cargo
+`index` and `list` also run here, and so do the three verbs that publish a
+collection ([below](#publishing-a-collection)); `x0k-tangle --help` lists
+them all. In this checkout `cargo
 run --release -p x0k-tangle -- <verb>` is the same thing as the binary; from
 your own repository, call the binary by path or put `target/release` on your
 `PATH`. The commands below write `x0k-tangle` for either.
@@ -188,7 +187,12 @@ are ids, and several targets share one predicate, separated by commas:
 shipped `document` file, **or a predicate of your own module, under your own
 prefix**: a `supersededBy` property in a `bs` module of yours is
 `bs:supersededBy` in the header. A literal statement the tools do not read
-for themselves is carried as written, keyed by its term.
+for themselves is carried as written, keyed by its term — and its term, like
+an edge's, is one some loaded module declares, whatever the document's
+class: `check` refuses `x0k:fooBar "x"` by its term and the line that wrote
+it, and names the declared term it is nearest when one is close
+(`x0k:tells` is told `x0k:tell`). "As written" is what `ingest` and `index`
+do with a statement; neither refuses one, so `check` goes first.
 
 There is one spelling, and you meet it everywhere: the term in the header is
 the term in the vocabulary file and the predicate in the store. The graph
@@ -208,14 +212,50 @@ would have.
 Nothing in the frontmatter types a document — a file whose only metadata is
 there has no header.
 
-The header is a fenced block, so a site generator renders it as one: MkDocs,
-Docusaurus and GitHub show it as a Turtle code block under the title. That is
-on purpose — what a document claims about itself sits where a reader of the
-source finds it, and `weave` shows it too. A site that would rather not show
-it drops it in its own build: it is always the first fenced block and its
-info string is exactly `turtle folio:document`, so a filter on that one
-string removes the header and nothing else. A mirror needs no header at all,
-so a page that only quotes code shows no block.
+The header is a fenced block, and a reader of the page sees it on purpose:
+what a document claims about itself sits where a reader of the source finds
+it, and `weave` shows it too. Whether a site generator shows it as code
+depends on the generator. Three were tried with this format, on pages
+carrying a header and a graph block, a mirror, prose after each block, and
+`---` front matter with a `title:`:
+
+- **GitHub** shows every block as written, as highlighted code: the header
+  and graph blocks as Turtle, a chunk in its own language.
+- **MkDocs** needs a hook. Python-Markdown's two fence extensions,
+  `pymdownx.superfences` and plain `fenced_code`, accept a fence opened by a
+  language and, optionally, attributes in braces, and nothing else, so
+  `turtle folio:document` does not open a fence there: the header becomes
+  inline code, and the prose after it runs into it. `fenced_code` refuses a
+  chunk's opening, `python {#backoff from="…"}`, the same way. This
+  repository ships the hook as `tools/mkdocs_folio.py`. Copy it beside your
+  `mkdocs.yml` and name it there:
+
+  ```yaml
+  hooks:
+    - mkdocs_folio.py
+  ```
+
+  It rewrites folio's fence openings before Markdown reads the page, and
+  nothing else: the header and graph blocks become Turtle code, and a chunk
+  becomes code in its language under the chunk's id, without the attributes
+  that say where the code came from. A fence inside another fence, and
+  indented code, stay as written. Tested with MkDocs 1.6.1, Material for
+  MkDocs 9.7.0, pymdown-extensions 10.17.2 and Python-Markdown 3.9.0, under
+  each fence extension.
+- **Docusaurus** 3.10.2, reading `.md` as MDX (its default), shows every
+  block as code in its language as written, with no plugin. It ignores the
+  rest of a fence's opening, so a chunk's id is not an anchor on the page,
+  and its default highlighter has no Turtle grammar, so the header shows as
+  plain text.
+
+A site that would rather not show the header drops it. With the MkDocs hook,
+`folio_header: hide` in a page's front matter, or under `extra:` in
+`mkdocs.yml` for every page, drops the page's first fenced block when it is
+the header; a page's own setting wins. Elsewhere, a filter in your own build
+does the same: the header is always the first fenced block and its info
+string is exactly `turtle folio:document`, so a filter on that one string
+removes the header and nothing else. A mirror needs no header at all, so a
+page that only quotes code shows no block.
 
 Then check the folder — any folder. The checker reads every `.md` under the
 path whose first fenced block is a header, and skips the rest:
@@ -226,7 +266,8 @@ x0k-tangle check docs/decisions
 
 Two kinds of thing come back, and they are kept apart. A **defect** exits
 non-zero: a header that does not parse, a prefix nothing declares, a class
-the vocabulary does not declare, a predicate no loaded module declares. A
+the vocabulary does not declare, a predicate no loaded module declares —
+an edge's or a literal statement's, named with its line. A
 **note** does not: ``edge `x0k:refinedBy` → `x0k:architecture/retry-queue`
 names no document here`` says the edge is well formed and its target is
 absent. The note's wording was written for this repository's own edges,
@@ -338,14 +379,16 @@ collection that loads the module may use it. The block that declares the
 module is the one exception: it is read before the module exists, so it
 states `@prefix paper: <https://example.org/papers#> .` itself.
 
-`check` reads a block's literal statements as fields, too: once your module
-declares a datatype property of a class — `paper:reviewed`, an `xsd:boolean`
-over `paper:Paper` — a field whose term no loaded module declares is refused,
+`check` reads a block's literal statements as fields, too, on an instance
+of any class: a field whose term no loaded module declares is refused,
 naming the nearest declared property (`paper:revieweddd` is told
-`paper:reviewed`), and on any class a value that contradicts a property's
-declared datatype is refused, naming the property, the value and the datatype
-(`paper:reviewed "yes"` is a string, not an `xsd:boolean`; a boolean is a
-bare `true` or `false`).
+`paper:reviewed`), and a value that contradicts a property's declared
+datatype is refused, naming the property, the value and the datatype
+(`paper:reviewed "yes"` is a string, not an `xsd:boolean`, for a module that
+declares `paper:reviewed` an `xsd:boolean` over `paper:Paper`; a boolean is
+a bare `true` or `false`). So a field your documents carry is a term your
+module declares — an `owl:DatatypeProperty`, with a range when you want its
+values read.
 
 The declaration that makes a prefix yours is one statement of that block,
 and `owl:` and `vann:` are predeclared there:
@@ -424,18 +467,36 @@ return.
 
 `check` reads your documents one at a time. To ask about the set — which
 decisions are superseded, what points at this one — load them into a database
-and query it:
+and query it. `x0k-folio-cli` reconciles every typed document under a root
+into an embedded Dialog datalog store, and answers queries over the graph
+they form:
 
 ```sh
 x0k-folio-cli ingest --root docs/decisions --database .folio/db --shipped
 ```
 
-`ingest` reads the directory once and commits each document's facts; it is a
-batch verb and waits for the store rather than for a clock, so a large
-collection takes as long as it takes. `watch` is the one that runs beside you,
-rescanning on an interval and moving on from a slow write. Treat `ingest` as a
-nightly job or a pre-merge step, not a per-keystroke hook: it is seconds per
-hundred documents, not milliseconds.
+The vocabulary bundled with the binary is the default, so `--shipped` only
+says out loud what would happen anyway. `--vocabulary <dir>` reads the `*.ttl`
+modules in that directory *as well*, which is what a reader with subjects of
+their own wants: your terms plus the ones a header is made of. Say
+`--only-vocabulary` when that directory is genuinely the whole vocabulary.
+`x0k-tangle check` takes the same two flags and loads through the same
+function, so a document `check` accepts is a document `ingest` can project.
+
+`ingest` reads the directory once, commits each document's facts, and reports
+how many Markdown files it read, how many carried a header, and how many of
+those were valid. It is a batch verb and waits for the store rather than for
+a clock: each document's commit is confirmed before the next begins, so a
+large collection takes as long as it takes, and a run that cannot confirm a
+document exits non-zero and names it rather than handing you a quietly empty
+database. `--delivery-grace-ms` (1–30000) puts a bound on that wait if you
+want one. `watch` is the one that runs beside you, re-ingesting as the
+documents change and moving on from a slow write — it waits 30000 ms unless
+told otherwise, and replays what it moved on from on its next pass. `rebuild`
+builds a new generation and keeps the old one until it succeeds, and
+`status` prints the last reconciliation, including what it rejected. Treat
+`ingest` as a nightly job or a pre-merge step, not a per-keystroke hook: it is
+seconds per hundred documents, not milliseconds.
 
 Four questions need no query language at all:
 
@@ -472,6 +533,21 @@ document that simply has no edges. A full IRI is accepted as it comes. If the
 question runs and answers nothing, the CLI says which it was: no document
 with that id, or a document carrying no such edge.
 
+Every other question is a query file:
+
+```sh
+x0k-folio-cli query --database .folio/db --file docs/queries/mentions.json
+```
+
+A query file is a native Dialog query: JSON datalog, verbose, and with no
+surface syntax yet. The seven under `crates/x0k-folio-cli/examples/queries/`
+are the reference — `citations.json` is the smallest one that joins two
+documents, `design-implementations.json` walks a header edge,
+`instances.json` reads what graph blocks describe — and every other question
+is one of those shapes with different properties and bindings. Copy the
+nearest one and change the IRIs. Which IRIs, and what the file is made of,
+come next.
+
 ### What a header becomes
 
 There is no field table to learn. Every statement a header makes is projected
@@ -495,7 +571,8 @@ retry-budget one above:
 
 A literal keeps the datatype it was written with — a string as text, a bare
 `12` as an integer, a bare `true` as a boolean. Beside the header's own
-statements the ingest adds **provenance**, under `folio:` too:
+statements the ingest adds **provenance**, under `folio:` too, so its IRIs
+read `…#folio/sourcePath`, `…#folio/sourceDocument` and so on:
 `folio:sourcePath` is the file the header was read from, and
 `folio:sourceDocument`, `folio:sourceStart` and `folio:sourceEnd` say which
 document a graph block sits in and at what byte offsets
@@ -504,6 +581,11 @@ selected). Provenance is about the projection, not about the document, which
 is why no header states it. Every one of these terms carries an
 `rdfs:comment`, so `grep` over the module files answers for them the same way
 it answers for any other predicate.
+
+A graph block follows the same rule. Each one that describes something is an
+entity of its own, its statements facts as written —
+`https://example.org/papers#cites` for the `paper:cites` of the papers
+example — plus the section's heading and prose as its title and description.
 
 ### What a query file is made of
 
@@ -783,58 +865,203 @@ The second prints every declaration as JSON — id, title, description, the
 document it is defined in, its facts by predicate, and the test chunks that
 prove it — for whatever consumes it next.
 
-## Querying what you typed
+## Publishing a collection
 
-`check` reads one document at a time. `x0k-folio-cli` reads the set: it
-reconciles every typed document under a root into an embedded Dialog datalog
-store, and answers queries over the graph they form.
+A **publication** is one more document in your collection. It names what
+to publish — documents, and crates if you have them — and the licence it
+goes out under, and three verbs do the rest: `project-repo` writes it as a
+standalone repository, `publish-repo` pushes that repository to a git
+remote, and `receive-repo` turns a contributor's clone of it back into
+patches against your documents. This repository is one such projection,
+made by the same verbs.
 
-```sh
-x0k-folio-cli ingest --root docs --database .folio/docs.db --vocabulary docs/.folio-vocab
-x0k-folio-cli query --database .folio/docs.db --file docs/queries/mentions.json
+### The smallest publication
+
+````markdown
+# Field notes
+
+```turtle folio:document
+publication:field-notes a x0k:Publication ;
+    x0k:status "accepted" ;
+    x0k:publishes acme:report\/q3, acme:report\/annual ;
+    x0k:entryPoint acme:report\/annual ;
+    x0k:license "MIT" ;
+    x0k:copyright "Acme Field Team" ;
+    x0k:publishRemote "https://git.example.com/acme/field-notes.git" ;
+    folio:tangleRoot "README.md" .
 ```
 
-The vocabulary bundled with the binary is the default, so `--shipped` only
-says out loud what would happen anyway. `--vocabulary <dir>` reads the `*.ttl`
-modules in that directory *as well*, which is what a reader with subjects of
-their own wants: your terms plus the ones a header is made of. Say
-`--only-vocabulary` when that directory is genuinely the whole vocabulary.
-`x0k-tangle check` takes the same two flags and loads through the same
-function, so a document `check` accepts is a document `ingest` can project.
-`ingest` reports how many Markdown files it read,
-how many carried a header, and how many of those were valid; `status` prints
-the last reconciliation including what it rejected; `watch` re-ingests as the
-documents change; `rebuild` builds a new generation and keeps the old one
-until it succeeds. Ingest waits for the store to confirm delivery before it
-exits — that wait is `--delivery-grace-ms` (1–30000, default 30000), it is
-most of the wall-clock time of a small run, and a run that cannot confirm
-exits non-zero rather than handing you a quietly empty database. This is a
-nightly or a pre-push job, not a pre-commit hook.
+```markdown {#readme}
+# Field notes
 
-A query is a native Dialog query file: JSON datalog, verbose, and with no
-surface syntax yet. The seven under
-`crates/x0k-folio-cli/examples/queries/` are the reference — `citations.json`
-is the smallest one that joins two documents, `design-implementations.json`
-walks a header edge, `instances.json` reads what graph blocks describe — and every
-other question is one of those shapes with different properties and bindings.
-Copy the nearest one and change the IRIs.
+The field team's reports, typed and checked.
 
-**Which IRIs.** The ones the header wrote. A header's statements become facts
-about the document's own entity under the terms they are written with,
-expanded through their prefixes: `x0k:status` is
-`https://0k.computer/ontology#status`, `x0k:refinedBy` is `#refinedBy`, the
-class is an `rdf:type` fact, and `folio:tangleRoot` is `#folio/tangleRoot`.
-Provenance the ingest adds sits under `folio:` too — `#folio/sourcePath`,
-`#folio/sourceDocument`, `#folio/sourceKind`, `#folio/sourceOrigin` — and
-those are declared as well. The whole rule is under *What a header becomes*
-above. Asking for a predicate no fact uses returns no rows and a note naming
-the predicate, never a silent empty answer.
+<!-- x0k:contents -->
+```
+````
 
-The entity those facts are about is the header's subject, expanded. Each
-graph block that describes something is an entity of its own, its statements
-facts as written — `https://example.org/papers#cites` for the `paper:cites`
-of the papers example — plus the section's heading and prose as its title
-and description.
+Line by line:
+
+- `publication:field-notes a x0k:Publication` is the publication's id and
+  class. `publication:` is a prefix you get without declaring it.
+- `x0k:publishes` names everything published, by id. A document is found
+  by the id its own header declares, wherever it sits in your collection;
+  a Rust crate is `software-module:<package name>`, and publishing one
+  makes the repository a Cargo workspace with that crate under `crates/`.
+  Documents typed in a module of your own, like `acme:Report` here, need
+  that module's directory named with `--vocabulary <dir>` on every verb
+  below.
+- `x0k:entryPoint` names what a reader starts from, and must be one of the
+  things published. When it names a crate, that crate's version is the one
+  stamped into the shipped vocabulary modules' `owl:versionIRI`. It is
+  optional.
+- `x0k:license` is any SPDX expression, and it is required: there is no
+  default licence, and a publication without one refuses to project.
+  `--license` overrides it for one run. Each identifier gets a file of its
+  own — `LICENSE-MIT`, `LICENSE-APACHE`, `LICENSE-<identifier>` — and only
+  MIT's text is written out; any other gets a placeholder naming where the
+  canonical text is, for you to fill in.
+- `x0k:copyright` is the holder MIT's licence line names, so MIT requires
+  it. Other licences do not.
+- `x0k:publishRemote` is where `publish-repo --really` pushes. `--remote
+  <url>` overrides it for one run. Without either, the push goes to
+  `x0k:repository`, the repository the projected manifests already name; a
+  publication that states none of the three can be projected and
+  rehearsed but not pushed.
+- `folio:tangleRoot "README.md"` and the `readme` chunk are the README. A
+  publication must tangle one. It may also tangle other Markdown at the
+  repository's root or under `guides/`, diagrams under `assets/diagrams/`,
+  and a `deny.toml`; any other path is refused.
+- `<!-- x0k:contents -->` is where the projector writes the contents page:
+  every literate chapter and vocabulary module the repository ships, each
+  described by the `x0k:summary` its own header declares. A publication
+  that ships either must carry the marker on one of its pages; one that
+  publishes only documents may leave it out.
+
+`x0k:status` says where the publication stands, as it does on any
+document.
+
+### What `project-repo` writes
+
+```sh
+x0k-tangle project-repo meta/field-notes.md --output-dir ../field-notes \
+  --workspace . --vocabulary vocab
+```
+
+The output directory becomes a git repository with one commit. It holds:
+
+- every published document, at the path it has in your collection, and
+  every literate chapter that generates published code, beside the code it
+  generates and its `.tangle-map.json` sidecar;
+- the published crates under `crates/`, with a workspace `Cargo.toml` and
+  `Cargo.lock`, when any crate is published;
+- the README, and whatever other Markdown the publication tangles;
+- the licence files;
+- `PROVENANCE.json`: the publication's id, the commit of your collection
+  the projection was made from, where every file came from, what was held
+  back, and the vocabulary that shipped;
+- the vocabulary your documents are written in — the modules named with
+  `--vocabulary` that the published documents use, under
+  `ontology/modules/` — so a reader of the repository can check its
+  documents;
+- `tools/ci`, which re-tangles every literate document, checks every
+  document against the shipped vocabulary when there is one, builds and
+  tests the crates when there are any, and fails if the tree changed;
+  `tools/x0k-guard-generated`, which refuses a pull request that edits a
+  generated file; and `.github/workflows/` wrappers that call the two
+  (`--no-github` leaves them out).
+
+When the publication does not publish `x0k-tangle` itself, `tools/ci`
+installs it: the release whose version is the `x0k-tangle` that made the
+projection, through the release's own installer, which checks it against
+the release's `SHA256SUMS`. `FOLIO_VERSION` moves the pin for one run, and
+`X0K_TANGLE` names a tangler you already have.
+
+Projecting into a directory that already holds a projection adds one
+commit to its history, so repeated publishes make one continuous history.
+A path listed with `x0k:overlay` belongs to the published side: written
+once if a chunk seeds it, and never touched again.
+
+### The build policy a publication states
+
+How the repository is built is the publication's to say. Each statement
+has a default that adds nothing you did not say:
+
+| Statement | What it sets | Without it |
+|---|---|---|
+| `x0k:rustVersion "1.89"` | the oldest Rust the manifests promise | your workspace's own `rust-version`, else none |
+| `x0k:rustToolchain "1.95.0"` | the toolchain `rust-toolchain.toml` pins | your workspace's own `rust-toolchain.toml`, else none |
+| `x0k:gitPin "<url>?rev=<commit>"` | a Git revision a crate may depend on, once per pin | none: a Git dependency is refused |
+| a chunk with `file="deny.toml"` | the `cargo deny` policy `tools/ci` runs | none, and no `cargo deny` step |
+| `x0k:marks <document>` | the documents whose sections declare the marks a contents row shows | none |
+| `x0k:publishBranch "main"` | the branch a publish pushes | the remote's default branch |
+| `x0k:publishRegistry "crates.io"` | upload the published crates to crates.io | none: no crate is uploaded |
+| `x0k:overlay "CONTRIBUTING.md"` | paths the published side owns | none |
+
+### `publish-repo`
+
+```sh
+x0k-tangle publish-repo meta/field-notes.md --output-dir ../field-notes \
+  --workspace . --vocabulary vocab
+```
+
+Without `--really` nothing leaves your machine. The verb projects with
+every guard on; builds and tests the result when it publishes crates; and
+reports the commit it would push, the remote, and the branch. When the
+publication states `x0k:publishRegistry "crates.io"`, it also asks the
+crates.io index which crate versions it already serves and rehearses the
+rest with `cargo publish --dry-run`. Read the report, look at the
+projection, then:
+
+```sh
+x0k-tangle publish-repo meta/field-notes.md --output-dir ../field-notes \
+  --workspace . --vocabulary vocab --really
+```
+
+pushes the projection's history to the remote — `HEAD` onto the branch —
+after uploading the crates the index does not have yet, when the
+publication asks for that. It refuses unless the build, the tests and
+every rehearsal passed, and it refuses before uploading anything when
+there is no remote to push to.
+
+### `receive-repo`
+
+A contribution arrives as a change to the published repository: a pull
+request, or a clone somebody sends you. Most of that repository is
+generated, so the change has to go back into your collection, to the
+documents it was generated from:
+
+```sh
+x0k-tangle receive-repo ../their-clone --workspace . --vocabulary vocab \
+  --out ../received
+```
+
+The verb finds the publication by the id in the clone's `PROVENANCE.json`,
+rebuilds the projection the contributor started from — at the commit of
+your collection that `PROVENANCE.json` records — and compares the clone
+with it. Each changed path is sorted: an edited document or hand-written
+source becomes a unified patch against the file it came from in your
+collection; an edit to a generated file is refused, naming the document
+that produces it; a path the published side owns, and every file the
+projector writes (README, CI, manifests, licences), is reported and not
+received. The patches and a `receipt.json` land in `--out`; apply them with
+`git apply`, or pass `--apply` to patch your working copy directly (it
+never commits, and refuses a file that already has uncommitted changes).
+The verb exits non-zero when anything was refused, so a forge check can
+run it on every pull request.
+
+Keep your collection in git: the rebuild needs the recorded commit. Without
+it the comparison is against your current tree, the report says so, and
+whatever changed in your collection since the projection shows up in the
+patches, reversed.
+
+### What stays ours
+
+The reader website we weave our own publications into — every document of
+a publication as a page on one canvas, laid out in an atlas of how the
+documents relate — is ours and is not in this repository. `weave` renders
+one document as a page, and `project-repo` is how a collection of yours
+is published.
 
 ## Your agent
 
@@ -883,14 +1110,12 @@ Said here so that nothing above has to imply it.
   the vocabulary marks no class as a document genus, so any class the loaded
   modules declare is an accepted `a`, and narrowing that needs a marker
   the vocabulary does not have.
-- **A configurable root for the legacy `workspace` verb.** Its identity
-  pipeline discovers `knowledge/implementation/`. Explicit-path tangling
-  works anywhere under the workspace; this repository's CI explicitly tangles
-  `implementation/`.
-- **The receive side.** `receive-repo` turns a contributor's clone of a
-  projected repository into patches against the corpus it came from, and it
-  is `[corpus-only]`: it runs against our corpus, not yours, and nothing in
-  this repository projects a repository of your own or receives one back.
-  What you can adopt is the format, the tangler and the vocabulary;
-  publication as projection stays on our side of the boundary.
+- **A whole-tree sweep.** `tangle` takes the documents or directories you
+  name; nothing walks a tree on its own. This repository's CI explicitly
+  tangles `implementation/`.
+- **A reader website for a whole publication.** `weave` renders one
+  document as a page. The website we weave a publication into — every
+  document on one canvas, laid out in an atlas of how they relate — is
+  ours and is not in this repository; a publication of yours is published
+  as a repository ([Publishing a collection](#publishing-a-collection)).
   Contributions to this repository go through `guides/CONTRIBUTING.md`.

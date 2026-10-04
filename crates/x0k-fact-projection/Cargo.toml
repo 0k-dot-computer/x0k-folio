@@ -2,7 +2,7 @@
 name = "x0k-fact-projection"
 version = "0.2.0"
 edition = { workspace = true }
-description = "Wasm-safe fact-projection contract: substrate-neutral FactEntry tuples, folio envelope + grove entity projections, and the FactSource read seam (single-spine plan C0)"
+description = "The fact shape folio documents are projected into (entity, predicate, typed value, and the cause that produced it), the projection of a document's header into those facts, and the read interface a consumer gets them through; no storage dependency, and it builds for wasm."
 license = "MIT"
 rust-version = { workspace = true }
 repository = "https://github.com/0k-dot-computer/x0k-folio"

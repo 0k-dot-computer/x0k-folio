@@ -1,0 +1,21 @@
+{
+  "source": "implementation/tangle/repository-verbs.md",
+  "source_hash": "1e7bb61d476a6acf",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "7752aad35f4d5654",
+      "outputs": [
+        {
+          "path": "crates/x0k-tangle/src/repository_verbs.rs",
+          "hash": "16136f7facab93f1"
+        },
+        {
+          "path": "crates/x0k-tangle/tests/repository_verbs.rs",
+          "hash": "6ac8b5951b73f898"
+        }
+      ]
+    }
+  ]
+}

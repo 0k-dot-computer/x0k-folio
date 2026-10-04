@@ -14,6 +14,12 @@
 <https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#comment> "A perceivable cue on a specific surface that indicates to an actor that an action is available here: GUI button, palette entry, keybinding label, CLI --help text, hint, icon. The perceivable aspect of an affordance." .
 <https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#label> "Signifier" .
+<https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/2000/01/rdf-schema#comment> "A crate that embodies one or more technai. The most common form of Artifact." .
+<https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/2000/01/rdf-schema#label> "Software Module" .
+<https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Artifact> .
 <https://0k.computer/ontology#Surface> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#Surface> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#Surface> <http://www.w3.org/2000/01/rdf-schema#comment> "A protocol or interface through which actors and readers meet the system. Two directions share the word. INBOUND surfaces are the invocation faces through which an actor reaches the system to act — MCP, CLI, SDK, GUI, keyboard, voice, palette (the descriptor detail is operation-surface's). OUTBOUND surfaces are the faces onto which a Publication projects a region of the graph for readers (publishedOn -> Surface): x0k-native (the document/motif renderer) or an external protocol (DFOS, ActivityPub, ATProto, IndieWeb). An external outbound surface additionally carries a direction (one-way syndication, or two-way where inbound replies fold back into the graph as observations) and an identity face (the owner's did:key projected as that network's own identity). See corpora/x0k/decisions/architecture/surfaces/publication-projection.md." .
@@ -24,6 +30,13 @@
 <https://0k.computer/ontology#claimedFor> <http://www.w3.org/2000/01/rdf-schema#comment> "Actor kind(s) for which the affordance's claim is made. (Affordance, Actor) is a distinct verifiable tuple — the same underlying techne may afford different things to different actors, and those are separate claims." .
 <https://0k.computer/ontology#claimedFor> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Affordance> .
 <https://0k.computer/ontology#claimedFor> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#cue> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://0k.computer/ontology#cue> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#comment> "What a signifier presents to perception, as the actor meets it: the command, function name, label or keybinding through which the affordance it signifies is found." .
+<https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Signifier> .
+<https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#label> "cue" .
+<https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#defines> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#defines> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#comment> "A Design defines the affordances that follow from its experience-shape decision. The affordance is then verified independently by its literate spec; the design is realized when a publication ships the modules that enable them." .
@@ -77,11 +90,11 @@
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology/software> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
-<https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#comment> "The publishable software vocabulary: Affordance, Signifier, Surface, and their relations to documents and implementations. enabledBy belongs here through its Affordance domain; its SoftwareModule target constraint is a shape. SoftwareModule and its Artifact superclass remain in product and work. A publication can select core, document, and software without importing those modules." .
+<https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#comment> "The publishable software vocabulary: SoftwareModule, Affordance, Signifier, Surface, and their relations to documents and implementations. SoftwareModule is here so that a publication shipping core, document, and software can name the crates it publishes (software-module:<crate>) in the vocabulary it ships; its Artifact superclass is in document. enabledBy belongs here through its Affordance domain; its SoftwareModule target constraint is a shape. A publication can select core, document, and software without importing work or product." .
 <https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#label> "software" .
 <https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
 <https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/document> .
-<https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/software/0.3.0> .
+<https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/software/0.4.0> .
 _:b0000n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0000n0001 .
 _:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Affordance> .
 _:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0000n0002 .

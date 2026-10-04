@@ -309,9 +309,17 @@ mod tests {
             ("core", "x0k:Concept"),
             ("document", "x0k:Decision"),
             ("work", "x0k:Intent"),
-            ("actor", "x0k:Actor"),
+            ("actor", "x0k:Techne"),
             ("software", "x0k:Affordance"),
-            ("product", "x0k:SoftwareModule"),
+            // Moved down from `product` and `work` on 2026-10-04 (the ADR's
+            // implementation note of that date): a publication shipping
+            // `software` names its crates in the vocabulary it ships.
+            ("software", "x0k:SoftwareModule"),
+            ("document", "x0k:Artifact"),
+            // Down from `actor` on 2026-10-04 (same note, later entry): the
+            // `actor:` ids a shipped affordance is claimed for need the class.
+            ("document", "x0k:Actor"),
+            ("product", "x0k:Profile"),
             ("paracosm", "paracosm:Place"),
         ] {
             if let Some(tables) = MODULE_TABLES.iter().find(|t| t.name == module) {
@@ -323,7 +331,7 @@ mod tests {
         }
         for (module, imports) in [
             ("document", &["core"][..]),
-            ("work", &["core", "document"]),
+            ("work", &["core", "document", "time"]),
             ("actor", &["core"]),
             ("software", &["core", "document"]),
             ("paracosm", &["core", "work"]),

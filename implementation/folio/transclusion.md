@@ -73,8 +73,8 @@ authoring surface what to flag.
 //!
 //! This module is the **shared core** that both rendering surfaces drive:
 //!
-//! - The **weave** step (`x0k-tangle::region_weave`, the literate-region
-//!   to static-site renderer) resolves transclusions to inlined markdown
+//! - The **weave** step (`x0k-tangle`'s literate-region to static-site
+//!   renderer, in its corpus build) resolves transclusions to inlined markdown
 //!   *before* weaving to HTML, so the web document renderer receives
 //!   pre-resolved content.
 //! - The **native** doc-viewer (the desktop application's document

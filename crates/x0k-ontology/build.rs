@@ -36,8 +36,15 @@ fn main() {
     let module_paths = load::module_file_paths(&modules_dir)
         .unwrap_or_else(|error| panic!("{error}"));
     let shape_paths = load::shape_file_paths(&shapes_dir);
-    for path in module_paths.iter().chain(shape_paths.iter()) {
-        println!("cargo:rerun-if-changed={}", package_relative(&manifest, path).display());
+    // The directories, not the files in them: a directory is judged by the
+    // newest mtime under it, so it covers every file it holds and every file
+    // added to or removed from it. A shapes directory that does not exist is
+    // not watched — Cargo reruns a script whose watched path is missing on
+    // every build.
+    for dir in [&modules_dir, &shapes_dir] {
+        if dir.is_dir() {
+            println!("cargo:rerun-if-changed={}", package_relative(&manifest, dir).display());
+        }
     }
 
     let model = OntologyModel::load_files(&module_paths, &shape_paths)

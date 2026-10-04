@@ -6,7 +6,7 @@
 //! every icon declaration checked against the profile and written bound.
 //! The CLI (`crate::cli`) calls these and does the printing.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -269,6 +269,14 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
         }
     }
     let mut corpus = check_corpus(model, headers.iter().map(|(name, env)| (name.as_str(), env)));
+    // The header parse keeps no line per statement; the text it came from
+    // does, and an undeclared term is refused at the line that wrote it.
+    let texts: HashMap<&str, &str> = documents.iter().map(|(name, content)| (name.as_str(), content.as_str())).collect();
+    for (name, defect) in &mut corpus.defects {
+        if let Some(content) = texts.get(name.as_str()) {
+            defect.locate(content);
+        }
+    }
     // Every affordance and signifier is a typed instance too, so the two
     // passes read the same blocks and ask different questions of them.
     // The count is therefore the larger of the two and never their sum,
@@ -707,4 +715,44 @@ pub fn write_icon_files(report: &IconReport, palette: &Palette, out: &Path) -> R
         }
     }
     Ok(written)
+}
+
+/// The one `rdf:JSON` literal the header states for `predicate`, read as
+/// `T` — `None` when the header states none. A second value, a literal of
+/// another datatype, or JSON that does not read as `T` refuses, naming why.
+pub(crate) fn header_json<T: serde::de::DeserializeOwned>(env: &Colophon, predicate: &str) -> Result<Option<T>> {
+    let values = env.properties.get(predicate).map(Vec::as_slice).unwrap_or_default();
+    let literal = match values {
+        [] => return Ok(None),
+        [one] => one,
+        many => anyhow::bail!("the header states `{predicate}` {} times; state it once", many.len()),
+    };
+    if literal.datatype != RDF_JSON {
+        anyhow::bail!("the header's `{predicate}` is not an `rdf:JSON` literal (datatype `{}`)", literal.datatype);
+    }
+    serde_json::from_str(&literal.value)
+        .map(Some)
+        .map_err(|e| anyhow::anyhow!("the header's `{predicate}` does not read: {e}"))
+}
+
+/// Read the publication header's `x0k:palette` — the icon profile's four
+/// roles bound to colours, per scheme — as the binder's own type. `None`
+/// when the header states none; a statement that does not read as one
+/// refuses, naming why.
+pub fn header_palette(content: &str) -> Result<Option<Palette>> {
+    let (env, _) = parse_envelope(content)
+        .map_err(|e| anyhow::anyhow!("the publication doc has no readable header: {e}"))?;
+    colophon_palette(&env)
+}
+
+/// [`header_palette`] for a header already read — by a caller that read it
+/// in a vocabulary of its own (the repository projector, under
+/// `--vocabulary`).
+pub fn colophon_palette(env: &Colophon) -> Result<Option<Palette>> {
+    header_json::<Palette>(env, "x0k:palette").map_err(|e| {
+        anyhow::anyhow!(
+            "the publication's `x0k:palette` does not read as the icon profile's four \
+             roles (ink, line, paper, accent) per scheme (light, dark): {e}"
+        )
+    })
 }

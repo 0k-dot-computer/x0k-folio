@@ -3,7 +3,7 @@ name = "x0k-syntax"
 version = "0.1.0"
 edition = { workspace = true }
 license = "MIT"
-description = "Pure tree-sitter syntax tokenizer: maps source code to semantic TokenKind spans with no rendering dependencies, so native and web presenters share one classification and choose their own colors."
+description = "Syntax highlighting without a renderer: tree-sitter grammars turn source code into spans of semantic token kinds (keyword, string, comment and so on), and each presenter picks its own colours."
 keywords = ["syntax-highlighting", "tree-sitter", "tokenizer", "highlighting", "parsing"]
 categories = ["parser-implementations", "text-processing", "development-tools"]
 rust-version = { workspace = true }

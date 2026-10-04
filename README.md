@@ -20,6 +20,9 @@ Where to start depends on what your documents already are:
 - **Code whose explanation matters as much as the code.** Let the document
   [own it](#a-document-that-owns-its-code): its code blocks are the source, and
   the files are generated from them.
+- **A set you want to publish.** Name its documents in a
+  [publication](#vocabularies-and-publications), and `publish-repo` writes
+  them as a repository of their own and pushes it.
 
 ## A document that owns its code
 
@@ -154,18 +157,20 @@ collection gives you, and the command behind each:
 
 | What | Command | Fails when |
 |---|---|---|
-| Check headers and links against the vocabulary | `x0k-tangle check <dir>` | a class or edge the vocabulary does not declare; in a class it describes, an undeclared field or a literal its datatype contradicts |
+| Check headers and links against the vocabulary | `x0k-tangle check <dir>` | a class, an edge or a literal statement whose term the vocabulary does not declare, in a header or a graph block; a literal its datatype contradicts |
 | Gate CI on a closed set | `x0k-tangle check <dir> --closed` | an edge names a document that is not in the set, such as a rename nobody finished |
 | Keep generated code in step | `x0k-tangle tangle <doc>`, then `git diff --exit-code` | a generated file no longer matches its document |
 | Keep quoted code current | `x0k-tangle sync <path…>`, then `check` | a mirror no longer matches the source it quotes |
 | Ask across the set | `x0k-folio-cli ingest`, then `query --named status` or `--named superseded` | — (lists every document's status, or each replaced decision and what replaced it, read from `x0k:supersededBy` edges) |
+| Publish the set as a repository | `x0k-tangle publish-repo <publication> --output-dir <dir>` rehearses and pushes nothing; add `--really` to push | the publication names a document nothing declares, states no licence, or publishes a crate that depends on one it does not publish |
 
 Out of the box an edge to a document outside the scanned folder is a note,
 not a failure, because a collection is usually part of something larger;
 `--closed` is for the tree that is the whole set. The guide covers each row:
 [typing documents](guides/INTEGRATING.md#typing-your-documents-in-place),
 [quoting code you already have](guides/INTEGRATING.md#starting-from-code-you-already-have),
-[asking questions](guides/INTEGRATING.md#asking-the-collection-a-question).
+[asking questions](guides/INTEGRATING.md#asking-the-collection-a-question),
+[publishing](guides/INTEGRATING.md#publishing-a-collection).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/triangle-dark.svg">
@@ -185,6 +190,14 @@ x0k-tangle check docs
 A file with no header is left out of the header checks and counted — its
 mirrors and chunks are still checked — so a folder can adopt one document at
 a time.
+
+The header is a fenced block, so a site generator shows it as one. GitHub
+and Docusaurus render it, and every mirror, as an ordinary code block with no
+setup. MkDocs needs the one-file hook every release ships,
+`tools/mkdocs_folio.py`, added under `hooks:` in `mkdocs.yml`; with it the
+blocks render under `pymdownx.superfences` or plain `fenced_code`, and a page
+can hide its header. [What was tested, on which
+versions](guides/INTEGRATING.md#typing-your-documents-in-place).
 
 If you evaluate tools with an agent, this prompt starts it in the right
 places:
@@ -260,9 +273,16 @@ class, and two papers citing each other — to copy as a start.
 
 A **publication** selects documents and code from a larger collection and
 produces a standalone repository, recording their origins in
-`PROVENANCE.json`. This repository is one: it carries the tool that produced
-it, with that tool's source documents in `implementation/` generating the
-code in `crates/`.
+`PROVENANCE.json`. This repository is one: it carries the tangler that
+generated its code, with that tangler's source documents in
+`implementation/` generating the code in `crates/`. The projector that
+selected and wrote it ships here too. `x0k-tangle project-repo` writes a
+publication of your own collection the same way, `publish-repo --really`
+pushes it to your git remote, and `receive-repo` turns a contributor's
+clone back into patches against your documents;
+[Publishing a collection](guides/INTEGRATING.md#publishing-a-collection)
+is the walkthrough. The reader website we weave our own publications into
+is not here.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/circle-dark.svg">

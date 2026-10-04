@@ -15,11 +15,9 @@ predicate no shipped module declares, which is a gap in what this publication
 selected, or a target naming no document here, which is an edge into the
 private corpus this was projected from and is expected.
 
-<a name="folio-instance-78306b3a6166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1"></a><sub data-instance-iri="x0k:affordance/check_a_document_against_shipped_vocabulary" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md"><strong>Affordance</strong> · Unresolved instance · <code>x0k:affordance/check_a_document_against_shipped_vocabulary</code> · <a href="#folio-source-78306b3a6166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1">source declaration</a> · the graph block at line 20 is not Turtle: The prefix actor: has not been declared at corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md:18</sub><a name="folio-source-78306b3a6166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1"></a>
+<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1"></a><sub data-instance-iri="https://0k.computer/ontology#affordance/check_a_document_against_shipped_vocabulary" data-concept-iri="https://0k.computer/ontology#Affordance" data-source-document="corpora/x0k/decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md"><strong>Affordance</strong> · Check a document against its vocabulary · <code>https://0k.computer/ontology#affordance/check_a_document_against_shipped_vocabulary</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779236166666f7264616e63652f636865636b5f615f646f63756d656e745f616761696e73745f736869707065645f766f636162756c617279-1"></a>
 
 ```turtle folio:graph
-@prefix actor: <https://0k.computer/ontology#actor/> .
-@prefix software-module: <https://0k.computer/ontology#software-module/> .
 affordance:check_a_document_against_shipped_vocabulary a x0k:Affordance ;
     x0k:claimedFor actor:human,
         actor:ai_agent ;
@@ -72,6 +70,37 @@ fn check_names_an_undeclared_predicate_and_fails() {
         stderr.contains("frobnicates") && stderr.contains("fixture.md"),
         "the defect names the predicate and the document: {stderr}"
     );
+}
+
+/// Found 2026-10-03: a literal statement whose term no module declares
+/// passed `check` on a design and on a class a module declares alike. It
+/// is refused now, by the term and the line that wrote it, in a file
+/// holding a declared literal beside it that is not.
+```
+
+</details>
+
+<details><summary><code>check_names_an_undeclared_literal_term_and_its_line_and_fails</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-check">#tests-check</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
+
+```rust
+#[test]
+fn check_names_an_undeclared_literal_term_and_its_line_and_fails() {
+    let tmp = TempDir::new().unwrap();
+    let doc = design_doc(&shipped_predicate())
+        .replace("x0k:status \"draft\" ;", "x0k:status \"draft\" ;\n    x0k:summary \"s\" ;\n    x0k:fooBar \"x\" ;");
+    write(tmp.path(), "docs/fixture.md", &doc);
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "check passed a defect: {stderr}");
+    let refusals: Vec<&str> = stderr.lines().filter(|line| line.contains("declared by no ontology module")).collect();
+    match refusals.as_slice() {
+        [one] => assert!(
+            one.contains("fixture.md") && one.contains("`x0k:fooBar` at line 7"),
+            "the refusal names the document, the term and its line: {one}"
+        ),
+        other => panic!("expected one refusal, got {other:?} in {stderr}"),
+    }
 }
 
 /// A vocabulary a reader could write: `mycorp` in its own namespace,

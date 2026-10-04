@@ -84,6 +84,30 @@ fn check_names_an_undeclared_predicate_and_fails() {
     );
 }
 
+/// Found 2026-10-03: a literal statement whose term no module declares
+/// passed `check` on a design and on a class a module declares alike. It
+/// is refused now, by the term and the line that wrote it, in a file
+/// holding a declared literal beside it that is not.
+#[test]
+fn check_names_an_undeclared_literal_term_and_its_line_and_fails() {
+    let tmp = TempDir::new().unwrap();
+    let doc = design_doc(&shipped_predicate())
+        .replace("x0k:status \"draft\" ;", "x0k:status \"draft\" ;\n    x0k:summary \"s\" ;\n    x0k:fooBar \"x\" ;");
+    write(tmp.path(), "docs/fixture.md", &doc);
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "check passed a defect: {stderr}");
+    let refusals: Vec<&str> = stderr.lines().filter(|line| line.contains("declared by no ontology module")).collect();
+    match refusals.as_slice() {
+        [one] => assert!(
+            one.contains("fixture.md") && one.contains("`x0k:fooBar` at line 7"),
+            "the refusal names the document, the term and its line: {one}"
+        ),
+        other => panic!("expected one refusal, got {other:?} in {stderr}"),
+    }
+}
+
 /// A vocabulary a reader could write: `mycorp` in its own namespace,
 /// declaring one genus class. The smallest set that closes — `core` has
 /// no imports, and `mycorp` imports it.
