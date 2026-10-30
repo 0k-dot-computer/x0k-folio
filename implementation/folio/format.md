@@ -3,7 +3,7 @@
 ```turtle folio:document
 implementation:folio\/format a x0k:Implementation ;
     x0k:status "draft" ;
-    x0k:summary "The crate root — its chapter map, and the one feature flag that severs the substrate-facing half so a standalone build is pure functions over strings." ;
+    x0k:summary "The crate root — its chapter map, and the feature boundaries for body editing, document envelopes and substrate bindings so a standalone build is pure functions over strings." ;
     x0k:concerns "folio", "format", "crate", "features", "publishing" ;
     x0k:cites architecture:filesystem-graph-materialization,
         implementation:folio\/colophon,
@@ -67,7 +67,7 @@ The crate reads as chapters, each owning one idea:
   `plugins` feature.
 
 A single document threads through those chapters: the publication
-manifest `publications/x0k-folio/x0k-folio.md`, whose
+manifest `corpora/x0k/publications/x0k-folio/x0k-folio.md`, whose
 header the colophon parses, whose body the segmenter addresses, whose
 sections transclusion can inline — and which, projected as a repository,
 publishes this very crate.
@@ -78,8 +78,13 @@ A parser needs document text and a vocabulary. A live x0k host also needs
 a projection plugin and its class registry. The `plugins` feature includes
 `x0k-types` and the monorepo's `workspace-hack` dependency, which unifies
 dependency features for host builds. It is enabled by default for existing
-hosts. A standalone consumer sets `default-features = false`; its only
-workspace dependency is the vocabulary library, `x0k-ontology`.
+hosts. A standalone document consumer selects `default-features = false`
+and `features = ["envelope"]`. A body-editing guest disables defaults without
+selecting `envelope`: structural patches, HTML normalization, writing presentation,
+segmentation and provenance remain available without Turtle parsing or random
+blank-node allocation. `document-vocabulary` and `plugins` both imply `envelope`.
+The envelope feature also owns materialization, ontology checks and transclusion;
+the default build retains the complete document API.
 
 The dependency boundary matters as much as the module boundary. Disabling
 the projection module while still pulling the monorepo's dependency
@@ -105,10 +110,10 @@ class registry.
 //!
 //! Modules:
 //!
-//! - [`colophon`] — the header's parser, renderer and types (`Colophon`, `DocType`, `Status`, `Materialization`)
-//! - [`entity_id`] — the id grammar: `<scheme>:<class>/<slug>`, parsed and rendered
-//! - [`envelope_check`] — a header read against a vocabulary the caller names
-//! - [`inline_entity`] — entities authored inside a document body, extracted
+//! - `colophon` — the header's parser, renderer and types (`Colophon`, `DocType`, `Status`, `Materialization`)
+//! - `entity_id` — the id grammar: `<scheme>:<class>/<slug>`, parsed and rendered
+//! - `envelope_check` — a header read against a vocabulary the caller names
+//! - `inline_entity` — entities authored inside a document body, extracted
 //! - [`html_canonical`] — HTML canonicalizer for folio HTML bodies (stable attribute ordering, whitespace policy, behavior stripping)
 //! - `projection` — the `ColophonProjection` projection plugin. Compiled only
 //!   under the `plugins` feature; the source ships either way, so a build
@@ -123,30 +128,44 @@ class registry.
 ## The crate surface
 
 The module list and re-exports are the crate's table of contents. The
-`#[cfg(feature = "plugins")]` lines are the severance made visible:
-exactly one module and its two names disappear from the public build.
+feature gates separate body editing from document-envelope parsing and the
+host plugin. Disabling plugins retains the document API when `envelope` is
+selected; disabling both leaves only the body-editing functions and types.
+`markdown_html` is the one renderer of markdown bodies to HTML: a page reads
+the same in the shell and in a browser tab because both hosts call it.
 
 <a name="chunk-modules-and-exports"></a><sub>[`src/lib.rs`](../../crates/x0k-folio/src/lib.rs) · `#modules-and-exports`</sub>
 
 ```rust {#modules-and-exports}
+pub mod block_identity;
 pub mod block_provenance;
 pub mod block_segment;
 pub mod canonical_patch;
+#[cfg(feature = "envelope")]
 pub mod colophon;
 #[cfg(feature = "document-vocabulary")]
 pub mod document_vocabulary;
+#[cfg(feature = "envelope")]
 pub mod entity_id;
+#[cfg(feature = "envelope")]
 pub mod envelope_check;
 pub mod html_canonical;
 pub mod writing_presentation;
+#[cfg(feature = "envelope")]
 pub mod inline_entity;
+#[cfg(feature = "envelope")]
 pub mod layout;
-// Unconditional: this is the half of materialization the published build
-// must carry. Its Loro-backed sibling below stays behind `plugins`.
+// Markdown bodies rendered as the HTML every host shows, the shell and a
+// browser alike; figure data and parameter panels need the envelope parser.
+#[cfg(feature = "envelope")]
+pub mod markdown_html;
+// Document builds carry materialization together with their envelope parser.
+#[cfg(feature = "envelope")]
 pub mod materialize;
 #[cfg(feature = "plugins")]
 pub mod projection;
 pub mod structural_block;
+#[cfg(feature = "envelope")]
 pub mod transclusion;
 
 pub use block_provenance::{
@@ -155,7 +174,9 @@ pub use block_provenance::{
     ViewerState,
 };
 pub use block_segment::{hash_block, segment_body, BlockKind, BlockSegment};
+#[cfg(feature = "envelope")]
 pub use entity_id::{EntityId, EntityIdError};
+#[cfg(feature = "envelope")]
 pub use envelope_check::{
     check_corpus, check_declarations, check_envelope, predicate_standing, CorpusReport,
     DanglingDeclaration, DanglingEdge, DeclarationDefect, DeclarationReport, Defect,
@@ -165,15 +186,20 @@ pub use envelope_check::{
 // exists only where that loader does.
 #[cfg(feature = "document-vocabulary")]
 pub use envelope_check::{check_instances, InstanceCheck};
+#[cfg(feature = "envelope")]
 pub use inline_entity::{
     declared_facts, defined_in_fact, document_edges, extract_from_markdown, inline_entity_facts,
     prose_edges, read_graph_block, read_parameters, GraphContent, InlineEntity,
     InlineEntityError, Object, Parameter, ParameterValue, ICON_CLASS,
 };
 pub use canonical_patch::{
-    apply_body_patches, apply_folio_patches, apply_markdown_patches,
-    canonicalize_edited_folio_content, canonicalize_folio_content, CanonicalHtmlPatch,
-    CanonicalPatch, CanonicalPatchError, CanonicalTextPoint,
+    apply_body_patches, apply_markdown_patches, CanonicalHtmlPatch, CanonicalPatch, CanonicalPatchError,
+    CanonicalTextPoint,
+};
+#[cfg(feature = "envelope")]
+pub use canonical_patch::{
+    apply_folio_patches, canonicalize_edited_folio_content,
+    canonicalize_folio_content,
 };
 #[cfg(feature = "plugins")]
 pub use projection::{ColophonProjection, FOLIO_PLUGIN_NAME};
@@ -181,6 +207,7 @@ pub use structural_block::{
     BlockId, BlockIdAllocator, FenceInfo, InlineSpan, MarkerId, StructuralBlock, StructuralDoc,
     StructuralListItem, TableAlignment,
 };
+#[cfg(feature = "envelope")]
 pub use transclusion::{
     DocSource, Resolved, TranscludeRef, TranscludeWarning, MAX_TRANSCLUDE_DEPTH,
 };

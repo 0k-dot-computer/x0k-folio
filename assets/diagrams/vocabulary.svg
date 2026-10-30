@@ -1,529 +1,571 @@
-<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title description" viewBox="0 0 1152 7168" width="1152" height="7168">
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title description" viewBox="0 0 1152 7591" width="1152" height="7591">
 <title id="title">The selected base vocabulary</title>
-<desc id="description">3 modules, 21 classes and 85 properties selected by this publication. Modules collect related predicates. The same domain can appear in several modules. Concepts defined here are shown as cards; predicates are grouped by domain. Union alternatives read as or. This vocabulary is a starting point; documents can declare other concepts.</desc>
-<rect width="1152" height="7168" fill="#ffffff"/>
+<desc id="description">3 modules, 25 classes and 90 properties selected by this publication. Modules collect related predicates. The same domain can appear in several modules. Concepts defined here are shown as cards; predicates are grouped by domain. Union alternatives read as or. This vocabulary is a starting point; documents can declare other concepts.</desc>
+<rect width="1152" height="7591" fill="#ffffff"/>
 <g fill="#202526" font-family="system-ui, sans-serif"><text x="32" y="45" font-size="28" font-weight="650">The selected base vocabulary</text>
 <text x="32" y="75" font-size="15">A starting vocabulary. Documents can define other concepts and instances.</text>
 <text x="32" y="100" font-size="15">Modules collect related predicates. The same domain can appear in several modules.</text>
 <g data-module="https://0k.computer/ontology/core"><text x="32" y="158" font-size="24" font-weight="650">core</text>
-<text x="32" y="182" font-size="14">1 class · 6 properties</text>
+<text x="32" y="182" font-size="14">3 classes · 9 properties</text>
 <text x="32" y="209" font-size="13" fill="#496c7e">Concepts defined here</text>
-<g data-concept="https://0k.computer/ontology#Concept"><title>https://0k.computer/ontology#Concept</title><rect x="32" y="223" width="352" height="49" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="248" font-size="16">Concept</text>
+<g data-concept="https://0k.computer/ontology#Class"><title>https://0k.computer/ontology#Class</title><rect x="32" y="223" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="248" font-size="16">Class</text>
+<text x="46" y="271" font-size="13">is a Concept</text>
 </g>
-<text x="32" y="302" font-size="16" font-weight="600">Predicates by domain</text>
-<g data-domain-group="not specified"><rect x="32" y="322" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="346" font-size="16">Domain: not specified</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="379">PREDICATE</text><text x="600" y="379">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#cites" data-kind="relationship"><title>https://0k.computer/ontology#cites</title><path d="M32 389 H1120" stroke="#202526"/>
-<text x="565" y="413" fill="#496c7e">→</text>
-<text x="46" y="413" font-size="16">x0k:cites</text>
-<text x="600" y="413" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#realizes" data-kind="relationship"><title>https://0k.computer/ontology#realizes</title><path d="M32 442 H1120" stroke="#202526"/>
-<text x="565" y="466" fill="#496c7e">→</text>
-<text x="46" y="466" font-size="16">x0k:realizes</text>
-<text x="600" y="466" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#subjectClass" data-kind="relationship"><title>https://0k.computer/ontology#subjectClass</title><path d="M32 495 H1120" stroke="#202526"/>
-<text x="565" y="519" fill="#496c7e">→</text>
-<text x="46" y="519" font-size="16">x0k:subjectClass</text>
-<text x="600" y="519" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#supersededBy" data-kind="relationship"><title>https://0k.computer/ontology#supersededBy</title><path d="M32 548 H1120" stroke="#202526"/>
-<text x="565" y="572" fill="#496c7e">→</text>
-<text x="46" y="572" font-size="16">x0k:supersededBy</text>
-<text x="600" y="572" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#supersedes" data-kind="relationship"><title>https://0k.computer/ontology#supersedes</title><path d="M32 601 H1120" stroke="#202526"/>
-<text x="565" y="625" fill="#496c7e">→</text>
-<text x="46" y="625" font-size="16">x0k:supersedes</text>
-<text x="600" y="625" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#targetClass" data-kind="relationship"><title>https://0k.computer/ontology#targetClass</title><path d="M32 654 H1120" stroke="#202526"/>
-<text x="565" y="678" fill="#496c7e">→</text>
-<text x="46" y="678" font-size="16">x0k:targetClass</text>
-<text x="600" y="678" font-size="15">not specified</text>
+<g data-concept="https://0k.computer/ontology#Concept"><title>https://0k.computer/ontology#Concept</title><rect x="400" y="223" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="414" y="248" font-size="16">Concept</text>
+<text x="414" y="271" font-size="13">is a (outside selection)</text>
+</g>
+<g data-concept="https://0k.computer/ontology#Kind"><title>https://0k.computer/ontology#Kind</title><rect x="768" y="223" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="782" y="248" font-size="16">Kind</text>
+</g>
+<text x="32" y="325" font-size="16" font-weight="600">Predicates by domain</text>
+<g data-domain-group="Concept"><rect x="32" y="345" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="369" font-size="16">Domain: Concept</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="402">PREDICATE</text><text x="600" y="402">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#decidedBy" data-kind="relationship"><title>https://0k.computer/ontology#decidedBy</title><path d="M32 412 H1120" stroke="#202526"/>
+<text x="565" y="436" fill="#496c7e">→</text>
+<text x="46" y="436" font-size="16">decided by</text>
+<text x="600" y="436" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#termKind" data-kind="relationship"><title>https://0k.computer/ontology#termKind</title><path d="M32 465 H1120" stroke="#202526"/>
+<text x="565" y="489" fill="#496c7e">→</text>
+<text x="46" y="489" font-size="16">term kind</text>
+<text x="600" y="489" font-size="15">Kind</text>
+</g>\n</g>\n<g data-domain-group="not specified"><rect x="32" y="540" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="564" font-size="16">Domain: not specified</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="597">PREDICATE</text><text x="600" y="597">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#cites" data-kind="relationship"><title>https://0k.computer/ontology#cites</title><path d="M32 607 H1120" stroke="#202526"/>
+<text x="565" y="631" fill="#496c7e">→</text>
+<text x="46" y="631" font-size="16">x0k:cites</text>
+<text x="600" y="631" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#enabledBy" data-kind="relationship"><title>https://0k.computer/ontology#enabledBy</title><path d="M32 660 H1120" stroke="#202526"/>
+<text x="565" y="684" fill="#496c7e">→</text>
+<text x="46" y="684" font-size="16">x0k:enabledBy</text>
+<text x="600" y="684" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#realizes" data-kind="relationship"><title>https://0k.computer/ontology#realizes</title><path d="M32 713 H1120" stroke="#202526"/>
+<text x="565" y="737" fill="#496c7e">→</text>
+<text x="46" y="737" font-size="16">x0k:realizes</text>
+<text x="600" y="737" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#subjectClass" data-kind="relationship"><title>https://0k.computer/ontology#subjectClass</title><path d="M32 766 H1120" stroke="#202526"/>
+<text x="565" y="790" fill="#496c7e">→</text>
+<text x="46" y="790" font-size="16">x0k:subjectClass</text>
+<text x="600" y="790" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#supersededBy" data-kind="relationship"><title>https://0k.computer/ontology#supersededBy</title><path d="M32 819 H1120" stroke="#202526"/>
+<text x="565" y="843" fill="#496c7e">→</text>
+<text x="46" y="843" font-size="16">x0k:supersededBy</text>
+<text x="600" y="843" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#supersedes" data-kind="relationship"><title>https://0k.computer/ontology#supersedes</title><path d="M32 872 H1120" stroke="#202526"/>
+<text x="565" y="896" fill="#496c7e">→</text>
+<text x="46" y="896" font-size="16">x0k:supersedes</text>
+<text x="600" y="896" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#targetClass" data-kind="relationship"><title>https://0k.computer/ontology#targetClass</title><path d="M32 925 H1120" stroke="#202526"/>
+<text x="565" y="949" fill="#496c7e">→</text>
+<text x="46" y="949" font-size="16">x0k:targetClass</text>
+<text x="600" y="949" font-size="15">not specified</text>
 </g>\n</g>\n</g>
-<g data-module="https://0k.computer/ontology/document"><text x="32" y="765" font-size="24" font-weight="650">document</text>
-<text x="32" y="789" font-size="14">16 classes · 68 properties · imports core</text>
-<text x="32" y="816" font-size="13" fill="#496c7e">Concepts defined here</text>
-<g data-concept="https://0k.computer/ontology#AIAgent"><title>https://0k.computer/ontology#AIAgent</title><rect x="32" y="830" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="855" font-size="16">AI Agent Actor</text>
-<text x="46" y="878" font-size="13">is a Actor</text>
+<g data-module="https://0k.computer/ontology/document"><text x="32" y="1036" font-size="24" font-weight="650">document</text>
+<text x="32" y="1060" font-size="14">18 classes · 71 properties · imports core</text>
+<text x="32" y="1087" font-size="13" fill="#496c7e">Concepts defined here</text>
+<g data-concept="https://0k.computer/ontology#AIAgent"><title>https://0k.computer/ontology#AIAgent</title><rect x="32" y="1101" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="1126" font-size="16">AI Agent Actor</text>
+<text x="46" y="1149" font-size="13">is a (outside selection) / Actor</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Actor"><title>https://0k.computer/ontology#Actor</title><rect x="400" y="830" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="414" y="855" font-size="16">Actor</text>
+<g data-concept="https://0k.computer/ontology#Actor"><title>https://0k.computer/ontology#Actor</title><rect x="400" y="1101" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="414" y="1126" font-size="16">Actor</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Architecture"><title>https://0k.computer/ontology#Architecture</title><rect x="768" y="830" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="782" y="855" font-size="16">Architecture Decision</text>
-<text x="782" y="878" font-size="13">is a Decision</text>
+<g data-concept="https://0k.computer/ontology#Architecture"><title>https://0k.computer/ontology#Architecture</title><rect x="768" y="1101" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="782" y="1126" font-size="16">Architecture Decision</text>
+<text x="782" y="1149" font-size="13">is a Decision</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Artifact"><title>https://0k.computer/ontology#Artifact</title><rect x="32" y="914" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="939" font-size="16">Artifact</text>
+<g data-concept="https://0k.computer/ontology#Artifact"><title>https://0k.computer/ontology#Artifact</title><rect x="32" y="1185" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="1210" font-size="16">Artifact</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Commitment"><title>https://0k.computer/ontology#Commitment</title><rect x="400" y="914" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="414" y="939" font-size="16">Commitment</text>
-<text x="414" y="962" font-size="13">is a Decision</text>
+<g data-concept="https://0k.computer/ontology#Commitment"><title>https://0k.computer/ontology#Commitment</title><rect x="400" y="1185" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="414" y="1210" font-size="16">Commitment</text>
+<text x="414" y="1233" font-size="13">is a Decision</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Decision"><title>https://0k.computer/ontology#Decision</title><rect x="768" y="914" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="782" y="939" font-size="16">Decision</text>
+<g data-concept="https://0k.computer/ontology#Decision"><title>https://0k.computer/ontology#Decision</title><rect x="768" y="1185" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="782" y="1210" font-size="16">Decision</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Design"><title>https://0k.computer/ontology#Design</title><rect x="32" y="998" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="1023" font-size="16">Design Decision</text>
-<text x="46" y="1046" font-size="13">is a Decision</text>
+<g data-concept="https://0k.computer/ontology#Design"><title>https://0k.computer/ontology#Design</title><rect x="32" y="1269" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="1294" font-size="16">Design Decision</text>
+<text x="46" y="1317" font-size="13">is a Decision</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Human"><title>https://0k.computer/ontology#Human</title><rect x="400" y="998" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="414" y="1023" font-size="16">Human Actor</text>
-<text x="414" y="1046" font-size="13">is a Actor</text>
+<g data-concept="https://0k.computer/ontology#ExternalService"><title>https://0k.computer/ontology#ExternalService</title><rect x="400" y="1269" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="414" y="1294" font-size="16">External Service Actor</text>
+<text x="414" y="1317" font-size="13">is a Actor</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Implementation"><title>https://0k.computer/ontology#Implementation</title><rect x="768" y="998" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="782" y="1023" font-size="16">Implementation</text>
-<text x="782" y="1046" font-size="13">is a Decision</text>
+<g data-concept="https://0k.computer/ontology#Human"><title>https://0k.computer/ontology#Human</title><rect x="768" y="1269" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="782" y="1294" font-size="16">Human Actor</text>
+<text x="782" y="1317" font-size="13">is a (outside selection) / Actor</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Knowledge"><title>https://0k.computer/ontology#Knowledge</title><rect x="32" y="1082" width="352" height="49" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="1107" font-size="16">Knowledge</text>
+<g data-concept="https://0k.computer/ontology#Implementation"><title>https://0k.computer/ontology#Implementation</title><rect x="32" y="1353" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="1378" font-size="16">Implementation</text>
+<text x="46" y="1401" font-size="13">is a Decision</text>
 </g>
-<g data-concept="https://0k.computer/ontology#LiterateSpec"><title>https://0k.computer/ontology#LiterateSpec</title><rect x="400" y="1082" width="352" height="49" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="414" y="1107" font-size="16">Literate Spec</text>
+<g data-concept="https://0k.computer/ontology#Knowledge"><title>https://0k.computer/ontology#Knowledge</title><rect x="400" y="1353" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="414" y="1378" font-size="16">Knowledge</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Manuscript"><title>https://0k.computer/ontology#Manuscript</title><rect x="768" y="1082" width="352" height="49" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="782" y="1107" font-size="16">Manuscript</text>
+<g data-concept="https://0k.computer/ontology#LiterateSpec"><title>https://0k.computer/ontology#LiterateSpec</title><rect x="768" y="1353" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="782" y="1378" font-size="16">Literate Spec</text>
 </g>
-<g data-concept="https://0k.computer/ontology#OpenQuestion"><title>https://0k.computer/ontology#OpenQuestion</title><rect x="32" y="1143" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="1168" font-size="16">Open Question</text>
+<g data-concept="https://0k.computer/ontology#Manuscript"><title>https://0k.computer/ontology#Manuscript</title><rect x="32" y="1437" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="1462" font-size="16">Manuscript</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Publication"><title>https://0k.computer/ontology#Publication</title><rect x="400" y="1143" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="414" y="1168" font-size="16">Publication</text>
-<text x="414" y="1191" font-size="13">is a Decision</text>
+<g data-concept="https://0k.computer/ontology#OpenQuestion"><title>https://0k.computer/ontology#OpenQuestion</title><rect x="400" y="1437" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="414" y="1462" font-size="16">Open Question</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Wiki"><title>https://0k.computer/ontology#Wiki</title><rect x="768" y="1143" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="782" y="1168" font-size="16">Wiki</text>
-<text x="782" y="1191" font-size="13">is a Knowledge</text>
+<g data-concept="https://0k.computer/ontology#Operator"><title>https://0k.computer/ontology#Operator</title><rect x="768" y="1437" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="782" y="1462" font-size="16">Operator Actor</text>
+<text x="782" y="1485" font-size="13">is a Actor</text>
 </g>
-<g data-concept="https://0k.computer/ontology#folio/Parameter"><title>https://0k.computer/ontology#folio/Parameter</title><rect x="32" y="1227" width="352" height="49" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="1252" font-size="16">Parameter</text>
+<g data-concept="https://0k.computer/ontology#Publication"><title>https://0k.computer/ontology#Publication</title><rect x="32" y="1521" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="1546" font-size="16">Publication</text>
+<text x="46" y="1569" font-size="13">is a Decision</text>
 </g>
-<text x="32" y="1306" font-size="16" font-weight="600">Predicates by domain</text>
-<g data-domain-group="Decision"><rect x="32" y="1326" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="1350" font-size="16">Domain: Decision</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="1383">PREDICATE</text><text x="600" y="1383">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#checkedBy" data-kind="relationship"><title>https://0k.computer/ontology#checkedBy</title><path d="M32 1393 H1120" stroke="#202526"/>
-<text x="565" y="1417" fill="#496c7e">→</text>
-<text x="46" y="1417" font-size="16">x0k:checkedBy</text>
-<text x="600" y="1417" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#concerns" data-kind="data property"><title>https://0k.computer/ontology#concerns</title><path d="M32 1446 H1120" stroke="#202526"/>
-<text x="565" y="1470" fill="#496c7e">→</text>
-<text x="46" y="1470" font-size="16">x0k:concerns</text>
-<text x="600" y="1470" font-size="15">xsd:string</text>
-<text x="46" y="1492" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#constrains" data-kind="relationship"><title>https://0k.computer/ontology#constrains</title><path d="M32 1499 H1120" stroke="#202526"/>
-<text x="565" y="1523" fill="#496c7e">→</text>
-<text x="46" y="1523" font-size="16">x0k:constrains</text>
-<text x="600" y="1523" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#informedBy" data-kind="relationship"><title>https://0k.computer/ontology#informedBy</title><path d="M32 1552 H1120" stroke="#202526"/>
-<text x="565" y="1576" fill="#496c7e">→</text>
-<text x="46" y="1576" font-size="16">x0k:informedBy</text>
-<text x="600" y="1576" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#motivatedBy" data-kind="relationship"><title>https://0k.computer/ontology#motivatedBy</title><path d="M32 1605 H1120" stroke="#202526"/>
-<text x="565" y="1629" fill="#496c7e">→</text>
-<text x="46" y="1629" font-size="16">x0k:motivatedBy</text>
-<text x="600" y="1629" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#raises" data-kind="relationship"><title>https://0k.computer/ontology#raises</title><path d="M32 1658 H1120" stroke="#202526"/>
-<text x="565" y="1682" fill="#496c7e">→</text>
-<text x="46" y="1682" font-size="16">x0k:raises</text>
-<text x="600" y="1682" font-size="15">Open Question</text>
-</g>\n<g data-property="https://0k.computer/ontology#resolves" data-kind="relationship"><title>https://0k.computer/ontology#resolves</title><path d="M32 1711 H1120" stroke="#202526"/>
-<text x="565" y="1735" fill="#496c7e">→</text>
-<text x="46" y="1735" font-size="16">x0k:resolves</text>
-<text x="600" y="1735" font-size="15">Open Question</text>
-</g>\n<g data-property="https://0k.computer/ontology#status" data-kind="data property"><title>https://0k.computer/ontology#status</title><path d="M32 1764 H1120" stroke="#202526"/>
-<text x="565" y="1788" fill="#496c7e">→</text>
-<text x="46" y="1788" font-size="16">x0k:status</text>
-<text x="600" y="1788" font-size="15">xsd:string</text>
-<text x="46" y="1810" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#supports" data-kind="relationship"><title>https://0k.computer/ontology#supports</title><path d="M32 1817 H1120" stroke="#202526"/>
-<text x="565" y="1841" fill="#496c7e">→</text>
-<text x="46" y="1841" font-size="16">x0k:supports</text>
-<text x="600" y="1841" font-size="15">Decision</text>
-</g>\n<g data-property="https://0k.computer/ontology#transcludes" data-kind="relationship"><title>https://0k.computer/ontology#transcludes</title><path d="M32 1870 H1120" stroke="#202526"/>
-<text x="565" y="1894" fill="#496c7e">→</text>
-<text x="46" y="1894" font-size="16">x0k:transcludes</text>
-<text x="600" y="1894" font-size="15">Decision</text>
-</g>\n</g>\n<g data-domain-group="Decision or Manuscript"><rect x="32" y="1945" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="1969" font-size="16">Domain: Decision or Manuscript</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="2002">PREDICATE</text><text x="600" y="2002">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#presents" data-kind="relationship"><title>https://0k.computer/ontology#presents</title><path d="M32 2012 H1120" stroke="#202526"/>
-<text x="565" y="2036" fill="#496c7e">→</text>
-<text x="46" y="2036" font-size="16">x0k:presents</text>
-<text x="600" y="2036" font-size="15">not specified</text>
-</g>\n</g>\n<g data-domain-group="Decision or Wiki"><rect x="32" y="2087" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="2111" font-size="16">Domain: Decision or Wiki</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="2144">PREDICATE</text><text x="600" y="2144">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#mentions" data-kind="relationship"><title>https://0k.computer/ontology#mentions</title><path d="M32 2154 H1120" stroke="#202526"/>
-<text x="565" y="2178" fill="#496c7e">→</text>
-<text x="46" y="2178" font-size="16">x0k:mentions</text>
-<text x="600" y="2178" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#refinedBy" data-kind="relationship"><title>https://0k.computer/ontology#refinedBy</title><path d="M32 2207 H1120" stroke="#202526"/>
-<text x="565" y="2231" fill="#496c7e">→</text>
-<text x="46" y="2231" font-size="16">x0k:refinedBy</text>
-<text x="600" y="2231" font-size="15">Decision or Wiki</text>
-</g>\n</g>\n<g data-domain-group="Implementation"><rect x="32" y="2282" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="2306" font-size="16">Domain: Implementation</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="2339">PREDICATE</text><text x="600" y="2339">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#methodology" data-kind="data property"><title>https://0k.computer/ontology#methodology</title><path d="M32 2349 H1120" stroke="#202526"/>
-<text x="565" y="2373" fill="#496c7e">→</text>
-<text x="46" y="2373" font-size="16">methodology</text>
-<text x="600" y="2373" font-size="15">xsd:string</text>
-<text x="46" y="2395" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#constrainedBy" data-kind="relationship"><title>https://0k.computer/ontology#constrainedBy</title><path d="M32 2402 H1120" stroke="#202526"/>
-<text x="565" y="2426" fill="#496c7e">→</text>
-<text x="46" y="2426" font-size="16">x0k:constrainedBy</text>
-<text x="600" y="2426" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#implements" data-kind="relationship"><title>https://0k.computer/ontology#implements</title><path d="M32 2455 H1120" stroke="#202526"/>
-<text x="565" y="2479" fill="#496c7e">→</text>
-<text x="46" y="2479" font-size="16">x0k:implements</text>
-<text x="600" y="2479" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#presupposes" data-kind="relationship"><title>https://0k.computer/ontology#presupposes</title><path d="M32 2508 H1120" stroke="#202526"/>
-<text x="565" y="2532" fill="#496c7e">→</text>
-<text x="46" y="2532" font-size="16">x0k:presupposes</text>
-<text x="600" y="2532" font-size="15">Wiki</text>
-</g>\n<g data-property="https://0k.computer/ontology#visualizes" data-kind="relationship"><title>https://0k.computer/ontology#visualizes</title><path d="M32 2561 H1120" stroke="#202526"/>
-<text x="565" y="2585" fill="#496c7e">→</text>
-<text x="46" y="2585" font-size="16">x0k:visualizes</text>
-<text x="600" y="2585" font-size="15">not specified</text>
-</g>\n</g>\n<g data-domain-group="Open Question"><rect x="32" y="2636" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="2660" font-size="16">Domain: Open Question</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="2693">PREDICATE</text><text x="600" y="2693">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#resolution" data-kind="data property"><title>https://0k.computer/ontology#resolution</title><path d="M32 2703 H1120" stroke="#202526"/>
-<text x="565" y="2727" fill="#496c7e">→</text>
-<text x="46" y="2727" font-size="16">resolution</text>
-<text x="600" y="2727" font-size="15">xsd:string</text>
-<text x="46" y="2749" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#raisedBy" data-kind="relationship"><title>https://0k.computer/ontology#raisedBy</title><path d="M32 2756 H1120" stroke="#202526"/>
-<text x="565" y="2780" fill="#496c7e">→</text>
-<text x="46" y="2780" font-size="16">x0k:raisedBy</text>
-<text x="600" y="2780" font-size="15">Decision</text>
-</g>\n</g>\n<g data-domain-group="Parameter"><rect x="32" y="2831" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="2855" font-size="16">Domain: Parameter</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="2888">PREDICATE</text><text x="600" y="2888">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#folio/default" data-kind="data property"><title>https://0k.computer/ontology#folio/default</title><path d="M32 2898 H1120" stroke="#202526"/>
-<text x="565" y="2922" fill="#496c7e">→</text>
-<text x="46" y="2922" font-size="16">x0k:folio/default</text>
-<text x="600" y="2922" font-size="15">not specified</text>
-<text x="46" y="2944" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/kind" data-kind="data property"><title>https://0k.computer/ontology#folio/kind</title><path d="M32 2951 H1120" stroke="#202526"/>
-<text x="565" y="2975" fill="#496c7e">→</text>
-<text x="46" y="2975" font-size="16">x0k:folio/kind</text>
-<text x="600" y="2975" font-size="15">xsd:string</text>
-<text x="46" y="2997" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/max" data-kind="data property"><title>https://0k.computer/ontology#folio/max</title><path d="M32 3004 H1120" stroke="#202526"/>
-<text x="565" y="3028" fill="#496c7e">→</text>
-<text x="46" y="3028" font-size="16">x0k:folio/max</text>
-<text x="600" y="3028" font-size="15">xsd:decimal</text>
-<text x="46" y="3050" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/min" data-kind="data property"><title>https://0k.computer/ontology#folio/min</title><path d="M32 3057 H1120" stroke="#202526"/>
-<text x="565" y="3081" fill="#496c7e">→</text>
-<text x="46" y="3081" font-size="16">x0k:folio/min</text>
-<text x="600" y="3081" font-size="15">xsd:decimal</text>
-<text x="46" y="3103" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/step" data-kind="data property"><title>https://0k.computer/ontology#folio/step</title><path d="M32 3110 H1120" stroke="#202526"/>
-<text x="565" y="3134" fill="#496c7e">→</text>
-<text x="46" y="3134" font-size="16">x0k:folio/step</text>
-<text x="600" y="3134" font-size="15">xsd:decimal</text>
-<text x="46" y="3156" font-size="11" fill="#496c7e">data property</text>
-</g>\n</g>\n<g data-domain-group="Publication"><rect x="32" y="3185" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="3209" font-size="16">Domain: Publication</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="3242">PREDICATE</text><text x="600" y="3242">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#carries" data-kind="data property"><title>https://0k.computer/ontology#carries</title><path d="M32 3252 H1120" stroke="#202526"/>
-<text x="565" y="3276" fill="#496c7e">→</text>
-<text x="46" y="3276" font-size="16">carries</text>
-<text x="600" y="3276" font-size="15">xsd:string</text>
-<text x="46" y="3298" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#copyright" data-kind="data property"><title>https://0k.computer/ontology#copyright</title><path d="M32 3305 H1120" stroke="#202526"/>
-<text x="565" y="3329" fill="#496c7e">→</text>
-<text x="46" y="3329" font-size="16">copyright</text>
-<text x="600" y="3329" font-size="15">xsd:string</text>
-<text x="46" y="3351" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#gitPin" data-kind="data property"><title>https://0k.computer/ontology#gitPin</title><path d="M32 3358 H1120" stroke="#202526"/>
-<text x="565" y="3382" fill="#496c7e">→</text>
-<text x="46" y="3382" font-size="16">git pin</text>
-<text x="600" y="3382" font-size="15">xsd:string</text>
-<text x="46" y="3404" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#keywords" data-kind="data property"><title>https://0k.computer/ontology#keywords</title><path d="M32 3411 H1120" stroke="#202526"/>
-<text x="565" y="3435" fill="#496c7e">→</text>
-<text x="46" y="3435" font-size="16">keywords</text>
-<text x="600" y="3435" font-size="15">xsd:string</text>
-<text x="46" y="3457" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#license" data-kind="data property"><title>https://0k.computer/ontology#license</title><path d="M32 3464 H1120" stroke="#202526"/>
-<text x="565" y="3488" fill="#496c7e">→</text>
-<text x="46" y="3488" font-size="16">license</text>
-<text x="600" y="3488" font-size="15">xsd:string</text>
-<text x="46" y="3510" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#marks" data-kind="relationship"><title>https://0k.computer/ontology#marks</title><path d="M32 3517 H1120" stroke="#202526"/>
-<text x="565" y="3541" fill="#496c7e">→</text>
-<text x="46" y="3541" font-size="16">marks</text>
-<text x="600" y="3541" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#overlay" data-kind="data property"><title>https://0k.computer/ontology#overlay</title><path d="M32 3570 H1120" stroke="#202526"/>
-<text x="565" y="3594" fill="#496c7e">→</text>
-<text x="46" y="3594" font-size="16">overlay</text>
-<text x="600" y="3594" font-size="15">xsd:string</text>
-<text x="46" y="3616" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#palette" data-kind="data property"><title>https://0k.computer/ontology#palette</title><path d="M32 3623 H1120" stroke="#202526"/>
-<text x="565" y="3647" fill="#496c7e">→</text>
-<text x="46" y="3647" font-size="16">palette</text>
-<text x="600" y="3647" font-size="15">not specified</text>
-<text x="46" y="3669" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#prebuilt" data-kind="data property"><title>https://0k.computer/ontology#prebuilt</title><path d="M32 3676 H1120" stroke="#202526"/>
-<text x="565" y="3700" fill="#496c7e">→</text>
-<text x="46" y="3700" font-size="16">prebuilt</text>
-<text x="600" y="3700" font-size="15">not specified</text>
-<text x="46" y="3722" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#projection" data-kind="data property"><title>https://0k.computer/ontology#projection</title><path d="M32 3729 H1120" stroke="#202526"/>
-<text x="565" y="3753" fill="#496c7e">→</text>
-<text x="46" y="3753" font-size="16">projection</text>
-<text x="600" y="3753" font-size="15">not specified</text>
-<text x="46" y="3775" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#publishBranch" data-kind="data property"><title>https://0k.computer/ontology#publishBranch</title><path d="M32 3782 H1120" stroke="#202526"/>
-<text x="565" y="3806" fill="#496c7e">→</text>
-<text x="46" y="3806" font-size="16">publish branch</text>
-<text x="600" y="3806" font-size="15">xsd:string</text>
-<text x="46" y="3828" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#publishRegistry" data-kind="data property"><title>https://0k.computer/ontology#publishRegistry</title><path d="M32 3835 H1120" stroke="#202526"/>
-<text x="565" y="3859" fill="#496c7e">→</text>
-<text x="46" y="3859" font-size="16">publish registry</text>
-<text x="600" y="3859" font-size="15">xsd:string</text>
-<text x="46" y="3881" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#publishRemote" data-kind="data property"><title>https://0k.computer/ontology#publishRemote</title><path d="M32 3888 H1120" stroke="#202526"/>
-<text x="565" y="3912" fill="#496c7e">→</text>
-<text x="46" y="3912" font-size="16">publish remote</text>
-<text x="600" y="3912" font-size="15">xsd:string</text>
-<text x="46" y="3934" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#repository" data-kind="data property"><title>https://0k.computer/ontology#repository</title><path d="M32 3941 H1120" stroke="#202526"/>
-<text x="565" y="3965" fill="#496c7e">→</text>
-<text x="46" y="3965" font-size="16">repository</text>
-<text x="600" y="3965" font-size="15">xsd:string</text>
-<text x="46" y="3987" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#repositoryLayout" data-kind="data property"><title>https://0k.computer/ontology#repositoryLayout</title><path d="M32 3994 H1120" stroke="#202526"/>
-<text x="565" y="4018" fill="#496c7e">→</text>
-<text x="46" y="4018" font-size="16">repository layout</text>
-<text x="600" y="4018" font-size="15">xsd:string</text>
-<text x="46" y="4040" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#rustToolchain" data-kind="data property"><title>https://0k.computer/ontology#rustToolchain</title><path d="M32 4047 H1120" stroke="#202526"/>
-<text x="565" y="4071" fill="#496c7e">→</text>
-<text x="46" y="4071" font-size="16">rust toolchain</text>
-<text x="600" y="4071" font-size="15">xsd:string</text>
-<text x="46" y="4093" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#rustVersion" data-kind="data property"><title>https://0k.computer/ontology#rustVersion</title><path d="M32 4100 H1120" stroke="#202526"/>
-<text x="565" y="4124" fill="#496c7e">→</text>
-<text x="46" y="4124" font-size="16">rust version</text>
-<text x="600" y="4124" font-size="15">xsd:string</text>
-<text x="46" y="4146" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#severs" data-kind="relationship"><title>https://0k.computer/ontology#severs</title><path d="M32 4153 H1120" stroke="#202526"/>
-<text x="565" y="4177" fill="#496c7e">→</text>
-<text x="46" y="4177" font-size="16">severs</text>
-<text x="600" y="4177" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#entryPoint" data-kind="relationship"><title>https://0k.computer/ontology#entryPoint</title><path d="M32 4206 H1120" stroke="#202526"/>
-<text x="565" y="4230" fill="#496c7e">→</text>
-<text x="46" y="4230" font-size="16">x0k:entryPoint</text>
-<text x="600" y="4230" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#excludes" data-kind="relationship"><title>https://0k.computer/ontology#excludes</title><path d="M32 4259 H1120" stroke="#202526"/>
-<text x="565" y="4283" fill="#496c7e">→</text>
-<text x="46" y="4283" font-size="16">x0k:excludes</text>
-<text x="600" y="4283" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#publishedBy" data-kind="relationship"><title>https://0k.computer/ontology#publishedBy</title><path d="M32 4312 H1120" stroke="#202526"/>
-<text x="565" y="4336" fill="#496c7e">→</text>
-<text x="46" y="4336" font-size="16">x0k:publishedBy</text>
-<text x="600" y="4336" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#publishedFor" data-kind="relationship"><title>https://0k.computer/ontology#publishedFor</title><path d="M32 4365 H1120" stroke="#202526"/>
-<text x="565" y="4389" fill="#496c7e">→</text>
-<text x="46" y="4389" font-size="16">x0k:publishedFor</text>
-<text x="600" y="4389" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#publishes" data-kind="relationship"><title>https://0k.computer/ontology#publishes</title><path d="M32 4418 H1120" stroke="#202526"/>
-<text x="565" y="4442" fill="#496c7e">→</text>
-<text x="46" y="4442" font-size="16">x0k:publishes</text>
-<text x="600" y="4442" font-size="15">not specified</text>
-</g>\n</g>\n<g data-domain-group="not specified"><rect x="32" y="4493" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="4517" font-size="16">Domain: not specified</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="4550">PREDICATE</text><text x="600" y="4550">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#bodyFormat" data-kind="data property"><title>https://0k.computer/ontology#bodyFormat</title><path d="M32 4560 H1120" stroke="#202526"/>
-<text x="565" y="4584" fill="#496c7e">→</text>
-<text x="46" y="4584" font-size="16">x0k:bodyFormat</text>
-<text x="600" y="4584" font-size="15">xsd:string</text>
-<text x="46" y="4606" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#createdAt" data-kind="data property"><title>https://0k.computer/ontology#createdAt</title><path d="M32 4613 H1120" stroke="#202526"/>
-<text x="565" y="4637" fill="#496c7e">→</text>
-<text x="46" y="4637" font-size="16">x0k:createdAt</text>
-<text x="600" y="4637" font-size="15">xsd:string</text>
-<text x="46" y="4659" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/contentHash" data-kind="data property"><title>https://0k.computer/ontology#folio/contentHash</title><path d="M32 4666 H1120" stroke="#202526"/>
-<text x="565" y="4690" fill="#496c7e">→</text>
-<text x="46" y="4690" font-size="16">x0k:folio/contentHash</text>
-<text x="600" y="4690" font-size="15">xsd:string</text>
-<text x="46" y="4712" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/documentRevisionId" data-kind="data property"><title>https://0k.computer/ontology#folio/documentRevisionId</title><path d="M32 4719 H1120" stroke="#202526"/>
-<text x="565" y="4743" fill="#496c7e">→</text>
-<text x="46" y="4743" font-size="16">x0k:folio/documentRevisionId</text>
-<text x="600" y="4743" font-size="15">xsd:string</text>
-<text x="46" y="4765" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/loroDocId" data-kind="data property"><title>https://0k.computer/ontology#folio/loroDocId</title><path d="M32 4772 H1120" stroke="#202526"/>
-<text x="565" y="4796" fill="#496c7e">→</text>
-<text x="46" y="4796" font-size="16">x0k:folio/loroDocId</text>
-<text x="600" y="4796" font-size="15">xsd:string</text>
-<text x="46" y="4818" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/pipelines" data-kind="data property"><title>https://0k.computer/ontology#folio/pipelines</title><path d="M32 4825 H1120" stroke="#202526"/>
-<text x="565" y="4849" fill="#496c7e">→</text>
-<text x="46" y="4849" font-size="16">x0k:folio/pipelines</text>
-<text x="600" y="4849" font-size="15">not specified</text>
-<text x="46" y="4871" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/sourceDocument" data-kind="relationship"><title>https://0k.computer/ontology#folio/sourceDocument</title><path d="M32 4878 H1120" stroke="#202526"/>
-<text x="565" y="4902" fill="#496c7e">→</text>
-<text x="46" y="4902" font-size="16">x0k:folio/sourceDocument</text>
-<text x="600" y="4902" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/sourceEnd" data-kind="data property"><title>https://0k.computer/ontology#folio/sourceEnd</title><path d="M32 4931 H1120" stroke="#202526"/>
-<text x="565" y="4955" fill="#496c7e">→</text>
-<text x="46" y="4955" font-size="16">x0k:folio/sourceEnd</text>
-<text x="600" y="4955" font-size="15">xsd:integer</text>
-<text x="46" y="4977" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/sourceKind" data-kind="data property"><title>https://0k.computer/ontology#folio/sourceKind</title><path d="M32 4984 H1120" stroke="#202526"/>
-<text x="565" y="5008" fill="#496c7e">→</text>
-<text x="46" y="5008" font-size="16">x0k:folio/sourceKind</text>
-<text x="600" y="5008" font-size="15">xsd:string</text>
-<text x="46" y="5030" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/sourceOrigin" data-kind="data property"><title>https://0k.computer/ontology#folio/sourceOrigin</title><path d="M32 5037 H1120" stroke="#202526"/>
-<text x="565" y="5061" fill="#496c7e">→</text>
-<text x="46" y="5061" font-size="16">x0k:folio/sourceOrigin</text>
-<text x="600" y="5061" font-size="15">xsd:string</text>
-<text x="46" y="5083" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/sourcePath" data-kind="data property"><title>https://0k.computer/ontology#folio/sourcePath</title><path d="M32 5090 H1120" stroke="#202526"/>
-<text x="565" y="5114" fill="#496c7e">→</text>
-<text x="46" y="5114" font-size="16">x0k:folio/sourcePath</text>
-<text x="600" y="5114" font-size="15">xsd:string</text>
-<text x="46" y="5136" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/sourceStart" data-kind="data property"><title>https://0k.computer/ontology#folio/sourceStart</title><path d="M32 5143 H1120" stroke="#202526"/>
-<text x="565" y="5167" fill="#496c7e">→</text>
-<text x="46" y="5167" font-size="16">x0k:folio/sourceStart</text>
-<text x="600" y="5167" font-size="15">xsd:integer</text>
-<text x="46" y="5189" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/tangleCrate" data-kind="data property"><title>https://0k.computer/ontology#folio/tangleCrate</title><path d="M32 5196 H1120" stroke="#202526"/>
-<text x="565" y="5220" fill="#496c7e">→</text>
-<text x="46" y="5220" font-size="16">x0k:folio/tangleCrate</text>
-<text x="600" y="5220" font-size="15">xsd:string</text>
-<text x="46" y="5242" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/tangleRoot" data-kind="data property"><title>https://0k.computer/ontology#folio/tangleRoot</title><path d="M32 5249 H1120" stroke="#202526"/>
-<text x="565" y="5273" fill="#496c7e">→</text>
-<text x="46" y="5273" font-size="16">x0k:folio/tangleRoot</text>
-<text x="600" y="5273" font-size="15">xsd:string</text>
-<text x="46" y="5295" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/tangleRoots" data-kind="data property"><title>https://0k.computer/ontology#folio/tangleRoots</title><path d="M32 5302 H1120" stroke="#202526"/>
-<text x="565" y="5326" fill="#496c7e">→</text>
-<text x="46" y="5326" font-size="16">x0k:folio/tangleRoots</text>
-<text x="600" y="5326" font-size="15">not specified</text>
-<text x="46" y="5348" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#folio/transcludes" data-kind="data property"><title>https://0k.computer/ontology#folio/transcludes</title><path d="M32 5355 H1120" stroke="#202526"/>
-<text x="565" y="5379" fill="#496c7e">→</text>
-<text x="46" y="5379" font-size="16">x0k:folio/transcludes</text>
-<text x="600" y="5379" font-size="15">xsd:string</text>
-<text x="46" y="5401" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#subtype" data-kind="data property"><title>https://0k.computer/ontology#subtype</title><path d="M32 5408 H1120" stroke="#202526"/>
-<text x="565" y="5432" fill="#496c7e">→</text>
-<text x="46" y="5432" font-size="16">x0k:subtype</text>
-<text x="600" y="5432" font-size="15">xsd:string</text>
-<text x="46" y="5454" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#summary" data-kind="data property"><title>https://0k.computer/ontology#summary</title><path d="M32 5461 H1120" stroke="#202526"/>
-<text x="565" y="5485" fill="#496c7e">→</text>
-<text x="46" y="5485" font-size="16">x0k:summary</text>
-<text x="600" y="5485" font-size="15">xsd:string</text>
-<text x="46" y="5507" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#updatedAt" data-kind="data property"><title>https://0k.computer/ontology#updatedAt</title><path d="M32 5514 H1120" stroke="#202526"/>
-<text x="565" y="5538" fill="#496c7e">→</text>
-<text x="46" y="5538" font-size="16">x0k:updatedAt</text>
-<text x="600" y="5538" font-size="15">xsd:string</text>
-<text x="46" y="5560" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#updatedBy" data-kind="data property"><title>https://0k.computer/ontology#updatedBy</title><path d="M32 5567 H1120" stroke="#202526"/>
-<text x="565" y="5591" fill="#496c7e">→</text>
-<text x="46" y="5591" font-size="16">x0k:updatedBy</text>
-<text x="600" y="5591" font-size="15">xsd:string</text>
-<text x="46" y="5613" font-size="11" fill="#496c7e">data property</text>
+<g data-concept="https://0k.computer/ontology#Wiki"><title>https://0k.computer/ontology#Wiki</title><rect x="400" y="1521" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="414" y="1546" font-size="16">Wiki</text>
+<text x="414" y="1569" font-size="13">is a Knowledge</text>
+</g>
+<g data-concept="https://0k.computer/ontology#folio/Parameter"><title>https://0k.computer/ontology#folio/Parameter</title><rect x="768" y="1521" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="782" y="1546" font-size="16">Parameter</text>
+</g>
+<text x="32" y="1623" font-size="16" font-weight="600">Predicates by domain</text>
+<g data-domain-group="Decision"><rect x="32" y="1643" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="1667" font-size="16">Domain: Decision</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="1700">PREDICATE</text><text x="600" y="1700">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#checkedBy" data-kind="relationship"><title>https://0k.computer/ontology#checkedBy</title><path d="M32 1710 H1120" stroke="#202526"/>
+<text x="565" y="1734" fill="#496c7e">→</text>
+<text x="46" y="1734" font-size="16">x0k:checkedBy</text>
+<text x="600" y="1734" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#concerns" data-kind="data property"><title>https://0k.computer/ontology#concerns</title><path d="M32 1763 H1120" stroke="#202526"/>
+<text x="565" y="1787" fill="#496c7e">→</text>
+<text x="46" y="1787" font-size="16">x0k:concerns</text>
+<text x="600" y="1787" font-size="15">xsd:string</text>
+<text x="46" y="1809" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#constrains" data-kind="relationship"><title>https://0k.computer/ontology#constrains</title><path d="M32 1816 H1120" stroke="#202526"/>
+<text x="565" y="1840" fill="#496c7e">→</text>
+<text x="46" y="1840" font-size="16">x0k:constrains</text>
+<text x="600" y="1840" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#informedBy" data-kind="relationship"><title>https://0k.computer/ontology#informedBy</title><path d="M32 1869 H1120" stroke="#202526"/>
+<text x="565" y="1893" fill="#496c7e">→</text>
+<text x="46" y="1893" font-size="16">x0k:informedBy</text>
+<text x="600" y="1893" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#motivatedBy" data-kind="relationship"><title>https://0k.computer/ontology#motivatedBy</title><path d="M32 1922 H1120" stroke="#202526"/>
+<text x="565" y="1946" fill="#496c7e">→</text>
+<text x="46" y="1946" font-size="16">x0k:motivatedBy</text>
+<text x="600" y="1946" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#raises" data-kind="relationship"><title>https://0k.computer/ontology#raises</title><path d="M32 1975 H1120" stroke="#202526"/>
+<text x="565" y="1999" fill="#496c7e">→</text>
+<text x="46" y="1999" font-size="16">x0k:raises</text>
+<text x="600" y="1999" font-size="15">Open Question</text>
+</g>\n<g data-property="https://0k.computer/ontology#resolves" data-kind="relationship"><title>https://0k.computer/ontology#resolves</title><path d="M32 2028 H1120" stroke="#202526"/>
+<text x="565" y="2052" fill="#496c7e">→</text>
+<text x="46" y="2052" font-size="16">x0k:resolves</text>
+<text x="600" y="2052" font-size="15">Open Question</text>
+</g>\n<g data-property="https://0k.computer/ontology#status" data-kind="data property"><title>https://0k.computer/ontology#status</title><path d="M32 2081 H1120" stroke="#202526"/>
+<text x="565" y="2105" fill="#496c7e">→</text>
+<text x="46" y="2105" font-size="16">x0k:status</text>
+<text x="600" y="2105" font-size="15">xsd:string</text>
+<text x="46" y="2127" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#supports" data-kind="relationship"><title>https://0k.computer/ontology#supports</title><path d="M32 2134 H1120" stroke="#202526"/>
+<text x="565" y="2158" fill="#496c7e">→</text>
+<text x="46" y="2158" font-size="16">x0k:supports</text>
+<text x="600" y="2158" font-size="15">Decision</text>
+</g>\n<g data-property="https://0k.computer/ontology#transcludes" data-kind="relationship"><title>https://0k.computer/ontology#transcludes</title><path d="M32 2187 H1120" stroke="#202526"/>
+<text x="565" y="2211" fill="#496c7e">→</text>
+<text x="46" y="2211" font-size="16">x0k:transcludes</text>
+<text x="600" y="2211" font-size="15">Decision</text>
+</g>\n</g>\n<g data-domain-group="Decision or Manuscript"><rect x="32" y="2262" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="2286" font-size="16">Domain: Decision or Manuscript</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="2319">PREDICATE</text><text x="600" y="2319">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#presents" data-kind="relationship"><title>https://0k.computer/ontology#presents</title><path d="M32 2329 H1120" stroke="#202526"/>
+<text x="565" y="2353" fill="#496c7e">→</text>
+<text x="46" y="2353" font-size="16">x0k:presents</text>
+<text x="600" y="2353" font-size="15">not specified</text>
+</g>\n</g>\n<g data-domain-group="Decision or Wiki"><rect x="32" y="2404" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="2428" font-size="16">Domain: Decision or Wiki</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="2461">PREDICATE</text><text x="600" y="2461">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#mentions" data-kind="relationship"><title>https://0k.computer/ontology#mentions</title><path d="M32 2471 H1120" stroke="#202526"/>
+<text x="565" y="2495" fill="#496c7e">→</text>
+<text x="46" y="2495" font-size="16">x0k:mentions</text>
+<text x="600" y="2495" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#refinedBy" data-kind="relationship"><title>https://0k.computer/ontology#refinedBy</title><path d="M32 2524 H1120" stroke="#202526"/>
+<text x="565" y="2548" fill="#496c7e">→</text>
+<text x="46" y="2548" font-size="16">x0k:refinedBy</text>
+<text x="600" y="2548" font-size="15">Decision or Wiki</text>
+</g>\n</g>\n<g data-domain-group="Implementation"><rect x="32" y="2599" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="2623" font-size="16">Domain: Implementation</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="2656">PREDICATE</text><text x="600" y="2656">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#depicts" data-kind="data property"><title>https://0k.computer/ontology#depicts</title><path d="M32 2666 H1120" stroke="#202526"/>
+<text x="565" y="2690" fill="#496c7e">→</text>
+<text x="46" y="2690" font-size="16">depicts</text>
+<text x="600" y="2690" font-size="15">xsd:string</text>
+<text x="46" y="2712" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#methodology" data-kind="data property"><title>https://0k.computer/ontology#methodology</title><path d="M32 2719 H1120" stroke="#202526"/>
+<text x="565" y="2743" fill="#496c7e">→</text>
+<text x="46" y="2743" font-size="16">methodology</text>
+<text x="600" y="2743" font-size="15">xsd:string</text>
+<text x="46" y="2765" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#constrainedBy" data-kind="relationship"><title>https://0k.computer/ontology#constrainedBy</title><path d="M32 2772 H1120" stroke="#202526"/>
+<text x="565" y="2796" fill="#496c7e">→</text>
+<text x="46" y="2796" font-size="16">x0k:constrainedBy</text>
+<text x="600" y="2796" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#implements" data-kind="relationship"><title>https://0k.computer/ontology#implements</title><path d="M32 2825 H1120" stroke="#202526"/>
+<text x="565" y="2849" fill="#496c7e">→</text>
+<text x="46" y="2849" font-size="16">x0k:implements</text>
+<text x="600" y="2849" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#presupposes" data-kind="relationship"><title>https://0k.computer/ontology#presupposes</title><path d="M32 2878 H1120" stroke="#202526"/>
+<text x="565" y="2902" fill="#496c7e">→</text>
+<text x="46" y="2902" font-size="16">x0k:presupposes</text>
+<text x="600" y="2902" font-size="15">Wiki</text>
+</g>\n<g data-property="https://0k.computer/ontology#visualizes" data-kind="relationship"><title>https://0k.computer/ontology#visualizes</title><path d="M32 2931 H1120" stroke="#202526"/>
+<text x="565" y="2955" fill="#496c7e">→</text>
+<text x="46" y="2955" font-size="16">x0k:visualizes</text>
+<text x="600" y="2955" font-size="15">not specified</text>
+</g>\n</g>\n<g data-domain-group="Open Question"><rect x="32" y="3006" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="3030" font-size="16">Domain: Open Question</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="3063">PREDICATE</text><text x="600" y="3063">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#resolution" data-kind="data property"><title>https://0k.computer/ontology#resolution</title><path d="M32 3073 H1120" stroke="#202526"/>
+<text x="565" y="3097" fill="#496c7e">→</text>
+<text x="46" y="3097" font-size="16">resolution</text>
+<text x="600" y="3097" font-size="15">xsd:string</text>
+<text x="46" y="3119" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#raisedBy" data-kind="relationship"><title>https://0k.computer/ontology#raisedBy</title><path d="M32 3126 H1120" stroke="#202526"/>
+<text x="565" y="3150" fill="#496c7e">→</text>
+<text x="46" y="3150" font-size="16">x0k:raisedBy</text>
+<text x="600" y="3150" font-size="15">Decision</text>
+</g>\n</g>\n<g data-domain-group="Parameter"><rect x="32" y="3201" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="3225" font-size="16">Domain: Parameter</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="3258">PREDICATE</text><text x="600" y="3258">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#folio/default" data-kind="data property"><title>https://0k.computer/ontology#folio/default</title><path d="M32 3268 H1120" stroke="#202526"/>
+<text x="565" y="3292" fill="#496c7e">→</text>
+<text x="46" y="3292" font-size="16">x0k:folio/default</text>
+<text x="600" y="3292" font-size="15">not specified</text>
+<text x="46" y="3314" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/kind" data-kind="data property"><title>https://0k.computer/ontology#folio/kind</title><path d="M32 3321 H1120" stroke="#202526"/>
+<text x="565" y="3345" fill="#496c7e">→</text>
+<text x="46" y="3345" font-size="16">x0k:folio/kind</text>
+<text x="600" y="3345" font-size="15">xsd:string</text>
+<text x="46" y="3367" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/max" data-kind="data property"><title>https://0k.computer/ontology#folio/max</title><path d="M32 3374 H1120" stroke="#202526"/>
+<text x="565" y="3398" fill="#496c7e">→</text>
+<text x="46" y="3398" font-size="16">x0k:folio/max</text>
+<text x="600" y="3398" font-size="15">xsd:decimal</text>
+<text x="46" y="3420" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/min" data-kind="data property"><title>https://0k.computer/ontology#folio/min</title><path d="M32 3427 H1120" stroke="#202526"/>
+<text x="565" y="3451" fill="#496c7e">→</text>
+<text x="46" y="3451" font-size="16">x0k:folio/min</text>
+<text x="600" y="3451" font-size="15">xsd:decimal</text>
+<text x="46" y="3473" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/step" data-kind="data property"><title>https://0k.computer/ontology#folio/step</title><path d="M32 3480 H1120" stroke="#202526"/>
+<text x="565" y="3504" fill="#496c7e">→</text>
+<text x="46" y="3504" font-size="16">x0k:folio/step</text>
+<text x="600" y="3504" font-size="15">xsd:decimal</text>
+<text x="46" y="3526" font-size="11" fill="#496c7e">data property</text>
+</g>\n</g>\n<g data-domain-group="Publication"><rect x="32" y="3555" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="3579" font-size="16">Domain: Publication</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="3612">PREDICATE</text><text x="600" y="3612">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#admitsReaderVerb" data-kind="data property"><title>https://0k.computer/ontology#admitsReaderVerb</title><path d="M32 3622 H1120" stroke="#202526"/>
+<text x="565" y="3646" fill="#496c7e">→</text>
+<text x="46" y="3646" font-size="16">admits reader verb</text>
+<text x="600" y="3646" font-size="15">(outside selection)</text>
+<text x="46" y="3668" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#carries" data-kind="data property"><title>https://0k.computer/ontology#carries</title><path d="M32 3675 H1120" stroke="#202526"/>
+<text x="565" y="3699" fill="#496c7e">→</text>
+<text x="46" y="3699" font-size="16">carries</text>
+<text x="600" y="3699" font-size="15">xsd:string</text>
+<text x="46" y="3721" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#copyright" data-kind="data property"><title>https://0k.computer/ontology#copyright</title><path d="M32 3728 H1120" stroke="#202526"/>
+<text x="565" y="3752" fill="#496c7e">→</text>
+<text x="46" y="3752" font-size="16">copyright</text>
+<text x="600" y="3752" font-size="15">xsd:string</text>
+<text x="46" y="3774" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#gitPin" data-kind="data property"><title>https://0k.computer/ontology#gitPin</title><path d="M32 3781 H1120" stroke="#202526"/>
+<text x="565" y="3805" fill="#496c7e">→</text>
+<text x="46" y="3805" font-size="16">git pin</text>
+<text x="600" y="3805" font-size="15">xsd:string</text>
+<text x="46" y="3827" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#keywords" data-kind="data property"><title>https://0k.computer/ontology#keywords</title><path d="M32 3834 H1120" stroke="#202526"/>
+<text x="565" y="3858" fill="#496c7e">→</text>
+<text x="46" y="3858" font-size="16">keywords</text>
+<text x="600" y="3858" font-size="15">xsd:string</text>
+<text x="46" y="3880" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#license" data-kind="data property"><title>https://0k.computer/ontology#license</title><path d="M32 3887 H1120" stroke="#202526"/>
+<text x="565" y="3911" fill="#496c7e">→</text>
+<text x="46" y="3911" font-size="16">license</text>
+<text x="600" y="3911" font-size="15">xsd:string</text>
+<text x="46" y="3933" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#marks" data-kind="relationship"><title>https://0k.computer/ontology#marks</title><path d="M32 3940 H1120" stroke="#202526"/>
+<text x="565" y="3964" fill="#496c7e">→</text>
+<text x="46" y="3964" font-size="16">marks</text>
+<text x="600" y="3964" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#overlay" data-kind="data property"><title>https://0k.computer/ontology#overlay</title><path d="M32 3993 H1120" stroke="#202526"/>
+<text x="565" y="4017" fill="#496c7e">→</text>
+<text x="46" y="4017" font-size="16">overlay</text>
+<text x="600" y="4017" font-size="15">xsd:string</text>
+<text x="46" y="4039" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#palette" data-kind="data property"><title>https://0k.computer/ontology#palette</title><path d="M32 4046 H1120" stroke="#202526"/>
+<text x="565" y="4070" fill="#496c7e">→</text>
+<text x="46" y="4070" font-size="16">palette</text>
+<text x="600" y="4070" font-size="15">not specified</text>
+<text x="46" y="4092" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#prebuilt" data-kind="data property"><title>https://0k.computer/ontology#prebuilt</title><path d="M32 4099 H1120" stroke="#202526"/>
+<text x="565" y="4123" fill="#496c7e">→</text>
+<text x="46" y="4123" font-size="16">prebuilt</text>
+<text x="600" y="4123" font-size="15">not specified</text>
+<text x="46" y="4145" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#projection" data-kind="data property"><title>https://0k.computer/ontology#projection</title><path d="M32 4152 H1120" stroke="#202526"/>
+<text x="565" y="4176" fill="#496c7e">→</text>
+<text x="46" y="4176" font-size="16">projection</text>
+<text x="600" y="4176" font-size="15">not specified</text>
+<text x="46" y="4198" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#publishBranch" data-kind="data property"><title>https://0k.computer/ontology#publishBranch</title><path d="M32 4205 H1120" stroke="#202526"/>
+<text x="565" y="4229" fill="#496c7e">→</text>
+<text x="46" y="4229" font-size="16">publish branch</text>
+<text x="600" y="4229" font-size="15">xsd:string</text>
+<text x="46" y="4251" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#publishRegistry" data-kind="data property"><title>https://0k.computer/ontology#publishRegistry</title><path d="M32 4258 H1120" stroke="#202526"/>
+<text x="565" y="4282" fill="#496c7e">→</text>
+<text x="46" y="4282" font-size="16">publish registry</text>
+<text x="600" y="4282" font-size="15">xsd:string</text>
+<text x="46" y="4304" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#publishRemote" data-kind="data property"><title>https://0k.computer/ontology#publishRemote</title><path d="M32 4311 H1120" stroke="#202526"/>
+<text x="565" y="4335" fill="#496c7e">→</text>
+<text x="46" y="4335" font-size="16">publish remote</text>
+<text x="600" y="4335" font-size="15">xsd:string</text>
+<text x="46" y="4357" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#readerAcceptance" data-kind="data property"><title>https://0k.computer/ontology#readerAcceptance</title><path d="M32 4364 H1120" stroke="#202526"/>
+<text x="565" y="4388" fill="#496c7e">→</text>
+<text x="46" y="4388" font-size="16">reader acceptance</text>
+<text x="600" y="4388" font-size="15">(outside selection)</text>
+<text x="46" y="4410" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#repository" data-kind="data property"><title>https://0k.computer/ontology#repository</title><path d="M32 4417 H1120" stroke="#202526"/>
+<text x="565" y="4441" fill="#496c7e">→</text>
+<text x="46" y="4441" font-size="16">repository</text>
+<text x="600" y="4441" font-size="15">xsd:string</text>
+<text x="46" y="4463" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#repositoryLayout" data-kind="data property"><title>https://0k.computer/ontology#repositoryLayout</title><path d="M32 4470 H1120" stroke="#202526"/>
+<text x="565" y="4494" fill="#496c7e">→</text>
+<text x="46" y="4494" font-size="16">repository layout</text>
+<text x="600" y="4494" font-size="15">xsd:string</text>
+<text x="46" y="4516" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#rustToolchain" data-kind="data property"><title>https://0k.computer/ontology#rustToolchain</title><path d="M32 4523 H1120" stroke="#202526"/>
+<text x="565" y="4547" fill="#496c7e">→</text>
+<text x="46" y="4547" font-size="16">rust toolchain</text>
+<text x="600" y="4547" font-size="15">xsd:string</text>
+<text x="46" y="4569" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#rustVersion" data-kind="data property"><title>https://0k.computer/ontology#rustVersion</title><path d="M32 4576 H1120" stroke="#202526"/>
+<text x="565" y="4600" fill="#496c7e">→</text>
+<text x="46" y="4600" font-size="16">rust version</text>
+<text x="600" y="4600" font-size="15">xsd:string</text>
+<text x="46" y="4622" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#severs" data-kind="relationship"><title>https://0k.computer/ontology#severs</title><path d="M32 4629 H1120" stroke="#202526"/>
+<text x="565" y="4653" fill="#496c7e">→</text>
+<text x="46" y="4653" font-size="16">severs</text>
+<text x="600" y="4653" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#entryPoint" data-kind="relationship"><title>https://0k.computer/ontology#entryPoint</title><path d="M32 4682 H1120" stroke="#202526"/>
+<text x="565" y="4706" fill="#496c7e">→</text>
+<text x="46" y="4706" font-size="16">x0k:entryPoint</text>
+<text x="600" y="4706" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#excludes" data-kind="relationship"><title>https://0k.computer/ontology#excludes</title><path d="M32 4735 H1120" stroke="#202526"/>
+<text x="565" y="4759" fill="#496c7e">→</text>
+<text x="46" y="4759" font-size="16">x0k:excludes</text>
+<text x="600" y="4759" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#publishedBy" data-kind="relationship"><title>https://0k.computer/ontology#publishedBy</title><path d="M32 4788 H1120" stroke="#202526"/>
+<text x="565" y="4812" fill="#496c7e">→</text>
+<text x="46" y="4812" font-size="16">x0k:publishedBy</text>
+<text x="600" y="4812" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#publishedFor" data-kind="relationship"><title>https://0k.computer/ontology#publishedFor</title><path d="M32 4841 H1120" stroke="#202526"/>
+<text x="565" y="4865" fill="#496c7e">→</text>
+<text x="46" y="4865" font-size="16">x0k:publishedFor</text>
+<text x="600" y="4865" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#publishes" data-kind="relationship"><title>https://0k.computer/ontology#publishes</title><path d="M32 4894 H1120" stroke="#202526"/>
+<text x="565" y="4918" fill="#496c7e">→</text>
+<text x="46" y="4918" font-size="16">x0k:publishes</text>
+<text x="600" y="4918" font-size="15">not specified</text>
+</g>\n</g>\n<g data-domain-group="not specified"><rect x="32" y="4969" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="4993" font-size="16">Domain: not specified</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="5026">PREDICATE</text><text x="600" y="5026">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#bodyFormat" data-kind="data property"><title>https://0k.computer/ontology#bodyFormat</title><path d="M32 5036 H1120" stroke="#202526"/>
+<text x="565" y="5060" fill="#496c7e">→</text>
+<text x="46" y="5060" font-size="16">x0k:bodyFormat</text>
+<text x="600" y="5060" font-size="15">xsd:string</text>
+<text x="46" y="5082" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#createdAt" data-kind="data property"><title>https://0k.computer/ontology#createdAt</title><path d="M32 5089 H1120" stroke="#202526"/>
+<text x="565" y="5113" fill="#496c7e">→</text>
+<text x="46" y="5113" font-size="16">x0k:createdAt</text>
+<text x="600" y="5113" font-size="15">xsd:string</text>
+<text x="46" y="5135" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/contentHash" data-kind="data property"><title>https://0k.computer/ontology#folio/contentHash</title><path d="M32 5142 H1120" stroke="#202526"/>
+<text x="565" y="5166" fill="#496c7e">→</text>
+<text x="46" y="5166" font-size="16">x0k:folio/contentHash</text>
+<text x="600" y="5166" font-size="15">xsd:string</text>
+<text x="46" y="5188" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/documentRevisionId" data-kind="data property"><title>https://0k.computer/ontology#folio/documentRevisionId</title><path d="M32 5195 H1120" stroke="#202526"/>
+<text x="565" y="5219" fill="#496c7e">→</text>
+<text x="46" y="5219" font-size="16">x0k:folio/documentRevisionId</text>
+<text x="600" y="5219" font-size="15">xsd:string</text>
+<text x="46" y="5241" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/loroDocId" data-kind="data property"><title>https://0k.computer/ontology#folio/loroDocId</title><path d="M32 5248 H1120" stroke="#202526"/>
+<text x="565" y="5272" fill="#496c7e">→</text>
+<text x="46" y="5272" font-size="16">x0k:folio/loroDocId</text>
+<text x="600" y="5272" font-size="15">xsd:string</text>
+<text x="46" y="5294" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/pipelines" data-kind="data property"><title>https://0k.computer/ontology#folio/pipelines</title><path d="M32 5301 H1120" stroke="#202526"/>
+<text x="565" y="5325" fill="#496c7e">→</text>
+<text x="46" y="5325" font-size="16">x0k:folio/pipelines</text>
+<text x="600" y="5325" font-size="15">not specified</text>
+<text x="46" y="5347" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/sourceDocument" data-kind="relationship"><title>https://0k.computer/ontology#folio/sourceDocument</title><path d="M32 5354 H1120" stroke="#202526"/>
+<text x="565" y="5378" fill="#496c7e">→</text>
+<text x="46" y="5378" font-size="16">x0k:folio/sourceDocument</text>
+<text x="600" y="5378" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/sourceEnd" data-kind="data property"><title>https://0k.computer/ontology#folio/sourceEnd</title><path d="M32 5407 H1120" stroke="#202526"/>
+<text x="565" y="5431" fill="#496c7e">→</text>
+<text x="46" y="5431" font-size="16">x0k:folio/sourceEnd</text>
+<text x="600" y="5431" font-size="15">xsd:integer</text>
+<text x="46" y="5453" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/sourceKind" data-kind="data property"><title>https://0k.computer/ontology#folio/sourceKind</title><path d="M32 5460 H1120" stroke="#202526"/>
+<text x="565" y="5484" fill="#496c7e">→</text>
+<text x="46" y="5484" font-size="16">x0k:folio/sourceKind</text>
+<text x="600" y="5484" font-size="15">xsd:string</text>
+<text x="46" y="5506" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/sourceOrigin" data-kind="data property"><title>https://0k.computer/ontology#folio/sourceOrigin</title><path d="M32 5513 H1120" stroke="#202526"/>
+<text x="565" y="5537" fill="#496c7e">→</text>
+<text x="46" y="5537" font-size="16">x0k:folio/sourceOrigin</text>
+<text x="600" y="5537" font-size="15">xsd:string</text>
+<text x="46" y="5559" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/sourcePath" data-kind="data property"><title>https://0k.computer/ontology#folio/sourcePath</title><path d="M32 5566 H1120" stroke="#202526"/>
+<text x="565" y="5590" fill="#496c7e">→</text>
+<text x="46" y="5590" font-size="16">x0k:folio/sourcePath</text>
+<text x="600" y="5590" font-size="15">xsd:string</text>
+<text x="46" y="5612" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/sourceStart" data-kind="data property"><title>https://0k.computer/ontology#folio/sourceStart</title><path d="M32 5619 H1120" stroke="#202526"/>
+<text x="565" y="5643" fill="#496c7e">→</text>
+<text x="46" y="5643" font-size="16">x0k:folio/sourceStart</text>
+<text x="600" y="5643" font-size="15">xsd:integer</text>
+<text x="46" y="5665" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/tangleCrate" data-kind="data property"><title>https://0k.computer/ontology#folio/tangleCrate</title><path d="M32 5672 H1120" stroke="#202526"/>
+<text x="565" y="5696" fill="#496c7e">→</text>
+<text x="46" y="5696" font-size="16">x0k:folio/tangleCrate</text>
+<text x="600" y="5696" font-size="15">xsd:string</text>
+<text x="46" y="5718" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/tangleRoot" data-kind="data property"><title>https://0k.computer/ontology#folio/tangleRoot</title><path d="M32 5725 H1120" stroke="#202526"/>
+<text x="565" y="5749" fill="#496c7e">→</text>
+<text x="46" y="5749" font-size="16">x0k:folio/tangleRoot</text>
+<text x="600" y="5749" font-size="15">xsd:string</text>
+<text x="46" y="5771" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/tangleRoots" data-kind="data property"><title>https://0k.computer/ontology#folio/tangleRoots</title><path d="M32 5778 H1120" stroke="#202526"/>
+<text x="565" y="5802" fill="#496c7e">→</text>
+<text x="46" y="5802" font-size="16">x0k:folio/tangleRoots</text>
+<text x="600" y="5802" font-size="15">not specified</text>
+<text x="46" y="5824" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#folio/transcludes" data-kind="data property"><title>https://0k.computer/ontology#folio/transcludes</title><path d="M32 5831 H1120" stroke="#202526"/>
+<text x="565" y="5855" fill="#496c7e">→</text>
+<text x="46" y="5855" font-size="16">x0k:folio/transcludes</text>
+<text x="600" y="5855" font-size="15">xsd:string</text>
+<text x="46" y="5877" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#subtype" data-kind="data property"><title>https://0k.computer/ontology#subtype</title><path d="M32 5884 H1120" stroke="#202526"/>
+<text x="565" y="5908" fill="#496c7e">→</text>
+<text x="46" y="5908" font-size="16">x0k:subtype</text>
+<text x="600" y="5908" font-size="15">xsd:string</text>
+<text x="46" y="5930" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#summary" data-kind="data property"><title>https://0k.computer/ontology#summary</title><path d="M32 5937 H1120" stroke="#202526"/>
+<text x="565" y="5961" fill="#496c7e">→</text>
+<text x="46" y="5961" font-size="16">x0k:summary</text>
+<text x="600" y="5961" font-size="15">xsd:string</text>
+<text x="46" y="5983" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#updatedAt" data-kind="data property"><title>https://0k.computer/ontology#updatedAt</title><path d="M32 5990 H1120" stroke="#202526"/>
+<text x="565" y="6014" fill="#496c7e">→</text>
+<text x="46" y="6014" font-size="16">x0k:updatedAt</text>
+<text x="600" y="6014" font-size="15">xsd:string</text>
+<text x="46" y="6036" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#updatedBy" data-kind="data property"><title>https://0k.computer/ontology#updatedBy</title><path d="M32 6043 H1120" stroke="#202526"/>
+<text x="565" y="6067" fill="#496c7e">→</text>
+<text x="46" y="6067" font-size="16">x0k:updatedBy</text>
+<text x="600" y="6067" font-size="15">xsd:string</text>
+<text x="46" y="6089" font-size="11" fill="#496c7e">data property</text>
 </g>\n</g>\n</g>
-<g data-module="https://0k.computer/ontology/software"><text x="32" y="5678" font-size="24" font-weight="650">software</text>
-<text x="32" y="5702" font-size="14">4 classes · 11 properties · imports core, document</text>
-<text x="32" y="5729" font-size="13" fill="#496c7e">Concepts defined here</text>
-<g data-concept="https://0k.computer/ontology#Affordance"><title>https://0k.computer/ontology#Affordance</title><rect x="32" y="5743" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="5768" font-size="16">Affordance</text>
+<g data-module="https://0k.computer/ontology/software"><text x="32" y="6154" font-size="24" font-weight="650">software</text>
+<text x="32" y="6178" font-size="14">4 classes · 10 properties · imports core, document</text>
+<text x="32" y="6205" font-size="13" fill="#496c7e">Concepts defined here</text>
+<g data-concept="https://0k.computer/ontology#Affordance"><title>https://0k.computer/ontology#Affordance</title><rect x="32" y="6219" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="6244" font-size="16">Affordance</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Signifier"><title>https://0k.computer/ontology#Signifier</title><rect x="400" y="5743" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="414" y="5768" font-size="16">Signifier</text>
+<g data-concept="https://0k.computer/ontology#Signifier"><title>https://0k.computer/ontology#Signifier</title><rect x="400" y="6219" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="414" y="6244" font-size="16">Signifier</text>
 </g>
-<g data-concept="https://0k.computer/ontology#SoftwareModule"><title>https://0k.computer/ontology#SoftwareModule</title><rect x="768" y="5743" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="782" y="5768" font-size="16">Software Module</text>
-<text x="782" y="5791" font-size="13">is a Artifact</text>
+<g data-concept="https://0k.computer/ontology#SoftwareModule"><title>https://0k.computer/ontology#SoftwareModule</title><rect x="768" y="6219" width="352" height="72" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="782" y="6244" font-size="16">Software Module</text>
+<text x="782" y="6267" font-size="13">is a Artifact</text>
 </g>
-<g data-concept="https://0k.computer/ontology#Surface"><title>https://0k.computer/ontology#Surface</title><rect x="32" y="5827" width="352" height="49" rx="6" fill="#ffffff" stroke="#202526"/>
-<text x="46" y="5852" font-size="16">Surface</text>
+<g data-concept="https://0k.computer/ontology#Surface"><title>https://0k.computer/ontology#Surface</title><rect x="32" y="6303" width="352" height="49" rx="6" fill="#ffffff" stroke="#202526"/>
+<text x="46" y="6328" font-size="16">Surface</text>
 </g>
-<text x="32" y="5906" font-size="16" font-weight="600">Predicates by domain</text>
-<g data-domain-group="Affordance"><rect x="32" y="5926" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="5950" font-size="16">Domain: Affordance</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="5983">PREDICATE</text><text x="600" y="5983">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#claimedFor" data-kind="relationship"><title>https://0k.computer/ontology#claimedFor</title><path d="M32 5993 H1120" stroke="#202526"/>
-<text x="565" y="6017" fill="#496c7e">→</text>
-<text x="46" y="6017" font-size="16">x0k:claimedFor</text>
-<text x="600" y="6017" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#enabledBy" data-kind="relationship"><title>https://0k.computer/ontology#enabledBy</title><path d="M32 6046 H1120" stroke="#202526"/>
-<text x="565" y="6070" fill="#496c7e">→</text>
-<text x="46" y="6070" font-size="16">x0k:enabledBy</text>
-<text x="600" y="6070" font-size="15">not specified</text>
-</g>\n<g data-property="https://0k.computer/ontology#requires" data-kind="relationship"><title>https://0k.computer/ontology#requires</title><path d="M32 6099 H1120" stroke="#202526"/>
-<text x="565" y="6123" fill="#496c7e">→</text>
-<text x="46" y="6123" font-size="16">x0k:requires</text>
-<text x="600" y="6123" font-size="15">Affordance</text>
-</g>\n</g>\n<g data-domain-group="Affordance or Decision"><rect x="32" y="6174" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="6198" font-size="16">Domain: Affordance or Decision</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="6231">PREDICATE</text><text x="600" y="6231">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#verifiedBy" data-kind="relationship"><title>https://0k.computer/ontology#verifiedBy</title><path d="M32 6241 H1120" stroke="#202526"/>
-<text x="565" y="6265" fill="#496c7e">→</text>
-<text x="46" y="6265" font-size="16">x0k:verifiedBy</text>
-<text x="600" y="6265" font-size="15">not specified</text>
-</g>\n</g>\n<g data-domain-group="Decision"><rect x="32" y="6316" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="6340" font-size="16">Domain: Decision</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="6373">PREDICATE</text><text x="600" y="6373">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#presentsSignifier" data-kind="relationship"><title>https://0k.computer/ontology#presentsSignifier</title><path d="M32 6383 H1120" stroke="#202526"/>
-<text x="565" y="6407" fill="#496c7e">→</text>
-<text x="46" y="6407" font-size="16">x0k:presentsSignifier</text>
-<text x="600" y="6407" font-size="15">Signifier</text>
-</g>\n</g>\n<g data-domain-group="Design Decision"><rect x="32" y="6458" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="6482" font-size="16">Domain: Design Decision</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="6515">PREDICATE</text><text x="600" y="6515">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#defines" data-kind="relationship"><title>https://0k.computer/ontology#defines</title><path d="M32 6525 H1120" stroke="#202526"/>
-<text x="565" y="6549" fill="#496c7e">→</text>
-<text x="46" y="6549" font-size="16">x0k:defines</text>
-<text x="600" y="6549" font-size="15">Affordance</text>
-</g>\n</g>\n<g data-domain-group="Implementation"><rect x="32" y="6600" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="6624" font-size="16">Domain: Implementation</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="6657">PREDICATE</text><text x="600" y="6657">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#proves" data-kind="relationship"><title>https://0k.computer/ontology#proves</title><path d="M32 6667 H1120" stroke="#202526"/>
-<text x="565" y="6691" fill="#496c7e">→</text>
-<text x="46" y="6691" font-size="16">x0k:proves</text>
-<text x="600" y="6691" font-size="15">Affordance</text>
-</g>\n</g>\n<g data-domain-group="Publication"><rect x="32" y="6742" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="6766" font-size="16">Domain: Publication</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="6799">PREDICATE</text><text x="600" y="6799">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#publishedOn" data-kind="relationship"><title>https://0k.computer/ontology#publishedOn</title><path d="M32 6809 H1120" stroke="#202526"/>
-<text x="565" y="6833" fill="#496c7e">→</text>
-<text x="46" y="6833" font-size="16">x0k:publishedOn</text>
-<text x="600" y="6833" font-size="15">Surface</text>
-</g>\n</g>\n<g data-domain-group="Signifier"><rect x="32" y="6884" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
-<text x="46" y="6908" font-size="16">Domain: Signifier</text>
-<g fill="#496c7e" font-size="11"><text x="46" y="6941">PREDICATE</text><text x="600" y="6941">RANGE</text></g>
-<g data-property="https://0k.computer/ontology#cue" data-kind="data property"><title>https://0k.computer/ontology#cue</title><path d="M32 6951 H1120" stroke="#202526"/>
-<text x="565" y="6975" fill="#496c7e">→</text>
-<text x="46" y="6975" font-size="16">cue</text>
-<text x="600" y="6975" font-size="15">xsd:string</text>
-<text x="46" y="6997" font-size="11" fill="#496c7e">data property</text>
-</g>\n<g data-property="https://0k.computer/ontology#presentedOn" data-kind="relationship"><title>https://0k.computer/ontology#presentedOn</title><path d="M32 7004 H1120" stroke="#202526"/>
-<text x="565" y="7028" fill="#496c7e">→</text>
-<text x="46" y="7028" font-size="16">x0k:presentedOn</text>
-<text x="600" y="7028" font-size="15">Surface</text>
-</g>\n<g data-property="https://0k.computer/ontology#signifies" data-kind="relationship"><title>https://0k.computer/ontology#signifies</title><path d="M32 7057 H1120" stroke="#202526"/>
-<text x="565" y="7081" fill="#496c7e">→</text>
-<text x="46" y="7081" font-size="16">x0k:signifies</text>
-<text x="600" y="7081" font-size="15">Affordance</text>
+<text x="32" y="6382" font-size="16" font-weight="600">Predicates by domain</text>
+<g data-domain-group="Affordance"><rect x="32" y="6402" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="6426" font-size="16">Domain: Affordance</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="6459">PREDICATE</text><text x="600" y="6459">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#claimedFor" data-kind="relationship"><title>https://0k.computer/ontology#claimedFor</title><path d="M32 6469 H1120" stroke="#202526"/>
+<text x="565" y="6493" fill="#496c7e">→</text>
+<text x="46" y="6493" font-size="16">x0k:claimedFor</text>
+<text x="600" y="6493" font-size="15">not specified</text>
+</g>\n<g data-property="https://0k.computer/ontology#requires" data-kind="relationship"><title>https://0k.computer/ontology#requires</title><path d="M32 6522 H1120" stroke="#202526"/>
+<text x="565" y="6546" fill="#496c7e">→</text>
+<text x="46" y="6546" font-size="16">x0k:requires</text>
+<text x="600" y="6546" font-size="15">Affordance</text>
+</g>\n</g>\n<g data-domain-group="Affordance or Decision"><rect x="32" y="6597" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="6621" font-size="16">Domain: Affordance or Decision</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="6654">PREDICATE</text><text x="600" y="6654">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#verifiedBy" data-kind="relationship"><title>https://0k.computer/ontology#verifiedBy</title><path d="M32 6664 H1120" stroke="#202526"/>
+<text x="565" y="6688" fill="#496c7e">→</text>
+<text x="46" y="6688" font-size="16">x0k:verifiedBy</text>
+<text x="600" y="6688" font-size="15">not specified</text>
+</g>\n</g>\n<g data-domain-group="Decision"><rect x="32" y="6739" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="6763" font-size="16">Domain: Decision</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="6796">PREDICATE</text><text x="600" y="6796">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#presentsSignifier" data-kind="relationship"><title>https://0k.computer/ontology#presentsSignifier</title><path d="M32 6806 H1120" stroke="#202526"/>
+<text x="565" y="6830" fill="#496c7e">→</text>
+<text x="46" y="6830" font-size="16">x0k:presentsSignifier</text>
+<text x="600" y="6830" font-size="15">Signifier</text>
+</g>\n</g>\n<g data-domain-group="Design Decision"><rect x="32" y="6881" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="6905" font-size="16">Domain: Design Decision</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="6938">PREDICATE</text><text x="600" y="6938">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#defines" data-kind="relationship"><title>https://0k.computer/ontology#defines</title><path d="M32 6948 H1120" stroke="#202526"/>
+<text x="565" y="6972" fill="#496c7e">→</text>
+<text x="46" y="6972" font-size="16">x0k:defines</text>
+<text x="600" y="6972" font-size="15">Affordance</text>
+</g>\n</g>\n<g data-domain-group="Implementation"><rect x="32" y="7023" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="7047" font-size="16">Domain: Implementation</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="7080">PREDICATE</text><text x="600" y="7080">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#proves" data-kind="relationship"><title>https://0k.computer/ontology#proves</title><path d="M32 7090 H1120" stroke="#202526"/>
+<text x="565" y="7114" fill="#496c7e">→</text>
+<text x="46" y="7114" font-size="16">x0k:proves</text>
+<text x="600" y="7114" font-size="15">Affordance</text>
+</g>\n</g>\n<g data-domain-group="Publication"><rect x="32" y="7165" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="7189" font-size="16">Domain: Publication</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="7222">PREDICATE</text><text x="600" y="7222">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#publishedOn" data-kind="relationship"><title>https://0k.computer/ontology#publishedOn</title><path d="M32 7232 H1120" stroke="#202526"/>
+<text x="565" y="7256" fill="#496c7e">→</text>
+<text x="46" y="7256" font-size="16">x0k:publishedOn</text>
+<text x="600" y="7256" font-size="15">Surface</text>
+</g>\n</g>\n<g data-domain-group="Signifier"><rect x="32" y="7307" width="1088" height="37" rx="4" fill="#496c7e" fill-opacity="0.09"/>
+<text x="46" y="7331" font-size="16">Domain: Signifier</text>
+<g fill="#496c7e" font-size="11"><text x="46" y="7364">PREDICATE</text><text x="600" y="7364">RANGE</text></g>
+<g data-property="https://0k.computer/ontology#cue" data-kind="data property"><title>https://0k.computer/ontology#cue</title><path d="M32 7374 H1120" stroke="#202526"/>
+<text x="565" y="7398" fill="#496c7e">→</text>
+<text x="46" y="7398" font-size="16">cue</text>
+<text x="600" y="7398" font-size="15">xsd:string</text>
+<text x="46" y="7420" font-size="11" fill="#496c7e">data property</text>
+</g>\n<g data-property="https://0k.computer/ontology#presentedOn" data-kind="relationship"><title>https://0k.computer/ontology#presentedOn</title><path d="M32 7427 H1120" stroke="#202526"/>
+<text x="565" y="7451" fill="#496c7e">→</text>
+<text x="46" y="7451" font-size="16">x0k:presentedOn</text>
+<text x="600" y="7451" font-size="15">Surface</text>
+</g>\n<g data-property="https://0k.computer/ontology#signifies" data-kind="relationship"><title>https://0k.computer/ontology#signifies</title><path d="M32 7480 H1120" stroke="#202526"/>
+<text x="565" y="7504" fill="#496c7e">→</text>
+<text x="46" y="7504" font-size="16">x0k:signifies</text>
+<text x="600" y="7504" font-size="15">Affordance</text>
 </g>\n</g>\n</g>
 </g>
 </svg>

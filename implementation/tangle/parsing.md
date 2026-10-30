@@ -747,3 +747,12 @@ ts part
 
 <<tests>>
 ```
+
+## A migrated header changes no projection
+
+A chapter moved off the retired `---` frontmatter onto the folio block
+tangles the projections it tangled before, byte for byte; only its tangle
+map's `source_hash` moves. That is checked on real chapters kept as frozen
+repository evidence, so the check lives with the repository's checks in
+x0k-integration-tests ([migrated headers](migrated-headers.md)), not in
+this crate.

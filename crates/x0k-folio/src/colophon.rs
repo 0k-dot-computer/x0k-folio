@@ -277,11 +277,8 @@ fn is_turtle_decimal(lexical: &str) -> bool {
     }
 }
 
-/// The body format when the header states none.
-pub const BODY_FORMAT_MARKDOWN: &str = "markdown";
-
-/// HTML body format. Opt-in; the renderer dispatches on this value.
-pub const BODY_FORMAT_HTML: &str = "html";
+// Body-format tokens are shared with editing that does not parse an envelope.
+pub use crate::canonical_patch::{BODY_FORMAT_HTML, BODY_FORMAT_MARKDOWN};
 
 /// Recognized `x0k:bodyFormat` values.
 pub const KNOWN_BODY_FORMATS: &[&str] = &[BODY_FORMAT_MARKDOWN, BODY_FORMAT_HTML];

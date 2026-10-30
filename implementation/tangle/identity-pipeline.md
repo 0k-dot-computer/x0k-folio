@@ -328,7 +328,8 @@ and afterwards were not.
 /// The literate trees this plugin claims, as workspace-relative paths.
 ///
 /// One entry per corpus, naming its implementation genus — the genus
-/// whose tangle targets are monorepo-relative. Publications are
+/// whose tangle targets are monorepo-relative — and `substrate/cells`,
+/// where each cell keeps its own literate tree under `lit/`. Publications are
 /// deliberately absent: a publication is a region document whose
 /// outputs resolve against the region's own repository root, and
 /// sweeping one from here overwrites the monorepo's `README.md`.
@@ -342,6 +343,7 @@ pub const LITERATE_ROOTS: &[&str] = &[
     "corpora/x0k/implementation",
     "corpora/mattress-world/implementation",
     "corpora/sci/implementation",
+    "substrate/cells",
 ];
 ```
 
@@ -1244,7 +1246,7 @@ mod tests {
     /// rather than skipping: the root check below is worthless if it can
     /// quietly decide it has nothing to look at.
     fn workspace_root() -> std::path::PathBuf {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test"));
         manifest
             .ancestors()
             // `Cargo.lock` is the marker the monorepo and a projected

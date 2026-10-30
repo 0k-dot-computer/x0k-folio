@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/x0k-folio", "crates/x0k-ontology", "crates/x0k-syntax", "crates/x0k-tangle", "crates/x0k-icon", "crates/x0k-fact-projection", "crates/x0k-folio-ingest", "crates/x0k-folio-dialog", "crates/x0k-folio-cli",
+members = ["crates/x0k-folio", "crates/x0k-ontology", "crates/x0k-sequence", "crates/x0k-syntax", "crates/x0k-tangle", "crates/x0k-icon", "crates/x0k-fact-projection", "crates/x0k-folio-ingest", "crates/x0k-folio-dialog", "crates/x0k-folio-cli",
 ]
 
 [workspace.package]

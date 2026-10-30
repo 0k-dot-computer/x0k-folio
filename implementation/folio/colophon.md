@@ -24,7 +24,7 @@ parser ([`parse_envelope`](#parse-envelope)) and its only renderer
 folio file, so "what is a typed document" has one answer.
 
 Our carried example throughout the folio chapters is a real header, the
-publication manifest at `publications/x0k-folio/x0k-folio.md` — the document
+publication manifest at `corpora/x0k/publications/x0k-folio/x0k-folio.md` — the document
 that publishes this crate to the public internet:
 
 ````markdown
@@ -440,11 +440,8 @@ old software unable to open the document:
 <a name="chunk-format-tokens"></a><sub>[`src/colophon.rs`](../../crates/x0k-folio/src/colophon.rs) · `#format-tokens`</sub>
 
 ```rust {#format-tokens}
-/// The body format when the header states none.
-pub const BODY_FORMAT_MARKDOWN: &str = "markdown";
-
-/// HTML body format. Opt-in; the renderer dispatches on this value.
-pub const BODY_FORMAT_HTML: &str = "html";
+// Body-format tokens are shared with editing that does not parse an envelope.
+pub use crate::canonical_patch::{BODY_FORMAT_HTML, BODY_FORMAT_MARKDOWN};
 
 /// Recognized `x0k:bodyFormat` values.
 pub const KNOWN_BODY_FORMATS: &[&str] = &[BODY_FORMAT_MARKDOWN, BODY_FORMAT_HTML];

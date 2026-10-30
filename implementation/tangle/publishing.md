@@ -807,7 +807,7 @@ publish of any other publication on GitHub that stated no
 the last resort, read only when the publication names no repository of
 its own in any of the three ways above. A publication's own word about
 where it lives always wins: one that states `x0k:repository` is pushed
-there whatever the config maps its surface to (x0k-plan-vm states its
+there whatever the config maps its surface to (x0k-plan states its
 own repository and is published on `github`, which the config maps to
 x0k-folio's).
 

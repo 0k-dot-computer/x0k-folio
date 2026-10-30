@@ -96,9 +96,17 @@ use std::ops::Range;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag};
 use serde::{Deserialize, Serialize};
 
-use crate::colophon::{parse_envelope, replace_body, BODY_FORMAT_HTML, BODY_FORMAT_MARKDOWN};
-use crate::html_canonical::{apply_canonical_patches, normalize_html};
+#[cfg(feature = "envelope")]
+use crate::colophon::{parse_envelope, replace_body};
+use crate::html_canonical::apply_canonical_patches;
+#[cfg(feature = "envelope")]
+use crate::html_canonical::normalize_html;
 use crate::FenceInfo;
+
+/// Markdown body format, also the default for a folio envelope.
+pub const BODY_FORMAT_MARKDOWN: &str = "markdown";
+/// HTML body format.
+pub const BODY_FORMAT_HTML: &str = "html";
 ```
 
 A **text point** is one position inside one decoded visible-text run of
@@ -296,6 +304,7 @@ is where it was, byte for byte.
 ///
 /// The header is preserved byte-for-byte. Patch coordinates start at the
 /// body root, so header formatting never becomes part of the edit grammar.
+#[cfg(feature = "envelope")]
 pub fn apply_folio_patches(
     content: &str,
     patches: &[CanonicalPatch],
@@ -330,6 +339,7 @@ reformats it.
 /// through unchanged. Folio HTML bodies take the same normalizer as the HTML
 /// overlay; markdown source is already the canonical file projection and is
 /// preserved byte-for-byte.
+#[cfg(feature = "envelope")]
 pub fn canonicalize_folio_content(content: &str) -> String {
     let Ok((envelope, body)) = parse_envelope(content) else {
         return content.to_string();
@@ -359,6 +369,7 @@ document (that edit canonicalizes, by the first arm).
 /// canonicalization by corrupting its header. Generic non-folio documents retain the bridge's
 /// existing pass-through behavior, including when an edit first turns one into
 /// a valid folio document.
+#[cfg(feature = "envelope")]
 pub fn canonicalize_edited_folio_content(
     previous: &str,
     edited: &str,

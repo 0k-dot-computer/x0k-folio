@@ -255,7 +255,7 @@ fn absolutize(path: &Path) -> PathBuf {
 
 /// Collapse `.` and `..` textually. Purely syntactic: it never
 /// touches the filesystem, so it is safe on paths that don't exist.
-fn lexically_normalize(path: &Path) -> PathBuf {
+pub(crate) fn lexically_normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for comp in path.components() {
         match comp {

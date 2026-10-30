@@ -9,10 +9,10 @@
 //!
 //! Modules:
 //!
-//! - [`colophon`] — the header's parser, renderer and types (`Colophon`, `DocType`, `Status`, `Materialization`)
-//! - [`entity_id`] — the id grammar: `<scheme>:<class>/<slug>`, parsed and rendered
-//! - [`envelope_check`] — a header read against a vocabulary the caller names
-//! - [`inline_entity`] — entities authored inside a document body, extracted
+//! - `colophon` — the header's parser, renderer and types (`Colophon`, `DocType`, `Status`, `Materialization`)
+//! - `entity_id` — the id grammar: `<scheme>:<class>/<slug>`, parsed and rendered
+//! - `envelope_check` — a header read against a vocabulary the caller names
+//! - `inline_entity` — entities authored inside a document body, extracted
 //! - [`html_canonical`] — HTML canonicalizer for folio HTML bodies (stable attribute ordering, whitespace policy, behavior stripping)
 //! - `projection` — the `ColophonProjection` projection plugin. Compiled only
 //!   under the `plugins` feature; the source ships either way, so a build
@@ -23,24 +23,35 @@
 //! active calls `projection::register_colophon_factory` before loading its class
 //! registry. Nothing hard-wires that registration.
 
+pub mod block_identity;
 pub mod block_provenance;
 pub mod block_segment;
 pub mod canonical_patch;
+#[cfg(feature = "envelope")]
 pub mod colophon;
 #[cfg(feature = "document-vocabulary")]
 pub mod document_vocabulary;
+#[cfg(feature = "envelope")]
 pub mod entity_id;
+#[cfg(feature = "envelope")]
 pub mod envelope_check;
 pub mod html_canonical;
 pub mod writing_presentation;
+#[cfg(feature = "envelope")]
 pub mod inline_entity;
+#[cfg(feature = "envelope")]
 pub mod layout;
-// Unconditional: this is the half of materialization the published build
-// must carry. Its Loro-backed sibling below stays behind `plugins`.
+// Markdown bodies rendered as the HTML every host shows, the shell and a
+// browser alike; figure data and parameter panels need the envelope parser.
+#[cfg(feature = "envelope")]
+pub mod markdown_html;
+// Document builds carry materialization together with their envelope parser.
+#[cfg(feature = "envelope")]
 pub mod materialize;
 #[cfg(feature = "plugins")]
 pub mod projection;
 pub mod structural_block;
+#[cfg(feature = "envelope")]
 pub mod transclusion;
 
 pub use block_provenance::{
@@ -49,7 +60,9 @@ pub use block_provenance::{
     ViewerState,
 };
 pub use block_segment::{hash_block, segment_body, BlockKind, BlockSegment};
+#[cfg(feature = "envelope")]
 pub use entity_id::{EntityId, EntityIdError};
+#[cfg(feature = "envelope")]
 pub use envelope_check::{
     check_corpus, check_declarations, check_envelope, predicate_standing, CorpusReport,
     DanglingDeclaration, DanglingEdge, DeclarationDefect, DeclarationReport, Defect,
@@ -59,15 +72,20 @@ pub use envelope_check::{
 // exists only where that loader does.
 #[cfg(feature = "document-vocabulary")]
 pub use envelope_check::{check_instances, InstanceCheck};
+#[cfg(feature = "envelope")]
 pub use inline_entity::{
     declared_facts, defined_in_fact, document_edges, extract_from_markdown, inline_entity_facts,
     prose_edges, read_graph_block, read_parameters, GraphContent, InlineEntity,
     InlineEntityError, Object, Parameter, ParameterValue, ICON_CLASS,
 };
 pub use canonical_patch::{
-    apply_body_patches, apply_folio_patches, apply_markdown_patches,
-    canonicalize_edited_folio_content, canonicalize_folio_content, CanonicalHtmlPatch,
-    CanonicalPatch, CanonicalPatchError, CanonicalTextPoint,
+    apply_body_patches, apply_markdown_patches, CanonicalHtmlPatch, CanonicalPatch, CanonicalPatchError,
+    CanonicalTextPoint,
+};
+#[cfg(feature = "envelope")]
+pub use canonical_patch::{
+    apply_folio_patches, canonicalize_edited_folio_content,
+    canonicalize_folio_content,
 };
 #[cfg(feature = "plugins")]
 pub use projection::{ColophonProjection, FOLIO_PLUGIN_NAME};
@@ -75,6 +93,7 @@ pub use structural_block::{
     BlockId, BlockIdAllocator, FenceInfo, InlineSpan, MarkerId, StructuralBlock, StructuralDoc,
     StructuralListItem, TableAlignment,
 };
+#[cfg(feature = "envelope")]
 pub use transclusion::{
     DocSource, Resolved, TranscludeRef, TranscludeWarning, MAX_TRANSCLUDE_DEPTH,
 };

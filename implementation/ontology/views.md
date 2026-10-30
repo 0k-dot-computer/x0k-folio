@@ -190,7 +190,7 @@ emitted from, so the answer is the build's and never a copy.
 ```rust {#lookups}
 /// The `rdfs:label` for a class URI (bare `x0k:` form), or `None` if the
 /// URI is not a vocabulary class (e.g. a synthetic UI-only class like
-/// `x0k:Ontology` / `x0k:Home` / `x0k:Population`).
+/// `x0k:Ontology` / `x0k:Home`).
 pub fn class_label(uri: &str) -> Option<&'static str> {
     ONTOLOGY_CLASSES
         .iter()
@@ -628,9 +628,10 @@ mod tests {
 
     #[test]
     fn ordering_spellings_are_pinned() {
-        // Ten classes and thirty-nine predicates: seven structural, fifteen
+        // Eleven classes and thirty-nine predicates: seven structural, fifteen
         // input, seventeen on the derivation and its parts
-        // (`x0k:implementation/ontology/ordering`). A change to this list is
+        // (`x0k:implementation/ontology/ordering`); `Metric` names the
+        // measuring method a metric-class detection reads. A change to this list is
         // a change to what a basis or a record may hold, never a tidy-up.
         // Read off `TERMS`, not `ordering::terms::*`, so a publication
         // compiling a subset still builds.
@@ -666,6 +667,7 @@ mod tests {
                 "x0kordering:estimate/low",
                 "x0kordering:estimate/point",
                 "x0kordering:estimate/subject",
+                "x0kordering:Metric",
                 "x0kordering:Placement",
                 "x0kordering:placement/rank",
                 "x0kordering:placement/unit",
@@ -700,7 +702,8 @@ mod tests {
         // list crosses a namespace: `x0k:fact/fold-rule` keeps the base
         // namespace because every module file in the corpus asserts it on
         // every term, and §1 refuses a rename for tidiness
-        // (`x0k:implementation/ontology/declaration`). `rdfs:isDefinedBy` is
+        // (`x0k:implementation/ontology/declaration`); `x0k:fact/indexed`
+        // sits beside it for the same reason. `rdfs:isDefinedBy` is
         // what places a term in a module, not the shape of its URI, so the
         // list below is what a base-namespace term in an extension looks
         // like when it is deliberate.
@@ -711,6 +714,7 @@ mod tests {
             declaration.terms,
             [
                 "x0k:fact/fold-rule",
+                "x0k:fact/indexed",
                 "x0kdecl:VocabularySet",
                 "x0kdecl:vocabulary-set/member",
                 "x0kdecl:vocabulary-set/read-set-shape",
@@ -718,17 +722,14 @@ mod tests {
             ],
         );
         assert_eq!(declaration.imports, ["https://0k.computer/ontology/core"]);
-        // The annotation property reaches neither table: it is not a class,
-        // and it relates a term to a rule rather than an individual to
-        // another individual. `TERMS` is the only view that holds it.
-        assert!(!declaration
-            .classes
-            .iter()
-            .any(|class| class.uri == "x0k:fact/fold-rule"));
-        assert!(!declaration
-            .object_properties
-            .iter()
-            .any(|property| property.uri == "x0k:fact/fold-rule"));
+        // The annotation properties reach neither table: they are not
+        // classes, and each relates a term to a rule rather than an
+        // individual to another individual. `TERMS` is the only view that
+        // holds them.
+        for annotation in ["x0k:fact/fold-rule", "x0k:fact/indexed"] {
+            assert!(!declaration.classes.iter().any(|class| class.uri == annotation));
+            assert!(!declaration.object_properties.iter().any(|property| property.uri == annotation));
+        }
     }
 
     #[test]
@@ -1058,6 +1059,76 @@ mod tests {
             .map(|(role, members)| (role.to_string(), members.iter().map(|member| member.to_string()).collect()))
             .collect();
         assert_eq!(emitted, expected);
+    }
+
+    #[test]
+    fn development_spellings_are_pinned() {
+        // The repository-governance vocabulary
+        // (`x0k:implementation/ontology/development`): what the gate and the
+        // guard reason about while work lands, apart from what the system is.
+        // tools/ci, the guard and the known-reds list read these words, so a
+        // rename is a change to every one of them. The module imports only
+        // `core` and no module imports it, so nothing the system runs on
+        // depends on how a repository is governed. What names a record's
+        // identity (a quarantined crate's path, a scaffold's intent and file,
+        // a known red's package and test) is first-writer-wins; what is
+        // revised in place (a reason, the intent a red is filed under, the evidence) is
+        // last-writer-wins.
+        if !shipped("development") {
+            return;
+        }
+        const DEVELOPMENT: &str = "https://0k.computer/ontology/development";
+        let development = MODULE_TABLES.iter().find(|t| t.name == "development")
+            .expect("the development module is compiled");
+        assert_eq!(
+            development.terms,
+            [
+                "x0kdev:cratePath",
+                "x0kdev:endsWith",
+                "x0kdev:evidence",
+                "x0kdev:exit",
+                "x0kdev:filedUnder",
+                "x0kdev:KnownRed",
+                "x0kdev:Landing",
+                "x0kdev:markedIn",
+                "x0kdev:package",
+                "x0kdev:Quarantine",
+                "x0kdev:reason",
+                "x0kdev:redKind",
+                "x0kdev:replacedBy",
+                "x0kdev:Scaffold",
+                "x0kdev:test",
+                "x0kdev:until",
+                "x0kdev:why",
+            ],
+        );
+        // A ratchet is a mechanism, a Concept and not a class, so it is no
+        // table term; its kind is the fact that says so.
+        let ratchet_kind = bootstrap_concept_facts().into_iter().find(|fact| {
+            fact.entity == format!("{DEVELOPMENT}#Ratchet")
+                && fact.predicate == "https://0k.computer/ontology#termKind"
+        }).map(|fact| fact.value);
+        assert_eq!(
+            ratchet_kind,
+            Some(concept_facts::OntologyValue::Entity("https://0k.computer/ontology#kind/mechanism".into())),
+        );
+        assert_eq!(development.imports, ["https://0k.computer/ontology/core"]);
+        for module in MODULE_TABLES {
+            assert!(!module.imports.contains(&DEVELOPMENT), "{} imports development", module.name);
+        }
+        let rule_of = |name: &str| {
+            bootstrap_concept_facts().into_iter().find(|fact| {
+                fact.entity == format!("{DEVELOPMENT}#{name}")
+                    && fact.predicate == "https://0k.computer/ontology#fact/fold-rule"
+            }).map(|fact| fact.value)
+        };
+        let text = |rule: &str| Some(concept_facts::OntologyValue::Text(rule.into()));
+        for name in ["cratePath", "until", "markedIn", "package", "test"] {
+            assert_eq!(rule_of(name), text("first-writer-wins"), "{name}");
+        }
+        for name in ["reason", "replacedBy", "exit", "endsWith", "why", "redKind", "filedUnder", "evidence"] {
+            assert_eq!(rule_of(name), text("last-writer-wins"), "{name}");
+        }
     }
 
     #[test]

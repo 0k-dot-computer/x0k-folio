@@ -146,6 +146,16 @@ pub fn canonical_element_inner_html(
 }
 
 impl HtmlTextPolicy {
+    /// Resolve one nonempty identity; duplicate IDs are not an address.
+    pub fn unique_element_id(self, input: &str, id: &str) -> Option<String> {
+        if id.is_empty() { return None; }
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let mut found = text_projection(&dom).into_iter()
+            .filter(|(_, attrs, _, _)| attrs.get("id").is_some_and(|value| value == id));
+        let (path, _, _, _) = found.next()?;
+        found.next().is_none().then_some(path)
+    }
+
     /// Read presentation metadata at an address in this source reading.
     pub fn element_attributes(self, input: &str, element: &str) -> Result<BTreeMap<String, String>, CanonicalPatchError> {
         let dom = parse_body_fragment(&self.normalize_html(input));
@@ -248,6 +258,19 @@ impl HtmlTextPolicy {
         a: &CanonicalTextPoint,
         b: &CanonicalTextPoint,
     ) -> Result<String, CanonicalPatchError> {
+        self.read_text_range(input, a, b, false)
+    }
+
+    /// Copy exact object source while retaining displayed coordinates for editing.
+    pub fn source_text_in_range(self, input: &str, a: &CanonicalTextPoint,
+        b: &CanonicalTextPoint) -> Result<String, CanonicalPatchError>
+    {
+        self.read_text_range(input, a, b, true)
+    }
+
+    fn read_text_range(self, input: &str, a: &CanonicalTextPoint,
+        b: &CanonicalTextPoint, source_objects: bool) -> Result<String, CanonicalPatchError>
+    {
         let dom = parse_body_fragment(&self.normalize_html(input));
         let runs = canonical_text_runs(&dom);
         let a_index = find_text_run_index(&runs, a)?;
@@ -260,15 +283,16 @@ impl HtmlTextPolicy {
             } else {
                 ((b_index, b.byte_offset), (a_index, a.byte_offset))
             };
-        if start_index == end_index {
-            return Ok(text_run_contents(&runs[start_index])[start_offset..end_offset].to_string());
-        }
         let mut text = String::new();
-        text.push_str(&text_run_contents(&runs[start_index])[start_offset..]);
-        for run in &runs[start_index + 1..end_index] {
-            text.push_str(&text_run_contents(run));
+        for (index, run) in runs.iter().enumerate().take(end_index + 1).skip(start_index) {
+            let contents = text_run_contents(run);
+            let start = if index == start_index { start_offset } else { 0 };
+            let end = if index == end_index { end_offset } else { contents.len() };
+            let slice = &contents[start..end];
+            if source_objects {
+                text.push_str(&source_text_slice(&dom, run, slice)?);
+            } else { text.push_str(slice); }
         }
-        text.push_str(&text_run_contents(&runs[end_index])[..end_offset]);
         Ok(text)
     }
 }
@@ -299,6 +323,9 @@ pub fn canonical_text_changes(before: &str, after: &str) -> Result<Vec<Canonical
 
 impl HtmlTextPolicy {
     pub fn text_changes(self, before: &str, after: &str) -> Result<Vec<CanonicalElementTextChange>, CanonicalPatchError> {
+        if before == after {
+            return Ok(Vec::new());
+        }
         let before = parse_body_fragment(&self.normalize_html(before));
         let after = parse_body_fragment(&self.normalize_html(after));
         if body_text(&before) != body_text(&after) {
@@ -405,6 +432,518 @@ fn text_projection(dom: &RcDom) -> Vec<TextProjection> {
         }
     }
     out
+}
+
+/// One block of a body this policy serialized: its bytes, and the path
+/// that names it there (`/div[1]/p[3]`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalBlock {
+    pub head: String,
+    pub range: std::ops::Range<usize>,
+}
+
+/// Elements whose serialized text may hold `<` unescaped.
+const RAW_TEXT_ELEMENTS: &[&str] = &["style", "noscript", "xmp", "noembed", "noframes", "plaintext"];
+
+/// Reads the elements of serialized bytes down to `levels` deep, giving
+/// each one's depth, tag, index among its parent's children of that tag,
+/// bytes, and where its open tag ends, as each closes. `None` when the
+/// bytes do not read as a serialization.
+fn read_elements(body: &str, levels: usize, mut each: impl FnMut(usize, &str, usize, std::ops::Range<usize>, usize)) -> Option<()> {
+    let bytes = body.as_bytes();
+    // The tag counts among the children of the element open at each depth.
+    let mut counts: Vec<BTreeMap<&str, usize>> = Vec::new();
+    // Each open element: its tag, where it starts, where its open tag ends,
+    // and its index.
+    let mut open: Vec<(&str, usize, usize, usize)> = Vec::new();
+    let mut at = 0;
+    while let Some(found) = body[at..].find('<') {
+        let lt = at + found;
+        let (depth, name, start, opened, index) = if bytes.get(lt + 1) == Some(&b'/') {
+            let end = lt + 2 + body[lt + 2..].find('>')?;
+            let (name, start, opened, index) = open.pop()?;
+            if name != &body[lt + 2..end] { return None; }
+            at = end + 1;
+            counts.truncate(open.len() + 1);
+            (open.len(), name, start, opened, index)
+        } else {
+            let name_end = lt + 1 + body[lt + 1..].find([' ', '>'])?;
+            let name = &body[lt + 1..name_end];
+            if name.is_empty() || name.starts_with(['!', '?', '/']) || RAW_TEXT_ELEMENTS.contains(&name) { return None; }
+            // Attributes are ` key="value"`, and a value holds no `"`.
+            let mut cursor = name_end;
+            while bytes.get(cursor)? == &b' ' {
+                let quote = cursor + body[cursor..].find("=\"")? + 2;
+                cursor = quote + body[quote..].find('"')? + 1;
+            }
+            if bytes.get(cursor)? != &b'>' { return None; }
+            at = cursor + 1;
+            let depth = open.len();
+            let index = if depth < levels {
+                if counts.len() <= depth { counts.resize_with(depth + 1, BTreeMap::new); }
+                let index = counts[depth].entry(name).or_default();
+                *index += 1;
+                *index
+            } else { 0 };
+            if !VOID_ELEMENTS.contains(&name) { open.push((name, lt, at, index)); continue; }
+            (depth, name, lt, at, index)
+        };
+        if depth < levels { each(depth, name, index, start..at, opened); }
+    }
+    open.is_empty().then_some(())
+}
+
+/// A serialized body's blocks, and the open tags of the elements around
+/// them, outermost first.
+struct Layout {
+    around: Vec<(String, std::ops::Range<usize>)>,
+    blocks: Vec<(String, usize, std::ops::Range<usize>)>,
+}
+
+/// Goes down through each element that is the only one at its level and
+/// holds others, to the first level with more than one. One reading sees
+/// two levels, which is as deep as a page in one editable region goes.
+fn read_layout(body: &str) -> Option<Layout> {
+    let mut layout = Layout { around: Vec::new(), blocks: Vec::new() };
+    let mut level = 0..body.len();
+    loop {
+        let (mut tops, mut children) = (Vec::new(), Vec::new());
+        read_elements(&body[level.clone()], 2, |depth, name, index, bytes, opened| {
+            let element = (name.to_owned(), index, bytes.start + level.start..bytes.end + level.start, opened + level.start);
+            if depth == 0 { tops.push(element) } else { children.push(element) }
+        })?;
+        let block = |elements: Vec<(String, usize, std::ops::Range<usize>, usize)>| elements.into_iter().map(|(name, index, range, _)| (name, index, range)).collect();
+        let [(name, _, range, opened)] = tops.as_slice() else { layout.blocks = block(tops); return Some(layout) };
+        if VOID_ELEMENTS.contains(&name.as_str()) || children.is_empty() { layout.blocks = block(tops); return Some(layout); }
+        layout.around.push((name.clone(), range.start..*opened));
+        if children.len() > 1 { layout.blocks = block(children); return Some(layout); }
+        // Its one element is alone too: read inside it again.
+        level = *opened..range.end - name.len() - 3;
+    }
+}
+
+impl Layout {
+    /// The path of the elements around the blocks (`/div[1]`).
+    fn around_path(&self) -> String {
+        self.around.iter().map(|(name, _)| format!("/{name}[1]")).collect()
+    }
+}
+
+impl HtmlTextPolicy {
+    /// The blocks of `body`, which this policy serialized, read from its
+    /// bytes without parsing it; `None` when they do not read as one.
+    pub fn serialized_blocks(self, body: &str) -> Option<Vec<CanonicalBlock>> {
+        let layout = read_layout(body)?;
+        let around = layout.around_path();
+        Some(layout.blocks.into_iter().map(|(name, index, range)| CanonicalBlock { head: format!("{around}/{name}[{index}]"), range }).collect())
+    }
+}
+
+/// Elements the reads around a caret treat as inline: their neighbours
+/// are their parent's.
+const INLINE_ELEMENTS: &[&str] = &["span", "em", "strong", "b", "i", "u", "s", "code", "a", "small", "sub", "sup", "mark"];
+
+/// A body this policy serialized, narrowed to the block that holds one
+/// path. Work on `html()` with `local` paths stands for the same work on
+/// the whole body.
+#[derive(Clone, Debug)]
+pub struct CanonicalScope<'a> {
+    body: &'a str,
+    block: CanonicalBlock,
+    local_head: String,
+    /// The block between the open and close tags of the elements around it.
+    fragment: String,
+    open: std::ops::Range<usize>,
+}
+
+impl HtmlTextPolicy {
+    /// The block of `body`, which this policy serialized, that holds
+    /// `element`; `None` when the bytes do not read, no block holds the
+    /// path, or the block is an inline element.
+    pub fn scope<'a>(self, body: &'a str, element: &str) -> Option<CanonicalScope<'a>> {
+        let layout = read_layout(body)?;
+        let around = layout.around_path();
+        let (name, index, range) = layout.blocks.iter().find(|(name, index, _)| {
+            let head = format!("{around}/{name}[{index}]");
+            element.strip_prefix(head.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })?;
+        if INLINE_ELEMENTS.contains(&name.as_str()) { return None; }
+        Some(CanonicalScope::of(body, &layout, name, *index, range.clone()))
+    }
+
+    /// Every block of `body`, which this policy serialized, as a scope to
+    /// read in, from one reading of its bytes; `None` when they do not read
+    /// as one. An inline block is among them: reading in it is the page's
+    /// reading, and only an edit needs the text beside it.
+    pub fn scopes(self, body: &str) -> Option<Vec<CanonicalScope<'_>>> {
+        let layout = read_layout(body)?;
+        Some(layout.blocks.iter().map(|(name, index, range)| CanonicalScope::of(body, &layout, name, *index, range.clone())).collect())
+    }
+}
+
+impl<'a> CanonicalScope<'a> {
+    /// The block `name[index]` at `range` of `body`, among `layout`'s blocks.
+    fn of(body: &'a str, layout: &Layout, name: &str, index: usize, range: std::ops::Range<usize>) -> Self {
+        let around = layout.around_path();
+        let opens: String = layout.around.iter().map(|(_, open)| &body[open.clone()]).collect();
+        let closes: String = layout.around.iter().rev().map(|(name, _)| format!("</{name}>")).collect();
+        CanonicalScope {
+            body,
+            block: CanonicalBlock { head: format!("{around}/{name}[{index}]"), range: range.clone() },
+            local_head: format!("{around}/{name}[1]"),
+            fragment: format!("{opens}{}{closes}", &body[range]),
+            open: 0..opens.len(),
+        }
+    }
+}
+
+impl CanonicalScope<'_> {
+    /// The block between the open and close tags of the elements around it.
+    pub fn html(&self) -> &str {
+        &self.fragment
+    }
+
+    pub fn block(&self) -> &CanonicalBlock {
+        &self.block
+    }
+
+    /// `path` as the fragment spells it; `None` outside the block.
+    pub fn local(&self, path: &str) -> Option<String> {
+        rebased(path, &self.block.head, &self.local_head)
+    }
+
+    /// A path the fragment spells, as the page spells it.
+    pub fn global(&self, path: &str) -> String {
+        rebased(path, &self.local_head, &self.block.head).unwrap_or_else(|| path.to_owned())
+    }
+
+    pub fn local_point(&self, point: &CanonicalTextPoint) -> Option<CanonicalTextPoint> {
+        Some(CanonicalTextPoint::new(self.local(&point.element)?, point.text_run, point.byte_offset))
+    }
+
+    pub fn global_point(&self, point: &CanonicalTextPoint) -> CanonicalTextPoint {
+        CanonicalTextPoint::new(self.global(&point.element), point.text_run, point.byte_offset)
+    }
+
+    /// The page with this block replaced by the block of an edited
+    /// `fragment`; `None` when the fragment's elements around the block
+    /// changed.
+    pub fn splice(&self, fragment: &str) -> Option<String> {
+        let closes = &self.fragment[self.open.end + self.block.range.len()..];
+        let block = fragment.strip_prefix(&self.fragment[self.open.clone()])?.strip_suffix(closes)?;
+        let range = &self.block.range;
+        let mut page = String::with_capacity(self.body.len() - range.len() + block.len());
+        page.push_str(&self.body[..range.start]);
+        page.push_str(block);
+        page.push_str(&self.body[range.end..]);
+        Some(page)
+    }
+}
+
+/// How two bodies this policy serialized differ, when they differ only
+/// inside the same blocks: both layouts, read once, and which blocks differ.
+pub struct BlockComparison<'a> {
+    before: &'a str,
+    after: &'a str,
+    old: Layout,
+    new: Layout,
+    differ: Vec<usize>,
+}
+
+impl HtmlTextPolicy {
+    /// Compares two bodies this policy serialized block by block; `None` when
+    /// they do not differ only inside the same blocks.
+    pub fn compare_blocks<'a>(self, before: &'a str, after: &'a str) -> Option<BlockComparison<'a>> {
+        let (old, new) = (read_layout(before)?, read_layout(after)?);
+        /// The bytes before the block at `at`, after the one before it.
+        fn between<'a>(body: &'a str, layout: &Layout, at: usize) -> &'a str {
+            let start = at.checked_sub(1).map_or(0, |previous| layout.blocks[previous].2.end);
+            let end = layout.blocks.get(at).map_or(body.len(), |block| block.2.start);
+            &body[start..end]
+        }
+        let aligned = !old.blocks.is_empty() && old.blocks.len() == new.blocks.len()
+            && old.blocks.iter().zip(&new.blocks).all(|(a, b)| a.0 == b.0 && a.1 == b.1)
+            && (0..=old.blocks.len()).all(|at| between(before, &old, at) == between(after, &new, at));
+        let differ = aligned.then(|| (0..old.blocks.len()).filter(|&at| before[old.blocks[at].2.clone()] != after[new.blocks[at].2.clone()]).collect())?;
+        Some(BlockComparison { before, after, old, new, differ })
+    }
+
+    /// The blocks of two bodies this policy serialized whose bytes differ,
+    /// before and after; `None` when the bodies do not differ only inside
+    /// the same blocks.
+    pub fn changed_blocks(self, before: &str, after: &str) -> Option<Vec<(CanonicalBlock, CanonicalBlock)>> {
+        Some(self.compare_blocks(before, after)?.changed())
+    }
+
+    /// `text_changes` for two bodies this policy serialized, parsing only
+    /// the blocks whose bytes differ.
+    pub fn serialized_text_changes(self, before: &str, after: &str) -> Result<Vec<CanonicalElementTextChange>, CanonicalPatchError> {
+        match self.compare_blocks(before, after) {
+            Some(comparison) => comparison.text_changes(self),
+            None => self.text_changes(before, after),
+        }
+    }
+}
+
+impl BlockComparison<'_> {
+    /// The blocks whose bytes differ, before and after.
+    pub fn changed(&self) -> Vec<(CanonicalBlock, CanonicalBlock)> {
+        self.differ.iter().map(|&at| {
+            let block = |layout: &Layout| {
+                let (name, index, range) = &layout.blocks[at];
+                CanonicalBlock { head: format!("{}/{name}[{index}]", layout.around_path()), range: range.clone() }
+            };
+            (block(&self.old), block(&self.new))
+        }).collect()
+    }
+
+    /// The text changes, each read in its block's fragment and named as the
+    /// page names it.
+    pub fn text_changes(&self, policy: HtmlTextPolicy) -> Result<Vec<CanonicalElementTextChange>, CanonicalPatchError> {
+        let mut changes = Vec::new();
+        for &at in &self.differ {
+            let scope = |body, layout: &Layout| {
+                let (name, index, range) = &layout.blocks[at];
+                CanonicalScope::of(body, layout, name, *index, range.clone())
+            };
+            let (was, now) = (scope(self.before, &self.old), scope(self.after, &self.new));
+            for mut change in policy.text_changes(was.html(), now.html())? {
+                change.element = was.global(&change.element);
+                changes.push(change);
+            }
+        }
+        Ok(changes)
+    }
+}
+
+#[cfg(test)]
+mod serialized_block_tests {
+    use super::*;
+
+    #[test]
+    fn a_split_replaces_one_block_by_two_and_keeps_the_rest() {
+        let before = "<div contenteditable=\"true\"><h2>Day</h2><p>AB</p><p>C</p></div>";
+        let after = "<div contenteditable=\"true\"><h2>Day</h2><p>A</p><p>B</p><p>C</p></div>";
+        let change = HtmlTextPolicy::Editing.block_list_change(before, after).expect("a change of whole blocks");
+        assert_eq!(change.parent, "/div[1]");
+        assert_eq!(change.before, ["/div[1]/h2[1]", "/div[1]/p[1]", "/div[1]/p[2]"]);
+        let paragraph = |text: &str| CanonicalBlockItem::Insert(CanonicalFragment::Element {
+            tag: "p".into(), namespace: "http://www.w3.org/1999/xhtml".into(), attributes: BTreeMap::new(),
+            children: vec![CanonicalFragment::Text(text.into())],
+        });
+        assert_eq!(change.after, [CanonicalBlockItem::Retain("/div[1]/h2[1]".into()), paragraph("A"), paragraph("B"), CanonicalBlockItem::Retain("/div[1]/p[2]".into())]);
+        assert_eq!(change.retained_path("/div[1]/p[2]").as_deref(), Some("/div[1]/p[3]"), "a kept block's path follows it");
+        assert_eq!(change.retained_path("/div[1]/p[1]"), None, "a replaced block has no path after");
+        // The join back, an added block at the end, a block taken out.
+        assert!(HtmlTextPolicy::Editing.block_list_change(after, before).is_some());
+        let added = "<div contenteditable=\"true\"><h2>Day</h2><p>AB</p><p>C</p><p>D</p></div>";
+        let change = HtmlTextPolicy::Editing.block_list_change(before, added).expect("an added block");
+        assert_eq!(change.after.len(), 4);
+        assert!(HtmlTextPolicy::Editing.block_list_change(added, before).is_some());
+    }
+
+    #[test]
+    fn a_change_outside_whole_blocks_is_refused() {
+        let before = "<div contenteditable=\"true\"><p>A</p><p>B</p></div>";
+        assert!(HtmlTextPolicy::Editing.block_list_change(before, before).is_none(), "no change");
+        assert!(HtmlTextPolicy::Editing.block_list_change(before, "<div contenteditable=\"false\"><p>A</p><p>C</p></div>").is_none(), "the element around the blocks changed");
+        assert!(HtmlTextPolicy::Editing.block_list_change(before, "<div contenteditable=\"true\"><p>A</p>x<p>C</p></div>").is_none(), "text between blocks");
+    }
+
+    const PAGE: &str = "<h2 id=\"d1\">Day 1</h2>\n<p>We walked <em>along</em> the river, <a href=\"x0k:a?b=1&amp;c=2\" title=\"a > b < c\">here</a>.</p>\n<ul><li>one</li><li>two <strong>bold</strong></li></ul><hr><p contenteditable=\"true\" data-x0k-entry=\"e1\">Then &lt;tags&gt; in text.</p><pre><code>let x = 1;\n  y</code></pre><div class=\"transclusion\" contenteditable=\"false\"><div contenteditable=\"true\" data-x0k-excerpt=\"x0k:j/e\"><p>Inner</p></div></div><svg viewBox=\"0 0 1 1\"><clipPath id=\"c\"><rect></rect></clipPath></svg><p>Last.</p>";
+
+    /// The page as it is, inside an editable region, and inside a section
+    /// inside that region, under both policies, with the path of the
+    /// elements around its blocks.
+    fn pages() -> Vec<(HtmlTextPolicy, String, &'static str)> {
+        let mut pages = Vec::new();
+        for policy in [HtmlTextPolicy::Canonical, HtmlTextPolicy::Editing] {
+            pages.push((policy, policy.normalize_html(PAGE), ""));
+            pages.push((policy, policy.normalize_html(&format!("<div contenteditable=\"true\">{PAGE}</div>")), "/div[1]"));
+            pages.push((policy, policy.normalize_html(&format!("<div contenteditable=\"true\"><section>{PAGE}</section></div>")), "/div[1]/section[1]"));
+        }
+        pages
+    }
+
+    #[test]
+    fn the_blocks_of_a_serialized_body_are_the_elements_inside_its_lone_wrappers() {
+        for (policy, page, around) in pages() {
+            let blocks = policy.serialized_blocks(&page).expect("a serialized body reads");
+            let expected: Vec<String> = text_projection(&parse_body_fragment(&page)).into_iter().map(|(path, ..)| path)
+                .filter(|path| path.rsplit_once('/').is_some_and(|(parent, _)| parent == around)).collect();
+            assert_eq!(blocks.iter().map(|block| block.head.clone()).collect::<Vec<_>>(), expected, "{policy:?} in {around:?}");
+            let scopes = policy.scopes(&page).expect("a serialized body reads");
+            assert_eq!(scopes.iter().map(|scope| scope.block().clone()).collect::<Vec<_>>(), blocks, "one reading gives every block");
+            for scope in &scopes {
+                assert_eq!(policy.normalize_html(scope.html()), scope.html(), "a block serializes the same in its fragment");
+                if let Some(alone) = policy.scope(&page, &scope.block().head) { assert_eq!(alone.html(), scope.html()); }
+            }
+        }
+    }
+
+    #[test]
+    fn serialized_text_changes_are_the_whole_page_s_text_changes() {
+        for (policy, page, around) in pages() {
+            for (point, text) in policy.text_points(&page) {
+                let first = text.char_indices().nth(1).map_or(text.len(), |(at, _)| at);
+                for (start, end, replacement) in [(text.len(), text.len(), "x"), (0, first, "")] {
+                    let at = |offset| CanonicalTextPoint::new(&point.element, point.text_run, offset);
+                    let patch = CanonicalPatch::ReplaceVisibleText { start: at(start), end: at(end), replacement: replacement.into() };
+                    let Ok(after) = policy.apply_patches(&page, &[patch]) else { continue };
+                    assert_eq!(policy.serialized_text_changes(&page, &after), policy.text_changes(&page, &after), "{policy:?} in {around:?} at {point:?}");
+                }
+            }
+            let renamed = page.replacen("id=\"d1\"", "id=\"d2\"", 1);
+            assert!(policy.serialized_text_changes(&page, &renamed).is_err(), "an attribute change is refused as the whole page refuses it");
+            assert!(policy.changed_blocks(&page, &renamed).is_some_and(|changed| changed.len() == 1), "an attribute inside a block changes that block");
+            let last = policy.apply_patches(&page, &[CanonicalPatch::ReplaceVisibleText {
+                start: CanonicalTextPoint::new(format!("{around}/p[3]"), 0, 0), end: CanonicalTextPoint::new(format!("{around}/p[3]"), 0, 0), replacement: "x".into(),
+            }]).expect("the last paragraph takes a character");
+            let changed = policy.changed_blocks(&page, &last).expect("a keystroke changes inside one block");
+            assert_eq!(changed.iter().map(|(a, b)| (a.head.as_str(), &last[b.range.clone()])).collect::<Vec<_>>(),
+                [(format!("{around}/p[3]").as_str(), "<p>xLast.</p>")], "{policy:?} in {around:?}");
+        }
+    }
+
+    #[test]
+    fn work_in_a_block_is_the_same_work_on_the_page() {
+        let mut scoped = 0;
+        for (policy, page, around) in pages() {
+            for (point, text) in policy.text_points(&page) {
+                let Some(scope) = policy.scope(&page, &point.element) else {
+                    assert_eq!(point.element, around, "only text outside every block has no scope");
+                    continue;
+                };
+                scoped += 1;
+                let local = scope.local_point(&point).expect("the point is in its block");
+                assert_eq!(scope.global_point(&local), point);
+                let end = CanonicalTextPoint::new(&point.element, point.text_run, text.len());
+                let typed = |at: &CanonicalTextPoint| [CanonicalPatch::ReplaceVisibleText { start: at.clone(), end: at.clone(), replacement: "x".into() }];
+                let whole = policy.apply_patches(&page, &typed(&end));
+                let alone = policy.apply_patches(scope.html(), &typed(&scope.local_point(&end).unwrap()))
+                    .map(|fragment| scope.splice(&fragment).expect("the elements around the block are unchanged"));
+                assert_eq!(alone, whole, "{policy:?} in {around:?} at {point:?}");
+                assert_eq!(policy.text_run(scope.html(), &local), policy.text_run(&page, &point));
+                assert_eq!(
+                    policy.declared_editing_region(scope.html(), &local, &local).map(|region| region.map(|region| scope.global(&region))),
+                    policy.declared_editing_region(&page, &point, &point),
+                    "{policy:?} in {around:?} at {point:?}",
+                );
+            }
+        }
+        assert!(scoped > 40, "most text points have a block: {scoped}");
+    }
+
+    #[test]
+    fn bytes_that_do_not_read_as_a_serialized_body_are_refused() {
+        let policy = HtmlTextPolicy::Editing;
+        assert!(policy.serialized_blocks("<p>open").is_none());
+        assert!(policy.serialized_blocks("<p>a</em>").is_none());
+        assert!(policy.serialized_blocks("<style>p > a { }</style><p>x</p>").is_none());
+        assert!(policy.serialized_blocks("<p>a</p><!-- note -->").is_none());
+        assert!(policy.scope("<p>a</p><p>b</p>", "/p[3]").is_none());
+        assert!(policy.scope("<em>a</em><em>b</em>", "/em[1]").is_none(), "an inline block has no scope");
+        assert_eq!(policy.serialized_blocks("text <p>a</p> more <p>b</p>").map(|blocks| blocks.len()), Some(2));
+        assert_eq!(policy.serialized_blocks("<p>only</p>").map(|blocks| blocks.len()), Some(1), "a lone element with no element inside is the block");
+    }
+}
+
+/// One block of a page after a change of whole blocks: a block of the page
+/// before, kept, or a new one, parsed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CanonicalBlockItem {
+    Retain(String),
+    Insert(CanonicalFragment),
+}
+
+/// How a page changed by whole blocks: the element around them, the paths of
+/// its blocks before, and its blocks after.
+#[derive(Clone, Debug)]
+pub struct CanonicalBlockListChange {
+    pub parent: String,
+    pub before: Vec<String>,
+    pub after: Vec<CanonicalBlockItem>,
+    /// Each kept block's path before and after.
+    kept: Vec<(String, String)>,
+}
+
+impl CanonicalBlockListChange {
+    /// `path` in the page after the change; `None` inside a replaced block.
+    pub fn retained_path(&self, path: &str) -> Option<String> {
+        self.kept.iter().find_map(|(old, new)| rebased(path, old, new))
+    }
+}
+
+/// `path`, which is `from` or names an element inside it, named under `to`
+/// instead; `None` for a path outside `from`.
+fn rebased(path: &str, from: &str, to: &str) -> Option<String> {
+    let rest = path.strip_prefix(from)?;
+    (rest.is_empty() || rest.starts_with('/')).then(|| format!("{to}{rest}"))
+}
+
+impl HtmlTextPolicy {
+    /// How `after` differs from `before`, both serialized by this policy,
+    /// when it differs only by a run of whole blocks; `None` otherwise.
+    pub fn block_list_change(self, before: &str, after: &str) -> Option<CanonicalBlockListChange> {
+        let (old, new) = (read_layout(before)?, read_layout(after)?);
+        let around = |body: &str, layout: &Layout| layout.around.iter().map(|(_, range)| body[range.clone()].to_owned()).collect::<Vec<_>>();
+        if old.blocks.is_empty() || new.blocks.is_empty() || around(before, &old) != around(after, &new) {
+            return None;
+        }
+        let bytes = |body: &'_ str, layout: &Layout, at: usize| body[layout.blocks[at].2.clone()].to_owned();
+        let (n, m) = (old.blocks.len(), new.blocks.len());
+        let mut head = 0;
+        while head < n && head < m && bytes(before, &old, head) == bytes(after, &new, head) {
+            head += 1;
+        }
+        let mut tail = 0;
+        while tail < n - head && tail < m - head && bytes(before, &old, n - 1 - tail) == bytes(after, &new, m - 1 - tail) {
+            tail += 1;
+        }
+        if head == n && head == m {
+            return None;
+        }
+        // Where the replaced run starts and ends, in each page.
+        let span = |layout: &Layout, count: usize| {
+            let start = if head > 0 { layout.blocks[head - 1].2.end } else { layout.blocks[0].2.start };
+            let end = if tail > 0 { layout.blocks[count - tail].2.start } else { layout.blocks[count - 1].2.end };
+            start..end.max(start)
+        };
+        let (was, now) = (span(&old, n), span(&new, m));
+        let blocks_only = |layout: &Layout, count: usize, range: &std::ops::Range<usize>| {
+            layout.blocks[head..count - tail].iter().map(|(_, _, bytes)| bytes.len()).sum::<usize>() == range.len()
+        };
+        if before[..was.start] != after[..now.start] || before[was.end..] != after[now.end..]
+            || !blocks_only(&old, n, &was) || !blocks_only(&new, m, &now)
+            || self.normalize_html(&before[was.clone()]) == self.normalize_html(&after[now.clone()]) {
+            return None;
+        }
+        let parent = old.around_path();
+        let path = |name: &str, index: usize| format!("{parent}/{name}[{index}]");
+        let mut after_items = Vec::with_capacity(m);
+        let mut kept = Vec::new();
+        for (at, (name, index, range)) in new.blocks.iter().enumerate() {
+            let source = if at < head { Some(at) } else if at >= m - tail { Some(n - (m - at)) } else { None };
+            match source {
+                Some(from) => {
+                    let (old_name, old_index, _) = &old.blocks[from];
+                    after_items.push(CanonicalBlockItem::Retain(path(old_name, *old_index)));
+                    kept.push((path(old_name, *old_index), path(name, *index)));
+                }
+                None => {
+                    let dom = parse_body_fragment(&after[range.clone()]);
+                    let element = find_element(&dom, &format!("/{name}[1]"))?;
+                    after_items.push(CanonicalBlockItem::Insert(fragment_tree(&element)?));
+                }
+            }
+        }
+        Some(CanonicalBlockListChange {
+            before: old.blocks.iter().map(|(name, index, _)| path(name, *index)).collect(),
+            parent,
+            after: after_items,
+            kept,
+        })
+    }
 }
 
 /// A parsed inert fragment used only when inserting new keyed children.
@@ -556,6 +1095,7 @@ fn collect_element_text_runs(node: &Handle, parent_path: &str, out: &mut Vec<Can
         });
     }
     let children = node.children.borrow();
+    let object = object_source(node).is_some();
     let mut same_tag_index: BTreeMap<String, usize> = BTreeMap::new();
     let mut text_run = 0usize;
     for child in children.iter() {
@@ -567,7 +1107,7 @@ fn collect_element_text_runs(node: &Handle, parent_path: &str, out: &mut Vec<Can
                 });
                 text_run += 1;
             }
-            NodeData::Element { name, .. } => {
+            NodeData::Element { name, .. } if !object => {
                 let tag = name.local.as_ref().to_string();
                 let index = same_tag_index.entry(tag.clone()).or_default();
                 *index += 1;
@@ -614,6 +1154,87 @@ fn parse_canonical_segment(segment: &str) -> Option<(&str, usize)> {
     (index > 0).then_some((&segment[..open], index))
 }
 
+/// A projection owner supplies this annotation; drawing descendants are opaque.
+pub const OBJECT_SOURCE_ATTRIBUTE: &str = "data-x0k-object-source";
+fn object_source(node: &Handle) -> Option<String> {
+    let NodeData::Element { attrs, .. } = &node.data else { return None; };
+    attrs.borrow().iter().find(|attr| attr.name.local.as_ref() == OBJECT_SOURCE_ATTRIBUTE)
+        .map(|attr| attr.value.to_string())
+}
+fn source_text_slice(dom: &RcDom, run: &CanonicalTextRun, slice: &str)
+    -> Result<String, CanonicalPatchError>
+{
+    let Some(element) = find_element(dom, &run.point.element) else { return Ok(slice.into()); };
+    let Some(source) = object_source(&element) else { return Ok(slice.into()); };
+    let count: usize = element.children.borrow().iter().filter_map(|child|
+        if let NodeData::Text { contents } = &child.data { Some(contents.borrow().matches('\u{fffc}').count()) } else { None }).sum();
+    if count > 1 || count == 1 && source.is_empty() {
+        return Err(CanonicalPatchError::InvalidFolio("ambiguous or empty object source".into()));
+    }
+    Ok(slice.replace('\u{fffc}', &source))
+}
+impl HtmlTextPolicy {
+    /// Resolve ordinary typing at an object edge without changing its marker.
+    pub fn text_insertion_point(self,input:&str,point:&CanonicalTextPoint)
+        -> Result<CanonicalTextPoint,CanonicalPatchError>
+    {
+        let dom=parse_body_fragment(&self.normalize_html(input));
+        let runs=canonical_text_runs(&dom);let index=find_text_run_index(&runs,point)?;
+        validate_text_offset(&runs[index],point.byte_offset)?;
+        let node=find_element(&dom,&point.element).ok_or_else(||CanonicalPatchError::ElementNotFound(point.element.clone()))?;
+        if object_source(&node).is_none() || text_run_contents(&runs[index])!="\u{fffc}" {return Ok(point.clone());}
+        let missing=||CanonicalPatchError::InvalidFolio("the object edge has no adjacent literal insertion run".into());
+        let before=point.byte_offset==0;
+        let neighbor=if before {index.checked_sub(1)} else {index.checked_add(1)}.and_then(|index|runs.get(index)).ok_or_else(missing)?;
+        let parent=point.element.rsplit_once('/').map(|(parent,_)|parent).unwrap_or_default();
+        let target=find_element(&dom,&neighbor.point.element).ok_or_else(missing)?;
+        let inline_sibling=neighbor.point.element.rsplit_once('/').is_some_and(|(path,_)|path==parent)
+            && matches!(&target.data,NodeData::Element {name,..} if matches!(name.local.as_ref(),"span"|"em"|"strong"|"b"|"i"|"u"|"s"|"code"|"a"|"small"|"sub"|"sup"|"mark"));
+        if neighbor.point.element!=parent && !inline_sibling {return Err(missing());}
+        let text=text_run_contents(neighbor);
+        if object_source(&target).is_some() && text.contains('\u{fffc}') {return Err(missing());}
+        let mut insertion=neighbor.point.clone();insertion.byte_offset=if before {text.len()} else {0};Ok(insertion)
+    }
+}
+
+#[cfg(test)]
+mod source_object_tests {
+    use super::*;
+    fn point(offset: usize) -> CanonicalTextPoint { CanonicalTextPoint::new("/p[1]/span[1]",0,offset) }
+    #[test]
+    fn copied_source_is_exact_and_layout_text_stays_literal() {
+        let html = "<p><span data-x0k-object-source=\"  &lt;α&gt;&#13;\n&amp;  \">é\u{fffc}界</span></p>";
+        let p=HtmlTextPolicy::Editing;
+        assert_eq!(p.text_in_range(html,&point(0),&point(8)).unwrap(),"é\u{fffc}界");
+        assert_eq!(p.source_text_in_range(html,&point(8),&point(0)).unwrap(),"é  <α>\r\n&  界");
+        assert_eq!(p.source_text_in_range(html,&point(0),&point(2)).unwrap(),"é");
+        assert_eq!(p.source_text_in_range(html,&point(5),&point(8)).unwrap(),"界");
+        for offset in [1,3,4,6,7,9] { assert!(p.source_text_in_range(html,&point(0),&point(offset)).is_err()); }
+    }
+    #[test]
+    fn object_payload_is_opaque_and_clearing_keeps_a_text_target() {
+        let html="<p contenteditable=\"true\"><span data-x0k-object-source=\"exact\">\u{fffc}<svg><title>drawing label</title></svg></span></p>";
+        let p=HtmlTextPolicy::Editing; let (start,end)=p.declared_editing_extent(html,&point(0)).unwrap().unwrap();
+        assert_eq!((start,end),(point(0),point(3)));
+        let cleared=p.apply_patches(html,&[CanonicalPatch::ReplaceVisibleText {start:point(0),end:point(3),replacement:String::new()}]).unwrap();
+        assert_eq!(p.text_run(&cleared,&point(0)).unwrap(),"");
+        assert_eq!(p.source_text_in_range(&cleared,&point(0),&point(0)).unwrap(),"");
+        assert!(p.text_run(&cleared,&CanonicalTextPoint::new("/p[1]/span[1]/svg[1]/title[1]",0,0)).is_err());
+        let replaced=p.apply_patches(&cleared,&[CanonicalPatch::ReplaceVisibleText {start:point(0),end:point(0),replacement:"界".into()}]).unwrap();
+        assert_eq!(p.source_text_in_range(&replaced,&point(0),&point(3)).unwrap(),"界");
+        assert!(replaced.contains("drawing label"));
+    }
+    #[test]
+    fn ambiguous_objects_refuse_copy_and_unannotated_tokens_stay_literal() {
+        let p=HtmlTextPolicy::Editing;
+        for html in ["<p><span data-x0k-object-source=\"exact\">\u{fffc}\u{fffc}</span></p>",
+            "<p><span data-x0k-object-source=\"\">\u{fffc}</span></p>"] {
+            assert!(p.source_text_in_range(html,&point(0),&point(3)).is_err());
+        }
+        assert_eq!(p.source_text_in_range("<p><span>\u{fffc}</span></p>",&point(0),&point(3)).unwrap(),"\u{fffc}");
+    }
+}
+
 impl HtmlTextPolicy {
     /// Canonical writing extent excludes metadata; callers retain editing authority.
     pub fn visible_text_extent(self, input: &str)
@@ -644,6 +1265,11 @@ impl HtmlTextPolicy {
         let (Some(first),Some(last))=(runs.first(),runs.last()) else {return Ok(None)};
         let mut end=last.point.clone();end.byte_offset=text_run_contents(last).len();
         Ok(Some((first.point.clone(),end)))
+    }
+    /// Every text run's start point and text, in document order, from one parse.
+    pub fn text_points(self, input: &str) -> Vec<(CanonicalTextPoint, String)> {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        canonical_text_runs(&dom).iter().map(|run| (run.point.clone(), text_run_contents(run))).collect()
     }
 
 }
@@ -706,6 +1332,72 @@ fn declared_region_at(dom: &RcDom, element: &str) -> Option<String> {
         path = path.rsplit_once('/').map_or("", |(parent, _)| parent);
     }
     None
+}
+
+impl HtmlTextPolicy {
+    /// Every element carrying `attribute`, by path, with the attribute's
+    /// value, in document order. One inside another marked element is not
+    /// listed: it belongs to the outer one.
+    pub fn marked_elements(self, input: &str, attribute: &str) -> Vec<(String, String)> {
+        let dom = parse_body_fragment(&self.normalize_html(input));
+        let mut out = Vec::new();
+        if let Some(html) = html_root(&dom) { collect_marked(&html, "", attribute, &mut out); }
+        out
+    }
+    /// `input` without every element carrying `attribute`, content and all.
+    pub fn without_marked(self, input: &str, attribute: &str) -> String {
+        let normalized = self.normalize_html(input);
+        let dom = parse_body_fragment(&normalized);
+        strip_marked(&dom.document, attribute);
+        serialize_body_fragment(&dom, normalized.len(), self)
+    }
+}
+
+fn html_root(dom: &RcDom) -> Option<Handle> {
+    dom.document.children.borrow().iter()
+        .find(|node| matches!(&node.data, NodeData::Element { name, .. } if name.local.as_ref() == "html"))
+        .cloned()
+}
+
+fn marked_value(node: &Handle, attribute: &str) -> Option<String> {
+    let NodeData::Element { attrs, .. } = &node.data else { return None };
+    let value = attrs.borrow().iter().find(|attr| attr.name.local.as_ref() == attribute).map(|attr| attr.value.to_string());
+    value
+}
+
+fn collect_marked(node: &Handle, path: &str, attribute: &str, out: &mut Vec<(String, String)>) {
+    let mut same_tag_index: BTreeMap<String, usize> = BTreeMap::new();
+    for child in node.children.borrow().iter() {
+        let NodeData::Element { name, .. } = &child.data else { continue };
+        let tag = name.local.as_ref().to_string();
+        let index = same_tag_index.entry(tag.clone()).or_default();
+        *index += 1;
+        let child_path = format!("{path}/{tag}[{index}]");
+        match marked_value(child, attribute) {
+            Some(value) => out.push((child_path, value)),
+            None => collect_marked(child, &child_path, attribute, out),
+        }
+    }
+}
+
+fn strip_marked(node: &Handle, attribute: &str) {
+    node.children.borrow_mut().retain(|child| marked_value(child, attribute).is_none());
+    for child in node.children.borrow().iter() { strip_marked(child, attribute); }
+}
+
+#[cfg(test)]
+mod marked_tests {
+    use super::*;
+
+    #[test]
+    fn marked_elements_are_listed_by_path_and_removed_whole() {
+        let page = "<p>Before.</p><div class=\"transclusion\" data-ref=\"x0k:wiki/q\"><div data-x0k-excerpt=\"x0k:wiki/q\"><p>Shown <em>here</em>.</p><div data-x0k-excerpt=\"x0k:wiki/inner\"><p>Deeper.</p></div></div></div><p>After.</p>";
+        let policy = HtmlTextPolicy::Editing;
+        assert_eq!(policy.marked_elements(page, "data-x0k-excerpt"), vec![("/div[1]/div[1]".to_string(), "x0k:wiki/q".to_string())]);
+        let without = policy.without_marked(page, "data-x0k-excerpt");
+        assert_eq!(without, policy.normalize_html("<p>Before.</p><div class=\"transclusion\" data-ref=\"x0k:wiki/q\"></div><p>After.</p>"));
+        assert_eq!(policy.text_run(page, &CanonicalTextPoint::new("/p[2]", 0, 0)).unwrap(), "After.", "paths outside are unchanged");
+    }
 }
 
 fn apply_attribute_patch(dom: &RcDom, patch: &CanonicalPatch) -> Result<(), CanonicalPatchError> {
@@ -843,7 +1535,8 @@ fn empty_text_container(node: &Handle) -> bool {
             "article" | "aside" | "blockquote" | "li" | "dt" | "dd" | "td" | "th" |
             "span" | "a" | "em" | "strong" | "b" | "i" | "u" | "s" | "small" |
             "mark" | "sub" | "sup" | "pre" | "code" | "figcaption"))
-        && node.children.borrow().is_empty()
+        && (node.children.borrow().is_empty() || object_source(node).is_some()
+            && node.children.borrow().iter().all(|child| !matches!(child.data, NodeData::Text { .. })))
 }
 
 struct SerializeCtx<'a> {

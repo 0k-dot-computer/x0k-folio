@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/projection.md",
-  "source_hash": "786a72278057cd15",
+  "source_hash": "9ca0ed980d7152cf",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -8,8 +8,12 @@
       "config_hash": "425fc997777ddbe8",
       "outputs": [
         {
+          "path": "crates/x0k-folio/tests/projection_round_trip.rs",
+          "hash": "fe5bea358a0ca8cf"
+        },
+        {
           "path": "crates/x0k-folio/src/projection.rs",
-          "hash": "40b7ce37e47ed3f2"
+          "hash": "88438202c900fa40"
         }
       ]
     }

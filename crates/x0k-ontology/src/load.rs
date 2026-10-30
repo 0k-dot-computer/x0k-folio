@@ -475,7 +475,7 @@ mod tests {
     use super::*;
 
     fn shipped_dir() -> PathBuf {
-        shipped_modules_dir(Path::new(env!("CARGO_MANIFEST_DIR")))
+        shipped_modules_dir(&std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test")))
     }
 
     #[test]

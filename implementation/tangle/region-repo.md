@@ -189,6 +189,11 @@ use crate::region_gfm::{
     relative_link, weave_affordance_section, AffordanceEvidence, ChapterLinks,
     ProofEvidence,
 };
+
+mod affordance_links;
+use affordance_links::expand_affordance_links;
+#[cfg(test)]
+use affordance_links::{affordance_description, render_affordance_links};
 ```
 
 Members are named by `x0k:software-module/<crate>` URIs for crates and
@@ -1541,6 +1546,23 @@ fact's `rdfs:comment`. Nothing about a document is written twice.
 
 The map may live in `IMPLEMENTATION.md` while `README.md` carries
 `<!-- x0k:affordance-links -->`: each affordance's mark, linked title, and opening description paragraph.
+A bare marker lists every published declaration in `publishes` order. An
+introduction usually wants fewer, and in the order a newcomer meets them,
+so the marker may name the declarations it lists, one id per line:
+
+```text
+<!-- x0k:affordance-links
+  x0k:affordance/tangle_source_from_a_document
+  x0k:affordance/query_the_documents
+-->
+```
+
+The list is then exactly those, in that order. Unlike a contents group
+the selection is not exhaustive, since leaving a declaration out of the
+introduction is the point, but it cannot go stale: an id the publication
+does not publish refuses, naming what it does publish, and so does an id
+named twice.
+
 Both lists come from the same extracted records. The map retains the
 surface cues and proof status; the introduction leaves those to the
 linked pages. We inspect only the publication's regenerated root-level
@@ -2061,13 +2083,14 @@ fn write_readme_contents(
         let path = output_dir.join(page);
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading publication page {}", page.display()))?;
-        let text = if text.contains(AFFORDANCES_MARKER) {
-            let compact = render_affordance_links(affordances, icons);
-            let expanded = text.replace(AFFORDANCES_MARKER, compact.trim_end());
-            std::fs::write(&path, &expanded)?;
-            expanded
-        } else {
-            text
+        let text = match expand_affordance_links(&text, affordances, icons)
+            .with_context(|| format!("publication page {}", page.display()))?
+        {
+            Some(expanded) => {
+                std::fs::write(&path, &expanded)?;
+                expanded
+            }
+            None => text,
         };
         let lines: Vec<&str> = text.split_inclusive('\n').collect();
         if let Some(marker) = find_contents_marker(&lines)? {
@@ -4612,7 +4635,7 @@ seed — and widening a crate to swallow a tree it does not own would
 change what the crate is. So the publication says it outright:
 `x0k:carries` names collection-relative paths, each a file or a
 directory, and the projection ships them as the collection holds them,
-at the same path. `x0k-plan-vm` is the case that asked: its evaluator
+at the same path. `x0k-plan` is the case that asked: its evaluator
 compiles with the Gallowglass fork at `third-party/gallowglass`, and its
 contract tests read the specification text beside their chapter.
 
@@ -6669,46 +6692,14 @@ fn render_affordances(records: &[AffordanceRecord], icons: Option<&Icons>) -> St
     out
 }
 
-/// The small public list and the detailed map use the same records and marks.
-const AFFORDANCES_MARKER: &str = "<!-- x0k:affordance-links -->";
-
+/// One affordance as a list line: its mark and its name linked to its page.
+/// The README's short list and the contents page share it.
 fn affordance_link(rec: &AffordanceRecord, icons: Option<&Icons>) -> String {
     let icon = icons
         .and_then(|i| i.label(&rec.id))
         .map(|label| format!("{} ", icon_picture(AFFORDANCES_DIR, label, SUBJECT_ICON_HEIGHT)))
         .unwrap_or_default();
     format!("- {icon}**[{}]({})**", rec.title, rec.document)
-}
-
-/// Use only the first prose paragraph: later paragraphs, icon declarations,
-/// and code belong to the affordance page. Text extraction avoids carrying
-/// page-relative links into a root-level list.
-fn affordance_description(description: &str) -> String {
-    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
-    let mut paragraph = false;
-    let mut text = String::new();
-    for event in Parser::new(description) {
-        match event {
-            Event::Start(Tag::Paragraph) => paragraph = true,
-            Event::End(TagEnd::Paragraph) if paragraph => break,
-            Event::Text(value) | Event::Code(value) if paragraph => text.push_str(&value),
-            Event::SoftBreak | Event::HardBreak if paragraph => text.push(' '),
-            _ => {}
-        }
-    }
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn render_affordance_links(records: &[AffordanceRecord], icons: Option<&Icons>) -> String {
-    let mut out = String::new();
-    for rec in records {
-        out.push_str(&format!("{}\n\n", affordance_link(rec, icons)));
-        let description = affordance_description(&rec.description);
-        if !description.is_empty() {
-            out.push_str(&format!("  <p>{}</p>\n\n", xml_escape(&description)));
-        }
-    }
-    out
 }
 
 /// Write each named document that declares a published affordance again,
@@ -6778,6 +6769,132 @@ fn affordance_evidence(rec: &AffordanceRecord, icons: Option<&Icons>, page: &str
             })
             .collect(),
     }
+}
+```
+
+The README's short list is a module of its own beside the projector,
+`region_repo/affordance_links.rs`: the marker it reads, the list it writes,
+and the one paragraph of each description it keeps. It borrows the line
+format from the contents page, so the two lists cannot drift apart.
+
+<a name="chunk-affordance-links"></a><sub>[`src/region_repo/affordance_links.rs`](../../crates/x0k-tangle/src/region_repo/affordance_links.rs) · `#affordance-links`</sub>
+
+```rust {#affordance-links file="src/region_repo/affordance_links.rs"}
+//! The short affordance list an authored publication page carries where its
+//! `<!-- x0k:affordance-links -->` marker is.
+
+use anyhow::{anyhow, bail, Result};
+
+use super::{affordance_link, xml_escape, AffordanceRecord, Icons};
+
+/// The marker's opening: a bare marker closes on the same line, a selecting
+/// one names a declaration per line before its `-->`.
+const AFFORDANCES_MARKER: &str = "<!-- x0k:affordance-links";
+
+/// Replace each affordance-links marker on an authored page with its list:
+/// every published record for a bare marker, or the ids the marker names,
+/// in its order. An id the publication does not publish refuses, as does
+/// one named twice or a marker never closed. `None` when the page carries
+/// no marker.
+pub(super) fn expand_affordance_links(
+    text: &str,
+    records: &[AffordanceRecord],
+    icons: Option<&Icons>,
+) -> Result<Option<String>> {
+    if !text.contains(AFFORDANCES_MARKER) {
+        return Ok(None);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut lines = text.split_inclusive('\n');
+    while let Some(line) = lines.next() {
+        let Some(rest) = line.trim().strip_prefix(AFFORDANCES_MARKER) else {
+            out.push_str(line);
+            continue;
+        };
+        let mut named: Vec<&str> = Vec::new();
+        if rest.trim() != "-->" {
+            if !rest.trim().is_empty() {
+                bail!(
+                    "the `{AFFORDANCES_MARKER}` marker's first line carries `{}`; name each \
+                     declaration on a line of its own",
+                    rest.trim()
+                );
+            }
+            loop {
+                let Some(member) = lines.next() else {
+                    bail!("the `{AFFORDANCES_MARKER}` marker is never closed with `-->`");
+                };
+                let member = member.trim();
+                if member == "-->" {
+                    break;
+                }
+                if member.is_empty() {
+                    continue;
+                }
+                if named.contains(&member) {
+                    bail!("the `{AFFORDANCES_MARKER}` marker names `{member}` twice");
+                }
+                named.push(member);
+            }
+        }
+        let list = if named.is_empty() {
+            render_affordance_links(records, icons)
+        } else {
+            let selected = named
+                .iter()
+                .map(|id| {
+                    records.iter().find(|r| r.id == *id).ok_or_else(|| {
+                        let published: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
+                        anyhow!(
+                            "the `{AFFORDANCES_MARKER}` marker names `{id}`, which this \
+                             publication does not publish; it publishes: {}",
+                            published.join(", ")
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            render_affordance_links(selected, icons)
+        };
+        out.push_str(list.trim_end());
+        if line.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    Ok(Some(out))
+}
+
+/// Use only the first prose paragraph: later paragraphs, icon declarations,
+/// and code belong to the affordance page. Text extraction avoids carrying
+/// page-relative links into a root-level list.
+pub(super) fn affordance_description(description: &str) -> String {
+    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+    let mut paragraph = false;
+    let mut text = String::new();
+    for event in Parser::new(description) {
+        match event {
+            Event::Start(Tag::Paragraph) => paragraph = true,
+            Event::End(TagEnd::Paragraph) if paragraph => break,
+            Event::Text(value) | Event::Code(value) if paragraph => text.push_str(&value),
+            Event::SoftBreak | Event::HardBreak if paragraph => text.push(' '),
+            _ => {}
+        }
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub(super) fn render_affordance_links<'a>(
+    records: impl IntoIterator<Item = &'a AffordanceRecord>,
+    icons: Option<&Icons>,
+) -> String {
+    let mut out = String::new();
+    for rec in records {
+        out.push_str(&format!("{}\n\n", affordance_link(rec, icons)));
+        let description = affordance_description(&rec.description);
+        if !description.is_empty() {
+            out.push_str(&format!("  <p>{}</p>\n\n", xml_escape(&description)));
+        }
+    }
+    out
 }
 ```
 
@@ -11495,6 +11612,53 @@ mod tests {
         assert!(!render_affordance_links(&[rec], None).contains("<p>"));
     }
 
+    /// The affordance-links marker selects: a bare marker lists every
+    /// published record in `publishes` order, a marker naming ids lists
+    /// exactly those in its own order, and an id the publication does not
+    /// publish, or one named twice, refuses.
+    #[test]
+    fn an_affordance_links_marker_lists_what_it_names_in_its_order() {
+        let named = |id: &str, title: &str| {
+            let mut rec = record(&[], &[], &[]);
+            rec.id = format!("x0k:affordance/{id}");
+            rec.title = title.to_string();
+            rec
+        };
+        let records = [named("first", "First"), named("second", "Second"), named("third", "Third")];
+        // The titles a page lists, in the order it lists them.
+        let titles = |page: &str| -> Vec<&'static str> {
+            let mut found: Vec<(usize, &'static str)> = ["First", "Second", "Third"]
+                .into_iter()
+                .filter_map(|t| page.find(&format!("**[{t}]")).map(|at| (at, t)))
+                .collect();
+            found.sort();
+            found.into_iter().map(|(_, t)| t).collect()
+        };
+
+        let bare = expand_affordance_links("# Read\n<!-- x0k:affordance-links -->\nAfter\n", &records, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(titles(&bare), ["First", "Second", "Third"], "{bare}");
+        assert!(bare.starts_with("# Read\n") && bare.ends_with("\nAfter\n"), "{bare}");
+
+        let page = "# Read\n<!-- x0k:affordance-links\n  x0k:affordance/third\n\n  x0k:affordance/first\n-->\nAfter\n";
+        let chosen = expand_affordance_links(page, &records, None).unwrap().unwrap();
+        assert_eq!(titles(&chosen), ["Third", "First"], "{chosen}");
+        assert!(!chosen.contains("x0k:affordance") && chosen.ends_with("\nAfter\n"), "{chosen}");
+
+        let stale = "<!-- x0k:affordance-links\n  x0k:affordance/gone\n-->\n";
+        let err = expand_affordance_links(stale, &records, None).unwrap_err().to_string();
+        assert!(err.contains("`x0k:affordance/gone`") && err.contains("x0k:affordance/second"), "{err}");
+
+        let twice = "<!-- x0k:affordance-links\n  x0k:affordance/first\n  x0k:affordance/first\n-->\n";
+        assert!(expand_affordance_links(twice, &records, None).unwrap_err().to_string().contains("twice"));
+
+        let open = "<!-- x0k:affordance-links\n  x0k:affordance/first\n";
+        assert!(expand_affordance_links(open, &records, None).unwrap_err().to_string().contains("never closed"));
+
+        assert_eq!(expand_affordance_links("# No marker\n", &records, None).unwrap(), None);
+    }
+
     #[test]
     fn status_is_derived_from_the_record_and_never_typed() {
         use AffordanceStatus::*;
@@ -11630,10 +11794,14 @@ hold one document back and keep the other.
 <a name="chunk-modules-consts"></a><sub>[`tests/region_repo_modules.rs`](../../crates/x0k-tangle/tests/region_repo_modules.rs) · `#modules-consts`</sub>
 
 ```rust {#modules-consts file="tests/region_repo_modules.rs"}
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-modules");
+fn fixture() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test")).join("tests/fixtures/ontology-modules")
+}
 /// Shapes for those fixtures: `document` constrains one predicate, `core`
 /// constrains nothing, so the two halves of §5 are both in the fixture set.
-const SHAPE_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-shapes");
+fn shape_fixture() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test")).join("tests/fixtures/ontology-shapes")
+}
 
 const DOC_REL: &str = "knowledge/implementation/demo/colophon.md";
 /// A second chapter of the same crate, in the same area, tangling to its own
@@ -11790,12 +11958,12 @@ fn workspace(modules: &[&str], entry_point: bool) -> tempfile::TempDir {
     .unwrap();
     tangle_document(&ws.join(EXTRA_REL), ws, &PipelineRegistry::default()).expect("tangle extra");
     std::fs::create_dir_all(ws.join("ontology/modules")).unwrap();
-    for entry in std::fs::read_dir(FIXTURE).unwrap() {
+    for entry in std::fs::read_dir(fixture()).unwrap() {
         let entry = entry.unwrap();
         std::fs::copy(entry.path(), ws.join("ontology/modules").join(entry.file_name())).unwrap();
     }
     std::fs::create_dir_all(ws.join("ontology/shapes")).unwrap();
-    for entry in std::fs::read_dir(SHAPE_FIXTURE).unwrap() {
+    for entry in std::fs::read_dir(shape_fixture()).unwrap() {
         let entry = entry.unwrap();
         std::fs::copy(entry.path(), ws.join("ontology/shapes").join(entry.file_name())).unwrap();
     }
@@ -12020,7 +12188,7 @@ fn a_closed_selection_projects_each_module_stamped_and_otherwise_verbatim() {
 
     for name in ["core", "document"] {
         let source =
-            std::fs::read_to_string(Path::new(FIXTURE).join(format!("{name}.ttl"))).unwrap();
+            std::fs::read_to_string(fixture().join(format!("{name}.ttl"))).unwrap();
         let shipped = std::fs::read_to_string(
             out.path().join("ontology/modules").join(format!("{name}.ttl")),
         )
@@ -12101,7 +12269,7 @@ fn a_module_carries_its_shapes_and_only_its_own() {
     let out = tempfile::tempdir().unwrap();
     project(ws.path(), out.path()).expect("projection");
 
-    let source = std::fs::read_to_string(Path::new(SHAPE_FIXTURE).join("document.ttl")).unwrap();
+    let source = std::fs::read_to_string(shape_fixture().join("document.ttl")).unwrap();
     let shipped = std::fs::read_to_string(out.path().join("ontology/shapes/document.ttl"))
         .expect("document's shapes crossed with document");
     // Unstamped, unlike the module file: `owl:versionIRI` is a fact about the

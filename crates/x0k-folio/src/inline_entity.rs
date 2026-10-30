@@ -41,7 +41,7 @@ use x0k_ontology::concept_facts::{camel_to_kebab, OntologyModel, RDF_TYPE, X0K_N
 
 use crate::colophon::{
     compact_iri, is_marker, parse_turtle, predeclared_prefixes, shipped_prefixes, Literal,
-    FOLIO_NS, GRAPH_MARKER, HEADER_MARKER, OWL_NS, RDFS_NS, RDF_JSON, XSD_BOOLEAN, XSD_DECIMAL,
+    FOLIO_NS, GRAPH_MARKER, HEADER_MARKER, OWL_NS, RDFS_NS, RDF_JSON, RDF_NS, XSD_BOOLEAN, XSD_DECIMAL,
     XSD_DOUBLE, XSD_INTEGER, XSD_STRING,
 };
 use crate::entity_id::EntityId;
@@ -112,6 +112,9 @@ pub enum InlineEntityError {
     /// the demands reuses this variant when a well-shaped object still fails
     /// its own reading.
     InvalidResources { class: String, heading: String, reason: String },
+    /// A param's value is an `rdf:JSON` literal that is not JSON: a
+    /// parameter's `folio:default`, or a param a scene sets.
+    MalformedParam { param: String, reason: String },
 }
 
 impl std::fmt::Display for InlineEntityError {
@@ -158,6 +161,7 @@ impl std::fmt::Display for InlineEntityError {
                 f,
                 "`{class}` block in section `{heading}` has invalid resource requirements: {reason}"
             ),
+            Self::MalformedParam { param, reason } => write!(f, "the param `{param}` is an `rdf:JSON` literal that is not JSON: {reason}"),
         }
     }
 }
@@ -287,17 +291,26 @@ pub enum ParameterValue {
     Integer(i64),
     Boolean(bool),
     Text(String),
+    /// An `rdf:JSON` literal's value.
+    Json(serde_json::Value),
 }
 
 impl ParameterValue {
-    fn of(literal: &oxrdf::Literal) -> Self {
+    /// The value `literal` states for the param `param`; an `rdf:JSON`
+    /// literal that is not JSON is refused, naming the param.
+    fn of(literal: &oxrdf::Literal, param: &str) -> Result<Self, InlineEntityError> {
         let value = literal.value();
-        match literal.datatype().as_str() {
+        if let Some(json) = json_lexical(literal) {
+            return serde_json::from_str(json)
+                .map(Self::Json)
+                .map_err(|error| InlineEntityError::MalformedParam { param: param.to_owned(), reason: error.to_string() });
+        }
+        Ok(match literal.datatype().as_str() {
             XSD_INTEGER => value.parse().map(Self::Integer).unwrap_or_else(|_| Self::Text(value.to_string())),
             XSD_DECIMAL | XSD_DOUBLE => value.parse().map(Self::Number).unwrap_or_else(|_| Self::Text(value.to_string())),
             XSD_BOOLEAN => Self::Boolean(value == "true" || value == "1"),
             _ => Self::Text(value.to_string()),
-        }
+        })
     }
 
     fn to_json(&self) -> serde_json::Value {
@@ -306,8 +319,15 @@ impl ParameterValue {
             Self::Integer(i) => serde_json::json!(i),
             Self::Boolean(b) => serde_json::json!(b),
             Self::Text(t) => serde_json::json!(t),
+            Self::Json(value) => value.clone(),
         }
     }
+}
+
+/// The text of a literal typed `rdf:JSON`; `None` for a literal of any
+/// other type.
+fn json_lexical(literal: &oxrdf::Literal) -> Option<&str> {
+    (literal.datatype().as_str() == RDF_JSON).then(|| literal.value())
 }
 
 impl Parameter {
@@ -395,10 +415,446 @@ pub fn read_parameters(text: &str) -> Result<Vec<Parameter>, InlineEntityError> 
         } else if predicate == term("step") {
             entry.step = number();
         } else if predicate == term("default") {
-            entry.default = Some(ParameterValue::of(literal));
+            entry.default = Some(ParameterValue::of(literal, &entry.id)?);
         }
     }
     Ok(order.into_iter().filter_map(|subject| by_subject.remove(&subject)).collect())
+}
+
+/// A parameter panel's values, keyed by each param's id: its `folio:default`.
+/// A param with no default is left out, so the figure's own default holds.
+pub fn panel_params(text: &str) -> Result<serde_json::Map<String, serde_json::Value>, InlineEntityError> {
+    Ok(read_parameters(text)?.into_iter().filter_map(|p| Some((p.id, p.default?.to_json()))).collect())
+}
+
+/// The namespace the `figure:` prefix names in a scene: the params of the view
+/// the scene is of, by their local names.
+pub const FIGURE_NS: &str = "urn:x0k:figure:";
+
+/// One moment's scene, as a section states it, and the loop its host runs
+/// while the moment rests: the values every home of a sequence shares.
+pub use x0k_sequence::{Loop, Scene};
+/// Read a scene block's Turtle: one subject typed `x0k:Scene`, setting params
+/// under `figure:` and stating at most one `x0k:loop` literal and one
+/// `x0k:viewData` literal.
+pub fn read_scene(text: &str) -> Result<Scene, InlineEntityError> {
+    let mut prefixes = shipped_prefixes().to_vec();
+    prefixes.push(("figure".to_string(), FIGURE_NS.to_string()));
+    let triples = parse_turtle(text, &prefixes, 1).map_err(|error| match error {
+        crate::colophon::FolioError::Turtle { line, reason } => InlineEntityError::InvalidTurtle { line, reason },
+        other => InlineEntityError::InvalidTurtle { line: 1, reason: other.to_string() },
+    })?;
+    let not_scene = |reason: String| InlineEntityError::NotOneInstance { line: 0, reason };
+    let class = format!("{X0K_NS}Scene");
+    let scenes: Vec<&NamedOrBlankNode> = triples
+        .iter()
+        .filter(|t| t.predicate.as_str() == RDF_TYPE && matches!(&t.object, Term::NamedNode(n) if n.as_str() == class))
+        .map(|t| &t.subject)
+        .collect();
+    let [subject] = scenes.as_slice() else {
+        return Err(not_scene("a scene block types one subject `x0k:Scene`".into()));
+    };
+    let (view_data, looping) = (format!("{X0K_NS}viewData"), format!("{X0K_NS}loop"));
+    let mut scene = Scene::default();
+    for triple in triples.iter().filter(|t| &t.subject == *subject && t.predicate.as_str() != RDF_TYPE) {
+        let predicate = triple.predicate.as_str();
+        if let Some(name) = predicate.strip_prefix(FIGURE_NS) {
+            let value = scene_value(name, &triple.object, &triples)?
+                .ok_or_else(|| not_scene(format!("`figure:{name}` states a value a param cannot take")))?;
+            scene.params.push((name.to_string(), value));
+        } else if predicate == view_data {
+            let data = match &triple.object {
+                Term::Literal(literal) => json_lexical(literal),
+                _ => None,
+            };
+            match data {
+                Some(data) if scene.data.is_none() => scene.data = Some(data.to_string()),
+                _ => return Err(not_scene("a scene states one `x0k:viewData` literal typed `rdf:JSON`".into())),
+            }
+        } else if predicate == looping {
+            let stated = match &triple.object {
+                Term::Literal(literal) => json_lexical(literal),
+                _ => None,
+            };
+            match stated {
+                Some(json) if scene.looping.is_none() => scene.looping = Some(read_loop(json)?),
+                _ => return Err(not_scene("a scene states one `x0k:loop` literal typed `rdf:JSON`".into())),
+            }
+        } else {
+            return Err(not_scene(format!("a scene states its params and its view's data, not `{}`", compact_iri(predicate, &prefixes))));
+        }
+    }
+    Ok(scene)
+}
+
+/// The value a scene sets the param `param` to: a literal by its datatype,
+/// an `rdf:JSON` literal as the JSON it spells, a collection as a list.
+/// `None` for an IRI or a malformed list; refused when an `rdf:JSON`
+/// literal is not JSON.
+fn scene_value(param: &str, object: &Term, triples: &[oxrdf::Triple]) -> Result<Option<serde_json::Value>, InlineEntityError> {
+    match object {
+        Term::Literal(literal) => Ok(Some(ParameterValue::of(literal, param)?.to_json())),
+        Term::NamedNode(node) if node.as_str() == format!("{RDF_NS}nil") => Ok(Some(serde_json::Value::Array(Vec::new()))),
+        Term::BlankNode(_) => {
+            let (first, rest) = (format!("{RDF_NS}first"), format!("{RDF_NS}rest"));
+            let mut items = Vec::new();
+            let mut cell = object.clone();
+            loop {
+                let node = match &cell {
+                    Term::NamedNode(node) if node.as_str() == format!("{RDF_NS}nil") => break,
+                    Term::BlankNode(node) => node.clone(),
+                    _ => return Ok(None),
+                };
+                let about = |predicate: &str| {
+                    triples
+                        .iter()
+                        .find(|t| t.predicate.as_str() == predicate && matches!(&t.subject, NamedOrBlankNode::BlankNode(b) if *b == node))
+                        .map(|t| t.object.clone())
+                };
+                let (Some(item), Some(next)) = (about(&first), about(&rest)) else { return Ok(None) };
+                let Some(item) = scene_value(param, &item, triples)? else { return Ok(None) };
+                items.push(item);
+                cell = next;
+            }
+            Ok(Some(serde_json::Value::Array(items)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// A loop's literal as it is written: each key optional, so a missing one
+/// is refused by name, and a key a loop does not state refused by its own.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoopLiteral {
+    count: Option<f64>,
+    from: Option<f64>,
+    param: Option<String>,
+    period: Option<f64>,
+    to: Option<f64>,
+}
+
+/// The loop an `x0k:loop` literal's JSON states, or why no host could run
+/// it.
+fn read_loop(json: &str) -> Result<Loop, InlineEntityError> {
+    let refuse = |why: String| InlineEntityError::NotOneInstance { line: 0, reason: format!("`x0k:loop` cannot run: {why}") };
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|error| refuse(format!("it is not JSON: {error}")))?;
+    if !value.is_object() {
+        return Err(refuse("it is not an object".into()));
+    }
+    let stated: LoopLiteral = serde_json::from_value(value).map_err(|error| refuse(format!("it is not a loop: {error}")))?;
+    match stated.param.as_deref() {
+        Some("t") => {}
+        Some(param) => return Err(refuse(format!("it carries `{param}`, and a host carries the position `t`"))),
+        None => return Err(refuse("it names no `param`".into())),
+    }
+    let finite = |n: Option<f64>| n.filter(|n| n.is_finite());
+    let (Some(from), Some(to)) = (finite(stated.from), finite(stated.to)) else { return Err(refuse("its `from` and `to` are not two numbers".into())) };
+    if from == to {
+        return Err(refuse("its range is empty".into()));
+    }
+    let period = finite(stated.period).filter(|ms| *ms > 0.0).ok_or_else(|| refuse("its `period` is not a number of milliseconds above 0".into()))?;
+    let count = match stated.count {
+        None => None,
+        Some(count) => Some(
+            Some(count)
+                .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= f64::from(u32::MAX))
+                .map(|n| n as u32)
+                .ok_or_else(|| refuse("its `count` is not a whole number of passes above 0".into()))?,
+        ),
+    };
+    Ok(Loop { param: "t".to_owned(), from, to, period, count })
+}
+
+/// A scene param a block cannot state: its name is not a Turtle local name,
+/// or its value is a `null` (which a scene states by leaving the param out)
+/// or an integer past `i64`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnstatableParam {
+    pub param: String,
+}
+
+impl std::fmt::Display for UnstatableParam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a scene block cannot state `{}`: a param is a local name set to a value that is not `null`", self.param)
+    }
+}
+
+impl std::error::Error for UnstatableParam {}
+
+/// A scene block's Turtle for `scene`, the inverse of [`read_scene`]: the
+/// subject typed `x0k:Scene`, a `figure:` statement per param in order, the
+/// `x0k:loop` literal, and the `x0k:viewData` literal last.
+pub fn scene_turtle(scene: &Scene) -> Result<String, UnstatableParam> {
+    let mut statements = vec!["[] a x0k:Scene".to_owned()];
+    for (name, value) in &scene.params {
+        let local = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        let object = scene_object(value).filter(|_| local).ok_or_else(|| UnstatableParam { param: name.clone() })?;
+        statements.push(format!("figure:{name} {object}"));
+    }
+    if let Some(looping) = &scene.looping {
+        statements.push(format!("x0k:loop {}^^rdf:JSON", data_literal(&loop_json(looping).to_string())));
+    }
+    if let Some(data) = &scene.data {
+        statements.push(format!("x0k:viewData {}^^rdf:JSON", data_literal(data)));
+    }
+    Ok(format!("{} .\n", statements.join(" ;\n    ")))
+}
+
+/// A loop as the JSON its literal spells, keys in name order, a whole number
+/// as an integer.
+fn loop_json(looping: &Loop) -> serde_json::Value {
+    let number = |n: f64| if n.fract() == 0.0 && n.abs() < 1e15 { serde_json::Value::from(n as i64) } else { serde_json::Value::from(n) };
+    let mut json = serde_json::json!({"from": number(looping.from), "param": looping.param, "period": number(looping.period), "to": number(looping.to)});
+    if let Some(count) = looping.count {
+        json["count"] = count.into();
+    }
+    in_key_order(&json)
+}
+
+/// A param's value as a statement's object; `None` for a `null`, or an
+/// integer past `i64`.
+fn scene_object(value: &serde_json::Value) -> Option<String> {
+    use serde_json::Value;
+    Some(match value {
+        Value::String(text) => quoted_string(text),
+        Value::Number(n) if n.is_i64() => n.to_string(),
+        Value::Number(n) if n.is_f64() => format!("{:?}", n.as_f64()?),
+        Value::Bool(b) => b.to_string(),
+        Value::Array(items) if items.is_empty() => "()".to_owned(),
+        Value::Array(items) if !items.iter().any(|item| item.is_array() || item.is_object()) => format!("( {} )", items.iter().map(scene_object).collect::<Option<Vec<_>>>()?.join(" ")),
+        Value::Array(_) | Value::Object(_) => format!("{}^^rdf:JSON", data_literal(&in_key_order(value).to_string())),
+        _ => return None,
+    })
+}
+
+/// `value` with every object's keys in name order.
+fn in_key_order(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            entries.sort_unstable_by_key(|(key, _)| *key);
+            Value::Object(entries.into_iter().map(|(key, item)| (key.clone(), in_key_order(item))).collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(in_key_order).collect()),
+        other => other.clone(),
+    }
+}
+
+/// `text` as a Turtle string in double quotes, its backslashes, quotes and
+/// line breaks escaped.
+fn quoted_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// An `rdf:JSON` literal's Turtle string for the JSON text `data`,
+/// single-quoted: the view's data, or a shaped param's value.
+fn data_literal(data: &str) -> String {
+    let escaped = data.replace('\\', "\\\\");
+    if !data.contains(['\'', '\n', '\r']) {
+        format!("'{escaped}'")
+    } else if !data.contains("'''") && !data.ends_with('\'') {
+        format!("'''{escaped}'''")
+    } else {
+        format!("'{}'", escaped.replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r"))
+    }
+}
+
+/// The namespace the `study:` prefix names in a moment's concepts block.
+pub const STUDY_NS: &str = "urn:x0k:study:";
+
+/// The concepts a moment introduces and the ones it assumes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Concepts {
+    pub introduces: Vec<String>,
+    pub assumes: Vec<String>,
+}
+
+/// A `turtle {.concepts}` block's concepts; `None` for any other block, or
+/// one whose Turtle does not read.
+pub fn concepts_block(info: &str, body: &str) -> Option<Concepts> {
+    if FenceInfo::parse(info).language() != Some("turtle") || !info.contains("{.concepts}") {
+        return None;
+    }
+    let mut prefixes = shipped_prefixes().to_vec();
+    prefixes.push(("study".to_string(), STUDY_NS.to_string()));
+    let triples = parse_turtle(body, &prefixes, 1).ok()?;
+    let list = |name: &str| -> Vec<String> {
+        let predicate = format!("{STUDY_NS}{name}");
+        let values = triples.iter().filter(|t| t.predicate.as_str() == predicate).filter_map(|t| scene_value(name, &t.object, &triples).ok().flatten());
+        values.flat_map(|value| match value {
+            serde_json::Value::Array(items) => items.into_iter().filter_map(|item| item.as_str().map(str::to_owned)).collect(),
+            _ => Vec::new(),
+        }).collect()
+    };
+    Some(Concepts { introduces: list("introduces"), assumes: list("assumes") })
+}
+/// A block of a page that a figure on it binds by name, and the data it hands
+/// the figure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentData {
+    /// The name an `x0k:media {source="…"}` fence binds it by.
+    pub name: String,
+    /// The bytes a bound figure receives through `SetData`.
+    pub payload: String,
+}
+
+/// A parameter panel of a page that a figure on it binds by name, and the
+/// params it hands the figure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentParams {
+    /// The name an `x0k:media {source="…"}` fence binds it by.
+    pub name: String,
+    /// [`panel_params`]' object: each param's id and its `folio:default`.
+    pub params: serde_json::Map<String, serde_json::Value>,
+}
+
+impl DocumentParams {
+    /// The params as the JSON view a `SetParams` is encoded from ([`params_text`]).
+    pub fn to_json(&self) -> String {
+        params_text(&self.params)
+    }
+}
+
+/// `params` as JSON text, every object's keys in name order whichever order
+/// the map holds them in: the view a host encodes a `SetParams` from (it
+/// crosses as the value's canonical CBOR, `x0k_surface_api::params`), and the
+/// text a published page's attribute holds, the same from every renderer and
+/// every build of `serde_json`.
+pub fn params_text(params: &serde_json::Map<String, serde_json::Value>) -> String {
+    in_key_order(&serde_json::Value::Object(params.clone())).to_string()
+}
+
+/// The name a fence gives its block: its `source="…"`, else its `{#name}`.
+fn block_name(info: &str) -> Option<String> {
+    fence_attr(info, "source").or_else(|| {
+        let rest = &info[info.find('#')? + 1..];
+        let end = rest.find(|c: char| c.is_whitespace() || c == ',' || c == '}').unwrap_or(rest.len());
+        (!rest[..end].is_empty()).then(|| rest[..end].to_owned())
+    })
+}
+
+/// The name a figure binds this fenced block by, when the block is data a
+/// figure can bind: an `x0k:data` fence or a scene (a `folio:graph` block
+/// whose subject is an `x0k:Scene`). A parameter panel is params, not data:
+/// [`bound_params`] reads it.
+pub fn data_block_name(info: &str, body: &str) -> Option<String> {
+    let bindable = if is_marker(info, GRAPH_MARKER) {
+        read_scene(body).is_ok()
+    } else {
+        FenceInfo::parse(info).x0k_type() == Some("data")
+    };
+    bindable.then(|| block_name(info)).flatten()
+}
+
+/// The name a figure binds this block by and the data it receives from it: a
+/// data fence's body as written, a scene's data literal. `None` when the
+/// block is no data, or is a scene that states none.
+pub fn bound_data(info: &str, body: &str) -> Option<DocumentData> {
+    let name = data_block_name(info, body)?;
+    let payload = match read_scene(body) {
+        Ok(scene) => scene.data?,
+        Err(_) => body.to_owned(),
+    };
+    Some(DocumentData { name, payload })
+}
+
+/// The name a figure binds this block by and the params it receives from it,
+/// when the block is a named parameter panel.
+pub fn bound_params(info: &str, body: &str) -> Option<DocumentParams> {
+    if !is_marker(info, GRAPH_MARKER) {
+        return None;
+    }
+    let params = panel_params(body).ok()?;
+    Some(DocumentParams { name: block_name(info)?, params })
+}
+
+/// The block an `x0k:media` fence binds its figure to: its `source="…"`.
+pub fn media_source(info: &str) -> Option<String> {
+    (FenceInfo::parse(info).x0k_type() == Some("media")).then(|| fence_attr(info, "source")).flatten()
+}
+
+/// Every data block of `markdown` a figure can bind, in document order.
+pub fn document_data(markdown: &str) -> Vec<DocumentData> {
+    fenced_blocks(markdown).iter().filter_map(|(info, body)| bound_data(info, body)).collect()
+}
+
+/// Every parameter panel of `markdown` a figure can bind, in document order.
+pub fn document_params(markdown: &str) -> Vec<DocumentParams> {
+    fenced_blocks(markdown).iter().filter_map(|(info, body)| bound_params(info, body)).collect()
+}
+
+/// The defaults the document declares for its params, by each param's id:
+/// every parameter block's `folio:default`s, named or not, a later block's
+/// standing over an earlier's. A param with no default is left out.
+pub fn declared_defaults(markdown: &str) -> serde_json::Map<String, serde_json::Value> {
+    let panels = fenced_blocks(markdown).into_iter().filter(|(info, _)| is_marker(info, GRAPH_MARKER));
+    panels.filter_map(|(_, body)| panel_params(&body).ok()).flatten().collect()
+}
+
+/// The params the document declares, whole: every parameter block's, named
+/// or not, in the order the document first names them, a later block's
+/// declaration of an id standing over an earlier's.
+pub fn declared_parameters(markdown: &str) -> Vec<Parameter> {
+    let panels = fenced_blocks(markdown).into_iter().filter(|(info, _)| is_marker(info, GRAPH_MARKER));
+    let mut declared: Vec<Parameter> = Vec::new();
+    for parameter in panels.filter_map(|(_, body)| read_parameters(&body).ok()).flatten() {
+        match declared.iter_mut().find(|held| held.id == parameter.id) {
+            Some(held) => *held = parameter,
+            None => declared.push(parameter),
+        }
+    }
+    declared
+}
+
+/// Every fenced block of `markdown`: its info string and its body.
+fn fenced_blocks(markdown: &str) -> Vec<(String, String)> {
+    let mut blocks = Vec::new();
+    let mut fence: Option<(String, String)> = None;
+    for event in Parser::new_ext(markdown, Options::empty()) {
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => fence = Some((info.to_string(), String::new())),
+            Event::Text(text) => {
+                if let Some((_, body)) = fence.as_mut() {
+                    body.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::CodeBlock) => blocks.extend(fence.take()),
+            _ => {}
+        }
+    }
+    blocks
+}
+
+/// A fence attribute's value: `name="v"`, `name='v'` or a bare `name=v`.
+pub fn fence_attr(info: &str, name: &str) -> Option<String> {
+    let needle = format!("{name}=");
+    let rest = info[info.find(&needle)? + needle.len()..].trim_start();
+    let (quote, body) = match rest.chars().next() {
+        Some(q @ ('"' | '\'')) => (Some(q), &rest[1..]),
+        _ => (None, rest),
+    };
+    let end = match quote {
+        Some(q) => body.find(q).unwrap_or(body.len()),
+        None => body.find(|c: char| c.is_whitespace() || c == '}').unwrap_or(body.len()),
+    };
+    let value = body[..end].trim();
+    (!value.is_empty()).then(|| value.to_owned())
 }
 
 /// Walk a markdown body and return one `Result` per attempted record, so a
@@ -928,6 +1384,34 @@ mod tests {
         );
     }
 
+    // What only an agent does is a techne, declared in a design the way an
+    // affordance is: its own class, realizing the affordance it serves.
+    #[test]
+    fn a_techne_block_is_read_as_a_techne() {
+        // `techne:` is predeclared only where the `actor` module is
+        // compiled; a build that ships no techne class reads no techne.
+        let prefixes = crate::colophon::predeclared_prefixes(&OntologyModel::shipped());
+        if !prefixes.iter().any(|(prefix, _)| prefix == "techne") {
+            return;
+        }
+        let body = "## Affordances\n\n### Read the plan from a container\n\nAn agent in a container reads the plan its grant covers.\n\n```turtle folio:graph\ntechne:ephemeral-plan-read a x0k:Techne ;\n    x0k:status \"wip\" ;\n    x0k:realizes affordance:ephemeral-environment-approve ;\n    x0k:dependsOn techne:ephemeral-device-join .\n```\n";
+        let allowed = HashSet::from(["affordance".to_string(), "techne".to_string()]);
+        let mut results = extract_from_markdown(body, &allowed);
+        assert_eq!(results.len(), 1);
+        let entity = results.remove(0).expect("techne parsed");
+        assert_eq!(entity.uri.to_string(), "x0k:techne/ephemeral-plan-read");
+        assert_eq!(entity.class, "techne");
+        assert_eq!(entity.class_iri, "https://0k.computer/ontology#Techne");
+        assert_eq!(entity.title, "Read the plan from a container");
+
+        let facts = inline_entity_facts(&entity, "x0k:design/ephemeral-device");
+        let has = |p: &str, v: &str| facts.iter().any(|(fp, fv)| fp == p && fv == v);
+        assert!(has("x0k:realizes", "entity:x0k:affordance/ephemeral-environment-approve"), "{facts:?}");
+        assert!(has("x0k:dependsOn", "entity:x0k:techne/ephemeral-device-join"), "{facts:?}");
+        assert!(!facts.iter().any(|(p, _)| p == "x0k:claimedFor"));
+        assert!(extract_from_markdown(body, &allowed_set()).is_empty(), "a reader that admits no techne reads none");
+    }
+
     #[test]
     fn a_nested_example_declares_nothing() {
         let body = "### Publish\n\n````markdown\n```turtle folio:graph\naffordance:publish a x0k:Affordance .\n```\n````\n";
@@ -1114,6 +1598,211 @@ mod tests {
         let body = format!("# Core\n\n## Knobs\n\n```turtle folio:graph {{source=\"hysteresis-parameters\"}}\n{panel}```\n");
         assert!(extract_from_markdown(&body, &HashSet::new()).is_empty());
         assert!(read_parameters("affordance:x a x0k:Affordance .\n").is_err());
+    }
+
+    #[test]
+    fn a_figure_binds_a_data_fence_as_data_and_a_panel_as_params() {
+        let panel = "x0k:implementation\\/canvas\\/core\\/threshold_gap a folio:Parameter ;\n    folio:default 1.5 .\n";
+        let body = format!(
+            "```turtle folio:graph {{source=\"knobs\"}}\n{panel}```\n\n\
+             ```turtle folio:graph {{source=\"not-a-panel\"}}\naffordance:x a x0k:Affordance .\n```\n\n\
+             ```json x0k:data {{#series}}\n[1, 2]\n```\n\n\
+             ```json x0k:!data {{#shown}}\n[3]\n```\n\n\
+             ```x0k:media {{ref=\"x0k:a/b\" source=\"knobs\"}}\n```\n"
+        );
+        assert_eq!(document_data(&body), vec![DocumentData { name: "series".into(), payload: "[1, 2]\n".into() }]);
+        assert_eq!(data_block_name("turtle folio:graph {source=\"knobs\"}", panel), None, "a panel is not data");
+        let params = document_params(&body);
+        assert_eq!(params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["knobs"]);
+        assert_eq!(params[0].to_json(), r#"{"threshold_gap":1.5}"#);
+        assert_eq!(bound_params("json x0k:data {#series}", "[1, 2]\n"), None);
+        assert_eq!(media_source(r#"x0k:media {ref="x0k:a/b" source="knobs"}"#).as_deref(), Some("knobs"));
+        assert_eq!(media_source(r#"x0k:!media {ref="x0k:a/b" source="knobs"}"#), None);
+    }
+
+    #[test]
+    fn a_panel_hands_its_figure_each_default_by_id_and_leaves_out_a_param_without_one() {
+        let panel = "x0k:implementation\\/canvas\\/core\\/threshold_gap a folio:Parameter ;\n    rdfs:label \"Gap\" ;\n    folio:default 1.5 .\n\n\
+                     x0k:implementation\\/canvas\\/core\\/num_levels a folio:Parameter ;\n    folio:default 4 .\n\n\
+                     x0k:implementation\\/canvas\\/core\\/show_bands a folio:Parameter ;\n    folio:default true .\n\n\
+                     x0k:implementation\\/canvas\\/core\\/falloff a folio:Parameter ;\n    folio:kind \"float\" .\n";
+        assert_eq!(
+            serde_json::Value::Object(panel_params(panel).unwrap()),
+            serde_json::json!({"threshold_gap": 1.5, "num_levels": 4, "show_bands": true})
+        );
+        assert!(panel_params("affordance:x a x0k:Affordance .\n").is_err());
+    }
+
+    #[test]
+    fn a_document_declares_its_params_defaults_in_every_parameter_block() {
+        let chapter = "# A figure\n\n```turtle folio:graph\nx0k:a\\/duration a folio:Parameter ;\n    folio:default 1000 .\n\n\
+                       x0k:a\\/emphasis a folio:Parameter ;\n    folio:kind \"paths\" .\n```\n\n\
+                       ```turtle folio:graph {#run}\nx0k:a\\/grow a folio:Parameter ;\n    folio:default 0.94 .\n```\n\n\
+                       ```turtle folio:graph\naffordance:x a x0k:Affordance .\n```\n";
+        assert_eq!(serde_json::Value::Object(declared_defaults(chapter)), serde_json::json!({"duration": 1000, "grow": 0.94}));
+        let declared: Vec<(String, Option<String>)> = declared_parameters(chapter).into_iter().map(|p| (p.id, p.kind)).collect();
+        assert_eq!(declared, [("duration".to_owned(), None), ("emphasis".to_owned(), Some("paths".to_owned())), ("grow".to_owned(), None)]);
+        let redeclared = format!("{chapter}\n```turtle folio:graph\nx0k:a\\/duration a folio:Parameter ;\n    folio:kind \"duration\" .\n```\n");
+        let duration = declared_parameters(&redeclared).into_iter().next().map(|p| (p.id, p.kind, p.default));
+        assert_eq!(duration, Some(("duration".to_owned(), Some("duration".to_owned()), None)), "a later block's declaration stands, in its first place");
+    }
+
+    #[test]
+    fn a_scene_states_its_params_as_facts_and_its_data_as_one_literal() {
+        let scene = "[] a x0k:Scene ;\n    figure:stations ( \"evaluate\" \"ready\" ) ;\n    figure:hidden () ;\n    \
+                     figure:letters \"N\" ;\n    figure:t 2.5 ;\n    x0k:viewData '{\"value\": \"21\"}'^^rdf:JSON .\n";
+        assert_eq!(
+            read_scene(scene).unwrap(),
+            Scene {
+                params: vec![
+                    ("stations".into(), serde_json::json!(["evaluate", "ready"])),
+                    ("hidden".into(), serde_json::json!([])),
+                    ("letters".into(), serde_json::json!("N")),
+                    ("t".into(), serde_json::json!(2.5)),
+                ],
+                looping: None,
+                data: Some("{\"value\": \"21\"}".into()),
+            }
+        );
+        let params_only = "[] a x0k:Scene ;\n    figure:letters \"\" .\n";
+        assert_eq!(read_scene(params_only).unwrap().data, None);
+        for refused in [
+            "[] figure:letters \"N\" .\n",
+            "[] a x0k:Scene ;\n    rdfs:label \"a scene\" .\n",
+            "[] a x0k:Scene ;\n    x0k:viewData \"{}\" .\n",
+            "[] a x0k:Scene ;\n    figure:letters x0k:Scene .\n",
+        ] {
+            assert!(read_scene(refused).is_err(), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_concepts_block_states_what_its_moment_introduces_and_assumes() {
+        let body = "[] study:introduces ( \"law\" ) ;\n    study:assumes ( \"record\" \"input\" ) .\n";
+        let concepts = concepts_block("turtle {.concepts}", body).unwrap();
+        assert_eq!((concepts.introduces, concepts.assumes), (vec!["law".to_owned()], vec!["record".to_owned(), "input".to_owned()]));
+        let none = concepts_block("turtle {.concepts}", "[] study:introduces () ;\n    study:assumes () .\n").unwrap();
+        assert_eq!(none, Concepts::default(), "an empty list introduces nothing");
+        assert_eq!(concepts_block("turtle folio:graph {#run}", body), None, "another block is no concepts block");
+        assert_eq!(concepts_block("turtle {.concepts}", "[] study:introduces ( \"law\" "), None, "Turtle that does not read");
+    }
+
+    /// Every scene station 1's script states, as its block's Turtle, or
+    /// `None` in a workspace with no corpus: a publication of this crate
+    /// ships no manuscripts. Inside the corpus a missing script fails.
+    fn script_scenes() -> Option<Vec<String>> {
+        let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test"));
+        let root = manifest.ancestors().find(|dir| dir.join("Cargo.lock").is_file()).expect("a workspace root above the crate");
+        if !root.join("corpora").is_dir() {
+            return None;
+        }
+        let path = root.join("corpora/x0k/manuscripts/understanding-x0k/station-1-script.md");
+        let script = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        Some(fenced_blocks(&script).into_iter().filter(|(info, body)| is_marker(info, GRAPH_MARKER) && read_scene(body).is_ok()).map(|(_, body)| body).collect())
+    }
+
+    #[test]
+    fn a_param_stated_as_json_is_the_value_it_spells_and_malformed_json_is_refused_naming_the_param() {
+        let transition = r#"'{"carry":{"start":0,"end":1},"leave":{"start":0,"end":0.5},"enter":{"start":0.5,"end":1}}'^^rdf:JSON"#;
+        let scene = format!("[] a x0k:Scene ;\n    figure:transition {transition} ;\n    figure:keys '[1, {{\"at\": 2}}]'^^rdf:JSON .\n");
+        let expected = serde_json::json!({"carry": {"start": 0, "end": 1}, "leave": {"start": 0, "end": 0.5}, "enter": {"start": 0.5, "end": 1}});
+        assert_eq!(read_scene(&scene).unwrap().params, [("transition".to_owned(), expected), ("keys".to_owned(), serde_json::json!([1, {"at": 2}]))]);
+        let malformed = "[] a x0k:Scene ;\n    figure:letters \"N\" ;\n    figure:transition '{\"carry\": '^^rdf:JSON .\n";
+        let refused = read_scene(malformed).unwrap_err();
+        assert!(matches!(&refused, InlineEntityError::MalformedParam { param, .. } if param == "transition"), "{refused:?}");
+        assert!(refused.to_string().contains("`transition`"), "{refused}");
+        let panel = "x0k:a\\/transition a folio:Parameter ;\n    folio:default '{\"carry\": {\"start\": 0, \"end\": 1}}'^^rdf:JSON .\n";
+        assert_eq!(serde_json::Value::Object(panel_params(panel).unwrap()), serde_json::json!({"transition": {"carry": {"start": 0, "end": 1}}}));
+        let malformed_default = panel.replace("}}'", "}'");
+        assert!(matches!(panel_params(&malformed_default), Err(InlineEntityError::MalformedParam { param, .. }) if param == "transition"));
+    }
+
+    #[test]
+    fn a_scene_written_back_reads_as_itself_and_spells_the_scripts_blocks() {
+        let Some(scenes) = script_scenes() else {
+            return;
+        };
+        assert!(scenes.len() >= 13, "the script states its scenes: {}", scenes.len());
+        for body in &scenes {
+            let scene = read_scene(body).unwrap();
+            let written = scene_turtle(&scene).unwrap();
+            assert_eq!(read_scene(&written).unwrap(), scene, "{written}");
+            assert_eq!(&written, body, "a hand-written scene is written back as it was written");
+        }
+    }
+
+    #[test]
+    fn every_value_a_scene_states_survives_the_round_trip() {
+        let params = vec![
+            ("hidden".to_owned(), serde_json::json!([])),
+            ("caption".to_owned(), serde_json::json!("say \"hi\" \\ then\nleave\t")),
+            ("t".to_owned(), serde_json::json!(2.5)),
+            ("speed".to_owned(), serde_json::json!(-3)),
+            ("tiny".to_owned(), serde_json::json!(1e-7)),
+            ("shown".to_owned(), serde_json::json!(true)),
+            ("nested".to_owned(), serde_json::json!([["1", "1.0"], [], [2, false]])),
+            ("transition".to_owned(), serde_json::json!({"carry": {"start": 0, "end": 1.0, "ease": "cubic-in-out"}, "leave": {"start": 0, "end": 0.5}})),
+            ("quoted".to_owned(), serde_json::json!({"say": "it's \"so\" \\ ''' then", "none": null})),
+            ("keyed".to_owned(), serde_json::json!([1, [{"at": 2.5}]])),
+        ];
+        let data = [
+            None,
+            Some(r#"{"value": "21"}"#),
+            Some(r#"{"value": "(<66> ('Add' 21 21))"}"#),
+            Some(r#"{"quoted": "a \"b\" c"}"#),
+            Some("{\"lines\": 2}\n'"),
+            Some("it's ''' long"),
+        ];
+        for data in data {
+            let scene = Scene { params: params.clone(), looping: None, data: data.map(str::to_owned) };
+            let written = scene_turtle(&scene).unwrap();
+            assert_eq!(read_scene(&written).unwrap(), scene, "{written}");
+        }
+        let lit = Scene { params: Vec::new(), looping: None, data: Some(r#"{"value": "(<66> ('Add' 21 21))"}"#.into()) };
+        assert_eq!(scene_turtle(&lit).unwrap(), "[] a x0k:Scene ;\n    x0k:viewData '''{\"value\": \"(<66> ('Add' 21 21))\"}'''^^rdf:JSON .\n");
+        let shaped = Scene { params: vec![("prior".to_owned(), serde_json::json!({"letters": "N", "camera": "it's"}))], looping: None, data: None };
+        assert_eq!(scene_turtle(&shaped).unwrap(), "[] a x0k:Scene ;\n    figure:prior '''{\"camera\":\"it's\",\"letters\":\"N\"}'''^^rdf:JSON .\n");
+        assert_eq!(read_scene(&scene_turtle(&Scene::default()).unwrap()).unwrap(), Scene::default());
+        for (name, value) in [("letters", serde_json::Value::Null), ("two words", serde_json::json!("N"))] {
+            let refused = Scene { params: vec![(name.to_owned(), value)], looping: None, data: None };
+            assert_eq!(scene_turtle(&refused), Err(UnstatableParam { param: name.to_owned() }));
+        }
+    }
+
+    #[test]
+    fn a_scene_states_its_loop_as_one_literal_and_writes_it_back_as_written() {
+        let block = "[] a x0k:Scene ;\n    figure:t 48.5 ;\n    x0k:loop '{\"count\":3,\"from\":48.5,\"param\":\"t\",\"period\":29500,\"to\":78}'^^rdf:JSON ;\n    \
+                     x0k:viewData '{\"value\": \"21\"}'^^rdf:JSON .\n";
+        let scene = read_scene(block).unwrap();
+        assert_eq!(scene.looping, Some(Loop { param: "t".into(), from: 48.5, to: 78.0, period: 29500.0, count: Some(3) }));
+        assert_eq!(scene_turtle(&scene).unwrap(), block, "keys in name order, whole numbers as integers");
+        let endless = Scene { looping: Some(Loop { count: None, ..scene.looping.clone().unwrap() }), ..Scene::default() };
+        assert_eq!(read_scene(&scene_turtle(&endless).unwrap()).unwrap(), endless);
+        let looping = |json: &str| format!("[] a x0k:Scene ;\n    x0k:loop '{json}'^^rdf:JSON .\n");
+        for (json, says) in [
+            (r#"{"from":0,"param":"t","period":1000,"to":4,"speed":2}"#, "`speed`"),
+            (r#"{"from":0,"param":"glow","period":1000,"to":4}"#, "`glow`"),
+            (r#"{"from":0,"period":1000,"to":4}"#, "`param`"),
+            (r#"{"from":4,"param":"t","period":1000,"to":4}"#, "empty"),
+            (r#"{"from":0,"param":"t","period":0,"to":4}"#, "`period`"),
+            (r#"{"count":0,"from":0,"param":"t","period":1000,"to":4}"#, "`count`"),
+            (r#"{"count":1.5,"from":0,"param":"t","period":1000,"to":4}"#, "`count`"),
+            (r#"[0, 4]"#, "object"),
+        ] {
+            let refused = read_scene(&looping(json)).unwrap_err().to_string();
+            assert!(refused.contains("x0k:loop") && refused.contains(says), "{json}: {refused}");
+        }
+        let twice = "[] a x0k:Scene ;\n    x0k:loop '{\"from\":0,\"param\":\"t\",\"period\":1000,\"to\":4}'^^rdf:JSON, '{\"from\":0,\"param\":\"t\",\"period\":2000,\"to\":4}'^^rdf:JSON .\n";
+        assert!(read_scene(twice).is_err(), "one loop");
+    }
+
+    #[test]
+    fn a_figure_binding_a_scene_receives_its_data_literal() {
+        let body = "```turtle folio:graph {#run}\n[] a x0k:Scene ;\n    figure:letters \"N\" ;\n    \
+                    x0k:viewData '{\"value\": \"21\"}'^^rdf:JSON .\n```\n\n\
+                    ```turtle folio:graph {#run}\n[] a x0k:Scene ;\n    figure:letters \"NA\" .\n```\n";
+        assert_eq!(document_data(body), vec![DocumentData { name: "run".into(), payload: "{\"value\": \"21\"}".into() }]);
+        assert_eq!(data_block_name("turtle folio:graph {#run}", "[] a x0k:Scene ;\n    figure:letters \"NA\" .\n").as_deref(), Some("run"));
     }
 
     #[test]

@@ -811,7 +811,7 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
 
     #[test]
     fn public_paper_corpus_runs_without_a_base_vocabulary() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/papers");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test")).join("examples/papers");
         let source = FolioSource::prepare(&root, OntologyModel::new([])).unwrap();
         assert_eq!(source.diagnostics().len(), 3);
         assert_eq!(source.vocabulary_source_count(), 0);

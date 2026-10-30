@@ -51,6 +51,7 @@ pub mod pipeline;
 pub mod pipeline_runner;
 pub mod region_gfm;
 pub mod resolve;
+pub mod retarget;
 pub mod source_ref;
 pub mod stitch;
 pub mod sync;

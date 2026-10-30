@@ -362,6 +362,7 @@ mod tests {
     /// body around it with `replace_body` rather than re-rendering it —
     /// a human's statement order and comments survive the save.
     #[test]
+    #[cfg(feature = "envelope")]
     fn body_swap_preserves_the_header_verbatim() {
         let file = "# X\n\n```turtle folio:document\ndesign:x a x0k:Design ;\n    # a human comment a renderer would drop\n    x0k:status \"proposed\" ;\n    x0k:concerns \"ui\" .\n```\n\nOriginal body paragraph.\n";
         let (_env, body) = crate::colophon::parse_envelope(file).expect("parses");

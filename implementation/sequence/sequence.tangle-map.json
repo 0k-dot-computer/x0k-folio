@@ -1,0 +1,25 @@
+{
+  "source": "implementation/sequence/sequence.md",
+  "source_hash": "6f0f166fa81451fa",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "12c25d2cea3382e8",
+      "outputs": [
+        {
+          "path": "crates/x0k-sequence/src/lib.rs",
+          "hash": "2173ac4447295207"
+        },
+        {
+          "path": "crates/x0k-sequence/Cargo.toml",
+          "hash": "c13ad7788378e2bb"
+        },
+        {
+          "path": "crates/x0k-sequence/src/tests.rs",
+          "hash": "e03084106f9434f4"
+        }
+      ]
+    }
+  ]
+}

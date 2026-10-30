@@ -181,7 +181,7 @@ impl Fixture {
             "<https://example.test/module/fixture> <http://purl.org/vocab/vann/preferredNamespacePrefix> \"fixture\" .\n",
             "<https://example.test/module/fixture> <http://purl.org/vocab/vann/preferredNamespaceUri> \"https://example.test/fixture#\" .\n",
         )).unwrap();
-        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/papers");
+        let example = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test")).join("examples/papers");
         for name in ["alpha.md", "beta.md", "vocabulary.md"] {
             fs::copy(example.join(name), corpus.join(name)).unwrap();
         }

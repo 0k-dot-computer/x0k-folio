@@ -19,10 +19,14 @@ use x0k_tangle::{
     receive_repo, tangle_document, PipelineRegistry, ReceiveOptions, RepoProjectOptions, Vocabulary,
 };
 
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-modules");
+fn fixture() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test")).join("tests/fixtures/ontology-modules")
+}
 /// Shapes for those fixtures: `document` constrains one predicate, `core`
 /// constrains nothing, so the two halves of §5 are both in the fixture set.
-const SHAPE_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-shapes");
+fn shape_fixture() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test")).join("tests/fixtures/ontology-shapes")
+}
 
 const DOC_REL: &str = "knowledge/implementation/demo/colophon.md";
 /// A second chapter of the same crate, in the same area, tangling to its own
@@ -154,12 +158,12 @@ fn workspace(modules: &[&str], entry_point: bool) -> tempfile::TempDir {
     .unwrap();
     tangle_document(&ws.join(EXTRA_REL), ws, &PipelineRegistry::default()).expect("tangle extra");
     std::fs::create_dir_all(ws.join("ontology/modules")).unwrap();
-    for entry in std::fs::read_dir(FIXTURE).unwrap() {
+    for entry in std::fs::read_dir(fixture()).unwrap() {
         let entry = entry.unwrap();
         std::fs::copy(entry.path(), ws.join("ontology/modules").join(entry.file_name())).unwrap();
     }
     std::fs::create_dir_all(ws.join("ontology/shapes")).unwrap();
-    for entry in std::fs::read_dir(SHAPE_FIXTURE).unwrap() {
+    for entry in std::fs::read_dir(shape_fixture()).unwrap() {
         let entry = entry.unwrap();
         std::fs::copy(entry.path(), ws.join("ontology/shapes").join(entry.file_name())).unwrap();
     }
@@ -359,7 +363,7 @@ fn a_closed_selection_projects_each_module_stamped_and_otherwise_verbatim() {
 
     for name in ["core", "document"] {
         let source =
-            std::fs::read_to_string(Path::new(FIXTURE).join(format!("{name}.ttl"))).unwrap();
+            std::fs::read_to_string(fixture().join(format!("{name}.ttl"))).unwrap();
         let shipped = std::fs::read_to_string(
             out.path().join("ontology/modules").join(format!("{name}.ttl")),
         )
@@ -429,7 +433,7 @@ fn a_module_carries_its_shapes_and_only_its_own() {
     let out = tempfile::tempdir().unwrap();
     project(ws.path(), out.path()).expect("projection");
 
-    let source = std::fs::read_to_string(Path::new(SHAPE_FIXTURE).join("document.ttl")).unwrap();
+    let source = std::fs::read_to_string(shape_fixture().join("document.ttl")).unwrap();
     let shipped = std::fs::read_to_string(out.path().join("ontology/shapes/document.ttl"))
         .expect("document's shapes crossed with document");
     // Unstamped, unlike the module file: `owl:versionIRI` is a fact about the

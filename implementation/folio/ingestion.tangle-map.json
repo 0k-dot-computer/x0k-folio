@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/ingestion.md",
-  "source_hash": "acc7a496171a8160",
+  "source_hash": "da5250b86b65e955",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -33,7 +33,7 @@
         },
         {
           "path": "crates/x0k-folio-ingest/tests/standalone.rs",
-          "hash": "4552ad7a31d6ffb9"
+          "hash": "b25e53b5a77c8fe4"
         },
         {
           "path": "crates/x0k-folio-ingest/src/delivery.rs",

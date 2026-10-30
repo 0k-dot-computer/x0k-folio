@@ -1,5 +1,5 @@
-# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.
-# Bootstrap source: this view seeds an empty region exactly once.
+# Authored: edit this file, then run tools/ontology-fixpoint --write (corpora/x0k/ontology/AGENTS.md).
+# The concept region seeds from it when empty; a concept-region fact overrides it.
 # Shapes: document
 
 <https://0k.computer/ontology#constrainedBy> <https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#Architecture> .

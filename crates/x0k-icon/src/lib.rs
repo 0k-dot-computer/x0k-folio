@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn the_fixtures_are_the_designs_icons() {
-        let design = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let design = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test"))
             .join("../decisions/design/presentation/icon-profile.md");
         let Ok(text) = std::fs::read_to_string(&design) else {
             return;

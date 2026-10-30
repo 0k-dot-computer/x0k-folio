@@ -2,7 +2,9 @@
 use crate::parser::{parse_info_string, ParsedDocument};
 use anyhow::Result;
 use x0k_folio::colophon::{is_marker, strip_header, GRAPH_MARKER};
-use x0k_folio::inline_entity::{read_parameters, Parameter};
+use x0k_folio::inline_entity::{
+    bound_params, document_data, document_params, media_source, read_parameters, DocumentData, DocumentParams, Parameter,
+};
 use x0k_syntax::{css_class, highlight, HighlightedToken, Language, TokenKind};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::collections::HashSet;
@@ -42,6 +44,9 @@ pub fn weave_html_with_instances(
 ) -> Result<WeaveOutput> {
     let body = strip_header(content);
     let body = body.as_str();
+    // The blocks this page's figures bind, by name: data and panels.
+    let data = document_data(body);
+    let panels = document_params(body);
     let mut html = String::new();
 
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
@@ -141,7 +146,7 @@ pub fn weave_html_with_instances(
                     doc,
                     &mut rendered_tab_chunks,
                     &mut chunk_seq,
-                    (source, instances),
+                    (source, instances, &data, &panels),
                 )?;
             }
             Event::Start(Tag::Heading { .. }) => {
@@ -405,13 +410,14 @@ fn render_code_block(
     doc: &ParsedDocument,
     rendered_tab_chunks: &mut HashSet<String>,
     chunk_seq: &mut usize,
-    instance_context: (&str, &crate::instance_rendering::InstancePresentation),
+    page: (&str, &crate::instance_rendering::InstancePresentation, &[DocumentData], &[DocumentParams]),
 ) -> Result<()> {
-    let (source, instances) = instance_context;
+    let (source, instances, data, panels) = page;
     // A parameter panel renders as the panel's data element.
     if is_marker(info, GRAPH_MARKER) {
         if let Ok(parameters) = read_parameters(code) {
-            render_param_panel(html, &parameters)?;
+            let name = bound_params(info, code).map(|panel| panel.name);
+            render_param_panel(html, &parameters, name.as_deref())?;
             return Ok(());
         }
     }
@@ -425,10 +431,11 @@ fn render_code_block(
 
     // x0k:media reference — render as embed mount point
     if info.contains("x0k:media") {
+        let binding = media_binding(info, data, panels);
         if let Some(ref name) = attrs.name {
             writeln!(
                 html,
-                "<div class=\"media-embed\" data-chunk=\"{}\" data-ref=\"{}\">\
+                "<div class=\"media-embed\" data-chunk=\"{}\" data-ref=\"{}\"{binding}>\
                  <span class=\"media-label\">interactive: {}</span></div>",
                 escape_html(name),
                 attrs.from.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),
@@ -441,7 +448,7 @@ fn render_code_block(
         if let Some(ref_uri) = ref_attr {
             writeln!(
                 html,
-                "<div class=\"media-embed\" data-media-ref=\"{}\">\
+                "<div class=\"media-embed\" data-media-ref=\"{}\"{binding}>\
                  <span class=\"media-label\">visualization: {}</span></div>",
                 escape_html(&ref_uri),
                 escape_html(&ref_uri),
@@ -1397,8 +1404,9 @@ fn emit_highlighted_range(
 }
 
 /// Render a parameter panel as a hidden data div that the doc browser
-/// reads to build the interactive parameter panel.
-fn render_param_panel(html: &mut String, parameters: &[Parameter]) -> Result<()> {
+/// reads to build the interactive parameter panel, named by the block's
+/// name when it has one.
+fn render_param_panel(html: &mut String, parameters: &[Parameter], name: Option<&str>) -> Result<()> {
     use serde_json::{json, Value};
     let params: Vec<Value> = parameters
         .iter()
@@ -1419,12 +1427,27 @@ fn render_param_panel(html: &mut String, parameters: &[Parameter]) -> Result<()>
             })
         })
         .collect();
+    let block = name.map(|name| format!(" data-block=\"{}\"", escape_html(name))).unwrap_or_default();
     writeln!(
         html,
-        "<div class=\"param-panel-data\" data-params=\"{}\"></div>",
+        "<div class=\"param-panel-data\"{block} data-params=\"{}\"></div>",
         escape_html(&serde_json::to_string(&params)?),
     )?;
     Ok(())
+}
+
+fn media_binding(info: &str, data: &[DocumentData], panels: &[DocumentParams]) -> String {
+    let Some(source) = media_source(info) else {
+        return String::new();
+    };
+    let mut attrs = format!(" data-media-source=\"{}\"", escape_html(&source));
+    if let Some(block) = data.iter().find(|block| block.name == source) {
+        attrs.push_str(&format!(" data-media-payload=\"{}\"", escape_html(&block.payload)));
+    }
+    if let Some(panel) = panels.iter().find(|panel| panel.name == source) {
+        attrs.push_str(&format!(" data-media-params=\"{}\"", escape_html(&panel.to_json())));
+    }
+    attrs
 }
 
 fn extract_ref_from_info(info: &str) -> Option<String> {
@@ -2458,6 +2481,30 @@ x0k:implementation\/canvas\/core\/num_levels a folio:Parameter ;
         // Neither a code block nor an instance card
         assert!(!output.html.contains("<pre><code"));
         assert!(!output.html.contains("Unresolved instance"));
+    }
+
+    #[test]
+    fn a_bound_figure_carries_its_data_as_payload_and_its_panel_as_params() {
+        let panel = "x0k:implementation\\/canvas\\/core\\/threshold_gap a folio:Parameter ;\n    folio:default 1.5 .\n";
+        let content = format!(
+            "# Viz\n\n```x0k:media {{ref=\"x0k:a/viz\" source=\"knobs\"}}\n```\n\n\
+             ```turtle folio:graph {{source=\"knobs\"}}\n{panel}```\n\n\
+             ```json x0k:data {{#knobs}}\n[1]\n```\n\n\
+             ```x0k:media {{ref=\"x0k:a/other\" source=\"missing\"}}\n```\n"
+        );
+        let doc = parse_document(&content).unwrap();
+        let html = weave_html(&content, &doc).unwrap().html;
+        let params = format!("data-media-params=\"{}\"", escape_html(r#"{"threshold_gap":1.5}"#));
+        assert!(
+            html.contains(&format!("data-media-ref=\"x0k:a/viz\" data-media-source=\"knobs\" data-media-payload=\"[1]\n\" {params}>")),
+            "a figure ahead of its blocks carries the data block's body and the panel's params: {html}"
+        );
+        assert!(!html.contains("data-media-payload=\"x0k:"), "a panel's Turtle is never a figure's data: {html}");
+        assert!(html.contains("<div class=\"param-panel-data\" data-block=\"knobs\" data-params="), "the panel names its block: {html}");
+        assert!(
+            html.contains("data-media-ref=\"x0k:a/other\" data-media-source=\"missing\">"),
+            "a figure naming no block of the page names it and carries nothing: {html}"
+        );
     }
 
     #[test]

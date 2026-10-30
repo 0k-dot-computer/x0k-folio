@@ -1,44 +1,126 @@
-# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.
-# Bootstrap source: this view seeds an empty region exactly once.
+# Authored: edit this file, then run tools/ontology-fixpoint --write (corpora/x0k/ontology/AGENTS.md).
+# The concept region seeds from it when empty; a concept-region fact overrides it.
 # Module: core
 
+<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2000/01/rdf-schema#comment> "An entity's class, stated as a fact: an entity is of a class because a fact says so, never because of its id." .
+<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2000/01/rdf-schema#label> "type" .
+<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#decidedBy> <https://0k.computer/ontology#architecture/declared-indexes> .
+<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#fact/indexed> "x0k" .
+<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
+<https://0k.computer/ontology#Class> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Class> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Class> <http://www.w3.org/2000/01/rdf-schema#comment> "A Concept of kind entity or act: the only Concepts that type subjects, each declared an owl:Class so a fact can be typed by it (ontology-modules §10). Every Class is a Concept, and not every Concept is a Class: a role, a mechanism or a notion is a Concept that nothing is an instance of. A class's extent is every subject it types." .
+<https://0k.computer/ontology#Class> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#Class> <http://www.w3.org/2000/01/rdf-schema#label> "Class" .
+<https://0k.computer/ontology#Class> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Class> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/schema> .
 <https://0k.computer/ontology#Concept> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#Concept> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#Concept> <http://www.w3.org/2000/01/rdf-schema#comment> "The root ontology concept: every registered class and property is typed by it, and it is typed by itself." .
+<https://0k.computer/ontology#Concept> <http://www.w3.org/2000/01/rdf-schema#comment> "A term of the vocabulary: every class, property and named idea the corpus gives one meaning is a Concept declared in one module, and Concept is typed by itself — one deliberate meta-level, never two. The ontology is the concept region of the fact plane: extending it is an assertion, never a migration, and module files are its defaults, not a second authority." .
 <https://0k.computer/ontology#Concept> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
 <https://0k.computer/ontology#Concept> <http://www.w3.org/2000/01/rdf-schema#label> "Concept" .
+<https://0k.computer/ontology#Concept> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/2004/02/skos/core#Concept> .
+<https://0k.computer/ontology#Concept> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/schema> .
+<https://0k.computer/ontology#Kind> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<https://0k.computer/ontology#Kind> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#Kind> <http://www.w3.org/2000/01/rdf-schema#comment> "What kind of thing a term names, which decides whether facts may be typed by it: entity, act, relation, value, role, mechanism, notion or schema (ontology-modules §10)." .
+<https://0k.computer/ontology#Kind> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#Kind> <http://www.w3.org/2000/01/rdf-schema#label> "Kind" .
+<https://0k.computer/ontology#Kind> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/schema> .
 <https://0k.computer/ontology#cites> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#cites> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#cites> <http://www.w3.org/2000/01/rdf-schema#comment> "A source this document draws on. Source-agnostic: the target may be a document already in the corpus or one on the web — a citation is a citation either way. Deliberately domain- and range-free, which is what places the term in `core`: it is about any concept that can cite, and pinning either end would make its home a function of what it happens to mention. A document's synthesis shape — a thread drawn across many sources — is read from these edges rather than declared as a page kind." .
 <https://0k.computer/ontology#cites> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#cites> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
+<https://0k.computer/ontology#decidedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#decidedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#decidedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "The decision document that settles what a term means. Authored on the term; which documents use the term is read from the documents themselves, never written back here. No range, as cites has none: a term about any concept, kept in core so every module can say where its words are decided." .
+<https://0k.computer/ontology#decidedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#decidedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#decidedBy> <http://www.w3.org/2000/01/rdf-schema#label> "decided by" .
+<https://0k.computer/ontology#decidedBy> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
+<https://0k.computer/ontology#enabledBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#enabledBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#enabledBy> <http://www.w3.org/2000/01/rdf-schema#comment> "Affordance or Techne enabledBy SoftwareModule: the module that embodies a techne, stated on the techne itself or on an affordance it makes possible. The dominant case across the inline `x0k:affordance` blocks under decisions/design/*.md. Multi-valued; an affordance may be enabled by several upstream modules composed together. Distinct from claimedFor (the actor) and signifies (the perceptual cue): enabledBy is the *substrate* relation that makes the affordance be the case. (At runtime the legacy `grove/enabled-by` link accepts arbitrary entity URIs — services, devices, external systems — but the schema-level relation centers on SoftwareModule, which is the case the federator's class registry can validate.)" .
+<https://0k.computer/ontology#enabledBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#enabledBy> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
+<https://0k.computer/ontology#kind/act> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#kind/act> <http://www.w3.org/2000/01/rdf-schema#comment> "A recorded occurrence: something done, at a time, by someone. Facts may be typed by an act term." .
+<https://0k.computer/ontology#kind/act> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#kind/act> <http://www.w3.org/2000/01/rdf-schema#label> "act" .
+<https://0k.computer/ontology#kind/entity> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#kind/entity> <http://www.w3.org/2000/01/rdf-schema#comment> "An addressable subject with a stable URI; its instances can be listed. Facts may be typed by an entity term." .
+<https://0k.computer/ontology#kind/entity> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#kind/entity> <http://www.w3.org/2000/01/rdf-schema#label> "entity" .
+<https://0k.computer/ontology#kind/mechanism> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#kind/mechanism> <http://www.w3.org/2000/01/rdf-schema#comment> "A part of how the software works, named so documents can discuss it. No fact is typed by a mechanism term." .
+<https://0k.computer/ontology#kind/mechanism> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#kind/mechanism> <http://www.w3.org/2000/01/rdf-schema#label> "mechanism" .
+<https://0k.computer/ontology#kind/notion> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#kind/notion> <http://www.w3.org/2000/01/rdf-schema#comment> "An idea that guides design or reasoning; nothing in the system is one. No fact is typed by a notion term." .
+<https://0k.computer/ontology#kind/notion> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#kind/notion> <http://www.w3.org/2000/01/rdf-schema#label> "notion" .
+<https://0k.computer/ontology#kind/relation> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#kind/relation> <http://www.w3.org/2000/01/rdf-schema#comment> "A property: an edge between subjects or a field of one." .
+<https://0k.computer/ontology#kind/relation> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#kind/relation> <http://www.w3.org/2000/01/rdf-schema#label> "relation" .
+<https://0k.computer/ontology#kind/role> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#kind/role> <http://www.w3.org/2000/01/rdf-schema#comment> "A position an entity holds in a relation; it has holders, not instances. No fact is typed by a role term." .
+<https://0k.computer/ontology#kind/role> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#kind/role> <http://www.w3.org/2000/01/rdf-schema#label> "role" .
+<https://0k.computer/ontology#kind/schema> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#kind/schema> <http://www.w3.org/2000/01/rdf-schema#comment> "The ontology's own machinery: it types terms, not subjects." .
+<https://0k.computer/ontology#kind/schema> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#kind/schema> <http://www.w3.org/2000/01/rdf-schema#label> "schema" .
+<https://0k.computer/ontology#kind/value> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#kind/value> <http://www.w3.org/2000/01/rdf-schema#comment> "A closed set of values or a measure; its members are the individuals its module claims, and no fact adds one." .
+<https://0k.computer/ontology#kind/value> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#kind/value> <http://www.w3.org/2000/01/rdf-schema#label> "value" .
 <https://0k.computer/ontology#realizes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#realizes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#realizes> <http://www.w3.org/2000/01/rdf-schema#comment> "A techne realizes an affordance — the embodied technique is the mechanism that makes the affordance possible. Distinct from signification: realization is what makes something *be the case*; signification is what makes it *perceptually reachable*. A Publication's relation to Design is *not* a direct realization edge; it is indirect, mediated by the modules it publishes, the technai those modules embody, the affordances those technai realize, and the designs that define those affordances. A Decision may claim realizes when it asserts that a techne or implementation realizes an affordance the decision is about. A Genome (or a literate implementation) realizes the Design decisions whose experience its expression makes real — the genome-topology edge of corpora/x0k/decisions/architecture/production/genome-regeneration.md; the citation may anchor to a block within the decision (block-grain, per decisions-as-gene-source)." .
 <https://0k.computer/ontology#realizes> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#realizes> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#subjectClass> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#subjectClass> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#subjectClass> <http://www.w3.org/2000/01/rdf-schema#comment> "The other half of the shape vocabulary: a class a well-formed SUBJECT of the constrained predicate belongs to. The mirror of `x0k:targetClass`, and it exists for the same reason one file up — a union domain whose members live in different modules is a constraint on current usage, not what the word means, so it is a shape and the property places in `core` (`x0k:architecture/vocabulary-shapes` clause 8). Repeated for a disjunction; deliberately domain- and range-free, like its sibling. The Decision-domain slice reads it beside `rdfs:domain`, because a shape file is part of the T-box union and a derivation that ignored it would read a truncated one." .
 <https://0k.computer/ontology#subjectClass> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#subjectClass> <https://0k.computer/ontology#decidedBy> <https://0k.computer/ontology#architecture/vocabulary-shapes> .
+<https://0k.computer/ontology#subjectClass> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#supersededBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#supersededBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#supersededBy> <http://www.w3.org/2000/01/rdf-schema#comment> "Inverse of supersedes. Authored from either side: a superseded decision can carry supersededBy to its replacement; a replacement can carry supersedes to the original. The kernel walks either direction without a separate index. This is the edge a decision log is made of — `status: superseded` says a decision is dead, and only this says what killed it — so a corpus that adopts `document` without `work` must still have it. Its subjects span modules (Decision in `document`, Observation in `work`), which is what places the term here: the union moves out to `x0k:subjectClass` and the join runs upward to the module every member's module already imports (`x0k:architecture/vocabulary-shapes` clause 8)." .
 <https://0k.computer/ontology#supersededBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
 <https://0k.computer/ontology#supersededBy> <http://www.w3.org/2002/07/owl#inverseOf> <https://0k.computer/ontology#supersedes> .
+<https://0k.computer/ontology#supersededBy> <https://0k.computer/ontology#decidedBy> <https://0k.computer/ontology#architecture/vocabulary-shapes> .
+<https://0k.computer/ontology#supersededBy> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#supersedes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#supersedes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#supersedes> <http://www.w3.org/2000/01/rdf-schema#comment> "Replacement relation. For Observation: when new information replaces or refines an older observation; both remain in the store and the relation tells retrieval which is current. For Decision: this decision replaces an earlier one (mirrors the in-prose `status: superseded` discipline as a typed edge). Inverse: supersededBy, and a log may be authored from either end — a replacement that claims what it replaces and a superseded document that points forward are the same edge read from opposite sides. Placed in `core` for the reason its inverse is: a union of subjects that spans modules is a shape, not part of what the word means." .
+<https://0k.computer/ontology#supersedes> <http://www.w3.org/2000/01/rdf-schema#comment> "Replacement relation. For Observation: unused by the memory log, where a later entry replaces an earlier one by coming after it. For Decision: this decision replaces an earlier one (mirrors the in-prose `status: superseded` discipline as a typed edge). Inverse: supersededBy, and a log may be authored from either end — a replacement that claims what it replaces and a superseded document that points forward are the same edge read from opposite sides. Placed in `core` for the reason its inverse is: a union of subjects that spans modules is a shape, not part of what the word means." .
 <https://0k.computer/ontology#supersedes> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
 <https://0k.computer/ontology#supersedes> <http://www.w3.org/2002/07/owl#inverseOf> <https://0k.computer/ontology#supersededBy> .
+<https://0k.computer/ontology#supersedes> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#targetClass> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#targetClass> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#targetClass> <http://www.w3.org/2000/01/rdf-schema#comment> "The whole shape vocabulary: a class a well-formed target of the constrained predicate belongs to. Asserted about the predicate, in the shape file of the module that defines it, never in the term file — a shape says what a document must do, not what a term means. Repeated for a disjunction; deliberately domain- and range-free, since a domain or a range would put a shape predicate back inside the import-closure check it exists to sit outside of." .
 <https://0k.computer/ontology#targetClass> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#targetClass> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
+<https://0k.computer/ontology#termKind> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#termKind> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#termKind> <http://www.w3.org/2000/01/rdf-schema#comment> "The kind of a term, stated exactly once on every Concept." .
+<https://0k.computer/ontology#termKind> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#termKind> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/core> .
+<https://0k.computer/ontology#termKind> <http://www.w3.org/2000/01/rdf-schema#label> "term kind" .
+<https://0k.computer/ontology#termKind> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Kind> .
+<https://0k.computer/ontology#termKind> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology/core> <http://purl.org/dc/terms/description> "x0k is poiesis against enframing: a vocabulary for bringing-forth owner-sovereign, Dunbar-scale substrate, not for rendering the world as standing-reserve to be optimized and extracted. The schema's shape is the stance — Techne is held apart from Capability, Desire and HumanMemory are unencodable headwaters, and work grows from Seeds by cultivation rather than command. The architecture is the poem, and this header names the ground it stands on." .
 <https://0k.computer/ontology/core> <http://purl.org/dc/terms/references> "Alexander, C. A Pattern Language; federation theory — living structure from local, structure-preserving transformation; why Dunbar-scale, not one global graph." .
 <https://0k.computer/ontology/core> <http://purl.org/dc/terms/references> "Heidegger, M. The Question Concerning Technology — Gestell vs. poiesis; the metaphysical frame and the stakes." .
 <https://0k.computer/ontology/core> <http://purl.org/dc/terms/references> "Varoufakis, Y. Technofeudalism — platform capital as rent-extracting fief; AI-substrate concentration as the next cloud-fief." .
 <https://0k.computer/ontology/core> <http://purl.org/dc/terms/references> "Wittgenstein, L. Tractatus 6.54 — the ladder thrown away after climbing; the self-emptying form." .
 <https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
-<https://0k.computer/ontology/core> <http://www.w3.org/2000/01/rdf-schema#comment> "The self-typed root every x0k vocabulary module stands on: Concept, the one meta-level that every class and property occupies." .
+<https://0k.computer/ontology/core> <http://www.w3.org/2000/01/rdf-schema#comment> "The self-typed root every x0k vocabulary module stands on: Concept, which every term occupies, and the term kinds that say what each term names." .
 <https://0k.computer/ontology/core> <http://www.w3.org/2000/01/rdf-schema#label> "core" .
 <https://0k.computer/ontology/core> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/core/0.4.0> .

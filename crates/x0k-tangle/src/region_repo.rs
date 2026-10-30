@@ -103,6 +103,11 @@ use crate::region_gfm::{
     ProofEvidence,
 };
 
+mod affordance_links;
+use affordance_links::expand_affordance_links;
+#[cfg(test)]
+use affordance_links::{affordance_description, render_affordance_links};
+
 const SOFTWARE_MODULE_PREFIX: &str = "x0k:software-module/";
 const ONTOLOGY_MODULE_PREFIX: &str = "x0k:ontology-module/";
 /// A literate document, by the id its own header declares. Only
@@ -4546,46 +4551,14 @@ fn render_affordances(records: &[AffordanceRecord], icons: Option<&Icons>) -> St
     out
 }
 
-/// The small public list and the detailed map use the same records and marks.
-const AFFORDANCES_MARKER: &str = "<!-- x0k:affordance-links -->";
-
+/// One affordance as a list line: its mark and its name linked to its page.
+/// The README's short list and the contents page share it.
 fn affordance_link(rec: &AffordanceRecord, icons: Option<&Icons>) -> String {
     let icon = icons
         .and_then(|i| i.label(&rec.id))
         .map(|label| format!("{} ", icon_picture(AFFORDANCES_DIR, label, SUBJECT_ICON_HEIGHT)))
         .unwrap_or_default();
     format!("- {icon}**[{}]({})**", rec.title, rec.document)
-}
-
-/// Use only the first prose paragraph: later paragraphs, icon declarations,
-/// and code belong to the affordance page. Text extraction avoids carrying
-/// page-relative links into a root-level list.
-fn affordance_description(description: &str) -> String {
-    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
-    let mut paragraph = false;
-    let mut text = String::new();
-    for event in Parser::new(description) {
-        match event {
-            Event::Start(Tag::Paragraph) => paragraph = true,
-            Event::End(TagEnd::Paragraph) if paragraph => break,
-            Event::Text(value) | Event::Code(value) if paragraph => text.push_str(&value),
-            Event::SoftBreak | Event::HardBreak if paragraph => text.push(' '),
-            _ => {}
-        }
-    }
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn render_affordance_links(records: &[AffordanceRecord], icons: Option<&Icons>) -> String {
-    let mut out = String::new();
-    for rec in records {
-        out.push_str(&format!("{}\n\n", affordance_link(rec, icons)));
-        let description = affordance_description(&rec.description);
-        if !description.is_empty() {
-            out.push_str(&format!("  <p>{}</p>\n\n", xml_escape(&description)));
-        }
-    }
-    out
 }
 
 /// Write each named document that declares a published affordance again,
@@ -5843,13 +5816,14 @@ fn write_readme_contents(
         let path = output_dir.join(page);
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading publication page {}", page.display()))?;
-        let text = if text.contains(AFFORDANCES_MARKER) {
-            let compact = render_affordance_links(affordances, icons);
-            let expanded = text.replace(AFFORDANCES_MARKER, compact.trim_end());
-            std::fs::write(&path, &expanded)?;
-            expanded
-        } else {
-            text
+        let text = match expand_affordance_links(&text, affordances, icons)
+            .with_context(|| format!("publication page {}", page.display()))?
+        {
+            Some(expanded) => {
+                std::fs::write(&path, &expanded)?;
+                expanded
+            }
+            None => text,
         };
         let lines: Vec<&str> = text.split_inclusive('\n').collect();
         if let Some(marker) = find_contents_marker(&lines)? {
@@ -8826,6 +8800,53 @@ mod tests {
         let mut rec = record(&[], &[], &[]);
         rec.description.clear();
         assert!(!render_affordance_links(&[rec], None).contains("<p>"));
+    }
+
+    /// The affordance-links marker selects: a bare marker lists every
+    /// published record in `publishes` order, a marker naming ids lists
+    /// exactly those in its own order, and an id the publication does not
+    /// publish, or one named twice, refuses.
+    #[test]
+    fn an_affordance_links_marker_lists_what_it_names_in_its_order() {
+        let named = |id: &str, title: &str| {
+            let mut rec = record(&[], &[], &[]);
+            rec.id = format!("x0k:affordance/{id}");
+            rec.title = title.to_string();
+            rec
+        };
+        let records = [named("first", "First"), named("second", "Second"), named("third", "Third")];
+        // The titles a page lists, in the order it lists them.
+        let titles = |page: &str| -> Vec<&'static str> {
+            let mut found: Vec<(usize, &'static str)> = ["First", "Second", "Third"]
+                .into_iter()
+                .filter_map(|t| page.find(&format!("**[{t}]")).map(|at| (at, t)))
+                .collect();
+            found.sort();
+            found.into_iter().map(|(_, t)| t).collect()
+        };
+
+        let bare = expand_affordance_links("# Read\n<!-- x0k:affordance-links -->\nAfter\n", &records, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(titles(&bare), ["First", "Second", "Third"], "{bare}");
+        assert!(bare.starts_with("# Read\n") && bare.ends_with("\nAfter\n"), "{bare}");
+
+        let page = "# Read\n<!-- x0k:affordance-links\n  x0k:affordance/third\n\n  x0k:affordance/first\n-->\nAfter\n";
+        let chosen = expand_affordance_links(page, &records, None).unwrap().unwrap();
+        assert_eq!(titles(&chosen), ["Third", "First"], "{chosen}");
+        assert!(!chosen.contains("x0k:affordance") && chosen.ends_with("\nAfter\n"), "{chosen}");
+
+        let stale = "<!-- x0k:affordance-links\n  x0k:affordance/gone\n-->\n";
+        let err = expand_affordance_links(stale, &records, None).unwrap_err().to_string();
+        assert!(err.contains("`x0k:affordance/gone`") && err.contains("x0k:affordance/second"), "{err}");
+
+        let twice = "<!-- x0k:affordance-links\n  x0k:affordance/first\n  x0k:affordance/first\n-->\n";
+        assert!(expand_affordance_links(twice, &records, None).unwrap_err().to_string().contains("twice"));
+
+        let open = "<!-- x0k:affordance-links\n  x0k:affordance/first\n";
+        assert!(expand_affordance_links(open, &records, None).unwrap_err().to_string().contains("never closed"));
+
+        assert_eq!(expand_affordance_links("# No marker\n", &records, None).unwrap(), None);
     }
 
     #[test]

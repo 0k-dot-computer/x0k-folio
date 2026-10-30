@@ -1889,7 +1889,9 @@ async fn timed_out_backend_stays_pending_while_next_source_reaches_healthy_sink(
         let gate = Arc::new((Mutex::new(false),Condvar::new()));
         let mut list = vec![
             Backend::new("slow",Slow {view:slow.clone(),gate:gate.clone()}).with_delivery_grace(std::time::Duration::from_millis(20)),
-            Backend::new("healthy",healthy.clone()).with_delivery_grace(std::time::Duration::from_millis(20)),
+            // The fan-out budget is the longest grace. The gated sink times
+            // out at any budget; the healthy one must fit inside it under load.
+            Backend::new("healthy",healthy.clone()).with_delivery_grace(std::time::Duration::from_secs(2)),
         ];
         if reverse {list.reverse();}
         let backends = Mutex::new(list);
@@ -2105,9 +2107,14 @@ async fn blocked_identity_reserves_time_for_healthy_source_acknowledgement() {
     for reverse in [false,true] {
         let (release,blocked)=std::sync::mpsc::channel();
         let healthy=MemorySink::default();
-        let mut list=vec![Backend::new("blocked",BlockedIdentity(blocked)),Backend::new("healthy",healthy.clone())];
+        // The fan-out budget is the longest grace. The blocked sink times
+        // out at any budget; the healthy one must fit inside it under load.
+        let mut list=vec![
+            Backend::new("blocked",BlockedIdentity(blocked)).with_delivery_grace(std::time::Duration::from_millis(90)),
+            Backend::new("healthy",healthy.clone()).with_delivery_grace(std::time::Duration::from_secs(2)),
+        ];
         if reverse {list.reverse();}
-        let backends=Mutex::new(list.into_iter().map(|b|b.with_delivery_grace(std::time::Duration::from_millis(90))).collect());
+        let backends=Mutex::new(list);
         let scratch=tempfile::tempdir().unwrap();
         let mut state=lifecycle::IngesterState::default();
         for source in ["urn:first","urn:second"] {

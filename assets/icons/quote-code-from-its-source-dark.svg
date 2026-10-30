@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Quote code you already have" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1.5 1.5 H7 V14.5 H1.5 Z" fill="none" stroke="#c5ced3" stroke-width="1"/>
+  <path d="M3 4 H5.5 M3 12.5 H5.5" fill="none" stroke="#c5ced3" stroke-width="1"/>
+  <path d="M9 1.5 H12.5 L14.5 3.5 V14.5 H9 Z" fill="none" stroke="#c5ced3" stroke-width="1"/>
+  <path d="M10.5 8 H13" fill="none" stroke="#ffffff" stroke-width="1.5"/>
+  <rect x="2.5" y="6" width="6" height="4" rx="0.5" fill="#171d21" stroke="#ffffff" stroke-width="1.5"/>
+  <path d="M4 8 H7" fill="none" stroke="#ffffff" stroke-width="1"/>
+</svg>

@@ -22,27 +22,29 @@ name = "x0k_folio"
 # `default`, so the minimal format library never pulls the x0k-types
 # substrate tree (x0k-serialization, x0k-entry-types, vector-clock,
 # x0k-macros, …).
-default = []
+default = ["envelope"]
+# Header/graph parsing and materialization are not needed by body-editing guests.
+envelope = ["dep:oxttl", "dep:oxrdf", "dep:x0k-ontology", "dep:x0k-fact-projection", "dep:walkdir"]
 plugins = [] # severed in this publication: its dependency is not published; enabling it does not build
 # Parse Turtle declarations carried by Markdown documents, using the shared loader.
-document-vocabulary = ["x0k-ontology/load"]
+document-vocabulary = ["envelope", "x0k-ontology/load"]
 
 [dependencies]
-# The `Materializer` seam this crate implements unconditionally: a format
+# The `Materializer` seam this crate implements with `envelope`: a format
 # library that cannot write a document back out is the missing half
-# `filesystem-graph-materialization` §8 names. Non-optional and published
+# `filesystem-graph-materialization` §8 names. Published
 # alongside, with a dependency list of serde/postcard/blake3.
-x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core"] , version = "0.2.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core"], optional = true , version = "0.2.0" }
 
 # `layout::CorpusScope::find_folio` walks a genus directory to resolve a
 # document by stem, since an id carries no topic.
-walkdir = "2"
+walkdir = { version = "2", optional = true }
 
 # The vocabulary a header's terms are drawn from.
 # `envelope_check` reads a document against whichever ontology modules
 # this build compiled, and the colophon predeclares a prefix for each of
 # its classes. Published alongside
-# this crate and non-optional: a format library that cannot check a
+# this crate under `envelope`: a format library that cannot check a
 # document against its own vocabulary is the missing layer
 # `x0k:architecture/publication-projection` §6 names. Its own dependency
 # tree is a build-time TTL parser plus an optional blake3, so the
@@ -53,13 +55,16 @@ walkdir = "2"
 # loader for Turtle carried in documents. The dev-dependency below also
 # switches the loader on for the tests, which
 # build vocabularies out of scratch module directories.
-x0k-ontology = { path = "../x0k-ontology", default-features = false , version = "0.3.1" }
+x0k-ontology = { path = "../x0k-ontology", default-features = false, optional = true , version = "0.3.1" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
+# A section's scene is the value every home of a sequence shares; this crate
+# reads it from a scene block and writes it back.
+x0k-sequence = { path = "../x0k-sequence" , version = "0.1.0" }
 # The header and every graph block are Turtle; one parser reads them.
-oxttl = "0.2"
-oxrdf = "0.3"
+oxttl = { version = "0.2", optional = true }
+oxrdf = { version = "0.3", optional = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 
@@ -77,6 +82,16 @@ markup5ever_rcdom = "=0.39.0"
 # underwriting acceptances that lock to a hash). Version matches x0k-tangle.
 pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
 blake3 = "1"
+
+[[test]]
+name = "patch_grammar"
+required-features = ["envelope"]
+
+# The projection round trip parses through the plugin, which lives behind
+# `plugins`; the standalone format build has no plugin to round-trip.
+[[test]]
+name = "projection_round_trip"
+required-features = ["plugins"]
 
 [dev-dependencies]
 # The envelope PROJECTION, for the materializer round-trip test only: the

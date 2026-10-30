@@ -23,11 +23,11 @@
 //!
 //! # Granularity
 //!
-//! Addressing is **section-level**: a reference is a folio URI
-//! optionally suffixed with a `#heading-path` anchor. With no anchor the
-//! whole target body is inlined. Block-level addressing is designed-in
-//! (the anchor model is the same heading-path scheme `block_segment` mints)
-//! but only section/whole-doc resolve today.
+//! A reference is a folio URI optionally suffixed with an anchor. With no
+//! anchor the whole target body is inlined. A `#block-…` anchor names one
+//! block by its stable id (`block_identity`); any other anchor is a
+//! heading path naming a section. A block anchor that names no block falls
+//! back to the heading path it spells.
 //!
 //! # Two declaration forms
 //!
@@ -271,6 +271,11 @@ fn extract_ref_attr(info: &str) -> Option<String> {
 /// The match is by single heading slug: a multi-segment anchor
 /// (`parent/child`) matches the final segment.
 pub fn extract_section(body: &str, anchor: &str) -> Option<String> {
+    let block = crate::block_identity::BlockId::parse(anchor)
+        .and_then(|id| crate::block_identity::block_text(body, &id));
+    if block.is_some() {
+        return block;
+    }
     let lines: Vec<&str> = body.lines().collect();
     let (start, end) = find_section_range(&lines, anchor)?;
     Some(lines[start..end].join("\n"))
@@ -325,12 +330,19 @@ fn find_section_range(lines: &[&str], anchor: &str) -> Option<(usize, usize)> {
 /// Per the transclusion design's "edit-through" rule: the edit lands on
 /// the source's canonical home, so every reading updates.
 pub fn replace_section(body: &str, anchor: &str, new_section: &str) -> Option<String> {
+    let block = crate::block_identity::BlockId::parse(anchor)
+        .and_then(|id| crate::block_identity::replace_block(body, &id, new_section));
+    if block.is_some() {
+        return block;
+    }
     let lines: Vec<&str> = body.lines().collect();
     let (start, end) = find_section_range(&lines, anchor)?;
     let mut out: Vec<&str> = Vec::with_capacity(lines.len());
     out.extend_from_slice(&lines[..start]);
-    // Splice the new section's lines in place of the old span.
-    let new_lines: Vec<&str> = new_section.lines().collect();
+    // Splice the new section's lines in place of the old span. Split the
+    // way `extract_section` joins, so a section's closing blank line, which
+    // it carries as a final newline, is kept.
+    let new_lines: Vec<&str> = new_section.split('\n').map(|line| line.strip_suffix('\r').unwrap_or(line)).collect();
     out.extend_from_slice(&new_lines);
     out.extend_from_slice(&lines[end..]);
     let mut joined = out.join("\n");
@@ -450,13 +462,24 @@ pub fn resolve_with_root(
     header_refs: Option<Vec<String>>,
     source: &dyn DocSource,
 ) -> Resolved {
+    resolve_within(spine_content, &[root_uri], header_refs, source)
+}
+
+/// Like [`resolve_with_root`], for content shown inside other documents:
+/// a reference to any of `ancestors` is a cycle, so an excerpt shown in a
+/// page never shows that page again.
+pub fn resolve_within(
+    spine_content: &str,
+    ancestors: &[&str],
+    header_refs: Option<Vec<String>>,
+    source: &dyn DocSource,
+) -> Resolved {
     let body = split_body(spine_content);
     let fm_refs = header_refs.unwrap_or_else(|| header_transcludes(spine_content));
 
     let mut warnings = Vec::new();
     let mut transcluded: HashSet<String> = HashSet::new();
-    let mut visited: HashSet<String> = HashSet::new();
-    visited.insert(root_uri.to_string());
+    let mut visited: HashSet<String> = ancestors.iter().map(|uri| uri.to_string()).collect();
 
     let resolved_body = resolve_body(
         &body,
@@ -751,6 +774,31 @@ mod tests {
     }
 
     #[test]
+    fn a_section_written_back_unchanged_leaves_the_body_as_it_was() {
+        let body = "Lead.\n\n## Cell\n\nA cell is a unit.\n\n## Face\n\nA face is a view.\n";
+        for anchor in ["cell", "face"] {
+            let section = extract_section(body, anchor).unwrap();
+            assert_eq!(replace_section(body, anchor, &section).unwrap(), body, "{anchor}");
+        }
+        let edited = extract_section(body, "cell").unwrap().replace("a unit", "one unit");
+        assert_eq!(replace_section(body, "cell", &edited).unwrap(), body.replace("a unit", "one unit"));
+    }
+
+    #[test]
+    fn content_shown_inside_a_page_does_not_show_that_page_again() {
+        let source = src(&[
+            ("x0k:wiki/page", "# Page\n\n```x0k:transclude {ref=\"x0k:wiki/quoted\"}\n```\n"),
+            ("x0k:wiki/quoted", "# Quoted\n\nQuoted words.\n\n```x0k:transclude {ref=\"x0k:wiki/page\"}\n```\n"),
+        ]);
+        // The quoted body, as the page shows it: the reference back to the page is a link.
+        let quoted = source.body("x0k:wiki/quoted").unwrap();
+        let r = resolve_within(&quoted, &["x0k:wiki/page", "x0k:wiki/quoted"], Some(Vec::new()), &source);
+        assert!(r.body.contains("Quoted words.") && r.body.contains("[page](x0k:wiki/page)"), "{}", r.body);
+        assert!(!r.body.contains("# Page"), "{}", r.body);
+        assert!(r.warnings.iter().any(|w| matches!(w, TranscludeWarning::Cycle { .. })));
+    }
+
+    #[test]
     fn self_transclusion_is_a_cycle() {
         let spine = "# Spine\n\n```turtle folio:document\nwiki:spine a x0k:Wiki .\n```\n\n```x0k:transclude {ref=\"x0k:wiki/spine\"}\n```\n";
         let source = src(&[("x0k:wiki/spine", spine)]);
@@ -832,6 +880,45 @@ mod tests {
         let s = heading_slug("Check a document against the vocabulary shipped beside it");
         assert!(!s.ends_with('-'), "slug {s} ends in a dash");
         assert!(s.chars().count() <= 40);
+    }
+
+    #[test]
+    fn a_block_reference_reads_the_same_block_after_its_source_is_edited_above() {
+        use crate::block_identity::{assign_ids, blocks, carry};
+        let header = "```turtle folio:document\ndesign:a a x0k:Design .\n```\n\n";
+        let body = assign_ids("# A\n\nFirst.\n\nThe cited claim.\n\nLast.\n", "x0k:design/a");
+        let id = blocks(&body)[2].id.clone().unwrap();
+        let spine = format!("Intro.\n\n```x0k:transclude {{ref=\"x0k:design/a#{id}\"}}\n```\n");
+        let read = |body: &str| {
+            let source = src(&[("x0k:design/a", &format!("{header}{body}"))]);
+            resolve(&spine, Some(vec![]), &source)
+        };
+        let before = read(&body);
+        assert!(before.warnings.is_empty());
+        assert!(before.body.contains("The cited claim."));
+        assert!(!before.body.contains("First.") && !before.body.contains(id.as_str()));
+
+        let above = body.find("First.").unwrap();
+        let edited = carry(&body, above..above, "A new paragraph.\n\n");
+        let edited = carry(&edited, 0..0, "Preface.\n\n");
+        let after = read(&edited);
+        assert!(after.warnings.is_empty());
+        assert!(after.body.contains("The cited claim."));
+        assert!(!after.body.contains("A new paragraph.") && !after.body.contains("Preface."));
+
+        let claim = edited.find("cited").unwrap();
+        let reworded = carry(&edited, claim..claim + 5, "revised");
+        assert!(read(&reworded).body.contains("The revised claim."));
+
+        let through = replace_section(&reworded, id.as_str(), "The claim, edited through.").unwrap();
+        assert!(read(&through).body.contains("The claim, edited through."));
+        assert!(through.contains("Last."));
+
+        let start = through.find(id.as_str()).unwrap() - 1;
+        let end = through.find("Last.").unwrap();
+        let deleted = carry(&through, start..end, "");
+        let gone = read(&deleted);
+        assert!(matches!(gone.warnings.as_slice(), [TranscludeWarning::SectionNotFound { .. }]));
     }
 
     #[test]

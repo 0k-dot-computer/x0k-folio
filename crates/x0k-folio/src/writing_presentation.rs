@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, ops::Range};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use pulldown_cmark::{Event, Parser, Tag};
-use crate::html_canonical::HtmlTextPolicy;
+use crate::html_canonical::{HtmlTextPolicy, CanonicalTextPoint, OBJECT_SOURCE_ATTRIBUTE};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WritingFormat { Literal, Markdown }
@@ -14,10 +14,25 @@ struct Row { level: u8, prefix: String, ending: String }
 pub struct WritingPresentation {
     source: String,
     rows: Option<Vec<Row>>,
+    parts: Option<Vec<Vec<Part>>>,
     pub runs: Vec<WritingRun>,
 }
 #[derive(Clone, Debug)]
-pub struct WritingRun { pub element: String, pub source: Range<usize> }
+pub struct WritingRun { pub element: String, pub source: Range<usize>, pub object: bool }
+/// A caller-rendered object. Its source includes every delimiter and whitespace byte.
+#[derive(Clone, Debug)]
+pub struct WritingObject { pub source: Range<usize>, pub drawing: String, pub width: f64, pub height: f64 }
+#[derive(Clone, Debug)]
+struct ObjectBox { source: String, drawing: String, width: f64, height: f64 }
+#[derive(Clone, Debug)]
+struct Part { text: String, object: Option<ObjectBox> }
+const TOKEN: &str = "\u{fffc}";
+impl Part {
+    fn intact(&self) -> bool { self.object.is_some() && self.text == TOKEN }
+    fn source(&self) -> &str {
+        if self.intact() { &self.object.as_ref().expect("intact object").source } else { &self.text }
+    }
+}
 const STYLE: &str = "white-space:pre-wrap;min-height:2em;margin:0";
 impl WritingPresentation {
     pub fn project(source: &str, format: WritingFormat) -> Self {
@@ -44,10 +59,10 @@ impl WritingPresentation {
         }
         if source.ends_with('\n') { rows.push(Row {level:0,prefix:String::new(),ending:"none".into()}); lengths.push(0); }
         let runs = runs_for(&rows, &lengths);
-        Self {source:source.into(),rows:Some(rows),runs}
+        Self {source:source.into(),rows:Some(rows),parts:None,runs}
     }
     fn literal(source: &str) -> Self {
-        Self {source:source.into(),rows:None,runs:vec![WritingRun {element:"/p[1]".into(),source:0..source.len()}]}
+        Self {source:source.into(),rows:None,parts:None,runs:vec![WritingRun {element:"/p[1]".into(),source:0..source.len(),object:false}]}
     }
     pub fn source(&self) -> &str { &self.source }
     pub fn region(&self) -> &str { if self.rows.is_some() { "/div[1]" } else { "/p[1]" } }
@@ -67,7 +82,7 @@ fn runs_for(rows:&[Row],lengths:&[usize]) -> Vec<WritingRun> {
     rows.iter().zip(lengths).map(|(row,len)| {
         let tag=tag(row); let ordinal=ordinals.entry(tag.clone()).or_default(); *ordinal+=1;
         offset+=row.prefix.len(); let start=offset; offset+=len;
-        let run=WritingRun {element:format!("/div[1]/{tag}[{ordinal}]"),source:start..offset};
+        let run=WritingRun {element:format!("/div[1]/{tag}[{ordinal}]"),source:start..offset,object:false};
         offset+=ending(row).len(); run
     }).collect()
 }
@@ -79,16 +94,97 @@ pub fn code_at(source:&str,offset:usize) -> bool {
 pub fn escape(value:&str) -> String {
     value.replace('&',"&amp;").replace('<',"&lt;").replace('>',"&gt;").replace('"',"&quot;").replace('\r',"&#13;")
 }
+fn checked_box(source:String,drawing:String,width:f64,height:f64) -> Result<ObjectBox> {
+    ensure!(!source.is_empty() && source.len()<=65536,"invalid object source size");
+    ensure!(!drawing.is_empty() && drawing.len()<=4*1024*1024,"invalid object drawing size");
+    ensure!(width.is_finite() && height.is_finite() && width>0.0 && height>0.0 && width<=16384.0 && height<=16384.0,"invalid object dimensions");
+    Ok(ObjectBox {source,drawing,width,height})
+}
+impl WritingPresentation {
+    pub fn with_objects(mut self,objects:&[WritingObject]) -> Result<Self> {
+        if objects.is_empty() { return Ok(self); }
+        ensure!(self.parts.is_none(),"objects require a fresh projection");
+        ensure!(objects.len()<=1024,"too many writing objects");
+        if self.rows.is_none() {
+            self.rows=Some(vec![Row {level:0,prefix:String::new(),ending:"none".into()}]);
+            self.runs=runs_for(self.rows.as_ref().expect("promoted row"),&[self.source.len()]);
+        }
+        let mut parts=Vec::new(); let mut next=0;
+        for run in &self.runs {
+            let mut row=Vec::new(); let mut cursor=run.source.start;
+            while let Some(object)=objects.get(next) {
+                if object.source.start>=run.source.end { break; }
+                ensure!(cursor<=object.source.start && object.source.start<object.source.end && object.source.end<=run.source.end,"object ranges must be ordered, disjoint and within visible rows");
+                ensure!(self.source.is_char_boundary(object.source.start) && self.source.is_char_boundary(object.source.end),"object splits a source character");
+                row.push(Part {text:self.source[cursor..object.source.start].into(),object:None});
+                ensure!(object.drawing.len()<=4*1024*1024,"invalid object drawing size");
+                let drawing=HtmlTextPolicy::Editing.normalize_html(&object.drawing);
+                let value=checked_box(self.source[object.source.clone()].into(),drawing,object.width,object.height)?;
+                row.push(Part {text:TOKEN.into(),object:Some(value)});
+                cursor=object.source.end; next+=1;
+            }
+            row.push(Part {text:self.source[cursor..run.source.end].into(),object:None}); parts.push(row);
+        }
+        ensure!(next==objects.len(),"object outside visible source");
+        ensure!(parts.iter().map(Vec::len).sum::<usize>()<=10000,"too many writing parts");
+        self.parts=Some(parts); self.rebuild_parts(); Ok(self)
+    }
+    fn row_runs(&self) -> Vec<WritingRun> {
+        match &self.parts {
+            Some(parts)=>runs_for(self.rows.as_ref().expect("segmented rows"),&parts.iter().map(|row| row.iter().map(|p|p.source().len()).sum()).collect::<Vec<_>>()),
+            None=>self.runs.clone(),
+        }
+    }
+    fn rebuild_parts(&mut self) {
+        let rows=self.rows.as_ref().expect("segmented rows"); let parts=self.parts.as_ref().expect("parts");
+        let row_runs=self.row_runs(); let mut source=String::new(); let mut runs=Vec::new();
+        for ((row,parts),address) in rows.iter().zip(parts).zip(row_runs) {
+            source.push_str(&row.prefix);
+            for (index,part) in parts.iter().enumerate() {
+                let start=source.len(); source.push_str(part.source());
+                runs.push(WritingRun {element:format!("{}/span[{}]",address.element,index+1),source:start..source.len(),object:part.intact()});
+            }
+            source.push_str(ending(row));
+        }
+        self.source=source; self.runs=runs;
+    }
+}
+fn part_html(part:&Part) -> String {
+    let Some(object)=&part.object else { return format!("<span>{}</span>",escape(&part.text)); };
+    let ObjectBox {source,drawing,width,height}=object;
+    format!("<span {OBJECT_SOURCE_ATTRIBUTE}=\"{}\" data-x0k-object-width=\"{width}\" data-x0k-object-height=\"{height}\" style=\"display:inline-block;position:relative;width:{width}px;height:{height}px;vertical-align:middle\">{}<span aria-hidden=\"true\" style=\"position:absolute;inset:0;pointer-events:none\">{drawing}</span></span>",escape(source),escape(&part.text))
+}
+fn decode_parts(html:&str,addresses:&[WritingRun],counts:&[usize]) -> Result<Vec<Vec<Part>>> {
+    ensure!(counts.len()==addresses.len() && counts.iter().all(|n| *n>0 && *n<=10000) && counts.iter().sum::<usize>()<=10000,"invalid writing part count");
+    let policy=HtmlTextPolicy::Editing;
+    addresses.iter().zip(counts).map(|(row,count)| (1..=*count).map(|index| {
+        let element=format!("{}/span[{index}]",row.element);
+        let attributes=policy.element_attributes(html,&element)?;
+        if let Some(source)=attributes.get(OBJECT_SOURCE_ATTRIBUTE) {
+            let number=|name| -> Result<f64> { Ok(attributes.get(name).ok_or_else(||anyhow::anyhow!("missing object dimension"))?.parse()?) };
+            let object=checked_box(source.clone(),policy.element_inner_html(html,&format!("{element}/span[1]"))?,number("data-x0k-object-width")?,number("data-x0k-object-height")?)?;
+            let text=policy.text_run(html,&CanonicalTextPoint {element,text_run:0,byte_offset:0})?;
+            ensure!(!text.contains(TOKEN) || text==TOKEN,"object marker must remain atomic");
+            Ok(Part {text,object:Some(object)})
+        } else { Ok(Part {text:policy.literal_element_text(html,&element)?,object:None}) }
+    }).collect()).collect()
+}
 impl WritingPresentation {
     pub fn html(&self, root_attributes:&str) -> String {
         let Some(rows)=&self.rows else {
             return format!("<p{root_attributes} contenteditable=\"plaintext-only\" style=\"{STYLE}\">{}</p>",escape(&self.source));
         };
         let mut html=format!("<div{root_attributes} contenteditable=\"plaintext-only\" data-x0k-writing=\"{}\" style=\"{STYLE}\">",escape(&serde_json::to_string(rows).expect("rows serialize")));
-        for (row,run) in rows.iter().zip(&self.runs) {
+        if let Some(parts)=&self.parts {
+            let counts=parts.iter().map(Vec::len).collect::<Vec<_>>();
+            let attribute=format!(" data-x0k-writing-parts=\"{}\"",escape(&serde_json::to_string(&counts).expect("counts serialize")));
+            html.insert_str(html.len()-1,&attribute);
+        }
+        for (index,(row,run)) in rows.iter().zip(self.row_runs()).enumerate() {
             let tag=tag(row);
             let size=if row.level==0 {"1em"} else {match row.level {1=>"1.35em",2=>"1.25em",_=>"1.15em"}};
-            html.push_str(&format!("<{tag} style=\"white-space:pre-wrap;min-height:1.4em;margin:0;font-size:{size};font-weight:{}\">{}</{tag}>",if row.level==0 {"inherit"} else {"600"},escape(&self.source[run.source.clone()])));
+            let body=self.parts.as_ref().map(|parts| parts[index].iter().map(part_html).collect::<String>()).unwrap_or_else(||escape(&self.source[run.source.clone()]));
+            html.push_str(&format!("<{tag} style=\"white-space:pre-wrap;min-height:1.4em;margin:0;font-size:{size};font-weight:{}\">{}</{tag}>",if row.level==0 {"inherit"} else {"600"},body));
         }
         html.push_str("</div>"); html
     }
@@ -106,11 +202,19 @@ impl WritingPresentation {
                     ensure!(row.level<=6 && if row.level==0 {row.prefix.is_empty()} else {atx_prefix(&row.prefix).is_some_and(|(prefix,level)| prefix==row.prefix && level==row.level)},"invalid hidden heading prefix");
                 }
                 let addresses=runs_for(&rows,&vec![0;rows.len()]);
+                if let Some(encoded)=attributes.get("data-x0k-writing-parts") {
+                    let counts:Vec<usize>=serde_json::from_str(encoded)?;
+                    let parts=decode_parts(html,&addresses,&counts)?;
+                    let mut decoded=Self {source:String::new(),rows:Some(rows),parts:Some(parts),runs:Vec::new()};
+                    decoded.rebuild_parts();
+                    ensure!(policy.normalize_html(html)==policy.normalize_html(&decoded.html(root_attributes)),"the object writing projection changed structure");
+                    return Ok(decoded);
+                }
                 let texts=addresses.iter().map(|run| policy.literal_element_text(html,&run.element)).collect::<std::result::Result<Vec<_>,_>>()?;
                 let mut source=String::new();
                 for (row,text) in rows.iter().zip(&texts) { source.push_str(&row.prefix); source.push_str(text); source.push_str(ending(row)); }
                 let runs=runs_for(&rows,&texts.iter().map(String::len).collect::<Vec<_>>());
-                let decoded=Self {source,rows:Some(rows),runs};
+                let decoded=Self {source,rows:Some(rows),parts:None,runs};
                 ensure!(policy.normalize_html(html)==policy.normalize_html(&decoded.html(root_attributes)),"the writing projection changed structure");
                 return Ok(decoded);
             }
@@ -123,12 +227,21 @@ impl WritingPresentation {
 impl WritingPresentation {
     /// The single typed delimiter that gives this heading its ATX meaning.
     pub fn heading_delimiter(&self,offset:usize) -> Option<Range<usize>> {
-        let index=self.runs.iter().position(|run| run.source.start==offset)?;
+        let index=self.row_runs().iter().position(|run| run.source.start==offset)?;
         let row=self.rows.as_ref()?.get(index)?;
         (row.level>0 && matches!(row.prefix.as_bytes().last(),Some(b' '|b'\t'))).then(|| offset-1..offset)
     }
+    /// Text changes may span adjacent source runs, never hidden bytes or drawing children.
+    pub fn admits_text_changes(&self,region:&str,changes:&[crate::html_canonical::CanonicalElementTextChange]) -> bool {
+        let runs=self.scoped_runs(region); let mut first=runs.len(); let mut last=0;
+        for change in changes {
+            let Some(index)=runs.iter().position(|run| run.element==change.element) else {return false;};
+            first=first.min(index); last=last.max(index);
+        }
+        changes.is_empty() || runs[first..=last].windows(2).all(|pair| pair[0].source.end==pair[1].source.start)
+    }
     pub fn scoped_runs(&self, region:&str) -> Vec<WritingRun> {
-        self.runs.iter().map(|run| WritingRun {element:run.element.replacen(self.region(),region,1),source:run.source.clone()}).collect()
+        self.runs.iter().map(|run| WritingRun {element:run.element.replacen(self.region(),region,1),source:run.source.clone(),object:run.object}).collect()
     }
     pub fn decode_region(html:&str, region:&str) -> Result<Self> {
         let policy=HtmlTextPolicy::Editing; let attributes=policy.element_attributes(html,region)?;
@@ -139,11 +252,42 @@ impl WritingPresentation {
         }
         ensure!(tag=="div","rich writing requires its declared root");
         let render=|key:&str,value:&str| format!(" {key}=\"{}\"",escape(value));
-        let extra=attributes.iter().filter(|(key,_)| !matches!(key.as_str(),"style"|"contenteditable"|"data-x0k-writing"))
+        let extra=attributes.iter().filter(|(key,_)| !matches!(key.as_str(),"style"|"contenteditable"|"data-x0k-writing"|"data-x0k-writing-parts"))
             .map(|(key,value)| render(key,value)).collect::<String>();
         let all=attributes.iter().map(|(key,value)| render(key,value)).collect::<String>();
         let fragment=format!("<div{all}>{}</div>",policy.element_inner_html(html,region)?);
         Self::decode(&fragment,&extra)
+    }
+    /// Only a whole token or either of its edges can request its source.
+    pub fn object_source_range(&self,region:&str,anchor:&CanonicalTextPoint,focus:&CanonicalTextPoint) -> Option<Range<usize>> {
+        if anchor.element!=focus.element || anchor.text_run!=0 || focus.text_run!=0
+            || ![0,3].contains(&anchor.byte_offset) || ![0,3].contains(&focus.byte_offset) {return None;}
+        self.scoped_runs(region).into_iter().find(|run|run.object && run.element==anchor.element).map(|run|run.source)
+    }
+    /// Explicit activation may reveal an entire object, including a one-scalar source.
+    pub fn reveal_source_selection(&self,anchor:usize,focus:usize) -> Option<Self> {
+        self.reveal_requested(anchor,focus,true)
+    }
+    /// Ordinary selection requests retain boundary-only objects.
+
+    pub fn reveal_selection(&self,anchor:usize,focus:usize) -> Option<Self> {
+        self.reveal_requested(anchor,focus,false)
+    }
+    fn reveal_requested(&self,anchor:usize,focus:usize,explicit:bool) -> Option<Self> {
+        ensure_selection(&self.source,anchor,focus)?;
+        let mut shown=self.clone();
+        if let Some(parts)=&mut shown.parts {
+            for (part,run) in parts.iter_mut().flatten().zip(&self.runs) {
+                if run.object && ((explicit && anchor!=focus && anchor.min(focus)<run.source.end && anchor.max(focus)>run.source.start)
+                    || [anchor,focus].iter().any(|offset|run.source.start<*offset && *offset<run.source.end)) {
+                    part.text=part.source().into();part.object=None;
+                }
+            }
+            shown.rebuild_parts();
+        }
+        // Hidden structural syntax needs the literal field, not a guessed caret.
+        if shown.selection_attributes("",anchor,focus).is_none() {shown=Self::literal(&self.source);}
+        Some(shown)
     }
     pub fn selection_attributes(&self,token:&str,anchor:usize,focus:usize) -> Option<String> {
         self.selection_attributes_in(self.region(),token,anchor,focus)
@@ -153,8 +297,12 @@ impl WritingPresentation {
         let endpoint=|name,offset| -> Option<String> {
             if !self.source.is_char_boundary(offset) {return None;}
             let run=scoped.iter().rev().find(|run| run.source.start<=offset && offset<=run.source.end)?;
+            let (text,local)=if run.object {
+                let local=if offset==run.source.start {0} else if offset==run.source.end {TOKEN.len()} else {return None;};
+                (TOKEN,local)
+            } else { (&self.source[run.source.clone()],offset-run.source.start) };
             Some(format!(" data-x0k-selection-{name}-node=\"{}\" data-x0k-selection-{name}-run=\"0\" data-x0k-selection-{name}-text=\"{}\" data-x0k-selection-{name}=\"{}\"",
-                escape(&run.element),escape(&self.source[run.source.clone()]),offset-run.source.start))
+                escape(&run.element),escape(text),local))
         };
         if !self.rich() {
             ensure_selection(&self.source,anchor,focus)?;
@@ -169,6 +317,133 @@ fn ensure_selection(source:&str,anchor:usize,focus:usize) -> Option<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_source_focus_resolves_only_object_edges_and_keeps_neighbors() {
+        let p=WritingPresentation::project("αβ",WritingFormat::Literal).with_objects(&[formula(0..2),formula(2..4)]).unwrap();
+        let region="/main[1]/div[1]";let runs=p.scoped_runs(region);
+        let object=runs.iter().find(|run|run.object).unwrap();
+        let point=|offset|CanonicalTextPoint::new(&object.element,0,offset);
+        for (a,b) in [(0,0),(3,3),(0,3),(3,0)] {
+            assert_eq!(p.object_source_range(region,&point(a),&point(b)),Some(0..2));
+        }
+        assert!(p.object_source_range(region,&point(1),&point(1)).is_none());
+        assert!(p.object_source_range(region,&point(0),&CanonicalTextPoint::new(&object.element,1,0)).is_none());
+        assert!(p.object_source_range(region,&point(0),&CanonicalTextPoint::new(format!("{}/svg[1]",object.element),0,0)).is_none());
+        let other=runs.iter().filter(|run|run.object).nth(1).unwrap();
+        assert!(p.object_source_range(region,&point(0),&CanonicalTextPoint::new(&other.element,0,0)).is_none());
+        let shown=p.reveal_source_selection(0,2).unwrap();
+        assert_eq!(shown.source(),"αβ");
+        assert_eq!(shown.runs.iter().filter(|run|run.object).map(|run|run.source.clone()).collect::<Vec<_>>(),vec![2..4]);
+        assert!(shown.selection_attributes("focus",0,2).is_some());
+        assert_eq!(p.reveal_selection(0,2).unwrap().html(""),p.html(""));
+        assert!(p.reveal_source_selection(0,1).is_none());
+        assert!(p.reveal_source_selection(0,5).is_none());
+    }
+
+    #[test]
+    fn source_reentry_reveals_only_the_addressed_object_without_editing_source() {
+        let text="# café \\(x^2\\) + \\(y^2\\)\r\nnext";
+        let a=text.find(r"\(x").unwrap();let b=text.find(r"\(y").unwrap();
+        let p=WritingPresentation::project(text,WritingFormat::Markdown).with_objects(&[formula(a..a+7),formula(b..b+7)]).unwrap();
+        let shown=p.reveal_selection(a+2,a+3).unwrap();
+        assert_eq!(shown.source(),text);assert_eq!(shown.runs.iter().filter(|r|r.object).count(),1);
+        assert_eq!(shown.runs.iter().find(|r|r.object).unwrap().source,b..b+7);
+        let attrs=shown.selection_attributes("inside",a+2,a+3).unwrap();
+        assert_eq!(WritingPresentation::decode(&shown.html(&attrs),&attrs).unwrap().source(),text);
+        assert_eq!(shown.runs[1].element,p.runs[1].element);
+        assert_eq!(p.reveal_selection(a,a+7).unwrap().html(""),p.html(""));
+        assert!(p.reveal_selection(6,6).is_none()); // Middle of é.
+        assert!(p.reveal_selection(text.len()+1,0).is_none());
+        let both=p.reveal_selection(b+2,a+2).unwrap();
+        assert!(!both.runs.iter().any(|r|r.object));
+        let hidden=p.reveal_selection(0,1).unwrap();
+        assert!(!hidden.rich());assert_eq!(hidden.source(),text);
+        assert_eq!(p.runs.iter().filter(|r|r.object).count(),2);
+    }
+
+    #[test]
+    fn mixed_object_edits_require_contiguous_source_and_keep_drawings_opaque() {
+        use crate::canonical_patch::CanonicalPatch;
+        let source="# before \\(x^2\\) after\r\nbody";
+        let p=WritingPresentation::project(source,WritingFormat::Markdown).with_objects(&[formula(9..16)]).unwrap();
+        let html=p.html("");let point=|index:usize,offset| CanonicalTextPoint::new(&p.runs[index].element,0,offset);
+        let edited=HtmlTextPolicy::Editing.apply_patches(&html,&[CanonicalPatch::ReplaceVisibleText {start:point(0,3),end:point(2,3),replacement:"new".into()}]).unwrap();
+        let changes=HtmlTextPolicy::Editing.text_changes(&html,&edited).unwrap();assert_eq!(changes.len(),3);
+        assert!(p.admits_text_changes(p.region(),&changes));
+        assert_eq!(WritingPresentation::decode(&edited,"").unwrap().source(),"# befnewter\r\nbody");
+        let crossed=HtmlTextPolicy::Editing.apply_patches(&html,&[CanonicalPatch::ReplaceVisibleText {start:point(0,3),end:point(3,3),replacement:"lost".into()}]).unwrap();
+        assert!(!p.admits_text_changes(p.region(),&HtmlTextPolicy::Editing.text_changes(&html,&crossed).unwrap()));
+        let forged=crate::html_canonical::CanonicalElementTextChange {element:format!("{}/span[1]",p.runs[1].element),child_elements:vec![],before:vec![],after:vec![]};
+        assert!(!p.admits_text_changes(p.region(),&[forged]));
+    }
+
+    fn formula(source:Range<usize>) -> WritingObject {
+        WritingObject {source,drawing:"<svg width=\"64\" height=\"32\"><path d=\"M0 0L64 32\"/></svg>".into(),width:64.0,height:32.0}
+    }
+    #[test]
+    fn objects_roundtrip_exact_source_in_headings_and_literal_fields() {
+        for source in ["# é \\( x^2 \\) fin\r\nbody\n", "é \\( x^2 \\) fin\r\nbody\n"] {
+            let start=source.find("\\(").unwrap(); let end=source.find("\\)").unwrap()+2;
+            let p=WritingPresentation::project(source,WritingFormat::Markdown).with_objects(&[formula(start..end)]).unwrap();
+            let object=p.runs.iter().find(|run|run.object).unwrap(); assert_eq!(object.source,start..end);
+            assert_eq!(p.runs.iter().filter(|run|run.object).count(),1);
+            let html=p.html(""); let d=WritingPresentation::decode(&html,"").unwrap();
+            assert_eq!(d.source(),source); assert_eq!(d.html(""),html);
+            assert_eq!(d.runs.iter().find(|run|run.object).unwrap().element,object.element);
+            let point=|byte_offset| CanonicalTextPoint {element:object.element.clone(),text_run:0,byte_offset};
+            assert_eq!(HtmlTextPolicy::Editing.source_text_in_range(&html,&point(0),&point(3)).unwrap(),&source[start..end]);
+            assert!(p.selection_attributes("inside",start+2,start+2).is_none());
+            assert!(p.selection_attributes("edges",start,end).is_some());
+            if source.starts_with('#') { assert_eq!(p.heading_delimiter(2),Some(1..2)); }
+        }
+    }
+    #[test]
+    fn object_replacement_and_deletion_do_not_resurrect_source() {
+        use crate::canonical_patch::CanonicalPatch;
+        let source="before \\(x^2\\) after";
+        let p=WritingPresentation::project(source,WritingFormat::Markdown).with_objects(&[formula(7..14)]).unwrap();
+        let object=&p.runs[1];
+        for replacement in ["", "café\nnew", "<b>&"] {
+            let point=|byte_offset| CanonicalTextPoint {element:object.element.clone(),text_run:0,byte_offset};
+            let edited=HtmlTextPolicy::Editing.apply_patches(&p.html(""),&[CanonicalPatch::ReplaceVisibleText {start:point(0),end:point(3),replacement:replacement.into()}]).unwrap();
+            let d=WritingPresentation::decode(&edited,"").unwrap();
+            assert_eq!(d.source(),format!("before {replacement} after"));
+            assert!(!d.runs.iter().any(|run|run.object));
+            assert!(d.selection_attributes("replacement",7+replacement.len(),7+replacement.len()).is_some());
+        }
+    }
+    #[test]
+    fn adjacent_objects_have_empty_boundary_runs_and_scoped_addresses() {
+        let p=WritingPresentation::project("αβ",WritingFormat::Literal).with_objects(&[formula(0..2),formula(2..4)]).unwrap();
+        assert_eq!(p.runs.len(),5); assert_eq!(p.runs[2].source,2..2);
+        let page=format!("<main>{}</main>",p.html(" id=\"entry\""));
+        let d=WritingPresentation::decode_region(&page,"/main[1]/div[1]").unwrap();
+        assert_eq!(d.source(),"αβ");
+        assert!(d.scoped_runs("/main[1]/div[1]")[1].object);
+        assert_eq!(d.scoped_runs("/main[1]/div[1]")[1].element,"/main[1]/div[1]/p[1]/span[2]");
+        let focus=d.selection_attributes("empty",4,4).unwrap();
+        assert!(focus.contains("/div[1]/p[1]/span[5]"));
+    }
+    #[test]
+    fn objects_refuse_hidden_bytes_overlap_invalid_unicode_and_dimensions() {
+        let source="# é \\(x\\)\r\nbody";
+        for ranges in [vec![0..2],vec![3..4],vec![5..14],vec![5..10,6..9],vec![5..5],vec![99..100]] {
+            assert!(WritingPresentation::project(source,WritingFormat::Markdown).with_objects(&ranges.into_iter().map(formula).collect::<Vec<_>>()).is_err());
+        }
+        for width in [0.0,-1.0,f64::NAN,f64::INFINITY,20000.0] {
+            let mut object=formula(5..10);object.width=width;
+            assert!(WritingPresentation::project(source,WritingFormat::Markdown).with_objects(&[object]).is_err());
+        }
+    }
+    #[test]
+    fn object_decode_refuses_extra_structure_and_partial_markers() {
+        let p=WritingPresentation::project("before \\(x^2\\) after",WritingFormat::Markdown).with_objects(&[formula(7..14)]).unwrap();
+        let html=p.html("");
+        for edited in [html.replace(TOKEN,&format!("{TOKEN}x")),html.replace("<span>before ","<span><em>before </em>"),html.replace("pointer-events:none","pointer-events:auto"),html.replace("</div>","<p>lost</p></div>"),html.replace("[3]","[18446744073709551615]")] {
+            assert!(WritingPresentation::decode(&edited,"").is_err());
+        }
+    }
+
     #[test]
     fn page_fields_keep_raw_source_scoped_runs_and_checked_focus() {
         let p=WritingPresentation::project("# café\r\nbody 界",WritingFormat::Markdown);

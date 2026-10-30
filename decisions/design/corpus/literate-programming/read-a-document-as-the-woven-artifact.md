@@ -392,6 +392,36 @@ folio:default 4 .
 
 </details>
 
+<details><summary><code>a_bound_figure_carries_its_data_as_payload_and_its_panel_as_params</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
+
+````rust
+#[test]
+fn a_bound_figure_carries_its_data_as_payload_and_its_panel_as_params() {
+    let panel = "x0k:implementation\\/canvas\\/core\\/threshold_gap a folio:Parameter ;\n    folio:default 1.5 .\n";
+    let content = format!(
+        "# Viz\n\n```x0k:media {{ref=\"x0k:a/viz\" source=\"knobs\"}}\n```\n\n\
+         ```turtle folio:graph {{source=\"knobs\"}}\n{panel}```\n\n\
+         ```json x0k:data {{#knobs}}\n[1]\n```\n\n\
+         ```x0k:media {{ref=\"x0k:a/other\" source=\"missing\"}}\n```\n"
+    );
+    let doc = parse_document(&content).unwrap();
+    let html = weave_html(&content, &doc).unwrap().html;
+    let params = format!("data-media-params=\"{}\"", escape_html(r#"{"threshold_gap":1.5}"#));
+    assert!(
+        html.contains(&format!("data-media-ref=\"x0k:a/viz\" data-media-source=\"knobs\" data-media-payload=\"[1]\n\" {params}>")),
+        "a figure ahead of its blocks carries the data block's body and the panel's params: {html}"
+    );
+    assert!(!html.contains("data-media-payload=\"x0k:"), "a panel's Turtle is never a figure's data: {html}");
+    assert!(html.contains("<div class=\"param-panel-data\" data-block=\"knobs\" data-params="), "the panel names its block: {html}");
+    assert!(
+        html.contains("data-media-ref=\"x0k:a/other\" data-media-source=\"missing\">"),
+        "a figure naming no block of the page names it and carries nothing: {html}"
+    );
+}
+````
+
+</details>
+
 <details><summary><code>the_header_is_lifted_out_of_the_page</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/weave.md#chunk-tests">#tests</a> in Weaving literate documents into HTML</summary>
 
 ````rust

@@ -53,9 +53,15 @@ Both directions are thin by design:
   file.
 - **Parse** (file → Loro): a file edit becomes the minimal
   delete-then-insert pair of text ops that transforms the old content
-  into the new. The one wrinkle is HTML bodies, which are canonicalized
-  through [`html-canonical.md`](html-canonical.md) *before* diffing —
-  the single chokepoint promise, kept at the write boundary.
+  into the new. Every body format is imported as the author's bytes,
+  HTML included: the canonical HTML form of
+  [`html-canonical.md`](html-canonical.md) is a normal form documents
+  are compared under, not what an import stores.
+
+Together they make a round trip that holds byte for byte: a file parsed
+into a document and materialized back is the file. That is what lets the
+document be the authority while the file stays an ordinary file an
+editor, `git` or `jj` can hold (see "The round trip holds" below).
 
 <a name="chunk-module-doc"></a><sub>[`src/projection.rs`](../../crates/x0k-folio/src/projection.rs) · `#module-doc`</sub>
 
@@ -78,8 +84,6 @@ Both directions are thin by design:
 //! `folio/v2` but each carries its own `PathTemplate` +
 //! `LiveEditPolicy`.
 
-use crate::colophon::{parse_envelope, replace_body, BODY_FORMAT_HTML};
-use crate::html_canonical::normalize_html;
 use anyhow::{Context, Result};
 use x0k_types::operations::DocumentOp;
 use x0k_types::projection_plugin::{
@@ -151,14 +155,19 @@ impl ProjectionPlugin for ColophonProjection {
 ## Parsing a file edit into ops
 
 The parse side receives old and new bytes and must produce Loro text
-ops. Markdown bodies pass through verbatim. HTML bodies take the
-canonicalization detour: if the new content parses as a folio document
-whose header states `x0k:bodyFormat "html"`, the body is normalized, and
-the *canonical* form is what gets diffed — so concurrent edits round-trip
-through Loro without diff drift. A file that doesn't parse (no header yet,
-raw body) falls back to the
-verbatim diff rather than erroring; the materializer must never refuse
-a half-written file.
+ops. Every body passes through verbatim, whatever its format, and a file
+that doesn't parse as a folio document (no header yet, a half-written
+save) is diffed the same way: the materializer must never refuse a
+half-written file, and must never rewrite one either.
+
+An importer preserves the authored source
+(`filesystem-graph-materialization`, "Renderers and importers preserve
+authored source details"). Canonicalizing an HTML body on the way in
+broke that: the canonical form collapses the whitespace between block
+elements, so the first projection back to disk rewrote a hand-laid HTML
+manuscript as one line. Comparing two HTML bodies under the normal form
+is the caller's business (`N_h` in `design:body-format-isomorphism`);
+storing the normal form in place of the file is not.
 
 <a name="chunk-parse-diff"></a><sub>[`src/projection.rs`](../../crates/x0k-folio/src/projection.rs) · `#parse-diff`</sub>
 
@@ -169,36 +178,10 @@ impl ProjectionParser for ColophonProjection {
             std::str::from_utf8(old).context("folio parse_diff: old bytes are not UTF-8")?;
         let new =
             std::str::from_utf8(new).context("folio parse_diff: new bytes are not UTF-8")?;
-        // HTML bodies are normalized on write so concurrent edits round-trip
-        // through Loro without diff drift. Markdown bodies pass through
-        // unchanged. If the new content isn't parseable as a folio
-        // document (no header yet, raw body), fall back to the verbatim diff.
-        let new_canonicalized = canonicalize_html_body_if_needed(new);
-        let new_str = new_canonicalized.as_deref().unwrap_or(new);
-        Ok(build_text_diff_ops(old, new_str))
+        Ok(build_text_diff_ops(old, new))
     }
-}
-
-/// If `content` parses as a folio document with an HTML body, return the
-/// canonicalized form (header kept, body normalized). Otherwise return
-/// `None` — the caller treats the input verbatim.
-///
-/// This is the single chokepoint where HTML bodies pick up canonical
-/// normalization before being written into the Loro `content` text path.
-fn canonicalize_html_body_if_needed(content: &str) -> Option<String> {
-    let (env, body) = parse_envelope(content).ok()?;
-    if env.body_format != BODY_FORMAT_HTML {
-        return None;
-    }
-    Some(replace_body(content, &normalize_html(&body)))
 }
 ```
-
-Note what `canonicalize_html_body_if_needed` leaves alone: the header. It
-splices the normalized body back with [`replace_body`](colophon.md), so the
-header's bytes — a human's statement order and comments included — are the
-ones that were there. The markdown path returns `None` and diffs the
-author's bytes untouched.
 
 ## The minimal diff
 
@@ -400,6 +383,369 @@ mod tests {
             "decisions/design/{slug}.md"
         );
         assert_eq!(plugin.live_edit_policy(), LiveEditPolicy::Forbidden);
+    }
+}
+```
+
+## The round trip holds
+
+What must hold, stated once: **for every file `f` this plugin binds,
+`materialize(parse(f)) = f`, byte for byte**, where `parse` is
+`parse_diff` from the empty document, the operations are applied to the
+character-indexed text the store keeps, and `materialize` is `render`.
+And for any two saves `a` and `b` of one file, applying `parse_diff(a, b)`
+to the document holding `a` leaves it holding `b`. A file is then a faithful
+view of the document: editing the file and editing the document through its
+operations have the same result, and a file the daemon writes back differs
+from the last one only where the document changed.
+
+The check runs over the real corpus and over generated documents. Every
+manuscript under `corpora/x0k/manuscripts/` must round-trip. Generated
+documents draw headings, paragraphs with multi-byte text, nested lists,
+backtick and tilde fences, graph and icon fences, transclusion and
+`x0k:media` fences, tables, raw HTML blocks, quotes, block-identity
+markers, HTML-bodied documents, and the bytes an editor leaves behind:
+CRLF endings, a byte-order mark, no final newline. The generator is a
+seeded splitmix draw, so a failure names its seed and reproduces.
+
+A check that cannot fail proves nothing, so the same check is run against
+a deliberately lossy serializer (one that drops trailing blanks, as a
+formatter would) and must catch it on both the corpus and the generator.
+Before HTML bodies were imported verbatim, the corpus check failed on the
+one HTML-bodied manuscript, `understanding-x0k/index.md`: canonicalization
+put its 140-line body on one line.
+
+Naming a document's blocks ([`block-identity.md`](block-identity.md)) is an
+edit like any other, so it must keep the round trip too, and in an HTML body
+it changes bytes only where an id is written: every manuscript and every
+generated document, once named, round-trips byte for byte, and an HTML body
+read without its ids is the body before naming.
+
+<a name="chunk-round-trip-tests"></a><sub>[`tests/projection_round_trip.rs`](../../crates/x0k-folio/tests/projection_round_trip.rs) · `#round-trip-tests`</sub>
+
+```rust {#round-trip-tests file="tests/projection_round_trip.rs"}
+//! The projection round trip: a file parsed into document operations and
+//! materialized back is the same file, byte for byte.
+//!
+//! "Parse" is the plugin's own `parse_diff` from the empty document;
+//! "apply" is the character-indexed text model Loro's `content` text keeps;
+//! "materialize" is the plugin's own `render`. The property holds for every
+//! manuscript in the corpus and for generated documents; an edit applied
+//! as the diff of two saves reproduces the second save.
+
+use std::path::PathBuf;
+
+use x0k_folio::ColophonProjection;
+use x0k_types::operations::DocumentOp;
+use x0k_types::projection_plugin::{
+    DocumentBodyHandle, LiveEditPolicy, PathTemplate, ProjectionPlugin,
+};
+
+fn plugin() -> ColophonProjection {
+    ColophonProjection::new(
+        PathTemplate::parse("corpora/x0k/manuscripts/{slug}.md").expect("slug template"),
+        LiveEditPolicy::AutoOn,
+    )
+}
+
+/// The document's `content` text, as the store keeps it: Unicode scalar
+/// values, addressed by index.
+struct Body(Vec<char>);
+
+impl DocumentBodyHandle for Body {
+    fn read_text(&self, path: &str) -> anyhow::Result<Option<String>> {
+        Ok((path == "content").then(|| self.0.iter().collect()))
+    }
+}
+
+fn apply(body: &mut Body, ops: &[DocumentOp]) {
+    for op in ops {
+        match op {
+            DocumentOp::TextInsert { path, index, text } if path == "content" => {
+                let tail = body.0.split_off(*index);
+                body.0.extend(text.chars());
+                body.0.extend(tail);
+            }
+            DocumentOp::TextDelete { path, index, len } if path == "content" => {
+                body.0.drain(*index..*index + *len);
+            }
+            other => panic!("the folio parser emitted a non-text op: {other:?}"),
+        }
+    }
+}
+
+/// Parse `file` against `before`, apply the operations to `before`.
+fn import(before: &str, file: &[u8]) -> Body {
+    let projection = plugin();
+    let parser = projection.parser().expect("folio/v2 parses");
+    let ops = parser.parse_diff(before.as_bytes(), file).expect("parse");
+    let mut body = Body(before.chars().collect());
+    apply(&mut body, &ops);
+    body
+}
+
+fn materialize(body: &Body) -> Vec<u8> {
+    plugin().render(body).expect("render")
+}
+
+/// A serializer that loses what a careless one loses: trailing blanks on
+/// each line, and the final newline normalized. The checks below must
+/// refuse it, or they could not refuse anything.
+fn lossy_materialize(body: &Body) -> Vec<u8> {
+    let text: String = body.0.iter().collect();
+    let mut out: String = text.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
+    out.push('\n');
+    out.into_bytes()
+}
+
+/// `Ok` when `file` survives parse-then-materialize under `serializer`;
+/// otherwise where the first byte differs, with a little context.
+fn round_trip(file: &[u8], serializer: fn(&Body) -> Vec<u8>) -> Result<(), String> {
+    let out = serializer(&import("", file));
+    if out == file {
+        return Ok(());
+    }
+    let at = out
+        .iter()
+        .zip(file.iter())
+        .position(|(a, b)| a != b)
+        .unwrap_or(out.len().min(file.len()));
+    let window = |bytes: &[u8]| {
+        let start = at.saturating_sub(24);
+        let end = (at + 24).min(bytes.len());
+        String::from_utf8_lossy(&bytes[start.min(end)..end]).into_owned()
+    };
+    Err(format!(
+        "first difference at byte {at} (file {} bytes, materialized {} bytes): file {:?} / materialized {:?}",
+        file.len(),
+        out.len(),
+        window(file),
+        window(&out)
+    ))
+}
+
+/// The checkout this crate sits in: the nearest directory above it holding
+/// the projection-class registry, wherever the crate has moved.
+fn workspace() -> PathBuf {
+    let mut dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test"));
+    while !dir.join("config/projection-classes.toml").is_file() {
+        assert!(dir.pop(), "no checkout above the crate directory");
+    }
+    dir
+}
+
+fn manuscripts() -> Vec<PathBuf> {
+    let root = workspace().join("corpora/x0k/manuscripts");
+    let mut out = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn every_manuscript_round_trips_byte_for_byte() {
+    let files = manuscripts();
+    assert!(files.len() >= 20, "the corpus holds its manuscripts: found {}", files.len());
+    let failures: Vec<String> = files
+        .iter()
+        .filter_map(|path| {
+            let bytes = std::fs::read(path).expect("read manuscript");
+            round_trip(&bytes, materialize)
+                .err()
+                .map(|why| format!("{}: {why}", path.display()))
+        })
+        .collect();
+    assert!(failures.is_empty(), "{} of {} manuscripts do not round-trip:\n{}", failures.len(), files.len(), failures.join("\n"));
+}
+
+#[test]
+fn a_lossy_serializer_fails_the_manuscript_check() {
+    let caught = manuscripts()
+        .iter()
+        .filter(|path| round_trip(&std::fs::read(path).unwrap(), lossy_materialize).is_err())
+        .count();
+    assert!(caught > 0, "a serializer that drops trailing blanks must fail on some manuscript");
+}
+
+/// A small deterministic generator: every run draws the same documents, so
+/// a failure names its seed and reproduces.
+struct Draw(u64);
+
+impl Draw {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+
+    fn pick<'a>(&mut self, items: &[&'a str]) -> &'a str {
+        items[self.below(items.len())]
+    }
+}
+
+const WORDS: &[&str] = &[
+    "plan", "x0k", "the", "café", "naïve", "日本語", "seed🌱", "—", "a\tb", "*em*", "**strong**",
+    "`code`", "[link](x0k:wiki/loro)", "[[discovery-loop]]", "<span>x</span>", "&amp;", "\\*", "end  ",
+    "$x^2$", "~~gone~~",
+];
+
+fn inline(d: &mut Draw) -> String {
+    let n = 1 + d.below(10);
+    (0..n).map(|_| d.pick(WORDS)).collect::<Vec<_>>().join(" ")
+}
+
+fn block(d: &mut Draw) -> String {
+    match d.below(12) {
+        0 => format!("{} {}\n", "#".repeat(1 + d.below(6)), inline(d)),
+        1 => (0..1 + d.below(3)).map(|_| inline(d) + "\n").collect(),
+        2 => (0..1 + d.below(4))
+            .map(|i| {
+                let indent = if i > 0 && d.below(3) == 0 { "  " } else { "" };
+                format!("{indent}{} {}\n", d.pick(&["-", "*", "1.", "+"]), inline(d))
+            })
+            .collect(),
+        3 => {
+            let fence = d.pick(&["```", "~~~"]);
+            let info = d.pick(&["", "rust", "turtle folio:graph", "text", "svg x0k:icon"]);
+            let lines: String = (0..d.below(4)).map(|_| inline(d) + "\n").collect();
+            format!("{fence}{info}\n{lines}{fence}\n")
+        }
+        4 => "```x0k:transclude {ref=\"x0k:design/places#brief\"}\n```\n".to_string(),
+        5 => "```x0k:media {ref=\"x0k:a/b\" source=\"knobs\"}\n```\n".to_string(),
+        6 => format!("| a | {} |\n|---|:-:|\n| 1 | {} |\n", inline(d), inline(d)),
+        7 => d.pick(&["<div class=\"x\">\n<p>hi</p>\n</div>\n", "<!-- a comment -->\n", "<details><summary>s</summary>\nbody\n</details>\n"]).to_string(),
+        8 => format!("[block-{}]: #block-{}\n", d.below(9999), d.below(9999)),
+        9 => format!("> {}\n> {}\n", inline(d), inline(d)),
+        10 => "---\n".to_string(),
+        _ => d.pick(&["\n", "   \n", "\t\n"]).to_string(),
+    }
+}
+
+const HEADER: &str = "```turtle folio:document\nmanuscript:work\\/part a x0k:Manuscript ;\n    x0k:status \"draft\" .\n```\n";
+const HTML_HEADER: &str = "```turtle folio:document\nmanuscript:work\\/part a x0k:Manuscript ;\n    x0k:status \"draft\" ;\n    x0k:bodyFormat \"html\" .\n```\n";
+
+/// A Markdown document: an optional title and header, blocks separated by
+/// blank lines (or not), and the byte-level variations an editor leaves —
+/// CRLF endings, a byte-order mark, no final newline.
+fn markdown_document(d: &mut Draw) -> String {
+    let mut doc = String::new();
+    if d.below(2) == 0 {
+        doc.push_str(&format!("# {}\n\n{HEADER}\n", inline(d)));
+    }
+    for _ in 0..d.below(12) {
+        doc.push_str(&block(d));
+        doc.push_str(d.pick(&["\n", "", "\n\n"]));
+    }
+    if d.below(10) == 0 {
+        doc = doc.replace('\n', "\r\n");
+    }
+    if d.below(10) == 0 {
+        doc.pop();
+    }
+    if d.below(20) == 0 {
+        doc.insert(0, '\u{feff}');
+    }
+    doc
+}
+
+fn html_document(d: &mut Draw) -> String {
+    let mut doc = format!("# {}\n\n{HTML_HEADER}\n", inline(d));
+    for _ in 0..1 + d.below(6) {
+        let element = d.pick(&["p", "h2", "section", "blockquote", "li"]);
+        let gap = d.pick(&["\n", "\n\n", "", "\n  "]);
+        doc.push_str(&format!("<{element}>{}</{element}>{gap}", inline(d)));
+    }
+    doc
+}
+
+#[test]
+fn generated_documents_round_trip() {
+    for seed in 0..2048u64 {
+        let mut d = Draw(seed);
+        let doc = markdown_document(&mut d);
+        round_trip(doc.as_bytes(), materialize).unwrap_or_else(|why| panic!("seed {seed}: {why}\n{doc:?}"));
+    }
+}
+
+/// An HTML body is imported as written: its round trip is byte for byte
+/// like a Markdown body's, not up to the HTML normal form.
+#[test]
+fn generated_html_documents_round_trip() {
+    for seed in 0..512u64 {
+        let mut d = Draw(seed);
+        let doc = html_document(&mut d);
+        round_trip(doc.as_bytes(), materialize).unwrap_or_else(|why| panic!("seed {seed}: {why}\n{doc:?}"));
+    }
+}
+
+/// The live path: a file saved twice becomes the diff of the two saves,
+/// applied to the document that holds the first. The document then holds
+/// the second save exactly.
+#[test]
+fn an_edit_between_two_saves_reproduces_the_second_save() {
+    for seed in 0..2048u64 {
+        let mut d = Draw(seed);
+        let before = markdown_document(&mut d);
+        let after = markdown_document(&mut d);
+        let body = import(&before, after.as_bytes());
+        assert_eq!(materialize(&body), after.as_bytes(), "seed {seed}");
+    }
+}
+
+#[test]
+fn a_lossy_serializer_fails_the_generated_check() {
+    let caught = (0..256u64)
+        .filter(|seed| {
+            let doc = markdown_document(&mut Draw(*seed));
+            round_trip(doc.as_bytes(), lossy_materialize).is_err()
+        })
+        .count();
+    assert!(caught > 0, "a serializer that drops trailing blanks must fail on some generated document");
+}
+
+/// A document whose blocks are named round-trips byte for byte; an HTML
+/// body gains bytes only in the ids written into its start tags.
+#[test]
+fn named_documents_round_trip() {
+    use x0k_folio::block_identity::{assign_ids, blocks, BlockText};
+    let named = |text: &str, label: &str| {
+        let named = assign_ids(text, "x0k:manuscript/named");
+        round_trip(named.as_bytes(), materialize).unwrap_or_else(|why| panic!("{label}: {why}"));
+        let html = named.contains("data-block-id");
+        if html {
+            assert_eq!(BlockText::parse(&named).visible(), text, "{label}: naming changed more than ids");
+        }
+        html
+    };
+    let manuscripts = manuscripts();
+    let html = manuscripts
+        .iter()
+        .filter(|path| named(&std::fs::read_to_string(path).unwrap(), &path.display().to_string()))
+        .count();
+    assert!(html >= 1, "the HTML-bodied manuscripts are named by attribute");
+    for seed in 0..512u64 {
+        let doc = html_document(&mut Draw(seed));
+        assert!(named(&doc, &format!("html seed {seed}")), "html seed {seed}: no block was named");
+        assert!(blocks(&assign_ids(&doc, "x0k:manuscript/named")).iter().all(|block| block.id.is_some()));
+    }
+    for seed in 0..2048u64 {
+        named(&markdown_document(&mut Draw(seed)), &format!("seed {seed}"));
     }
 }
 ```

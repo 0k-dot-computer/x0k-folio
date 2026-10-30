@@ -111,7 +111,7 @@ use x0k_ontology::concept_facts::{camel_to_kebab, OntologyModel, RDF_TYPE, X0K_N
 
 use crate::colophon::{
     compact_iri, is_marker, parse_turtle, predeclared_prefixes, shipped_prefixes, Literal,
-    FOLIO_NS, GRAPH_MARKER, HEADER_MARKER, OWL_NS, RDFS_NS, RDF_JSON, XSD_BOOLEAN, XSD_DECIMAL,
+    FOLIO_NS, GRAPH_MARKER, HEADER_MARKER, OWL_NS, RDFS_NS, RDF_JSON, RDF_NS, XSD_BOOLEAN, XSD_DECIMAL,
     XSD_DOUBLE, XSD_INTEGER, XSD_STRING,
 };
 use crate::entity_id::EntityId;
@@ -210,6 +210,9 @@ pub enum InlineEntityError {
     /// the demands reuses this variant when a well-shaped object still fails
     /// its own reading.
     InvalidResources { class: String, heading: String, reason: String },
+    /// A param's value is an `rdf:JSON` literal that is not JSON: a
+    /// parameter's `folio:default`, or a param a scene sets.
+    MalformedParam { param: String, reason: String },
 }
 
 impl std::fmt::Display for InlineEntityError {
@@ -256,6 +259,7 @@ impl std::fmt::Display for InlineEntityError {
                 f,
                 "`{class}` block in section `{heading}` has invalid resource requirements: {reason}"
             ),
+            Self::MalformedParam { param, reason } => write!(f, "the param `{param}` is an `rdf:JSON` literal that is not JSON: {reason}"),
         }
     }
 }
@@ -399,6 +403,13 @@ x0k:implementation\/canvas\/core\/num_levels a folio:Parameter ;
     folio:default 4 .
 ```
 
+A default is typed by its literal: an integer, a decimal, a boolean, a
+string, or a literal typed `rdf:JSON`, which is the JSON value it spells, so
+a param whose value is an object, as a transition is, declares its default
+whole. An `rdf:JSON` literal that is not JSON is refused, naming the param:
+the one reading of such a literal, a scene's params' as well
+([`read_scene`]), refuses rather than falling back to its text.
+
 A parameter's subject is the document's id with the parameter's id as one
 more path segment, written with `x0k:`, so the panel reads with the fixed
 prefixes alone — a guest that renders the figure needs no vocabulary to read
@@ -431,17 +442,26 @@ pub enum ParameterValue {
     Integer(i64),
     Boolean(bool),
     Text(String),
+    /// An `rdf:JSON` literal's value.
+    Json(serde_json::Value),
 }
 
 impl ParameterValue {
-    fn of(literal: &oxrdf::Literal) -> Self {
+    /// The value `literal` states for the param `param`; an `rdf:JSON`
+    /// literal that is not JSON is refused, naming the param.
+    fn of(literal: &oxrdf::Literal, param: &str) -> Result<Self, InlineEntityError> {
         let value = literal.value();
-        match literal.datatype().as_str() {
+        if let Some(json) = json_lexical(literal) {
+            return serde_json::from_str(json)
+                .map(Self::Json)
+                .map_err(|error| InlineEntityError::MalformedParam { param: param.to_owned(), reason: error.to_string() });
+        }
+        Ok(match literal.datatype().as_str() {
             XSD_INTEGER => value.parse().map(Self::Integer).unwrap_or_else(|_| Self::Text(value.to_string())),
             XSD_DECIMAL | XSD_DOUBLE => value.parse().map(Self::Number).unwrap_or_else(|_| Self::Text(value.to_string())),
             XSD_BOOLEAN => Self::Boolean(value == "true" || value == "1"),
             _ => Self::Text(value.to_string()),
-        }
+        })
     }
 
     fn to_json(&self) -> serde_json::Value {
@@ -450,8 +470,15 @@ impl ParameterValue {
             Self::Integer(i) => serde_json::json!(i),
             Self::Boolean(b) => serde_json::json!(b),
             Self::Text(t) => serde_json::json!(t),
+            Self::Json(value) => value.clone(),
         }
     }
+}
+
+/// The text of a literal typed `rdf:JSON`; `None` for a literal of any
+/// other type.
+fn json_lexical(literal: &oxrdf::Literal) -> Option<&str> {
+    (literal.datatype().as_str() == RDF_JSON).then(|| literal.value())
 }
 
 impl Parameter {
@@ -539,10 +566,657 @@ pub fn read_parameters(text: &str) -> Result<Vec<Parameter>, InlineEntityError> 
         } else if predicate == term("step") {
             entry.step = number();
         } else if predicate == term("default") {
-            entry.default = Some(ParameterValue::of(literal));
+            entry.default = Some(ParameterValue::of(literal, &entry.id)?);
         }
     }
     Ok(order.into_iter().filter_map(|subject| by_subject.remove(&subject)).collect())
+}
+```
+
+A panel holds the figure's authored params
+(`x0k:architecture/malleable-ui-runtime` §"Each param has a scope"), and what
+it hands the figure is their values: [`panel_params`] reads the panel into a
+JSON object keyed by each param's id, the value its `folio:default` typed by
+its literal. A param with no default is left out, so the figure keeps its own
+declared default for it. This is the one reading of a panel's values: every
+host sends this object as the figure's `SetParams`, and none reads a panel's
+defaults itself.
+
+<a name="chunk-parameters-2"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#parameters` · continues</sub>
+
+```rust {#parameters}
+
+/// A parameter panel's values, keyed by each param's id: its `folio:default`.
+/// A param with no default is left out, so the figure's own default holds.
+pub fn panel_params(text: &str) -> Result<serde_json::Map<String, serde_json::Value>, InlineEntityError> {
+    Ok(read_parameters(text)?.into_iter().filter_map(|p| Some((p.id, p.default?.to_json()))).collect())
+}
+```
+
+## A section's scene
+
+A page whose sections carry a figure through a story states, in a section, the
+scene the figure shows at that moment
+(`x0k:architecture/arrangement-document` §"Arrangements in time"). A scene is a
+`folio:graph` block whose one subject is `a x0k:Scene`, named like any block a
+figure binds:
+
+````markdown
+```turtle folio:graph {#run}
+[] a x0k:Scene ;
+    figure:stations ( "evaluate" ) ;
+    figure:letters "N" ;
+    x0k:viewData '{"value": "21"}'^^rdf:JSON .
+```
+````
+
+What the host reads is stated as facts: each param the scene sets, under the
+`figure:` prefix, which names the params of whatever view binds the block, by
+the local names its panel declares them with. A list is a Turtle collection,
+so `()` states an empty list and a param left out is one the scene does not
+set. A param whose value is shaped, an object or a list holding a list or an
+object, is one literal typed `rdf:JSON`, and the scene sets the param to the JSON value it
+spells:
+
+```turtle
+[] a x0k:Scene ;
+    figure:transition '{"carry":{"end":1,"start":0},"enter":{"end":1,"start":0.5},"leave":{"end":0.5,"start":0}}'^^rdf:JSON .
+```
+
+The host reads that literal, which is what makes it a param: it hands the
+value to the figure as it hands a number, compares it with the default and
+writes it back. What only the view reads is one `x0k:viewData` literal, typed
+`rdf:JSON` the same way and passed through unread.
+
+What only the host reads is the scene's **loop**, one `x0k:loop` literal typed
+`rdf:JSON`: an object naming the param it carries, `param`, the range it
+carries it over, `from` and `to`, the milliseconds a pass takes, `period`, and
+optionally how many passes it makes, `count`; with no `count` it runs without
+end. A loop is the arrangement's, not the view's, so it is an `x0k:` fact
+beside the view's data, never a `figure:` param: the view is fed the param
+the loop moves and never the loop. The host carries the narrative position,
+so a loop's `param` is `t`:
+
+```turtle
+[] a x0k:Scene ;
+    figure:t 48.5 ;
+    x0k:loop '{"from":48.5,"param":"t","period":29500,"to":78}'^^rdf:JSON .
+```
+
+A loop that states another key, carries another param, has an empty range,
+a `period` that is not a number of milliseconds above 0, or a `count` that is
+not a whole number of passes above 0 refuses the block and says which. A
+scene states nothing else: any other predicate is refused, so a scene holds
+only what a host can deliver.
+
+The scene a block states is `x0k_sequence::Scene`, the value every home of a
+sequence shares (`x0k:implementation/sequence/sequence`): its params in the
+order the block names them, its loop, and its data. The block is the document's way of
+stating it; this module reads a scene from the block and writes one back.
+
+<a name="chunk-document-data"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#document-data`</sub>
+
+```rust {#document-data}
+/// The namespace the `figure:` prefix names in a scene: the params of the view
+/// the scene is of, by their local names.
+pub const FIGURE_NS: &str = "urn:x0k:figure:";
+
+/// One moment's scene, as a section states it, and the loop its host runs
+/// while the moment rests: the values every home of a sequence shares.
+pub use x0k_sequence::{Loop, Scene};
+```
+
+Reading a scene parses the block with the shipped prefixes and `figure:`,
+finds its one `x0k:Scene` subject, and reads each statement about it. A
+param's literal is read as a parameter's default is (`ParameterValue::of`), so
+an `rdf:JSON` literal that is not JSON refuses the block and names the param.
+The view's data is recognised by the same reading of the literal's type, and
+kept as its text; the loop's is read as the object it spells. A collection's cells are blank nodes chained by `rdf:first`
+and `rdf:rest`, so a param whose object is a blank node is unrolled into a
+list.
+
+<a name="chunk-document-data-2"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#document-data` · continues</sub>
+
+```rust {#document-data}
+/// Read a scene block's Turtle: one subject typed `x0k:Scene`, setting params
+/// under `figure:` and stating at most one `x0k:loop` literal and one
+/// `x0k:viewData` literal.
+pub fn read_scene(text: &str) -> Result<Scene, InlineEntityError> {
+    let mut prefixes = shipped_prefixes().to_vec();
+    prefixes.push(("figure".to_string(), FIGURE_NS.to_string()));
+    let triples = parse_turtle(text, &prefixes, 1).map_err(|error| match error {
+        crate::colophon::FolioError::Turtle { line, reason } => InlineEntityError::InvalidTurtle { line, reason },
+        other => InlineEntityError::InvalidTurtle { line: 1, reason: other.to_string() },
+    })?;
+    let not_scene = |reason: String| InlineEntityError::NotOneInstance { line: 0, reason };
+    let class = format!("{X0K_NS}Scene");
+    let scenes: Vec<&NamedOrBlankNode> = triples
+        .iter()
+        .filter(|t| t.predicate.as_str() == RDF_TYPE && matches!(&t.object, Term::NamedNode(n) if n.as_str() == class))
+        .map(|t| &t.subject)
+        .collect();
+    let [subject] = scenes.as_slice() else {
+        return Err(not_scene("a scene block types one subject `x0k:Scene`".into()));
+    };
+    let (view_data, looping) = (format!("{X0K_NS}viewData"), format!("{X0K_NS}loop"));
+    let mut scene = Scene::default();
+    for triple in triples.iter().filter(|t| &t.subject == *subject && t.predicate.as_str() != RDF_TYPE) {
+        let predicate = triple.predicate.as_str();
+        if let Some(name) = predicate.strip_prefix(FIGURE_NS) {
+            let value = scene_value(name, &triple.object, &triples)?
+                .ok_or_else(|| not_scene(format!("`figure:{name}` states a value a param cannot take")))?;
+            scene.params.push((name.to_string(), value));
+        } else if predicate == view_data {
+            let data = match &triple.object {
+                Term::Literal(literal) => json_lexical(literal),
+                _ => None,
+            };
+            match data {
+                Some(data) if scene.data.is_none() => scene.data = Some(data.to_string()),
+                _ => return Err(not_scene("a scene states one `x0k:viewData` literal typed `rdf:JSON`".into())),
+            }
+        } else if predicate == looping {
+            let stated = match &triple.object {
+                Term::Literal(literal) => json_lexical(literal),
+                _ => None,
+            };
+            match stated {
+                Some(json) if scene.looping.is_none() => scene.looping = Some(read_loop(json)?),
+                _ => return Err(not_scene("a scene states one `x0k:loop` literal typed `rdf:JSON`".into())),
+            }
+        } else {
+            return Err(not_scene(format!("a scene states its params and its view's data, not `{}`", compact_iri(predicate, &prefixes))));
+        }
+    }
+    Ok(scene)
+}
+
+/// The value a scene sets the param `param` to: a literal by its datatype,
+/// an `rdf:JSON` literal as the JSON it spells, a collection as a list.
+/// `None` for an IRI or a malformed list; refused when an `rdf:JSON`
+/// literal is not JSON.
+fn scene_value(param: &str, object: &Term, triples: &[oxrdf::Triple]) -> Result<Option<serde_json::Value>, InlineEntityError> {
+    match object {
+        Term::Literal(literal) => Ok(Some(ParameterValue::of(literal, param)?.to_json())),
+        Term::NamedNode(node) if node.as_str() == format!("{RDF_NS}nil") => Ok(Some(serde_json::Value::Array(Vec::new()))),
+        Term::BlankNode(_) => {
+            let (first, rest) = (format!("{RDF_NS}first"), format!("{RDF_NS}rest"));
+            let mut items = Vec::new();
+            let mut cell = object.clone();
+            loop {
+                let node = match &cell {
+                    Term::NamedNode(node) if node.as_str() == format!("{RDF_NS}nil") => break,
+                    Term::BlankNode(node) => node.clone(),
+                    _ => return Ok(None),
+                };
+                let about = |predicate: &str| {
+                    triples
+                        .iter()
+                        .find(|t| t.predicate.as_str() == predicate && matches!(&t.subject, NamedOrBlankNode::BlankNode(b) if *b == node))
+                        .map(|t| t.object.clone())
+                };
+                let (Some(item), Some(next)) = (about(&first), about(&rest)) else { return Ok(None) };
+                let Some(item) = scene_value(param, &item, triples)? else { return Ok(None) };
+                items.push(item);
+                cell = next;
+            }
+            Ok(Some(serde_json::Value::Array(items)))
+        }
+        _ => Ok(None),
+    }
+}
+```
+
+A loop is read into its declared shape, each key optional, so each way a
+literal can fail to describe a loop the host could run has its own reason,
+and a key the loop does not know is named rather than ignored.
+
+<a name="chunk-document-data-3"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#document-data` · continues</sub>
+
+```rust {#document-data}
+
+/// A loop's literal as it is written: each key optional, so a missing one
+/// is refused by name, and a key a loop does not state refused by its own.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoopLiteral {
+    count: Option<f64>,
+    from: Option<f64>,
+    param: Option<String>,
+    period: Option<f64>,
+    to: Option<f64>,
+}
+
+/// The loop an `x0k:loop` literal's JSON states, or why no host could run
+/// it.
+fn read_loop(json: &str) -> Result<Loop, InlineEntityError> {
+    let refuse = |why: String| InlineEntityError::NotOneInstance { line: 0, reason: format!("`x0k:loop` cannot run: {why}") };
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|error| refuse(format!("it is not JSON: {error}")))?;
+    if !value.is_object() {
+        return Err(refuse("it is not an object".into()));
+    }
+    let stated: LoopLiteral = serde_json::from_value(value).map_err(|error| refuse(format!("it is not a loop: {error}")))?;
+    match stated.param.as_deref() {
+        Some("t") => {}
+        Some(param) => return Err(refuse(format!("it carries `{param}`, and a host carries the position `t`"))),
+        None => return Err(refuse("it names no `param`".into())),
+    }
+    let finite = |n: Option<f64>| n.filter(|n| n.is_finite());
+    let (Some(from), Some(to)) = (finite(stated.from), finite(stated.to)) else { return Err(refuse("its `from` and `to` are not two numbers".into())) };
+    if from == to {
+        return Err(refuse("its range is empty".into()));
+    }
+    let period = finite(stated.period).filter(|ms| *ms > 0.0).ok_or_else(|| refuse("its `period` is not a number of milliseconds above 0".into()))?;
+    let count = match stated.count {
+        None => None,
+        Some(count) => Some(
+            Some(count)
+                .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= f64::from(u32::MAX))
+                .map(|n| n as u32)
+                .ok_or_else(|| refuse("its `count` is not a whole number of passes above 0".into()))?,
+        ),
+    };
+    Ok(Loop { param: "t".to_owned(), from, to, period, count })
+}
+```
+
+## Writing a scene back
+
+A scene a reader captures is written into the section as a block, so the
+writer is the reader's inverse: [`scene_turtle`] gives the block's Turtle
+for a scene, and [`read_scene`] reads that Turtle back as the same scene,
+its params in the same order with the same values and its data the same
+text. It writes the block the way the scenes in a script are written by
+hand: `[] a x0k:Scene`, one `figure:` statement per param on its own line,
+then the loop, the data literal last, so a scene read from a hand-written block and
+written again is the block it was read from, and replacing a section's
+scene changes only the lines that state something new.
+
+A param's value is written by its JSON type: a string as a quoted string, an
+integer as an integer and any other number as a decimal (both read back as
+the number they were), a boolean as itself, and a list as a collection of
+its items, `()` when empty. An object, and a list holding a list or an
+object, is written whole as one `rdf:JSON` literal, quoted as the view's data is
+(below), its keys in name order so a value is written the same however it
+was built. A `null` is not written: a scene states a param it hands back to
+its default by leaving it out. The writer refuses a `null` param, and a
+param whose name is not a Turtle local name. The loop is written as a shaped
+param is, its keys in name order, and a whole number in it as an integer, so
+`"period":29500` reads back and is written again as it was written.
+
+<a name="chunk-document-data-4"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#document-data` · continues</sub>
+
+```rust {#document-data}
+
+/// A scene param a block cannot state: its name is not a Turtle local name,
+/// or its value is a `null` (which a scene states by leaving the param out)
+/// or an integer past `i64`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnstatableParam {
+    pub param: String,
+}
+
+impl std::fmt::Display for UnstatableParam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a scene block cannot state `{}`: a param is a local name set to a value that is not `null`", self.param)
+    }
+}
+
+impl std::error::Error for UnstatableParam {}
+
+/// A scene block's Turtle for `scene`, the inverse of [`read_scene`]: the
+/// subject typed `x0k:Scene`, a `figure:` statement per param in order, the
+/// `x0k:loop` literal, and the `x0k:viewData` literal last.
+pub fn scene_turtle(scene: &Scene) -> Result<String, UnstatableParam> {
+    let mut statements = vec!["[] a x0k:Scene".to_owned()];
+    for (name, value) in &scene.params {
+        let local = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        let object = scene_object(value).filter(|_| local).ok_or_else(|| UnstatableParam { param: name.clone() })?;
+        statements.push(format!("figure:{name} {object}"));
+    }
+    if let Some(looping) = &scene.looping {
+        statements.push(format!("x0k:loop {}^^rdf:JSON", data_literal(&loop_json(looping).to_string())));
+    }
+    if let Some(data) = &scene.data {
+        statements.push(format!("x0k:viewData {}^^rdf:JSON", data_literal(data)));
+    }
+    Ok(format!("{} .\n", statements.join(" ;\n    ")))
+}
+
+/// A loop as the JSON its literal spells, keys in name order, a whole number
+/// as an integer.
+fn loop_json(looping: &Loop) -> serde_json::Value {
+    let number = |n: f64| if n.fract() == 0.0 && n.abs() < 1e15 { serde_json::Value::from(n as i64) } else { serde_json::Value::from(n) };
+    let mut json = serde_json::json!({"from": number(looping.from), "param": looping.param, "period": number(looping.period), "to": number(looping.to)});
+    if let Some(count) = looping.count {
+        json["count"] = count.into();
+    }
+    in_key_order(&json)
+}
+
+/// A param's value as a statement's object; `None` for a `null`, or an
+/// integer past `i64`.
+fn scene_object(value: &serde_json::Value) -> Option<String> {
+    use serde_json::Value;
+    Some(match value {
+        Value::String(text) => quoted_string(text),
+        Value::Number(n) if n.is_i64() => n.to_string(),
+        Value::Number(n) if n.is_f64() => format!("{:?}", n.as_f64()?),
+        Value::Bool(b) => b.to_string(),
+        Value::Array(items) if items.is_empty() => "()".to_owned(),
+        Value::Array(items) if !items.iter().any(|item| item.is_array() || item.is_object()) => format!("( {} )", items.iter().map(scene_object).collect::<Option<Vec<_>>>()?.join(" ")),
+        Value::Array(_) | Value::Object(_) => format!("{}^^rdf:JSON", data_literal(&in_key_order(value).to_string())),
+        _ => return None,
+    })
+}
+
+/// `value` with every object's keys in name order.
+fn in_key_order(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            entries.sort_unstable_by_key(|(key, _)| *key);
+            Value::Object(entries.into_iter().map(|(key, item)| (key.clone(), in_key_order(item))).collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(in_key_order).collect()),
+        other => other.clone(),
+    }
+}
+
+/// `text` as a Turtle string in double quotes, its backslashes, quotes and
+/// line breaks escaped.
+fn quoted_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+```
+
+The data literal, like a shaped param's, is JSON, which quotes with `"`, so
+it is written in single quotes: `'…'` when it holds no `'` and no line break, `'''…'''` when it holds a
+`'` or a line break and can be written long (it holds no `'''` and does not
+end in `'`), and otherwise `'…'` with each `'` and line break escaped. A
+backslash is escaped in every form, so the text read back is the text
+written.
+
+<a name="chunk-document-data-5"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#document-data` · continues</sub>
+
+```rust {#document-data}
+
+/// An `rdf:JSON` literal's Turtle string for the JSON text `data`,
+/// single-quoted: the view's data, or a shaped param's value.
+fn data_literal(data: &str) -> String {
+    let escaped = data.replace('\\', "\\\\");
+    if !data.contains(['\'', '\n', '\r']) {
+        format!("'{escaped}'")
+    } else if !data.contains("'''") && !data.ends_with('\'') {
+        format!("'''{escaped}'''")
+    } else {
+        format!("'{}'", escaped.replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r"))
+    }
+}
+```
+
+## A moment's concepts
+
+A study's moments say what they teach. Each closes with a block whose info
+string is `turtle {.concepts}`, stating the concepts its sentence
+introduces and the ones it assumes, each a Turtle collection of strings
+under the `study:` prefix (`urn:x0k:study:`):
+
+```turtle
+[] study:introduces ( "law" ) ;
+    study:assumes ( "record" "input" ) .
+```
+
+A page that walks a reader through its moments reads them to know what
+the reader has met, so a run a moment plays can stop where a step is new
+to them (`x0k:implementation/document-editing/tree-page` §"Stepping through
+a run"). [`concepts_block`] reads one such block, and answers nothing for
+any other block or for one whose Turtle does not read; a list it cannot
+read as strings is empty.
+
+<a name="chunk-document-data-6"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#document-data` · continues</sub>
+
+```rust {#document-data}
+
+/// The namespace the `study:` prefix names in a moment's concepts block.
+pub const STUDY_NS: &str = "urn:x0k:study:";
+
+/// The concepts a moment introduces and the ones it assumes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Concepts {
+    pub introduces: Vec<String>,
+    pub assumes: Vec<String>,
+}
+
+/// A `turtle {.concepts}` block's concepts; `None` for any other block, or
+/// one whose Turtle does not read.
+pub fn concepts_block(info: &str, body: &str) -> Option<Concepts> {
+    if FenceInfo::parse(info).language() != Some("turtle") || !info.contains("{.concepts}") {
+        return None;
+    }
+    let mut prefixes = shipped_prefixes().to_vec();
+    prefixes.push(("study".to_string(), STUDY_NS.to_string()));
+    let triples = parse_turtle(body, &prefixes, 1).ok()?;
+    let list = |name: &str| -> Vec<String> {
+        let predicate = format!("{STUDY_NS}{name}");
+        let values = triples.iter().filter(|t| t.predicate.as_str() == predicate).filter_map(|t| scene_value(name, &t.object, &triples).ok().flatten());
+        values.flat_map(|value| match value {
+            serde_json::Value::Array(items) => items.into_iter().filter_map(|item| item.as_str().map(str::to_owned)).collect(),
+            _ => Vec::new(),
+        }).collect()
+    };
+    Some(Concepts { introduces: list("introduces"), assumes: list("assumes") })
+}
+```
+
+## Blocks a figure binds
+
+A figure on a page reads what it shows from blocks of the same page. Its
+fence names them — `x0k:media {ref="…" source="hysteresis-parameters"}` —
+and every block of that name answers: a parameter panel, a scene, or an
+`x0k:data` fence, each named by its `source="…"` or its `{#name}`. A
+`folio:graph` block that is none of these binds nothing, because what a
+figure is handed must be what it can read, and an illustrative `x0k:!data`
+fence declares nothing.
+
+What a block is says which channel carries it, since a view is a function of
+its params and its data and each arrives on its own message
+(`x0k:architecture/malleable-ui-runtime`). A data fence is data: its bytes as
+written, through `SetData`. A panel is the figure's authored params:
+[`panel_params`]' object, through `SetParams`; its Turtle never reaches the
+figure. A scene is one moment: its `x0k:viewData` literal through `SetData`
+and its params through `SetParams`, from a host that follows the reader
+through the page; a scene with no data literal hands its figure no data.
+
+One name binds them all. A figure with knobs and data names a panel and a
+data block the same, and a sequence's scenes share their name with the panel
+whose values they start from, a scene's value standing over the panel's and
+the panel's over the figure's own default. This is the smallest binding that
+keeps the two channels apart: the fence keeps its one `source=`, every block
+that feeds a figure is found by its one name, and the block, not a second
+attribute, says whether it is params or data. Every renderer — the native
+body, the HTML body and the woven page — asks [`document_data`] for the data
+blocks, or [`bound_data`] for one block's, and [`document_params`] for the
+panels, or [`bound_params`] for one panel's, so a figure receives the same
+data and params wherever its page is read.
+
+A figure's own chapter declares its params the same way, in a parameter
+block bound to no name, and [`declared_defaults`] reads every such block's
+defaults: what the figure shows for a param no panel, scene or occurrence
+sets. A host that times or captures a figure by a param reads its default
+there, from the chapter the figure is drawn by, never from a copy of it.
+A host that generates a control for a param reads the param whole, its
+kind, range and label with its default, through [`declared_parameters`].
+
+<a name="chunk-document-data-7"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#document-data` · continues</sub>
+
+```rust {#document-data}
+/// A block of a page that a figure on it binds by name, and the data it hands
+/// the figure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentData {
+    /// The name an `x0k:media {source="…"}` fence binds it by.
+    pub name: String,
+    /// The bytes a bound figure receives through `SetData`.
+    pub payload: String,
+}
+
+/// A parameter panel of a page that a figure on it binds by name, and the
+/// params it hands the figure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentParams {
+    /// The name an `x0k:media {source="…"}` fence binds it by.
+    pub name: String,
+    /// [`panel_params`]' object: each param's id and its `folio:default`.
+    pub params: serde_json::Map<String, serde_json::Value>,
+}
+
+impl DocumentParams {
+    /// The params as the JSON view a `SetParams` is encoded from ([`params_text`]).
+    pub fn to_json(&self) -> String {
+        params_text(&self.params)
+    }
+}
+
+/// `params` as JSON text, every object's keys in name order whichever order
+/// the map holds them in: the view a host encodes a `SetParams` from (it
+/// crosses as the value's canonical CBOR, `x0k_surface_api::params`), and the
+/// text a published page's attribute holds, the same from every renderer and
+/// every build of `serde_json`.
+pub fn params_text(params: &serde_json::Map<String, serde_json::Value>) -> String {
+    in_key_order(&serde_json::Value::Object(params.clone())).to_string()
+}
+
+/// The name a fence gives its block: its `source="…"`, else its `{#name}`.
+fn block_name(info: &str) -> Option<String> {
+    fence_attr(info, "source").or_else(|| {
+        let rest = &info[info.find('#')? + 1..];
+        let end = rest.find(|c: char| c.is_whitespace() || c == ',' || c == '}').unwrap_or(rest.len());
+        (!rest[..end].is_empty()).then(|| rest[..end].to_owned())
+    })
+}
+
+/// The name a figure binds this fenced block by, when the block is data a
+/// figure can bind: an `x0k:data` fence or a scene (a `folio:graph` block
+/// whose subject is an `x0k:Scene`). A parameter panel is params, not data:
+/// [`bound_params`] reads it.
+pub fn data_block_name(info: &str, body: &str) -> Option<String> {
+    let bindable = if is_marker(info, GRAPH_MARKER) {
+        read_scene(body).is_ok()
+    } else {
+        FenceInfo::parse(info).x0k_type() == Some("data")
+    };
+    bindable.then(|| block_name(info)).flatten()
+}
+
+/// The name a figure binds this block by and the data it receives from it: a
+/// data fence's body as written, a scene's data literal. `None` when the
+/// block is no data, or is a scene that states none.
+pub fn bound_data(info: &str, body: &str) -> Option<DocumentData> {
+    let name = data_block_name(info, body)?;
+    let payload = match read_scene(body) {
+        Ok(scene) => scene.data?,
+        Err(_) => body.to_owned(),
+    };
+    Some(DocumentData { name, payload })
+}
+
+/// The name a figure binds this block by and the params it receives from it,
+/// when the block is a named parameter panel.
+pub fn bound_params(info: &str, body: &str) -> Option<DocumentParams> {
+    if !is_marker(info, GRAPH_MARKER) {
+        return None;
+    }
+    let params = panel_params(body).ok()?;
+    Some(DocumentParams { name: block_name(info)?, params })
+}
+
+/// The block an `x0k:media` fence binds its figure to: its `source="…"`.
+pub fn media_source(info: &str) -> Option<String> {
+    (FenceInfo::parse(info).x0k_type() == Some("media")).then(|| fence_attr(info, "source")).flatten()
+}
+
+/// Every data block of `markdown` a figure can bind, in document order.
+pub fn document_data(markdown: &str) -> Vec<DocumentData> {
+    fenced_blocks(markdown).iter().filter_map(|(info, body)| bound_data(info, body)).collect()
+}
+
+/// Every parameter panel of `markdown` a figure can bind, in document order.
+pub fn document_params(markdown: &str) -> Vec<DocumentParams> {
+    fenced_blocks(markdown).iter().filter_map(|(info, body)| bound_params(info, body)).collect()
+}
+
+/// The defaults the document declares for its params, by each param's id:
+/// every parameter block's `folio:default`s, named or not, a later block's
+/// standing over an earlier's. A param with no default is left out.
+pub fn declared_defaults(markdown: &str) -> serde_json::Map<String, serde_json::Value> {
+    let panels = fenced_blocks(markdown).into_iter().filter(|(info, _)| is_marker(info, GRAPH_MARKER));
+    panels.filter_map(|(_, body)| panel_params(&body).ok()).flatten().collect()
+}
+
+/// The params the document declares, whole: every parameter block's, named
+/// or not, in the order the document first names them, a later block's
+/// declaration of an id standing over an earlier's.
+pub fn declared_parameters(markdown: &str) -> Vec<Parameter> {
+    let panels = fenced_blocks(markdown).into_iter().filter(|(info, _)| is_marker(info, GRAPH_MARKER));
+    let mut declared: Vec<Parameter> = Vec::new();
+    for parameter in panels.filter_map(|(_, body)| read_parameters(&body).ok()).flatten() {
+        match declared.iter_mut().find(|held| held.id == parameter.id) {
+            Some(held) => *held = parameter,
+            None => declared.push(parameter),
+        }
+    }
+    declared
+}
+
+/// Every fenced block of `markdown`: its info string and its body.
+fn fenced_blocks(markdown: &str) -> Vec<(String, String)> {
+    let mut blocks = Vec::new();
+    let mut fence: Option<(String, String)> = None;
+    for event in Parser::new_ext(markdown, Options::empty()) {
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => fence = Some((info.to_string(), String::new())),
+            Event::Text(text) => {
+                if let Some((_, body)) = fence.as_mut() {
+                    body.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::CodeBlock) => blocks.extend(fence.take()),
+            _ => {}
+        }
+    }
+    blocks
+}
+
+/// A fence attribute's value: `name="v"`, `name='v'` or a bare `name=v`.
+pub fn fence_attr(info: &str, name: &str) -> Option<String> {
+    let needle = format!("{name}=");
+    let rest = info[info.find(&needle)? + needle.len()..].trim_start();
+    let (quote, body) = match rest.chars().next() {
+        Some(q @ ('"' | '\'')) => (Some(q), &rest[1..]),
+        _ => (None, rest),
+    };
+    let end = match quote {
+        Some(q) => body.find(q).unwrap_or(body.len()),
+        None => body.find(|c: char| c.is_whitespace() || c == '}').unwrap_or(body.len()),
+    };
+    let value = body[..end].trim();
+    (!value.is_empty()).then(|| value.to_owned())
 }
 ```
 
@@ -1169,9 +1843,16 @@ graph block, not because its info string failed a test for looking like one.
 
 ## Tests
 
-The carried example is the affordance at the top of this document; the rest
-pin one refusal each, and one pins the boundary — that a declared resource
-comes back as an object and not as an interpretation.
+The carried example is the affordance at the top of this document; a techne
+block reads the same way under its own class; the rest pin one refusal each,
+and one pins the boundary — that a declared resource
+comes back as an object and not as an interpretation. Two pin the scene
+writer as the reader's inverse: every scene station 1's script states is
+written back as the block it was read from, and every value a scene can
+state reads back as itself, an object among them, whichever way its literal
+must be quoted, while a `null` and a name Turtle cannot spell are refused.
+One pins the `rdf:JSON` param: a scene's and a panel's read as the JSON they
+spell, and one that is not JSON is refused, naming the param.
 
 <a name="chunk-tests"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#tests`</sub>
 
@@ -1212,6 +1893,34 @@ mod tests {
             facts.last(),
             Some(&("x0k:definedIn".to_string(), "entity:x0k:design/publish-a-region-as-a-repository".to_string()))
         );
+    }
+
+    // What only an agent does is a techne, declared in a design the way an
+    // affordance is: its own class, realizing the affordance it serves.
+    #[test]
+    fn a_techne_block_is_read_as_a_techne() {
+        // `techne:` is predeclared only where the `actor` module is
+        // compiled; a build that ships no techne class reads no techne.
+        let prefixes = crate::colophon::predeclared_prefixes(&OntologyModel::shipped());
+        if !prefixes.iter().any(|(prefix, _)| prefix == "techne") {
+            return;
+        }
+        let body = "## Affordances\n\n### Read the plan from a container\n\nAn agent in a container reads the plan its grant covers.\n\n```turtle folio:graph\ntechne:ephemeral-plan-read a x0k:Techne ;\n    x0k:status \"wip\" ;\n    x0k:realizes affordance:ephemeral-environment-approve ;\n    x0k:dependsOn techne:ephemeral-device-join .\n```\n";
+        let allowed = HashSet::from(["affordance".to_string(), "techne".to_string()]);
+        let mut results = extract_from_markdown(body, &allowed);
+        assert_eq!(results.len(), 1);
+        let entity = results.remove(0).expect("techne parsed");
+        assert_eq!(entity.uri.to_string(), "x0k:techne/ephemeral-plan-read");
+        assert_eq!(entity.class, "techne");
+        assert_eq!(entity.class_iri, "https://0k.computer/ontology#Techne");
+        assert_eq!(entity.title, "Read the plan from a container");
+
+        let facts = inline_entity_facts(&entity, "x0k:design/ephemeral-device");
+        let has = |p: &str, v: &str| facts.iter().any(|(fp, fv)| fp == p && fv == v);
+        assert!(has("x0k:realizes", "entity:x0k:affordance/ephemeral-environment-approve"), "{facts:?}");
+        assert!(has("x0k:dependsOn", "entity:x0k:techne/ephemeral-device-join"), "{facts:?}");
+        assert!(!facts.iter().any(|(p, _)| p == "x0k:claimedFor"));
+        assert!(extract_from_markdown(body, &allowed_set()).is_empty(), "a reader that admits no techne reads none");
     }
 
     #[test]
@@ -1403,6 +2112,211 @@ mod tests {
     }
 
     #[test]
+    fn a_figure_binds_a_data_fence_as_data_and_a_panel_as_params() {
+        let panel = "x0k:implementation\\/canvas\\/core\\/threshold_gap a folio:Parameter ;\n    folio:default 1.5 .\n";
+        let body = format!(
+            "```turtle folio:graph {{source=\"knobs\"}}\n{panel}```\n\n\
+             ```turtle folio:graph {{source=\"not-a-panel\"}}\naffordance:x a x0k:Affordance .\n```\n\n\
+             ```json x0k:data {{#series}}\n[1, 2]\n```\n\n\
+             ```json x0k:!data {{#shown}}\n[3]\n```\n\n\
+             ```x0k:media {{ref=\"x0k:a/b\" source=\"knobs\"}}\n```\n"
+        );
+        assert_eq!(document_data(&body), vec![DocumentData { name: "series".into(), payload: "[1, 2]\n".into() }]);
+        assert_eq!(data_block_name("turtle folio:graph {source=\"knobs\"}", panel), None, "a panel is not data");
+        let params = document_params(&body);
+        assert_eq!(params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["knobs"]);
+        assert_eq!(params[0].to_json(), r#"{"threshold_gap":1.5}"#);
+        assert_eq!(bound_params("json x0k:data {#series}", "[1, 2]\n"), None);
+        assert_eq!(media_source(r#"x0k:media {ref="x0k:a/b" source="knobs"}"#).as_deref(), Some("knobs"));
+        assert_eq!(media_source(r#"x0k:!media {ref="x0k:a/b" source="knobs"}"#), None);
+    }
+
+    #[test]
+    fn a_panel_hands_its_figure_each_default_by_id_and_leaves_out_a_param_without_one() {
+        let panel = "x0k:implementation\\/canvas\\/core\\/threshold_gap a folio:Parameter ;\n    rdfs:label \"Gap\" ;\n    folio:default 1.5 .\n\n\
+                     x0k:implementation\\/canvas\\/core\\/num_levels a folio:Parameter ;\n    folio:default 4 .\n\n\
+                     x0k:implementation\\/canvas\\/core\\/show_bands a folio:Parameter ;\n    folio:default true .\n\n\
+                     x0k:implementation\\/canvas\\/core\\/falloff a folio:Parameter ;\n    folio:kind \"float\" .\n";
+        assert_eq!(
+            serde_json::Value::Object(panel_params(panel).unwrap()),
+            serde_json::json!({"threshold_gap": 1.5, "num_levels": 4, "show_bands": true})
+        );
+        assert!(panel_params("affordance:x a x0k:Affordance .\n").is_err());
+    }
+
+    #[test]
+    fn a_document_declares_its_params_defaults_in_every_parameter_block() {
+        let chapter = "# A figure\n\n```turtle folio:graph\nx0k:a\\/duration a folio:Parameter ;\n    folio:default 1000 .\n\n\
+                       x0k:a\\/emphasis a folio:Parameter ;\n    folio:kind \"paths\" .\n```\n\n\
+                       ```turtle folio:graph {#run}\nx0k:a\\/grow a folio:Parameter ;\n    folio:default 0.94 .\n```\n\n\
+                       ```turtle folio:graph\naffordance:x a x0k:Affordance .\n```\n";
+        assert_eq!(serde_json::Value::Object(declared_defaults(chapter)), serde_json::json!({"duration": 1000, "grow": 0.94}));
+        let declared: Vec<(String, Option<String>)> = declared_parameters(chapter).into_iter().map(|p| (p.id, p.kind)).collect();
+        assert_eq!(declared, [("duration".to_owned(), None), ("emphasis".to_owned(), Some("paths".to_owned())), ("grow".to_owned(), None)]);
+        let redeclared = format!("{chapter}\n```turtle folio:graph\nx0k:a\\/duration a folio:Parameter ;\n    folio:kind \"duration\" .\n```\n");
+        let duration = declared_parameters(&redeclared).into_iter().next().map(|p| (p.id, p.kind, p.default));
+        assert_eq!(duration, Some(("duration".to_owned(), Some("duration".to_owned()), None)), "a later block's declaration stands, in its first place");
+    }
+
+    #[test]
+    fn a_scene_states_its_params_as_facts_and_its_data_as_one_literal() {
+        let scene = "[] a x0k:Scene ;\n    figure:stations ( \"evaluate\" \"ready\" ) ;\n    figure:hidden () ;\n    \
+                     figure:letters \"N\" ;\n    figure:t 2.5 ;\n    x0k:viewData '{\"value\": \"21\"}'^^rdf:JSON .\n";
+        assert_eq!(
+            read_scene(scene).unwrap(),
+            Scene {
+                params: vec![
+                    ("stations".into(), serde_json::json!(["evaluate", "ready"])),
+                    ("hidden".into(), serde_json::json!([])),
+                    ("letters".into(), serde_json::json!("N")),
+                    ("t".into(), serde_json::json!(2.5)),
+                ],
+                looping: None,
+                data: Some("{\"value\": \"21\"}".into()),
+            }
+        );
+        let params_only = "[] a x0k:Scene ;\n    figure:letters \"\" .\n";
+        assert_eq!(read_scene(params_only).unwrap().data, None);
+        for refused in [
+            "[] figure:letters \"N\" .\n",
+            "[] a x0k:Scene ;\n    rdfs:label \"a scene\" .\n",
+            "[] a x0k:Scene ;\n    x0k:viewData \"{}\" .\n",
+            "[] a x0k:Scene ;\n    figure:letters x0k:Scene .\n",
+        ] {
+            assert!(read_scene(refused).is_err(), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_concepts_block_states_what_its_moment_introduces_and_assumes() {
+        let body = "[] study:introduces ( \"law\" ) ;\n    study:assumes ( \"record\" \"input\" ) .\n";
+        let concepts = concepts_block("turtle {.concepts}", body).unwrap();
+        assert_eq!((concepts.introduces, concepts.assumes), (vec!["law".to_owned()], vec!["record".to_owned(), "input".to_owned()]));
+        let none = concepts_block("turtle {.concepts}", "[] study:introduces () ;\n    study:assumes () .\n").unwrap();
+        assert_eq!(none, Concepts::default(), "an empty list introduces nothing");
+        assert_eq!(concepts_block("turtle folio:graph {#run}", body), None, "another block is no concepts block");
+        assert_eq!(concepts_block("turtle {.concepts}", "[] study:introduces ( \"law\" "), None, "Turtle that does not read");
+    }
+
+    /// Every scene station 1's script states, as its block's Turtle, or
+    /// `None` in a workspace with no corpus: a publication of this crate
+    /// ships no manuscripts. Inside the corpus a missing script fails.
+    fn script_scenes() -> Option<Vec<String>> {
+        let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test"));
+        let root = manifest.ancestors().find(|dir| dir.join("Cargo.lock").is_file()).expect("a workspace root above the crate");
+        if !root.join("corpora").is_dir() {
+            return None;
+        }
+        let path = root.join("corpora/x0k/manuscripts/understanding-x0k/station-1-script.md");
+        let script = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        Some(fenced_blocks(&script).into_iter().filter(|(info, body)| is_marker(info, GRAPH_MARKER) && read_scene(body).is_ok()).map(|(_, body)| body).collect())
+    }
+
+    #[test]
+    fn a_param_stated_as_json_is_the_value_it_spells_and_malformed_json_is_refused_naming_the_param() {
+        let transition = r#"'{"carry":{"start":0,"end":1},"leave":{"start":0,"end":0.5},"enter":{"start":0.5,"end":1}}'^^rdf:JSON"#;
+        let scene = format!("[] a x0k:Scene ;\n    figure:transition {transition} ;\n    figure:keys '[1, {{\"at\": 2}}]'^^rdf:JSON .\n");
+        let expected = serde_json::json!({"carry": {"start": 0, "end": 1}, "leave": {"start": 0, "end": 0.5}, "enter": {"start": 0.5, "end": 1}});
+        assert_eq!(read_scene(&scene).unwrap().params, [("transition".to_owned(), expected), ("keys".to_owned(), serde_json::json!([1, {"at": 2}]))]);
+        let malformed = "[] a x0k:Scene ;\n    figure:letters \"N\" ;\n    figure:transition '{\"carry\": '^^rdf:JSON .\n";
+        let refused = read_scene(malformed).unwrap_err();
+        assert!(matches!(&refused, InlineEntityError::MalformedParam { param, .. } if param == "transition"), "{refused:?}");
+        assert!(refused.to_string().contains("`transition`"), "{refused}");
+        let panel = "x0k:a\\/transition a folio:Parameter ;\n    folio:default '{\"carry\": {\"start\": 0, \"end\": 1}}'^^rdf:JSON .\n";
+        assert_eq!(serde_json::Value::Object(panel_params(panel).unwrap()), serde_json::json!({"transition": {"carry": {"start": 0, "end": 1}}}));
+        let malformed_default = panel.replace("}}'", "}'");
+        assert!(matches!(panel_params(&malformed_default), Err(InlineEntityError::MalformedParam { param, .. }) if param == "transition"));
+    }
+
+    #[test]
+    fn a_scene_written_back_reads_as_itself_and_spells_the_scripts_blocks() {
+        let Some(scenes) = script_scenes() else {
+            return;
+        };
+        assert!(scenes.len() >= 13, "the script states its scenes: {}", scenes.len());
+        for body in &scenes {
+            let scene = read_scene(body).unwrap();
+            let written = scene_turtle(&scene).unwrap();
+            assert_eq!(read_scene(&written).unwrap(), scene, "{written}");
+            assert_eq!(&written, body, "a hand-written scene is written back as it was written");
+        }
+    }
+
+    #[test]
+    fn every_value_a_scene_states_survives_the_round_trip() {
+        let params = vec![
+            ("hidden".to_owned(), serde_json::json!([])),
+            ("caption".to_owned(), serde_json::json!("say \"hi\" \\ then\nleave\t")),
+            ("t".to_owned(), serde_json::json!(2.5)),
+            ("speed".to_owned(), serde_json::json!(-3)),
+            ("tiny".to_owned(), serde_json::json!(1e-7)),
+            ("shown".to_owned(), serde_json::json!(true)),
+            ("nested".to_owned(), serde_json::json!([["1", "1.0"], [], [2, false]])),
+            ("transition".to_owned(), serde_json::json!({"carry": {"start": 0, "end": 1.0, "ease": "cubic-in-out"}, "leave": {"start": 0, "end": 0.5}})),
+            ("quoted".to_owned(), serde_json::json!({"say": "it's \"so\" \\ ''' then", "none": null})),
+            ("keyed".to_owned(), serde_json::json!([1, [{"at": 2.5}]])),
+        ];
+        let data = [
+            None,
+            Some(r#"{"value": "21"}"#),
+            Some(r#"{"value": "(<66> ('Add' 21 21))"}"#),
+            Some(r#"{"quoted": "a \"b\" c"}"#),
+            Some("{\"lines\": 2}\n'"),
+            Some("it's ''' long"),
+        ];
+        for data in data {
+            let scene = Scene { params: params.clone(), looping: None, data: data.map(str::to_owned) };
+            let written = scene_turtle(&scene).unwrap();
+            assert_eq!(read_scene(&written).unwrap(), scene, "{written}");
+        }
+        let lit = Scene { params: Vec::new(), looping: None, data: Some(r#"{"value": "(<66> ('Add' 21 21))"}"#.into()) };
+        assert_eq!(scene_turtle(&lit).unwrap(), "[] a x0k:Scene ;\n    x0k:viewData '''{\"value\": \"(<66> ('Add' 21 21))\"}'''^^rdf:JSON .\n");
+        let shaped = Scene { params: vec![("prior".to_owned(), serde_json::json!({"letters": "N", "camera": "it's"}))], looping: None, data: None };
+        assert_eq!(scene_turtle(&shaped).unwrap(), "[] a x0k:Scene ;\n    figure:prior '''{\"camera\":\"it's\",\"letters\":\"N\"}'''^^rdf:JSON .\n");
+        assert_eq!(read_scene(&scene_turtle(&Scene::default()).unwrap()).unwrap(), Scene::default());
+        for (name, value) in [("letters", serde_json::Value::Null), ("two words", serde_json::json!("N"))] {
+            let refused = Scene { params: vec![(name.to_owned(), value)], looping: None, data: None };
+            assert_eq!(scene_turtle(&refused), Err(UnstatableParam { param: name.to_owned() }));
+        }
+    }
+
+    #[test]
+    fn a_scene_states_its_loop_as_one_literal_and_writes_it_back_as_written() {
+        let block = "[] a x0k:Scene ;\n    figure:t 48.5 ;\n    x0k:loop '{\"count\":3,\"from\":48.5,\"param\":\"t\",\"period\":29500,\"to\":78}'^^rdf:JSON ;\n    \
+                     x0k:viewData '{\"value\": \"21\"}'^^rdf:JSON .\n";
+        let scene = read_scene(block).unwrap();
+        assert_eq!(scene.looping, Some(Loop { param: "t".into(), from: 48.5, to: 78.0, period: 29500.0, count: Some(3) }));
+        assert_eq!(scene_turtle(&scene).unwrap(), block, "keys in name order, whole numbers as integers");
+        let endless = Scene { looping: Some(Loop { count: None, ..scene.looping.clone().unwrap() }), ..Scene::default() };
+        assert_eq!(read_scene(&scene_turtle(&endless).unwrap()).unwrap(), endless);
+        let looping = |json: &str| format!("[] a x0k:Scene ;\n    x0k:loop '{json}'^^rdf:JSON .\n");
+        for (json, says) in [
+            (r#"{"from":0,"param":"t","period":1000,"to":4,"speed":2}"#, "`speed`"),
+            (r#"{"from":0,"param":"glow","period":1000,"to":4}"#, "`glow`"),
+            (r#"{"from":0,"period":1000,"to":4}"#, "`param`"),
+            (r#"{"from":4,"param":"t","period":1000,"to":4}"#, "empty"),
+            (r#"{"from":0,"param":"t","period":0,"to":4}"#, "`period`"),
+            (r#"{"count":0,"from":0,"param":"t","period":1000,"to":4}"#, "`count`"),
+            (r#"{"count":1.5,"from":0,"param":"t","period":1000,"to":4}"#, "`count`"),
+            (r#"[0, 4]"#, "object"),
+        ] {
+            let refused = read_scene(&looping(json)).unwrap_err().to_string();
+            assert!(refused.contains("x0k:loop") && refused.contains(says), "{json}: {refused}");
+        }
+        let twice = "[] a x0k:Scene ;\n    x0k:loop '{\"from\":0,\"param\":\"t\",\"period\":1000,\"to\":4}'^^rdf:JSON, '{\"from\":0,\"param\":\"t\",\"period\":2000,\"to\":4}'^^rdf:JSON .\n";
+        assert!(read_scene(twice).is_err(), "one loop");
+    }
+
+    #[test]
+    fn a_figure_binding_a_scene_receives_its_data_literal() {
+        let body = "```turtle folio:graph {#run}\n[] a x0k:Scene ;\n    figure:letters \"N\" ;\n    \
+                    x0k:viewData '{\"value\": \"21\"}'^^rdf:JSON .\n```\n\n\
+                    ```turtle folio:graph {#run}\n[] a x0k:Scene ;\n    figure:letters \"NA\" .\n```\n";
+        assert_eq!(document_data(body), vec![DocumentData { name: "run".into(), payload: "{\"value\": \"21\"}".into() }]);
+        assert_eq!(data_block_name("turtle folio:graph {#run}", "[] a x0k:Scene ;\n    figure:letters \"NA\" .\n").as_deref(), Some("run"));
+    }
+
+    #[test]
     fn document_edges_unions_the_header_and_the_prose_once_each() {
         let mut header = BTreeMap::new();
         header.insert("x0k:presupposes".to_string(), vec!["x0k:wiki/a".to_string()]);
@@ -1414,7 +2328,7 @@ mod tests {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [inline-entity](#chunk-inline-entity) · [error](#chunk-error) · [read-graph-block](#chunk-read-graph-block) · [parameters](#chunk-parameters) · [extract](#chunk-extract) · [finalize](#chunk-finalize) · [icon-record](#chunk-icon-record) · [description](#chunk-description) · [resources](#chunk-resources) · [facts](#chunk-facts) · [prose-edges](#chunk-prose-edges) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/inline_entity.rs`](../../crates/x0k-folio/src/inline_entity.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [inline-entity](#chunk-inline-entity) · [error](#chunk-error) · [read-graph-block](#chunk-read-graph-block) · [parameters](#chunk-parameters) · [document-data](#chunk-document-data) · [extract](#chunk-extract) · [finalize](#chunk-finalize) · [icon-record](#chunk-icon-record) · [description](#chunk-description) · [resources](#chunk-resources) · [facts](#chunk-facts) · [prose-edges](#chunk-prose-edges) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -1426,6 +2340,8 @@ mod tests {
 <<read-graph-block>>
 
 <<parameters>>
+
+<<document-data>>
 
 <<extract>>
 

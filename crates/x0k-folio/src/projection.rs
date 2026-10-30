@@ -17,8 +17,6 @@
 //! `folio/v2` but each carries its own `PathTemplate` +
 //! `LiveEditPolicy`.
 
-use crate::colophon::{parse_envelope, replace_body, BODY_FORMAT_HTML};
-use crate::html_canonical::normalize_html;
 use anyhow::{Context, Result};
 use x0k_types::operations::DocumentOp;
 use x0k_types::projection_plugin::{
@@ -81,28 +79,8 @@ impl ProjectionParser for ColophonProjection {
             std::str::from_utf8(old).context("folio parse_diff: old bytes are not UTF-8")?;
         let new =
             std::str::from_utf8(new).context("folio parse_diff: new bytes are not UTF-8")?;
-        // HTML bodies are normalized on write so concurrent edits round-trip
-        // through Loro without diff drift. Markdown bodies pass through
-        // unchanged. If the new content isn't parseable as a folio
-        // document (no header yet, raw body), fall back to the verbatim diff.
-        let new_canonicalized = canonicalize_html_body_if_needed(new);
-        let new_str = new_canonicalized.as_deref().unwrap_or(new);
-        Ok(build_text_diff_ops(old, new_str))
+        Ok(build_text_diff_ops(old, new))
     }
-}
-
-/// If `content` parses as a folio document with an HTML body, return the
-/// canonicalized form (header kept, body normalized). Otherwise return
-/// `None` — the caller treats the input verbatim.
-///
-/// This is the single chokepoint where HTML bodies pick up canonical
-/// normalization before being written into the Loro `content` text path.
-fn canonicalize_html_body_if_needed(content: &str) -> Option<String> {
-    let (env, body) = parse_envelope(content).ok()?;
-    if env.body_format != BODY_FORMAT_HTML {
-        return None;
-    }
-    Some(replace_body(content, &normalize_html(&body)))
 }
 
 /// Build the minimal set of Loro text ops that take `old_content` to

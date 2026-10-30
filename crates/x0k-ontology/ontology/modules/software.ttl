@@ -1,35 +1,42 @@
-# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.
-# Bootstrap source: this view seeds an empty region exactly once.
+# Authored: edit this file, then run tools/ontology-fixpoint --write (corpora/x0k/ontology/AGENTS.md).
+# The concept region seeds from it when empty; a concept-region fact overrides it.
 # Module: software
 
 <https://0k.computer/ontology#Affordance> <http://purl.org/dc/terms/references> "Gibson, J.J. (1979). The Ecological Approach to Visual Perception, ch. 8." .
 <https://0k.computer/ontology#Affordance> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#Affordance> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#Affordance> <http://www.w3.org/2000/01/rdf-schema#comment> "A relational property between an actor and the system: what the coupled actor+system can accomplish through the system's real surfaces. Gibsonian; actor-relative; eval-verified." .
+<https://0k.computer/ontology#Affordance> <http://www.w3.org/2000/01/rdf-schema#comment> "What a human can accomplish through the system's real surfaces, verified by eval. Every affordance names something a human can do; claiming it for an AI agent as well states parity: an agent can do what a human can, where permitted and sensible. What only an agent can do is a Techne." .
 <https://0k.computer/ontology#Affordance> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#Affordance> <http://www.w3.org/2000/01/rdf-schema#label> "Affordance" .
+<https://0k.computer/ontology#Affordance> <http://www.w3.org/2004/02/skos/core#scopeNote> "A relational property between an actor and the system: what the coupled actor+system can accomplish through the system's real surfaces. Gibsonian; actor-relative; eval-verified." .
+<https://0k.computer/ontology#Affordance> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/entity> .
 <https://0k.computer/ontology#Signifier> <http://purl.org/dc/terms/references> "Norman, D. (2013). The Design of Everyday Things, revised ed., preface." .
 <https://0k.computer/ontology#Signifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#Signifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#comment> "A perceivable cue on a specific surface that indicates to an actor that an action is available here: GUI button, palette entry, keybinding label, CLI --help text, hint, icon. The perceivable aspect of an affordance." .
+<https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#comment> "A surface cue that makes an action noticeable to an actor (button, menu item, help entry, keybinding label). Following Norman's later clarification: the perceivable cue is a signifier, not the affordance itself." .
 <https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#Signifier> <http://www.w3.org/2000/01/rdf-schema#label> "Signifier" .
+<https://0k.computer/ontology#Signifier> <http://www.w3.org/2004/02/skos/core#scopeNote> "A perceivable cue on a specific surface that indicates to an actor that an action is available here: GUI button, palette entry, keybinding label, CLI --help text, hint, icon. The perceivable aspect of an affordance." .
+<https://0k.computer/ontology#Signifier> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/entity> .
 <https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/2000/01/rdf-schema#comment> "A crate that embodies one or more technai. The most common form of Artifact." .
 <https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/2000/01/rdf-schema#label> "Software Module" .
 <https://0k.computer/ontology#SoftwareModule> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://0k.computer/ontology#Artifact> .
+<https://0k.computer/ontology#SoftwareModule> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/entity> .
 <https://0k.computer/ontology#Surface> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <https://0k.computer/ontology#Surface> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#Surface> <http://www.w3.org/2000/01/rdf-schema#comment> "A protocol or interface through which actors and readers meet the system. Two directions share the word. INBOUND surfaces are the invocation faces through which an actor reaches the system to act — MCP, CLI, SDK, GUI, keyboard, voice, palette (the descriptor detail is operation-surface's). OUTBOUND surfaces are the faces onto which a Publication projects a region of the graph for readers (publishedOn -> Surface): x0k-native (the document/motif renderer) or an external protocol (DFOS, ActivityPub, ATProto, IndieWeb). An external outbound surface additionally carries a direction (one-way syndication, or two-way where inbound replies fold back into the graph as observations) and an identity face (the owner's did:key projected as that network's own identity). See corpora/x0k/decisions/architecture/surfaces/publication-projection.md." .
 <https://0k.computer/ontology#Surface> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#Surface> <http://www.w3.org/2000/01/rdf-schema#label> "Surface" .
+<https://0k.computer/ontology#Surface> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/entity> .
 <https://0k.computer/ontology#claimedFor> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#claimedFor> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#claimedFor> <http://www.w3.org/2000/01/rdf-schema#comment> "Actor kind(s) for which the affordance's claim is made. (Affordance, Actor) is a distinct verifiable tuple — the same underlying techne may afford different things to different actors, and those are separate claims." .
+<https://0k.computer/ontology#claimedFor> <http://www.w3.org/2000/01/rdf-schema#comment> "Actor kinds the affordance's claim is made for: at least one human kind (human or operator), and ai_agent as well where an agent can do it too. Each (Affordance, actor kind) pair is a distinct verifiable claim." .
 <https://0k.computer/ontology#claimedFor> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Affordance> .
 <https://0k.computer/ontology#claimedFor> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#claimedFor> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#cue> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
 <https://0k.computer/ontology#cue> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#comment> "What a signifier presents to perception, as the actor meets it: the command, function name, label or keybinding through which the affordance it signifies is found." .
@@ -37,60 +44,64 @@
 <https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#label> "cue" .
 <https://0k.computer/ontology#cue> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<https://0k.computer/ontology#cue> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#defines> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#defines> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#comment> "A Design defines the affordances that follow from its experience-shape decision. The affordance is then verified independently by its literate spec; the design is realized when a publication ships the modules that enable them." .
 <https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Design> .
 <https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#defines> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
-<https://0k.computer/ontology#enabledBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
-<https://0k.computer/ontology#enabledBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#enabledBy> <http://www.w3.org/2000/01/rdf-schema#comment> "Affordance enabledBy SoftwareModule: the module that embodies the techne making this affordance possible. The dominant case across the inline `x0k:affordance` blocks under decisions/design/*.md. Multi-valued; an affordance may be enabled by several upstream modules composed together. Distinct from claimedFor (the actor) and signifies (the perceptual cue): enabledBy is the *substrate* relation that makes the affordance be the case. (At runtime the legacy `grove/enabled-by` link accepts arbitrary entity URIs — services, devices, external systems — but the schema-level relation centers on SoftwareModule, which is the case the federator's class registry can validate.)" .
-<https://0k.computer/ontology#enabledBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Affordance> .
-<https://0k.computer/ontology#enabledBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#defines> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#comment> "The specific surface on which a signifier is presented — a keybinding on an input surface, a button on a graphical one." .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Signifier> .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Surface> .
+<https://0k.computer/ontology#presentedOn> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#comment> "A decision (a design, or a publication) declares that a signifier is presented as part of its experience contract." .
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#presentsSignifier> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Signifier> .
+<https://0k.computer/ontology#presentsSignifier> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#proves> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#proves> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#proves> <http://www.w3.org/2000/01/rdf-schema#comment> "The chunk that tangles a test proves an affordance: authored as the proves= attribute on the code block declaring the test, addressed as <implementation id>#<chunk name>, so the proof lives on the code and a renamed or deleted test is a dangling edge the checker reports. The affordance's verifiedBy is the derived dual; nothing on a design names a test. Status is derived from it: proven when a proving chunk's tests ran green at projection, declared when the affordance has a face and no proof, claimed when it has neither." .
 <https://0k.computer/ontology#proves> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Implementation> .
 <https://0k.computer/ontology#proves> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#proves> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
+<https://0k.computer/ontology#proves> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#comment> "The Surface on which this Publication is published: wherever the region meets its audience — a runtime listener bound to one configuration, a repository host, a package registry, a release channel, an operating system its modules are built to run on." .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#publishedOn> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Surface> .
+<https://0k.computer/ontology#publishedOn> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#requires> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#requires> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#requires> <http://www.w3.org/2000/01/rdf-schema#comment> "Affordance requires Affordance: the second affordance must already hold for the first to hold. Affordance dependency graph; distinct from Techne dependsOn (substrate composition) and Decision dependsOn (decision rests on decision). Many-to-many; transitive at query time." .
 <https://0k.computer/ontology#requires> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Affordance> .
 <https://0k.computer/ontology#requires> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#requires> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
+<https://0k.computer/ontology#requires> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#signifies> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#signifies> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#comment> "A signifier signifies an affordance — it is the perceivable cue (button, label, keybinding hint, default suggestion) that indicates to an actor that the affordance is available here. Techne realizes the affordance; signifier signifies it. The two together make the affordance both real and reachable; either alone is incomplete (techne without signifier is unreachable for perception-dependent actors; signifier without techne is a broken promise)." .
 <https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Signifier> .
 <https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#signifies> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Affordance> .
+<https://0k.computer/ontology#signifies> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "What proves an affordance holds: an executable spec at any rung - a LiterateSpec the eval harness drives, or a chunk of an Implementation that tangles a test and declares proves= for it (the derived dual of proves). The admissible targets are a shape on software; the term itself has no range, because the two classes live in document and the constraint is contextual (vocabulary-shapes §3)." .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
+<https://0k.computer/ontology#verifiedBy> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology/software> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
-<https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#comment> "The publishable software vocabulary: SoftwareModule, Affordance, Signifier, Surface, and their relations to documents and implementations. SoftwareModule is here so that a publication shipping core, document, and software can name the crates it publishes (software-module:<crate>) in the vocabulary it ships; its Artifact superclass is in document. enabledBy belongs here through its Affordance domain; its SoftwareModule target constraint is a shape. A publication can select core, document, and software without importing work or product." .
+<https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#comment> "The publishable software vocabulary: SoftwareModule, Affordance, Signifier, Surface, and their relations to documents and implementations. SoftwareModule is here so that a publication shipping core, document, and software can name the crates it publishes (software-module:<crate>) in the vocabulary it ships; its Artifact superclass is in document. A publication can select core, document, and software without importing work or product." .
 <https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#label> "software" .
 <https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
 <https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/document> .

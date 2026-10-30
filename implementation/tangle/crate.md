@@ -165,6 +165,7 @@ pub mod pipeline;
 pub mod pipeline_runner;
 pub mod region_gfm;
 pub mod resolve;
+pub mod retarget;
 pub mod source_ref;
 pub mod stitch;
 pub mod sync;
@@ -681,13 +682,13 @@ struct Cli {
 
 The subcommands are the literate verbs, and they operate on documents
 in place: `tangle`, `check`, `affordances`, `declarations`, `icon`,
-`sync`, `index`, `weave`, and `list`. The verbs that publish a
+`sync`, `index`, `weave`, `list`, and `retarget`. The verbs that publish a
 collection follow them (§ "Publishing a collection"), and the corpus
 build adds its own last (§ "The corpus build's verbs"). Each variant's doc comment is
 its `--help` text, so the clap derive below is also the user-facing
 contract.
 
-<a name="chunk-command-enum"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [declarations-command](#chunk-declarations-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [list-command](#chunk-list-command) · [repository-commands](#chunk-repository-commands) · [corpus-commands](#chunk-corpus-commands)</sub>
+<a name="chunk-command-enum"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#command-enum` · assembles [tangle-command](#chunk-tangle-command) · [check-command](#chunk-check-command) · [affordances-command](#chunk-affordances-command) · [declarations-command](#chunk-declarations-command) · [icon-command](#chunk-icon-command) · [sync-command](#chunk-sync-command) · [index-command](#chunk-index-command) · [weave-command](#chunk-weave-command) · [list-command](#chunk-list-command) · [retarget-command](#chunk-retarget-command) · [repository-commands](#chunk-repository-commands) · [corpus-commands](#chunk-corpus-commands)</sub>
 
 ```rust {#command-enum file="src/cli.rs"}
 #[derive(Subcommand)]
@@ -701,12 +702,13 @@ enum Command {
     <<index-command>>
     <<weave-command>>
     <<list-command>>
+    <<retarget-command>>
     <<repository-commands>>
     <<corpus-commands>>
 }
 ```
 
-Five of the verbs are the perceivable cue for an affordance a
+Six of the verbs are the perceivable cue for an affordance a
 publication of this crate claims for a human, and each declares that
 under its own heading: a signifier is recorded where the face lives,
 so the chapter that ships carries the cue with it
@@ -961,6 +963,20 @@ Icon {
 
 ### `x0k-tangle sync`
 
+Fill every `from=` chunk under the paths from the file and symbol it
+names: the affordance of [quoting code a document does not own and
+keeping the quote current](../../decisions/design/corpus/literate-programming/quote-code-you-already-have.md "x0k:affordance/quote_code_from_its_source"),
+from a shell. `check` reads the same chunks without writing and fails
+once a quote and its source differ.
+
+<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d73796e63-5"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-sync" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle sync · <code>https://0k.computer/ontology#signifier/x0k-tangle-sync</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d73796e63-5">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d73796e63-5"></a>
+
+```turtle folio:graph
+signifier:x0k-tangle-sync a x0k:Signifier ;
+    x0k:signifies affordance:quote_code_from_its_source ;
+    x0k:presentedOn surface:cli .
+```
+
 <a name="chunk-sync-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#sync-command`</sub>
 
 ```rust {#sync-command file="src/cli.rs"}
@@ -973,6 +989,44 @@ Sync {
     #[arg(long)]
     workspace: Option<PathBuf>,
 },
+```
+
+### `x0k-tangle retarget`
+
+Move a tangled output to a new path by rewriting the documents that write
+it, then re-tangle and prove the bytes did not change
+([`retarget.md`](retarget.md)). It is the step a crate split repeats for
+every module it moves.
+
+<a name="chunk-retarget-command"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#retarget-command`</sub>
+
+```rust {#retarget-command file="src/cli.rs"}
+/// Move a tangled output to a new path: rewrite the documents that write it, re-tangle, and prove every byte stayed
+Retarget {
+    /// The output's current path, relative to the workspace root
+    from: PathBuf,
+    /// Its new path, relative to the workspace root
+    to: PathBuf,
+    /// Move the whole document to this crate directory (its only output must be FROM)
+    #[arg(long = "crate")]
+    new_crate: Option<PathBuf>,
+    /// Workspace root (defaults to current directory)
+    #[arg(long)]
+    workspace: Option<PathBuf>,
+},
+```
+
+<a name="chunk-dispatch-retarget"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-retarget`</sub>
+
+```rust {#dispatch-retarget file="src/cli.rs"}
+Command::Retarget { from, to, new_crate, workspace } => {
+    let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
+    let registry = (host.registry)();
+    for moved in crate::retarget::retarget_output(&ws, &from, &to, new_crate.as_deref(), &registry)? {
+        eprintln!("  {} — {}", moved.document.display(), moved.rewrites.join("; "));
+    }
+    eprintln!("retargeted {} -> {}", from.display(), to.display());
+}
 ```
 
 ### `x0k-tangle index`
@@ -999,7 +1053,7 @@ Weave one literate document into HTML — prose and highlighted code
 together as a single page, to a directory or to stdout: the affordance
 of [reading a document as the woven page it describes](../../decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md "x0k:affordance/weave_a_document"), from a shell.
 
-<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-5"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-weave" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle weave · <code>https://0k.computer/ontology#signifier/x0k-tangle-weave</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-5">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-5"></a>
+<a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-6"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-weave" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle weave · <code>https://0k.computer/ontology#signifier/x0k-tangle-weave</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-6">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d7765617665-6"></a>
 
 ```turtle folio:graph
 signifier:x0k-tangle-weave a x0k:Signifier ;
@@ -1088,7 +1142,7 @@ contract, and a sentence true of one binary must not print in another.
 The corpus build gets one more say over its help lines first, for the
 same reason.
 
-<a name="chunk-main-fn"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-declarations](#chunk-dispatch-declarations) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-list](#chunk-dispatch-list)</sub>
+<a name="chunk-main-fn"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#main-fn` · assembles [dispatch-tangle](#chunk-dispatch-tangle) · [dispatch-sync](#chunk-dispatch-sync) · [dispatch-check](#chunk-dispatch-check) · [dispatch-affordances](#chunk-dispatch-affordances) · [dispatch-declarations](#chunk-dispatch-declarations) · [dispatch-icon](#chunk-dispatch-icon) · [dispatch-index](#chunk-dispatch-index) · [dispatch-weave](#chunk-dispatch-weave) · [dispatch-list](#chunk-dispatch-list) · [dispatch-retarget](#chunk-dispatch-retarget)</sub>
 
 ```rust {#main-fn file="src/cli.rs"}
 /// Parse the process arguments and run the verb they name, as `host`.
@@ -1120,6 +1174,8 @@ pub fn run(host: &Host) -> Result<()> {
         <<dispatch-weave>>
 
         <<dispatch-list>>
+
+        <<dispatch-retarget>>
 
         Command::Repository(verb) => crate::run_repository(verb)?,
 

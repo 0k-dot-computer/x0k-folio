@@ -390,7 +390,7 @@ The provenance names the publication by URI, not by path — the clone
 does not carry the publication doc (it is a decision, outside the
 disclosed region). Ours are few and live under one directory — flat, or
 one directory per publication beside its assets, which is how ours are
-kept (`publications/x0k-folio/x0k-folio.md`) — so a shallow scan is the
+kept (`corpora/x0k/publications/x0k-folio/x0k-folio.md`) — so a shallow scan is the
 first resolver. A collection that is not ours files its publication
 wherever its authors file things, and no registry says where; the id is
 still the identity, so a publication the scan does not find is looked
@@ -1868,8 +1868,9 @@ const NESTED_CRATE: &str = "crates/app/demo-crate";
 const NESTED_CORE: &str = "crates/core/demo-core";
 /// The publication in a directory of its own, as ours are kept.
 const NESTED_PUB_REL: &str = "decisions/publications/demo/demo.md";
-const MODULE_FIXTURE: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ontology-modules/core.ttl");
+fn module_fixture() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR when it runs a test")).join("tests/fixtures/ontology-modules/core.ttl")
+}
 
 const NESTED_PUB: &str = "# Demo\n\n```turtle folio:document\npublication:demo a x0k:Publication ;\n    x0k:status \"proposed\" ;\n    x0k:license \"MIT\" ;\n    x0k:copyright \"Demo Authors\" ;\n    x0k:publishes x0k:software-module\\/demo-crate,\n        x0k:software-module\\/demo-core,\n        x0k:ontology-module\\/core ;\n    x0k:entryPoint x0k:software-module\\/demo-crate ;\n    folio:tangleRoot \"README.md\" .\n```\n\n```markdown {#readme}\n# Demo\n\nA demo publication.\n\n<!-- x0k:contents -->\n```\n";
 
@@ -1936,7 +1937,7 @@ fn nested_workspace(organized: bool) -> tempfile::TempDir {
     std::fs::write(ws.join(NESTED_PUB_REL), publication).unwrap();
     let modules = ws.join("corpora/x0k/ontology/modules");
     std::fs::create_dir_all(&modules).unwrap();
-    std::fs::copy(MODULE_FIXTURE, modules.join("core.ttl")).unwrap();
+    std::fs::copy(module_fixture(), modules.join("core.ttl")).unwrap();
     tangle_document(&ws.join(DOC_REL), ws, &PipelineRegistry::default()).expect("tangle");
     assert!(
         std::fs::read_to_string(ws.join(NESTED_CRATE).join("src/lib.rs"))

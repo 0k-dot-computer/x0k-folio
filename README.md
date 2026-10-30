@@ -8,25 +8,105 @@ Folio turns a folder of Markdown into a typed, checked graph: documents
 declare what they are and how they relate, own or quote code, and can be
 queried and published as a set.
 
+Documentation drifts away from the code it describes, and from the other
+documents it names, because nothing checks one against the other. Folio adds
+that check to CI, for the parts of your documentation you opt in. It is
+before 1.0; [Status](#status) says what is released and what is not done yet.
+
+## What you (or your agent) can do with this
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/derive-dark.svg">
+  <img alt="one document tangles to source which a machine runs, and weaves to a page which a person reads" src="assets/diagrams/derive-light.svg">
+</picture>
+
+The smallest case is one document that holds a program and its explanation:
+**tangling** writes its code blocks out as source files, and **weaving**
+renders the same document as a page to read. The rest works on documents
+that say what they are, so the tools can check them as a set:
+
+- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/tangle-source-from-a-document-dark.svg"><img alt="Project source code out of a document" src="assets/icons/tangle-source-from-a-document-light.svg" height="20"></picture> **[Project source code out of a document](decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)**
+
+  <p>Collect a document's code blocks into source files a compiler can build.</p>
+
+- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/weave-a-document-dark.svg"><img alt="Read a document as the woven artifact" src="assets/icons/weave-a-document-light.svg" height="20"></picture> **[Read a document as the woven artifact](decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)**
+
+  <p>Read the explanation and code together, with each reference to another code block a link to where that block is defined.</p>
+
+- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/quote-code-from-its-source-dark.svg"><img alt="Quote code you already have" src="assets/icons/quote-code-from-its-source-light.svg" height="20"></picture> **[Quote code you already have](decisions/design/corpus/literate-programming/quote-code-you-already-have.md)**
+
+  <p>Quote a function or type from a source file, and be told when the quote no longer matches it.</p>
+
+- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/check-a-document-against-shipped-vocabulary-dark.svg"><img alt="Check a document against its vocabulary" src="assets/icons/check-a-document-against-shipped-vocabulary-light.svg" height="20"></picture> **[Check a document against its vocabulary](decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)**
+
+  <p>Find metadata and relationships that do not match the document vocabulary.</p>
+
+- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/query-the-documents-dark.svg"><img alt="Query the documents" src="assets/icons/query-the-documents-light.svg" height="20"></picture> **[Query the documents](decisions/design/corpus/publish-a-region-as-a-repository/query-the-documents.md)**
+
+  <p>Ask questions across a collection's concepts, instances, and relationships.</p>
+
+And a set of documents can be [published](#a-set-to-publish) as a repository
+of its own, as this one is.
+
+An agent can do all of it for you: the documents are Markdown, the headers are
+a few lines it writes, and the checks tell it when it got one wrong. The
+[implementation map](IMPLEMENTATION.md) lists every capability with its
+declaration and the tests that prove it.
+
+## Getting started
+
+### Does it fit?
+
 Where to start depends on what your documents already are:
 
-- **Decision records, design docs, an ADR directory.** Give each one a header
-  and let [`check`](#typed-documents) fail CI when a header names a document
-  that is not there, such as after an unfinished rename; `query` lists what is
-  current and what replaced what.
-- **Docs that quote code.** [Mirror](#quote-code-you-already-have) the quoted
+- **Decision records, design docs, an ADR directory.** Give each one a
+  [header](#decision-records-and-design-docs) and let `check` fail CI when a
+  header names a document that is not there; `query` lists what is current
+  and what replaced what.
+- **Docs that quote code.** [Mirror](#docs-that-quote-code) the quoted
   symbols, so a page that quotes a function fails CI when the function
   changes. Your code stays where it is.
 - **Code whose explanation matters as much as the code.** Let the document
-  [own it](#a-document-that-owns-its-code): its code blocks are the source, and
-  the files are generated from them.
+  [own it](#code-the-document-owns): its code blocks are the source, and the
+  files are generated from them.
 - **A set you want to publish.** Name its documents in a
-  [publication](#vocabularies-and-publications), and `publish-repo` writes
-  them as a repository of their own and pushes it.
+  [publication](#a-set-to-publish), and `publish-repo` writes them as a
+  repository of their own and pushes it.
 
-## A document that owns its code
+If your documentation is a few pages that neither quote code nor name one
+another, there is nothing here for Folio to check, and you do not need it.
 
-Here is a whole document, `docs/occlusion.md`:
+If you evaluate tools with an agent, this prompt starts it in the right
+places:
+
+```
+Read https://github.com/0k-dot-computer/x0k-folio, starting with README.md and
+guides/INTEGRATING.md. Look at my project. Where would typed documents or code
+generated from documents be useful? Name a specific place to start, show
+a small example, and explain the cost of keeping it up to date.
+```
+
+### Install
+
+```sh
+curl -fsSL https://0k.computer/folio/install.sh | sh
+```
+
+This installs `x0k-tangle` and `x0k-folio-cli` for Linux or macOS (x86_64 or
+arm64) from [the latest release](https://github.com/0k-dot-computer/x0k-folio/releases),
+checking each archive against the release's `SHA256SUMS` before anything is
+written. The address is this project's own domain and redirects to the
+release's `install.sh`; to do the same by hand, download your platform's
+archive and `SHA256SUMS` from the release page and run `shasum -a 256 -c`.
+On Windows, take the `.zip` from the release page. With a Rust toolchain,
+`cargo install x0k-tangle` builds the tangler from crates.io instead.
+[Setup](guides/INTEGRATING.md#setup) covers pinning a version, verifying build
+provenance, and building from source.
+
+### Try it on one document
+
+To see the mechanism before you touch your project, write this whole
+document as `docs/occlusion.md` in an empty folder:
 
 ````markdown
 # Ambient occlusion
@@ -53,19 +133,17 @@ export declare function occlusion(samples: number[]): number;
 ```
 ````
 
-Then, with the tools [installed](#install):
+Then tangle it:
 
 ```sh
 x0k-tangle tangle docs/occlusion.md --workspace .
 ```
 
-**Tangling** is that step — collecting a document's code blocks into source
-files. It writes `src/occlusion.js` and `src/occlusion.d.ts`, each opening
-with a `@generated` header in that file's own comment style, plus a
+It writes `src/occlusion.js` and `src/occlusion.d.ts`, each opening with a
+`@generated` header in that file's own comment style, plus a
 `docs/occlusion.tangle-map.json` sidecar recording which chunk produced which
-file. The Turtle block under the title is the document's own header:
-`folio:tangleRoot` names the file a chunk lands in when it names no other,
-and the rest of it says [what the document is](#typed-documents).
+file. `x0k-tangle weave docs/occlusion.md --output-dir site` renders the same
+document as a page.
 
 One document, two files, two languages. The declarations and the code they
 declare cannot fall out of step, because there is one place to edit them and
@@ -73,25 +151,60 @@ the other file is output. Nothing about it is specific to TypeScript, and
 nothing about it is specific to Rust either — the tools are Rust, the
 documents are whatever you write.
 
-Chunks also splice: a line reading `<<average>>` inside another block pastes
-the `average` block in there, at the reference's own indentation. So you choose
-the order that explains the program, and the compiler still receives the order
-it needs.
+The same thing at full size is every chapter under
+[`implementation/`](implementation): [The chunk shape](implementation/tangle/chunk.md),
+for one, is the document that generates part of the tangler you just ran.
 
-**Weaving** is the other direction — the same document rendered as a page to
-read, each chunk reference a link to its definition:
-`x0k-tangle weave docs/occlusion.md --output-dir site`.
+### Bring it into your project
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/derive-dark.svg">
-  <img alt="one document tangles to source which a machine runs, and weaves to a page which a person reads" src="assets/diagrams/derive-light.svg">
-</picture>
+A folder adopts one document at a time. A file with no header is left out of
+the header checks and counted — its mirrors and chunks are still checked — so
+start with one document and run `x0k-tangle check docs` on the folder it is in.
 
-Commit the document, the sidecar and the generated files together, and have CI
-re-tangle and fail if the tree changes. That check is the whole reason the
-prose stays true to the code; without it you have comments again.
+Each way in comes down to a command CI runs:
 
-## Quote code you already have
+| What | Command | Fails when |
+|---|---|---|
+| Docs that quote code stay current | `x0k-tangle sync <path…>`, then `check` | a mirror no longer matches the source it quotes |
+| Code written inside the document that explains it | `x0k-tangle tangle <doc>`, then `git diff --exit-code` | a generated file no longer matches its document |
+| Headers and links checked against a vocabulary | `x0k-tangle check <dir>` | a class, an edge or a literal statement whose term the vocabulary does not declare, in a header or a graph block; a literal its datatype contradicts |
+| A CI gate on a closed set | `x0k-tangle check <dir> --closed` | an edge names a document that is not in the set, such as a rename nobody finished |
+| Questions across the set | `x0k-folio-cli ingest`, then `query --named status` or `--named superseded` | — (lists every document's status, or each replaced decision and what replaced it, read from `x0k:supersededBy` edges) |
+| A set published as its own repository | `x0k-tangle publish-repo <publication> --output-dir <dir>` rehearses and pushes nothing; add `--really` to push | the publication names a document nothing declares, states no licence, or publishes a crate that depends on one it does not publish |
+
+The header is a fenced block, so a site generator shows it as one. GitHub
+and Docusaurus render it, and every mirror, as an ordinary code block with no
+setup. MkDocs needs the one-file hook every release ships,
+`tools/mkdocs_folio.py`, added under `hooks:` in `mkdocs.yml`; with it the
+blocks render under `pymdownx.superfences` or plain `fenced_code`, and a page
+can hide its header. [What was tested, on which
+versions](guides/INTEGRATING.md#typing-your-documents-in-place).
+
+#### Decision records and design docs
+
+Give each document a header — one Turtle block under its title — saying what
+it is and how it relates to the others:
+
+````markdown
+# Retry budget
+
+```turtle folio:document
+decision:retry-budget a x0k:Decision ;
+    x0k:status "superseded" ;
+    x0k:supersededBy decision:retry-budget-v2 .
+```
+````
+
+`x0k-tangle check docs --closed` fails when a header names a document that is
+not in the folder, such as after a rename nobody finished. `x0k-folio-cli
+ingest`, then `query --named status`, lists every document's status, and
+`--named superseded` lists what replaced what.
+[Typing your documents in place](guides/INTEGRATING.md#typing-your-documents-in-place)
+walks through a whole directory, and
+[Asking the collection a question](guides/INTEGRATING.md#asking-the-collection-a-question)
+through queries of your own.
+
+#### Docs that quote code
 
 A document can quote code it does not own. Name the file and the symbol, and
 leave the block empty:
@@ -107,107 +220,26 @@ From the project root, `x0k-tangle sync docs` fills the block from the source,
 and `x0k-tangle check docs` fails once the two differ, so a page cannot go on
 showing code the tree no longer has. A mirror needs no header: it works in any
 Markdown file. Symbols resolve in
-Rust, TypeScript, JavaScript and TSX, Python, and Julia, and a mirror copies
-the whole item it names. [Starting from code you already have](guides/INTEGRATING.md#starting-from-code-you-already-have)
+Rust, TypeScript, JavaScript and TSX, Python, and Julia.
+[Starting from code you already have](guides/INTEGRATING.md#starting-from-code-you-already-have)
 covers methods, decorated items and the other path forms.
 
-## Install
+#### Code the document owns
 
-```sh
-curl -fsSL https://0k.computer/folio/install.sh | sh
-```
+Write the code inside the document, as in [the example](#try-it-on-one-document),
+and commit the document, the sidecar and the generated files together. Have CI
+re-tangle and fail if the tree changes. That check is the whole reason the
+prose stays true to the code; without it you have comments again.
+[Adopting the tangle for one crate](guides/INTEGRATING.md#adopting-the-tangle-for-one-crate)
+moves an existing module into a document.
 
-This installs `x0k-tangle` and `x0k-folio-cli` for Linux or macOS (x86_64 or
-arm64) from [the latest release](https://github.com/0k-dot-computer/x0k-folio/releases),
-checking each archive against the release's `SHA256SUMS` before anything is
-written. The address is this project's own domain and redirects to the
-release's `install.sh`; to do the same by hand, download your platform's
-archive and `SHA256SUMS` from the release page and run `shasum -a 256 -c`.
-On Windows, take the `.zip` from the release page. With a Rust toolchain,
-`cargo install x0k-tangle` builds the tangler from crates.io instead.
-[Setup](guides/INTEGRATING.md#setup) covers pinning a version, verifying build
-provenance, and building from source.
+#### A set to publish
 
-## Typed documents
-
-Each document has a small header — one Turtle block under its title — that
-gives it an identity, a kind, and named relationships to other documents. An
-implementation can name the design it follows; a design can name the decision
-that supports it; a decision can name the one that replaced it:
-
-````markdown
-# Retry budget
-
-```turtle folio:document
-decision:retry-budget a x0k:Decision ;
-    x0k:status "superseded" ;
-    x0k:supersededBy decision:retry-budget-v2 .
-```
-````
-
-The subject is the document, `a` names its class, and every other line is a
-statement in the vocabulary's own terms: `x0k:supersededBy` is the property
-the vocabulary file declares, spelled the same way, and `decision:` is a
-prefix you get without declaring it, one per class the vocabulary has.
-`check` validates headers against the shipped vocabulary, or yours:
-`--vocabulary <dir>` adds your own modules, and
-[a six-line module](guides/INTEGRATING.md#the-smallest-module-of-all) gives
-your documents ids under a prefix of your own, such as `acme:`. What a typed
-collection gives you, and the command behind each:
-
-| What | Command | Fails when |
-|---|---|---|
-| Check headers and links against the vocabulary | `x0k-tangle check <dir>` | a class, an edge or a literal statement whose term the vocabulary does not declare, in a header or a graph block; a literal its datatype contradicts |
-| Gate CI on a closed set | `x0k-tangle check <dir> --closed` | an edge names a document that is not in the set, such as a rename nobody finished |
-| Keep generated code in step | `x0k-tangle tangle <doc>`, then `git diff --exit-code` | a generated file no longer matches its document |
-| Keep quoted code current | `x0k-tangle sync <path…>`, then `check` | a mirror no longer matches the source it quotes |
-| Ask across the set | `x0k-folio-cli ingest`, then `query --named status` or `--named superseded` | — (lists every document's status, or each replaced decision and what replaced it, read from `x0k:supersededBy` edges) |
-| Publish the set as a repository | `x0k-tangle publish-repo <publication> --output-dir <dir>` rehearses and pushes nothing; add `--really` to push | the publication names a document nothing declares, states no licence, or publishes a crate that depends on one it does not publish |
-
-Out of the box an edge to a document outside the scanned folder is a note,
-not a failure, because a collection is usually part of something larger;
-`--closed` is for the tree that is the whole set. The guide covers each row:
-[typing documents](guides/INTEGRATING.md#typing-your-documents-in-place),
-[quoting code you already have](guides/INTEGRATING.md#starting-from-code-you-already-have),
-[asking questions](guides/INTEGRATING.md#asking-the-collection-a-question),
-[publishing](guides/INTEGRATING.md#publishing-a-collection).
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/triangle-dark.svg">
-  <img alt="an implementation is constrained by an architecture and implements a design; architecture supports design; the design document declares an affordance" src="assets/diagrams/triangle-light.svg">
-</picture>
-
-## Try it
-
-With the tools installed, write the document above and run the tangle
-command under it, or [add a header to one document you already have](guides/INTEGRATING.md#typing-your-documents-in-place)
-and check the folder it is in:
-
-```sh
-x0k-tangle check docs
-```
-
-A file with no header is left out of the header checks and counted — its
-mirrors and chunks are still checked — so a folder can adopt one document at
-a time.
-
-The header is a fenced block, so a site generator shows it as one. GitHub
-and Docusaurus render it, and every mirror, as an ordinary code block with no
-setup. MkDocs needs the one-file hook every release ships,
-`tools/mkdocs_folio.py`, added under `hooks:` in `mkdocs.yml`; with it the
-blocks render under `pymdownx.superfences` or plain `fenced_code`, and a page
-can hide its header. [What was tested, on which
-versions](guides/INTEGRATING.md#typing-your-documents-in-place).
-
-If you evaluate tools with an agent, this prompt starts it in the right
-places:
-
-```
-Read https://github.com/0k-dot-computer/x0k-folio, starting with README.md and
-guides/INTEGRATING.md. Look at my project. Where would typed documents or code
-generated from documents be useful? Name a specific place to start, show
-a small example, and explain the cost of keeping it up to date.
-```
+A **publication** is a document that names other documents and the code they
+own. `x0k-tangle publish-repo <publication> --output-dir <dir>` writes them as
+a standalone repository and rehearses the push; `--really` pushes it.
+[Publishing a collection](guides/INTEGRATING.md#publishing-a-collection) is the
+walkthrough.
 
 ## Status
 
@@ -230,37 +262,65 @@ a small example, and explain the cost of keeping it up to date.
   edited here directly.
 - **Not done yet:** [what these tools do not do yet](guides/INTEGRATING.md#what-does-not-exist-yet).
 
-## What you can do with this
+## How it works
 
-- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/tangle-source-from-a-document-dark.svg"><img alt="Project source code out of a document" src="assets/icons/tangle-source-from-a-document-light.svg" height="20"></picture> **[Project source code out of a document](decisions/design/corpus/literate-programming/project-source-code-out-of-a-document.md)**
+This repository is written the way it asks you to write. Every part of the
+tools is a chapter under `implementation/` that generates the code in
+`crates/`, and the [implementation map](IMPLEMENTATION.md) groups the chapters
+by idea. Each section below ends at the group to read next.
 
-  <p>Collect a document's code blocks into source files a compiler can build.</p>
+### Tangling and weaving
 
-- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/weave-a-document-dark.svg"><img alt="Read a document as the woven artifact" src="assets/icons/weave-a-document-light.svg" height="20"></picture> **[Read a document as the woven artifact](decisions/design/corpus/literate-programming/read-a-document-as-the-woven-artifact.md)**
+A code block with a name, `{#average}`, is a **chunk**. A chunk lands in the
+file its `file=` attribute names, or else in the file the header's
+`folio:tangleRoot` names. Chunks also splice: a line reading `<<average>>`
+inside another block pastes the `average` block in there, at the reference's
+own indentation. So you choose the order that explains the program, and the
+compiler still receives the order it needs. Every generated file opens with a
+`@generated` header naming its document, and the sidecar records which chunk
+produced which lines.
 
-  <p>Read the explanation and code together, with each reference to another code block a link to where that block is defined.</p>
+Weaving goes the other way: the same document rendered as a page, each chunk
+reference a link to its definition.
+Next: [Chunks, and resolving them](IMPLEMENTATION.md#chunks-and-resolving-them)
+and [Weaving a document into something to read](IMPLEMENTATION.md#weaving-a-document-into-something-to-read).
 
-- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/check-a-document-against-shipped-vocabulary-dark.svg"><img alt="Check a document against its vocabulary" src="assets/icons/check-a-document-against-shipped-vocabulary-light.svg" height="20"></picture> **[Check a document against its vocabulary](decisions/design/corpus/publish-a-region-as-a-repository/check-a-document-against-its-vocabulary.md)**
+### Mirrors
 
-  <p>Find metadata and relationships that do not match the document vocabulary.</p>
+A mirror names a file and a symbol. `sync` parses the file with the
+tree-sitter grammar for its language and copies the whole item the symbol
+names; the grammar decides where the item begins and ends, so there is no
+brace counting and no regular expression. `check` repeats the extraction and
+compares. Next: [Back the other way](IMPLEMENTATION.md#back-the-other-way).
 
-- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/read-declared-affordances-dark.svg"><img alt="Declare concepts and instances" src="assets/icons/read-declared-affordances-light.svg" height="20"></picture> **[Declare concepts and instances](decisions/design/corpus/publish-a-region-as-a-repository/declare-concepts-and-instances.md)**
+### Typed documents
 
-  <p>Define a vocabulary in a document, then describe particular things with it.</p>
+Each document's header gives it an identity, a kind, and named relationships
+to other documents. An implementation can name the design it follows; a
+design can name the decision that supports it; a decision can name the one
+that replaced it. In the header above, the subject is the document, `a` names
+its class, and every other line is a statement in the vocabulary's own terms:
+`x0k:supersededBy` is the property the vocabulary file declares, spelled the
+same way, and `decision:` is a prefix you get without declaring it, one per
+class the vocabulary has.
 
-- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/query-the-documents-dark.svg"><img alt="Query the documents" src="assets/icons/query-the-documents-light.svg" height="20"></picture> **[Query the documents](decisions/design/corpus/publish-a-region-as-a-repository/query-the-documents.md)**
+`check` validates headers against the shipped vocabulary, or yours:
+`--vocabulary <dir>` adds your own modules, and
+[a six-line module](guides/INTEGRATING.md#the-smallest-module-of-all) gives
+your documents ids under a prefix of your own, such as `acme:`. Out of the box
+an edge to a document outside the scanned folder is a note, not a failure,
+because a collection is usually part of something larger; `--closed` is for
+the tree that is the whole set.
 
-  <p>Ask questions across a collection's concepts, instances, and relationships.</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/triangle-dark.svg">
+  <img alt="an implementation is constrained by an architecture and implements a design; architecture supports design; the design document declares an affordance" src="assets/diagrams/triangle-light.svg">
+</picture>
 
-- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/show-an-icon-on-a-surface-dark.svg"><img alt="Show an icon on any surface" src="assets/icons/show-an-icon-on-a-surface-light.svg" height="20"></picture> **[Show an icon on any surface](decisions/design/presentation/icon-profile/show-an-icon-on-any-surface.md)**
+Next: [What a document is](IMPLEMENTATION.md#what-a-document-is) and
+[The vocabulary a document is written in](IMPLEMENTATION.md#the-vocabulary-a-document-is-written-in).
 
-  <p>Draw the same icon for different surfaces, using the colors and file format each needs.</p>
-
-- <picture><source media="(prefers-color-scheme: dark)" srcset="assets/icons/check-an-icon-against-the-profile-dark.svg"><img alt="Check an icon against the profile" src="assets/icons/check-an-icon-against-the-profile-light.svg" height="20"></picture> **[Check an icon against the profile](decisions/design/presentation/icon-profile/check-an-icon-against-the-profile.md)**
-
-  <p>Check an icon's geometry and strokes against the shared drawing rules.</p>
-
-## Vocabularies and publications
+### Vocabularies
 
 The vocabulary is RDF. Its concepts are OWL classes, and a document can define
 concepts of its own in a `turtle folio:graph` block and describe particular
@@ -270,24 +330,27 @@ its title and the prose its description.
 is a small collection that does both — a `paper:` namespace and a `Paper`
 class, and two papers citing each other — to copy as a start.
 [Explore the supplied vocabulary](assets/diagrams/vocabulary.svg).
+Next: [Querying documents](IMPLEMENTATION.md#querying-documents).
 
-A **publication** selects documents and code from a larger collection and
+### Publications, and this repository
+
+A publication selects documents and code from a larger collection and
 produces a standalone repository, recording their origins in
-`PROVENANCE.json`. This repository is one: it carries the tangler that
+`PROVENANCE.json`. This repository is one. It carries the tangler that
 generated its code, with that tangler's source documents in
-`implementation/` generating the code in `crates/`. The projector that
-selected and wrote it ships here too. `x0k-tangle project-repo` writes a
-publication of your own collection the same way, `publish-repo --really`
-pushes it to your git remote, and `receive-repo` turns a contributor's
-clone back into patches against your documents;
-[Publishing a collection](guides/INTEGRATING.md#publishing-a-collection)
-is the walkthrough. The reader website we weave our own publications into
-is not here.
+`implementation/`, and the projector that selected and wrote it. This README
+is generated the same way, from a document that stays in the larger
+collection. `x0k-tangle project-repo` writes a publication of your own
+collection, `publish-repo --really` pushes it to your git remote, and
+`receive-repo` turns a contributor's clone back into patches against your
+documents. The reader website we weave our own publications into is not here.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/circle-dark.svg">
   <img alt="the private corpus publishes this repository, which ships the tangler that projected it" src="assets/diagrams/circle-light.svg">
 </picture>
+
+Next: [Publishing a collection](IMPLEMENTATION.md#publishing-a-collection).
 
 ## License
 

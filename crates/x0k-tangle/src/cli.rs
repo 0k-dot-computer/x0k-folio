@@ -211,6 +211,19 @@ enum Command {
         /// Path to a literate document
         path: PathBuf,
     },
+    /// Move a tangled output to a new path: rewrite the documents that write it, re-tangle, and prove every byte stayed
+    Retarget {
+        /// The output's current path, relative to the workspace root
+        from: PathBuf,
+        /// Its new path, relative to the workspace root
+        to: PathBuf,
+        /// Move the whole document to this crate directory (its only output must be FROM)
+        #[arg(long = "crate")]
+        new_crate: Option<PathBuf>,
+        /// Workspace root (defaults to current directory)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
     #[command(flatten)]
     Repository(crate::RepositoryCommand),
     #[cfg(feature = "corpus")]
@@ -599,6 +612,15 @@ pub fn run(host: &Host) -> Result<()> {
                     }
                 );
             }
+        }
+
+        Command::Retarget { from, to, new_crate, workspace } => {
+            let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
+            let registry = (host.registry)();
+            for moved in crate::retarget::retarget_output(&ws, &from, &to, new_crate.as_deref(), &registry)? {
+                eprintln!("  {} — {}", moved.document.display(), moved.rewrites.join("; "));
+            }
+            eprintln!("retargeted {} -> {}", from.display(), to.display());
         }
 
         Command::Repository(verb) => crate::run_repository(verb)?,

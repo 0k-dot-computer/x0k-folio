@@ -82,7 +82,7 @@ impl OntologyModel {
         self.ensure(OntologyFact::text(
             CONCEPT_URI,
             RDFS_COMMENT,
-            "The root ontology concept: every registered class and property is typed by it, and it is typed by itself.",
+            "A term of the vocabulary: every class, property and named idea the corpus gives one meaning is a Concept declared in one module, and Concept is typed by itself — one deliberate meta-level, never two. The ontology is the concept region of the fact plane: extending it is an assertion, never a migration, and module files are its defaults, not a second authority.",
         ));
 
         for entity in self.declared_entities() {
@@ -649,8 +649,8 @@ fn render_view(facts: &[&OntologyFact], subject_line: &str) -> String {
     lines.sort();
     lines.dedup();
     let mut out = format!(
-        "# @generated from the concept region of the fact plane. DO NOT AUTHOR HERE.\n\
-         # Bootstrap source: this view seeds an empty region exactly once.\n\
+        "# Authored: edit this file, then run tools/ontology-fixpoint --write (corpora/x0k/ontology/AGENTS.md).\n\
+         # The concept region seeds from it when empty; a concept-region fact overrides it.\n\
          {subject_line}\n\n",
     );
     for line in lines { out.push_str(&line); out.push('\n'); }
@@ -785,7 +785,18 @@ mod tests {
         let model = bootstrap_model();
         let concepts = model.concept_entities();
         let declared: BTreeSet<_> = model.declared_entities().into_iter().collect();
-        assert_eq!(concepts, declared, "every declaration must occupy the one Concept level");
+        assert!(declared.is_subset(&concepts), "every declaration must occupy the one Concept level");
+
+        // A Concept need not be a class or a property (`ontology-modules`
+        // §10), so the level is closed by kind instead: every term states
+        // exactly one.
+        let term_kind = model.expand(crate::core::terms::TERM_KIND);
+        for concept in &concepts {
+            let kinds = model.facts().iter()
+                .filter(|fact| fact.entity == *concept && fact.predicate == term_kind)
+                .count();
+            assert_eq!(kinds, 1, "{concept} must state exactly one term kind");
+        }
 
         for concept in &concepts {
             let typings = model.facts().iter().filter(|fact| {
