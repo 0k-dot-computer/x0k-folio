@@ -26,9 +26,14 @@ yanked = "deny"
 # Report unmaintained crates anywhere in the graph, not just direct deps.
 # Measured clean today; this is the tripwire for when it stops being clean.
 unmaintained = "all"
-# No ignores. The graph is clean, so an empty ignore list is honest and any
-# future entry has to be argued for in a diff.
-ignore = []
+# Every entry is argued for in a diff and names what removes it.
+ignore = [
+    # crypto-bigint 0.5.5 arrives only through Dialog's dialog-varsig, whose
+    # default es256/es256k features pull p256/k256 0.13. folio never creates
+    # or signs with a key, so no secret reaches the affected operations.
+    # Remove when Dialog makes those algorithms opt-in or moves to 0.14.
+    { id = "RUSTSEC-2026-0387", reason = "reached only through Dialog's default secp256 features; folio signs with no key" },
+]
 
 [licenses]
 # Our packages retain their publication license. Dependencies retain theirs:
