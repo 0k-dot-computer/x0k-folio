@@ -1,8 +1,8 @@
 {
   "schema": "x0k.provenance/v1",
   "publication_uri": "x0k:publication/x0k-folio",
-  "corpus_rev": "mlmszoozzqyzxlstvqzlnxqsmqwlvsuv",
-  "corpus_commit": "b0201878af7e4a32ca66095bef8c2fe7984ddd7b",
+  "corpus_rev": "lmvwuokznovvxmtvxnopxvnzzrvrvowq",
+  "corpus_commit": "df5192e7ecfbebe62b9dca203f5680717811abcb",
   "path_map": {
     "background/event-graph-crdts.md": "corpora/x0k/wiki/event-graph-crdts.md",
     "background/literate-programming.md": "corpora/x0k/wiki/literate-programming.md",

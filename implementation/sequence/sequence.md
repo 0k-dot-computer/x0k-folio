@@ -175,7 +175,9 @@ scene at one moment and reads it back, writes the empty scene over it and
 reads that back, writes the scene again, and finds a second moment holding
 what it held before all three. A home's tests run it with two of the
 home's moments, so a document, a fact store and a genome are held to one
-contract.
+contract. A breach carries the scenes it found, so a failing home's test
+names what it wrote and what came back; it is returned only when a home
+breaks the contract, so its size costs nothing on the path that passes.
 
 <a name="chunk-check"></a><sub>[`src/lib.rs`](../../crates/x0k-sequence/src/lib.rs) · `#check`</sub>
 
@@ -194,6 +196,10 @@ pub enum Breach<E> {
 /// Hold `home` to its contract with two of its moments: `scene` written at
 /// `here` reads back, the empty scene written over it replaces it, `scene`
 /// written again reads back, and `there` holds what it held before.
+#[allow(
+    clippy::result_large_err,
+    reason = "a breach carries the scenes it found and is returned only when a home breaks its contract"
+)]
 pub fn check_home<H: MomentHome + ?Sized>(home: &mut H, here: &MomentRef, there: &MomentRef, scene: &Scene) -> Result<(), Breach<H::Error>> {
     let before = home.scene(there).map_err(Breach::Refused)?;
     for wrote in [scene.clone(), Scene::default(), scene.clone()] {

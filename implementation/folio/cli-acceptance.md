@@ -58,7 +58,7 @@ remembers to pass, and a gate you have to remember is the failure being fixed.
 
 ```rust {#acceptance-harness}
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};

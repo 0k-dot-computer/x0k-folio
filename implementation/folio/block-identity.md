@@ -462,7 +462,7 @@ fn write_markers(visible: &str, shapes: &[Shape]) -> String {
         match shape.item_column {
             Some(column) => {
                 stored.push_str(&id.marker());
-                stored.extend(std::iter::repeat(' ').take(column));
+                stored.extend(std::iter::repeat_n(' ', column));
             }
             None => {
                 if follows_text(&stored) {

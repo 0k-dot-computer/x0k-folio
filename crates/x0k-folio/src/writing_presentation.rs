@@ -269,7 +269,6 @@ impl WritingPresentation {
         self.reveal_requested(anchor,focus,true)
     }
     /// Ordinary selection requests retain boundary-only objects.
-
     pub fn reveal_selection(&self,anchor:usize,focus:usize) -> Option<Self> {
         self.reveal_requested(anchor,focus,false)
     }
@@ -425,6 +424,7 @@ mod tests {
         assert!(focus.contains("/div[1]/p[1]/span[5]"));
     }
     #[test]
+    #[allow(clippy::single_range_in_vec_init, reason = "each case is a list of object ranges, and a list of one is a case")]
     fn objects_refuse_hidden_bytes_overlap_invalid_unicode_and_dimensions() {
         let source="# é \\(x\\)\r\nbody";
         for ranges in [vec![0..2],vec![3..4],vec![5..14],vec![5..10,6..9],vec![5..5],vec![99..100]] {

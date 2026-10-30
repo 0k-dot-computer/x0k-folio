@@ -80,6 +80,10 @@ pub enum Breach<E> {
 /// Hold `home` to its contract with two of its moments: `scene` written at
 /// `here` reads back, the empty scene written over it replaces it, `scene`
 /// written again reads back, and `there` holds what it held before.
+#[allow(
+    clippy::result_large_err,
+    reason = "a breach carries the scenes it found and is returned only when a home breaks its contract"
+)]
 pub fn check_home<H: MomentHome + ?Sized>(home: &mut H, here: &MomentRef, there: &MomentRef, scene: &Scene) -> Result<(), Breach<H::Error>> {
     let before = home.scene(there).map_err(Breach::Refused)?;
     for wrote in [scene.clone(), Scene::default(), scene.clone()] {
