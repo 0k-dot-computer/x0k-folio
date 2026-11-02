@@ -191,7 +191,10 @@ use crate::region_gfm::{
 };
 
 mod affordance_links;
+mod dependency_closure;
 use affordance_links::expand_affordance_links;
+use dependency_closure::{manifest_access, manifest_package_str, path_deps, released_crates};
+pub(crate) use dependency_closure::released_crates_of;
 #[cfg(test)]
 use affordance_links::{affordance_description, render_affordance_links};
 ```
@@ -322,6 +325,9 @@ pub struct RepoProjectReport {
     pub output_dir: PathBuf,
     pub crates: Vec<String>,
     pub excluded: Vec<String>,
+    /// Crates a publication this one uses releases, each with the version
+    /// this projection depends on. Not vendored: the registry serves them.
+    pub released: BTreeMap<String, String>,
     pub literate_docs: Vec<PathBuf>,
     pub leak_violations: Vec<String>,
     pub closure_violations: Vec<String>,
@@ -957,6 +963,16 @@ let crates_io = CratesIoMeta {
     repository: header_literal(&env, "x0k:repository"),
     keywords: header_literals(&env, "x0k:keywords"),
 };
+
+// What this publication takes from the registry rather than shipping.
+let released = released_crates(workspace, &layout, vocabulary, &packages, &env)?;
+if let Some(name) = crates.iter().find(|name| released.contains_key(*name)) {
+    bail!(
+        "`publishes` names `{name}`, which a publication under `usesPublication` \
+         releases; a crate ships from one publication"
+    );
+}
+report.released = released.clone();
 ```
 
 ### The guards
@@ -1017,12 +1033,23 @@ for name in &crates {
             }
             continue; // severable exclusion
         }
+        if released.contains_key(&target) {
+            continue; // the registry serves it
+        }
         report.closure_violations.push(format!(
             "crate `{name}` has escaping path dep `{dep}` → `{target}` (not published, not excluded)"
         ));
     }
 }
 ```
+
+A crate another publication releases is not an escape. `x0k:usesPublication`
+names that publication, which has to state a registry, and every crate it
+publishes stays out of this projection: a dependency on one projects to the
+version its sources hold and resolves from the registry. The two publications
+release separately, and this one builds on what the other has released, so its
+lock cannot resolve until that version is up. `publish-repo` says so before it
+starts.
 
 A violation refuses the whole projection with every finding listed;
 `allow_dirty` downgrades the refusal to the warnings the CLI prints. No
@@ -1273,6 +1300,7 @@ let vendor_ctx = VendorCtx {
     license: &license,
     published: &published,
     excluded: &excluded,
+    released: &released,
     versions: &versions,
     crates_io: &crates_io,
     literate_set: &literate_set,
@@ -2774,13 +2802,6 @@ the keys the publication act owns change.
 <a name="chunk-manifest-readers"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#manifest-readers`</sub>
 
 ```rust {#manifest-readers}
-fn manifest_package_str(doc: &toml_edit::DocumentMut, key: &str) -> Option<String> {
-    doc.get("package")
-        .and_then(|p| p.get(key))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
 /// crates.io metadata sourced from the publication doc.
 #[derive(Debug, Clone, Default)]
 struct CratesIoMeta {
@@ -2795,6 +2816,7 @@ struct VendorCtx<'a> {
     license: &'a str,
     published: &'a BTreeSet<String>,
     excluded: &'a BTreeSet<String>,
+    released: &'a BTreeMap<String, String>,
     versions: &'a BTreeMap<String, String>,
     crates_io: &'a CratesIoMeta,
     /// Workspace-relative paths of every document in the projection's
@@ -3021,15 +3043,6 @@ fn package_name(doc: &toml_edit::DocumentMut, path: &Path) -> Result<String> {
         .map(str::to_string).with_context(|| format!("{} has no package.name", path.display()))
 }
 
-fn manifest_access(doc: &toml_edit::DocumentMut) -> String {
-    doc.get("package")
-        .and_then(|p| p.get("metadata"))
-        .and_then(|m| m.get("x0k"))
-        .and_then(|x| x.get("access"))
-        .and_then(|a| a.as_str())
-        .unwrap_or("public")
-        .to_string()
-}
 ```
 
 The receiver needs the same residency from the other side. A projection
@@ -3059,11 +3072,90 @@ pub(crate) fn source_package_roots(workspace: &Path) -> Result<BTreeMap<String, 
 }
 ```
 
-<a name="chunk-path-deps"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#path-deps`</sub>
+<a name="chunk-dependency-closure"></a><sub>[`src/region_repo/dependency_closure.rs`](../../crates/x0k-tangle/src/region_repo/dependency_closure.rs) · `#dependency-closure`</sub>
 
-```rust {#path-deps}
+```rust {#dependency-closure file="src/region_repo/dependency_closure.rs"}
+//! What a publication's path dependencies reach: the crates it ships, and the
+//! crates a publication it uses has released.
+
+use super::*;
+
+/// The crates the publications under `x0k:usesPublication` release, each with
+/// the version its sources hold. A publication named there has to state a
+/// registry: otherwise nothing it ships can be depended on from one.
+pub(super) fn released_crates(
+    workspace: &Path,
+    layout: &CorpusLayout,
+    vocabulary: &Vocabulary,
+    packages: &SourcePackages,
+    env: &Colophon,
+) -> Result<BTreeMap<String, String>> {
+    let mut released = BTreeMap::new();
+    for id in env.edges.get("x0k:usesPublication").into_iter().flatten() {
+        let path = find_document(workspace, layout, vocabulary, id)?;
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let (used, _) = vocabulary
+            .read(&content)
+            .map_err(|e| anyhow!("`{id}` has no readable header: {e}"))?;
+        if used.doc_type != DocType::Publication {
+            bail!("`usesPublication` names `{id}`, which is not a publication");
+        }
+        if header_literal(&used, "x0k:publishRegistry").is_none() {
+            bail!(
+                "`usesPublication` names `{id}`, which states no `x0k:publishRegistry`: \
+                 nothing it ships can be depended on from a registry"
+            );
+        }
+        let members = member_names(used.edges.get("x0k:publishes"), "publishes", vocabulary)?;
+        for name in members.crates {
+            let manifest = packages.manifest(&name)?;
+            let version = manifest_package_str(&manifest, "version")
+                .ok_or_else(|| anyhow!("crate `{name}` of `{id}` states no version"))?;
+            released.insert(name, version);
+        }
+    }
+    Ok(released)
+}
+
+/// [`released_crates`] for a publication read from its document, for the
+/// publish step, which asks the registry before it projects anything.
+pub(crate) fn released_crates_of(
+    region_doc: &Path,
+    workspace: &Path,
+    vocabulary: &Vocabulary,
+) -> Result<BTreeMap<String, String>> {
+    let content = std::fs::read_to_string(region_doc)
+        .with_context(|| format!("reading {}", region_doc.display()))?;
+    let (env, _) = vocabulary
+        .read(&content)
+        .map_err(|e| anyhow!("the publication doc has no readable header: {e}"))?;
+    if !env.edges.contains_key("x0k:usesPublication") {
+        return Ok(BTreeMap::new());
+    }
+    let packages = SourcePackages::read(workspace)?;
+    released_crates(workspace, &CorpusLayout::read(workspace), vocabulary, &packages, &env)
+}
+
+pub(super) fn manifest_access(doc: &toml_edit::DocumentMut) -> String {
+    doc.get("package")
+        .and_then(|p| p.get("metadata"))
+        .and_then(|m| m.get("x0k"))
+        .and_then(|x| x.get("access"))
+        .and_then(|a| a.as_str())
+        .unwrap_or("public")
+        .to_string()
+}
+
+pub(super) fn manifest_package_str(doc: &toml_edit::DocumentMut, key: &str) -> Option<String> {
+    doc.get("package")
+        .and_then(|p| p.get(key))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 /// `(dep-key, optional, target-crate)` for each `path = "..."` dependency.
-fn path_deps(doc: &toml_edit::DocumentMut) -> Vec<(String, bool, String)> {
+pub(super) fn path_deps(doc: &toml_edit::DocumentMut) -> Vec<(String, bool, String)> {
     fn collect(table: &dyn toml_edit::TableLike, out: &mut Vec<(String, bool, String)>) {
         for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
             let Some(deps) = table.get(kind).and_then(|d| d.as_table_like()) else { continue; };
@@ -3315,6 +3407,13 @@ walked (2026-09-05: a test-only path to `x0k-ontology` was the first).
                 if key == "workspace-hack" || target.as_ref().is_some_and(|t| ctx.excluded.contains(t)) {
                     deps.remove(&key);
                     dropped.insert(key);
+                    continue;
+                }
+                if let Some(version) = target.as_ref().and_then(|t| ctx.released.get(t)) {
+                    if let Some(dep) = deps.get_mut(&key).and_then(|d| d.as_table_like_mut()) {
+                        dep.remove("path");
+                        dep.insert("version", toml_edit::value(version.as_str()));
+                    }
                     continue;
                 }
                 if let Some(target) = target.filter(|t| ctx.published.contains(t)) {
@@ -15213,7 +15312,7 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [build-policy](#chunk-build-policy) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [header-literal](#chunk-header-literal) · [manifest-readers](#chunk-manifest-readers) · [source-package-roots](#chunk-source-package-roots) · [path-deps](#chunk-path-deps) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [sever-doc-links](#chunk-sever-doc-links) · [demote-in-chapters](#chunk-demote-in-chapters) · [demote-in-unowned-sources](#chunk-demote-in-unowned-sources) · [severed-items](#chunk-severed-items) · [demote-severed-links](#chunk-demote-severed-links) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [collection-vocabulary](#chunk-collection-vocabulary) · [mirrored-sources](#chunk-mirrored-sources) · [carried-files](#chunk-carried-files) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [declare-undeclared-prefixes](#chunk-declare-undeclared-prefixes) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [icons](#chunk-icons) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [ci-plan](#chunk-ci-plan) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [prebuilt-decl](#chunk-prebuilt-decl) · [prebuilt-table](#chunk-prebuilt-table) · [prebuilt-header-types](#chunk-prebuilt-header-types) · [prebuilt-summary](#chunk-prebuilt-summary) · [prebuilt-plan](#chunk-prebuilt-plan) · [resolve-prebuilt-fn](#chunk-resolve-prebuilt-fn) · [crate-binaries](#chunk-crate-binaries) · [github-project](#chunk-github-project) · [emit-prebuilt](#chunk-emit-prebuilt) · [emit-npm-wrapper](#chunk-emit-npm-wrapper) · [npm-manifest](#chunk-npm-manifest) · [npm-check-script](#chunk-npm-check-script) · [release-workflow](#chunk-release-workflow) · [installer-script](#chunk-installer-script) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [mkdocs-hook-text](#chunk-mkdocs-hook-text) · [release-script](#chunk-release-script) · [release-vendor-script](#chunk-release-vendor-script) · [npm-check-text](#chunk-npm-check-text) · [npm-resolve-text](#chunk-npm-resolve-text) · [npm-install-text](#chunk-npm-install-text) · [npm-shim-text](#chunk-npm-shim-text) · [npm-pin-text](#chunk-npm-pin-text) · [npm-test-text](#chunk-npm-test-text) · [release-workflow-text](#chunk-release-workflow-text) · [installer-text](#chunk-installer-text) · [installer-step-text](#chunk-installer-step-text) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/region_repo.rs`](../../crates/x0k-tangle/src/region_repo.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [uses](#chunk-uses) · [constants](#chunk-constants) · [options](#chunk-options) · [report](#chunk-report) · [module-version-source](#chunk-module-version-source) · [license-source](#chunk-license-source) · [proofs](#chunk-proofs) · [project-publication-repo](#chunk-project-publication-repo) · [overlay-paths](#chunk-overlay-paths) · [build-policy](#chunk-build-policy) · [previous-provenance-field](#chunk-previous-provenance-field) · [overlay-stash](#chunk-overlay-stash) · [restore-overlay](#chunk-restore-overlay) · [clear-regenerated-region](#chunk-clear-regenerated-region) · [member-names](#chunk-member-names) · [header-literal](#chunk-header-literal) · [manifest-readers](#chunk-manifest-readers) · [source-package-roots](#chunk-source-package-roots) · [vendor-crate](#chunk-vendor-crate) · [rewrite-vendored-manifest](#chunk-rewrite-vendored-manifest) · [sever-doc-links](#chunk-sever-doc-links) · [demote-in-chapters](#chunk-demote-in-chapters) · [demote-in-unowned-sources](#chunk-demote-in-unowned-sources) · [severed-items](#chunk-severed-items) · [demote-severed-links](#chunk-demote-severed-links) · [vocab-module](#chunk-vocab-module) · [modules-rel-dir](#chunk-modules-rel-dir) · [collection-vocabulary](#chunk-collection-vocabulary) · [mirrored-sources](#chunk-mirrored-sources) · [carried-files](#chunk-carried-files) · [discover-literate-docs-fn](#chunk-discover-literate-docs-fn) · [copy-literate-docs](#chunk-copy-literate-docs) · [copy-sidecar](#chunk-copy-sidecar) · [doc-selection](#chunk-doc-selection) · [resolve-named-document](#chunk-resolve-named-document) · [project-named-documents](#chunk-project-named-documents) · [section-document](#chunk-section-document) · [write-projected-documents](#chunk-write-projected-documents) · [declare-undeclared-prefixes](#chunk-declare-undeclared-prefixes) · [affordance-closure](#chunk-affordance-closure) · [affordance-record](#chunk-affordance-record) · [affordance-records](#chunk-affordance-records) · [run-proofs](#chunk-run-proofs) · [affordance-table](#chunk-affordance-table) · [icons](#chunk-icons) · [emit-workspace-manifest](#chunk-emit-workspace-manifest) · [license-files](#chunk-license-files) · [emit-licenses](#chunk-emit-licenses) · [generate-lockfile](#chunk-generate-lockfile) · [tangle-readme](#chunk-tangle-readme) · [write-readme-contents](#chunk-write-readme-contents) · [ci-plan](#chunk-ci-plan) · [emit-ci-and-guard](#chunk-emit-ci-and-guard) · [prebuilt-decl](#chunk-prebuilt-decl) · [prebuilt-table](#chunk-prebuilt-table) · [prebuilt-header-types](#chunk-prebuilt-header-types) · [prebuilt-summary](#chunk-prebuilt-summary) · [prebuilt-plan](#chunk-prebuilt-plan) · [resolve-prebuilt-fn](#chunk-resolve-prebuilt-fn) · [crate-binaries](#chunk-crate-binaries) · [github-project](#chunk-github-project) · [emit-prebuilt](#chunk-emit-prebuilt) · [emit-npm-wrapper](#chunk-emit-npm-wrapper) · [npm-manifest](#chunk-npm-manifest) · [npm-check-script](#chunk-npm-check-script) · [release-workflow](#chunk-release-workflow) · [installer-script](#chunk-installer-script) · [emit-provenance](#chunk-emit-provenance) · [current-corpus-rev](#chunk-current-corpus-rev) · [current-corpus-commit](#chunk-current-corpus-commit) · [git-run-and-commit](#chunk-git-run-and-commit) · [projection-message](#chunk-projection-message) · [git-init-and-reproject](#chunk-git-init-and-reproject) · [license-texts](#chunk-license-texts) · [ci-script](#chunk-ci-script) · [deny-config](#chunk-deny-config) · [toolchain-file](#chunk-toolchain-file) · [workflow-wrappers](#chunk-workflow-wrappers) · [guard-script](#chunk-guard-script) · [mkdocs-hook-text](#chunk-mkdocs-hook-text) · [release-script](#chunk-release-script) · [release-vendor-script](#chunk-release-vendor-script) · [npm-check-text](#chunk-npm-check-text) · [npm-resolve-text](#chunk-npm-resolve-text) · [npm-install-text](#chunk-npm-install-text) · [npm-shim-text](#chunk-npm-shim-text) · [npm-pin-text](#chunk-npm-pin-text) · [npm-test-text](#chunk-npm-test-text) · [release-workflow-text](#chunk-release-workflow-text) · [installer-text](#chunk-installer-text) · [installer-step-text](#chunk-installer-step-text) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -15254,7 +15353,6 @@ fn install_sh_refuses_a_machine_the_release_does_not_carry() {
 
 <<source-package-roots>>
 
-<<path-deps>>
 
 <<vendor-crate>>
 
@@ -15665,6 +15763,71 @@ fn relocated_workspace_inherited_paths_are_materialized_and_guarded() {
     assert!(dep.get("workspace").is_none());
     std::fs::write(root.join(PUB_REL), publication(&["demo-crate"], &["core"], true)).unwrap();
     assert!(project_err(root).contains("escaping path dep"));
+}
+
+/// `moved_workspace` with `helper-crate` shipped by a second publication,
+/// `support`, which states `registry`; the first ships `demo-crate` and uses it.
+fn workspace_using_a_publication(registry: bool) -> tempfile::TempDir {
+    let ws = moved_workspace();
+    let root = ws.path();
+    let used = publication(&["helper-crate"], &["core"], true).replace("publication:demo", "publication:support");
+    let statement = if registry { "    x0k:publishRegistry \"crates.io\" ;\n" } else { "" };
+    std::fs::write(
+        root.join(PUB_REL).with_file_name("support.md"),
+        with_statements(&used, statement),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join(PUB_REL),
+        with_statements(
+            &publication(&["demo-crate"], &["core"], true),
+            "    x0k:usesPublication publication:support ;\n",
+        ),
+    )
+    .unwrap();
+    ws
+}
+
+#[test]
+fn a_dependency_on_a_used_publication_projects_to_its_released_version() {
+    let ws = workspace_using_a_publication(true);
+    let out = tempfile::tempdir().unwrap();
+    // Nothing serves `helper-crate`, so the lock refuses: the projection
+    // really does resolve it from the registry.
+    let err = format!("{:#}", project(ws.path(), out.path()).expect_err("no registry serves it"));
+    assert!(err.contains("helper-crate") && !err.contains("escaping path dep"), "{err}");
+    let text = std::fs::read_to_string(out.path().join("demo-crate/Cargo.toml")).unwrap();
+    let manifest = text.parse::<toml_edit::DocumentMut>().unwrap();
+    let dep = &manifest["dependencies"]["support"];
+    assert_eq!(dep["version"].as_str(), Some("0.1.0"));
+    assert_eq!(dep["package"].as_str(), Some("helper-crate"));
+    assert!(dep.get("path").is_none(), "{text}");
+    assert!(text.contains("build-dependencies"), "{text}");
+    assert!(!text.contains("path ="), "{text}");
+    assert!(!out.path().join("helper-crate").exists());
+}
+
+#[test]
+fn a_used_publication_that_states_no_registry_is_refused() {
+    let ws = workspace_using_a_publication(false);
+    let err = project_err(ws.path());
+    assert!(err.contains("publication:support") || err.contains("x0k:publication/support"), "{err}");
+    assert!(err.contains("x0k:publishRegistry"), "{err}");
+}
+
+#[test]
+fn a_crate_ships_from_one_publication() {
+    let ws = workspace_using_a_publication(true);
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_statements(
+            &publication(&["demo-crate", "helper-crate"], &["core"], true),
+            "    x0k:usesPublication publication:support ;\n",
+        ),
+    )
+    .unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("helper-crate") && err.contains("one publication"), "{err}");
 }
 
 #[test]

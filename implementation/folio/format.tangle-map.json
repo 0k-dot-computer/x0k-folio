@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/format.md",
-  "source_hash": "18c92d51658a306d",
+  "source_hash": "4a1b34c7cea6921d",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-folio/src/lib.rs",
-          "hash": "120d9bffbbc11f18"
+          "hash": "3af37533bfd01fce"
         },
         {
           "path": "crates/x0k-folio/tools/check-standalone.sh",

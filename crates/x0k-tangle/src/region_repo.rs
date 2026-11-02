@@ -104,7 +104,10 @@ use crate::region_gfm::{
 };
 
 mod affordance_links;
+mod dependency_closure;
 use affordance_links::expand_affordance_links;
+use dependency_closure::{manifest_access, manifest_package_str, path_deps, released_crates};
+pub(crate) use dependency_closure::released_crates_of;
 #[cfg(test)]
 use affordance_links::{affordance_description, render_affordance_links};
 
@@ -188,6 +191,9 @@ pub struct RepoProjectReport {
     pub output_dir: PathBuf,
     pub crates: Vec<String>,
     pub excluded: Vec<String>,
+    /// Crates a publication this one uses releases, each with the version
+    /// this projection depends on. Not vendored: the registry serves them.
+    pub released: BTreeMap<String, String>,
     pub literate_docs: Vec<PathBuf>,
     pub leak_violations: Vec<String>,
     pub closure_violations: Vec<String>,
@@ -617,6 +623,16 @@ pub fn project_publication_repo_in(
         keywords: header_literals(&env, "x0k:keywords"),
     };
 
+    // What this publication takes from the registry rather than shipping.
+    let released = released_crates(workspace, &layout, vocabulary, &packages, &env)?;
+    if let Some(name) = crates.iter().find(|name| released.contains_key(*name)) {
+        bail!(
+            "`publishes` names `{name}`, which a publication under `usesPublication` \
+             releases; a crate ships from one publication"
+        );
+    }
+    report.released = released.clone();
+
     let mut versions: BTreeMap<String, String> = BTreeMap::new();
     let mut source_licenses: BTreeMap<String, String> = BTreeMap::new();
     let mut editions: BTreeSet<String> = BTreeSet::new();
@@ -656,6 +672,9 @@ pub fn project_publication_repo_in(
                     ));
                 }
                 continue; // severable exclusion
+            }
+            if released.contains_key(&target) {
+                continue; // the registry serves it
             }
             report.closure_violations.push(format!(
                 "crate `{name}` has escaping path dep `{dep}` → `{target}` (not published, not excluded)"
@@ -819,6 +838,7 @@ pub fn project_publication_repo_in(
         license: &license,
         published: &published,
         excluded: &excluded,
+        released: &released,
         versions: &versions,
         crates_io: &crates_io,
         literate_set: &literate_set,
@@ -1440,13 +1460,6 @@ fn header_literal(env: &Colophon, predicate: &str) -> Option<String> {
     header_literals(env, predicate).into_iter().next()
 }
 
-fn manifest_package_str(doc: &toml_edit::DocumentMut, key: &str) -> Option<String> {
-    doc.get("package")
-        .and_then(|p| p.get(key))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
 /// crates.io metadata sourced from the publication doc.
 #[derive(Debug, Clone, Default)]
 struct CratesIoMeta {
@@ -1461,6 +1474,7 @@ struct VendorCtx<'a> {
     license: &'a str,
     published: &'a BTreeSet<String>,
     excluded: &'a BTreeSet<String>,
+    released: &'a BTreeMap<String, String>,
     versions: &'a BTreeMap<String, String>,
     crates_io: &'a CratesIoMeta,
     /// Workspace-relative paths of every document in the projection's
@@ -1687,16 +1701,6 @@ fn package_name(doc: &toml_edit::DocumentMut, path: &Path) -> Result<String> {
         .map(str::to_string).with_context(|| format!("{} has no package.name", path.display()))
 }
 
-fn manifest_access(doc: &toml_edit::DocumentMut) -> String {
-    doc.get("package")
-        .and_then(|p| p.get("metadata"))
-        .and_then(|m| m.get("x0k"))
-        .and_then(|x| x.get("access"))
-        .and_then(|a| a.as_str())
-        .unwrap_or("public")
-        .to_string()
-}
-
 /// Each workspace package's root, relative to `workspace`, by package
 /// name: where the projector vendors `<name>/` from. Read the way the
 /// projector reads it, so the receiver routes an edit back to the
@@ -1713,30 +1717,6 @@ pub(crate) fn source_package_roots(workspace: &Path) -> Result<BTreeMap<String, 
         .collect())
 }
 
-/// `(dep-key, optional, target-crate)` for each `path = "..."` dependency.
-fn path_deps(doc: &toml_edit::DocumentMut) -> Vec<(String, bool, String)> {
-    fn collect(table: &dyn toml_edit::TableLike, out: &mut Vec<(String, bool, String)>) {
-        for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
-            let Some(deps) = table.get(kind).and_then(|d| d.as_table_like()) else { continue; };
-            for (key, item) in deps.iter() {
-                let Some(t) = item.as_table_like() else { continue; };
-                let Some(path) = t.get("path").and_then(|p| p.as_str()) else { continue; };
-                let target = Path::new(path).file_name().and_then(|s| s.to_str())
-                    .unwrap_or(path).to_string();
-                let optional = t.get("optional").and_then(|o| o.as_bool()).unwrap_or(false);
-                out.push((key.to_string(), optional, target));
-            }
-        }
-    }
-    let mut out = Vec::new();
-    collect(doc.as_table(), &mut out);
-    if let Some(targets) = doc.get("target").and_then(|t| t.as_table_like()) {
-        for (_, target) in targets.iter() {
-            if let Some(table) = target.as_table_like() { collect(table, &mut out); }
-        }
-    }
-    out
-}
 
 /// Copy `<workspace>/<crate>/` into `<output>/<crate>/`, drop any
 /// `@generated` file whose source document is outside the projection's
@@ -1881,6 +1861,13 @@ fn rewrite_vendored_manifest(path: &Path, ctx: &VendorCtx<'_>) -> Result<BTreeSe
                     if key == "workspace-hack" || target.as_ref().is_some_and(|t| ctx.excluded.contains(t)) {
                         deps.remove(&key);
                         dropped.insert(key);
+                        continue;
+                    }
+                    if let Some(version) = target.as_ref().and_then(|t| ctx.released.get(t)) {
+                        if let Some(dep) = deps.get_mut(&key).and_then(|d| d.as_table_like_mut()) {
+                            dep.remove("path");
+                            dep.insert("version", toml_edit::value(version.as_str()));
+                        }
                         continue;
                     }
                     if let Some(target) = target.filter(|t| ctx.published.contains(t)) {

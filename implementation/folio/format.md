@@ -185,7 +185,7 @@ pub use envelope_check::{
 // The instance pass reads the vocabulary a collection carries, so it
 // exists only where that loader does.
 #[cfg(feature = "document-vocabulary")]
-pub use envelope_check::{check_instances, resolve_across, InstanceCheck};
+pub use envelope_check::{check_instances, resolve_across, DeclaredInstanceAt, InstanceCheck};
 #[cfg(feature = "envelope")]
 pub use inline_entity::{
     declared_facts, defined_in_fact, document_edges, extract_from_markdown, inline_entity_facts,

@@ -1,6 +1,6 @@
 [package]
 name = "x0k-ontology"
-version = "0.3.2"
+version = "0.3.3"
 edition = { workspace = true }
 license = "MIT"
 description = "The vocabulary folio documents are typed in: compiles OWL modules into Rust tables of the classes, properties and link predicates a header is checked against, and loads further modules from a directory at run time."

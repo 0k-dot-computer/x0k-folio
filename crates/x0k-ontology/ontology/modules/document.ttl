@@ -375,7 +375,7 @@
 <https://0k.computer/ontology#marks> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#mentions> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#mentions> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#comment> "Soft, prose-equivalent reference from one document to another: a decision or a wiki page touching another's territory where neither motivates, supports, refines, nor constrains it. Range-free, because what a document mentions may be any concept — a genome, a manuscript, a page. Stated on the mentioning document; the relation has no inverse spelling." .
+<https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#comment> "Soft, prose-equivalent reference from one document to another: a document touching another's territory where neither motivates, supports, refines, nor constrains it. Any class may mention: its domain unions owl:Thing and keeps Decision and Wiki so it stays a document edge. Range-free, because what a document mentions may be any concept — a genome, a manuscript, a page. Stated on the mentioning document; the relation has no inverse spelling." .
 <https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
 <https://0k.computer/ontology#mentions> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#mentions> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
@@ -389,8 +389,8 @@
 <https://0k.computer/ontology#methodology> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#motivatedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#motivatedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#motivatedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "An upstream cause this decision rests on. Range unions Decision (the typical case — design motivatedBy commitment, architecture motivatedBy design, publication motivatedBy design) and Intent (the cultivation-loop case — a decision was written because executing the named intent surfaced the need for it). Consumers walk rdf:type to disambiguate the target class." .
-<https://0k.computer/ontology#motivatedBy> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#motivatedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "An upstream cause this decision or wiki page rests on. Range unions Decision (the typical case — design motivatedBy commitment, architecture motivatedBy design, publication motivatedBy design) and Intent (the cultivation-loop case — a decision was written because executing the named intent surfaced the need for it). Consumers walk rdf:type to disambiguate the target class." .
+<https://0k.computer/ontology#motivatedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0001n0000 .
 <https://0k.computer/ontology#motivatedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#motivatedBy> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#overlay> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
@@ -418,7 +418,7 @@
 <https://0k.computer/ontology#presents> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#presents> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#comment> "An authored presentation of an entity: the Manuscript (or Decision-genus doc) that renders this entity's neighbourhood as a composed telling. Range is left open (mirroring `publishes`): any presentable entity may be presented — a Seed's bloom, the ontology world, a population chart. The presentation view-mode lens keys on this edge — an entity with an inbound `presents` link offers the curation lens (raw bloom <-> composed presentation). Distinct from `publishes` (region membership): `presents` binds one presentation doc to the one entity it is experienced over." .
-<https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0001n0000 .
+<https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0002n0000 .
 <https://0k.computer/ontology#presents> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#presents> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#presupposes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
@@ -504,9 +504,9 @@
 <https://0k.computer/ontology#refinedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#refinedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "A more specific downstream document that fills in this one: a decision refined by a narrower decision or implementation chapter, a wiki page by a narrower page. Stated on the refined document; the relation has no inverse spelling." .
-<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0002n0000 .
+<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0003n0000 .
 <https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
-<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#range> _:b0003n0000 .
+<https://0k.computer/ontology#refinedBy> <http://www.w3.org/2000/01/rdf-schema#range> _:b0004n0000 .
 <https://0k.computer/ontology#refinedBy> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#repository> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
 <https://0k.computer/ontology#repository> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
@@ -534,10 +534,10 @@
 <https://0k.computer/ontology#resolution> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#comment> "A decision resolves an open question by settling its answer. The resolution is recorded both on the decision (as the body of the answer) and on the question (status flips to 'resolved')." .
+<https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#comment> "A decision resolves an open question by settling its answer. Where the question lives inside another decision rather than as an OpenQuestion of its own, the edge names that decision. The resolution is recorded both on the decision (as the body of the answer) and on the question (status flips to 'resolved')." .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
 <https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
-<https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#OpenQuestion> .
+<https://0k.computer/ontology#resolves> <http://www.w3.org/2000/01/rdf-schema#range> _:b0005n0000 .
 <https://0k.computer/ontology#resolves> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#rustToolchain> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
 <https://0k.computer/ontology#rustToolchain> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
@@ -564,8 +564,7 @@
 <https://0k.computer/ontology#severs> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#status> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
 <https://0k.computer/ontology#status> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#status> <http://www.w3.org/2000/01/rdf-schema#comment> "Decision status: 'proposed' | 'accepted' | 'superseded'." .
-<https://0k.computer/ontology#status> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Decision> .
+<https://0k.computer/ontology#status> <http://www.w3.org/2000/01/rdf-schema#comment> "Lifecycle status. A decision's is 'proposed' | 'accepted' | 'superseded'; anything else that carries one names its own." .
 <https://0k.computer/ontology#status> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#status> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#status> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
@@ -614,6 +613,14 @@
 <https://0k.computer/ontology#updatedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
 <https://0k.computer/ontology#updatedBy> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://0k.computer/ontology#updatedBy> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
+<https://0k.computer/ontology#usesPublication> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<https://0k.computer/ontology#usesPublication> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
+<https://0k.computer/ontology#usesPublication> <http://www.w3.org/2000/01/rdf-schema#comment> "A Publication whose released crates this Publication builds on: it stays out of this projection, and a dependency on one of its crates resolves to the released version on the registry that Publication states." .
+<https://0k.computer/ontology#usesPublication> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#usesPublication> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/document> .
+<https://0k.computer/ontology#usesPublication> <http://www.w3.org/2000/01/rdf-schema#label> "uses publication" .
+<https://0k.computer/ontology#usesPublication> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Publication> .
+<https://0k.computer/ontology#usesPublication> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#visualizes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#visualizes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#visualizes> <http://www.w3.org/2000/01/rdf-schema#comment> "A viz page's edge to the page it illustrates: an Implementation that renders a concept visualizes the chapter or wiki page whose idea it shows (sync/viz-fingerprint visualizes sync/engine). Domain Implementation, which places it here; deliberately range-free, as implements is, because which kinds of page get a visualization is usage, not meaning." .
@@ -624,24 +631,36 @@
 <https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#comment> "The document genus and its kinds — Decision and its subtypes, Knowledge and Wiki, Manuscript, LiterateSpec, OpenQuestion, Publication — with Artifact, what work produces and a document is one of, Actor and its kinds (Human, AIAgent), whom a publication is published for and an affordance is claimed for, the document-to-document edges, the header properties that stay inside the genus, and the folio: tool-configuration terms a header or a parameter panel carries." .
 <https://0k.computer/ontology/document> <http://www.w3.org/2000/01/rdf-schema#label> "document" .
 <https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
-<https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/document/0.5.0> .
+<https://0k.computer/ontology/document> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/document/0.6.0> .
 _:b0000n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0000n0001 .
 _:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
 _:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0000n0002 .
 _:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Wiki> .
-_:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+_:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0000n0003 .
+_:b0000n0003 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://www.w3.org/2002/07/owl#Thing> .
+_:b0000n0003 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
 _:b0001n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0001n0001 .
-_:b0001n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Manuscript> .
+_:b0001n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
 _:b0001n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0001n0002 .
-_:b0001n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0001n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Wiki> .
 _:b0001n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
 _:b0002n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0002n0001 .
-_:b0002n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0002n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Manuscript> .
 _:b0002n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0002n0002 .
-_:b0002n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Wiki> .
+_:b0002n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
 _:b0002n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
 _:b0003n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0003n0001 .
 _:b0003n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
 _:b0003n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0003n0002 .
 _:b0003n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Wiki> .
 _:b0003n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+_:b0004n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0004n0001 .
+_:b0004n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0004n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0004n0002 .
+_:b0004n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Wiki> .
+_:b0004n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+_:b0005n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0005n0001 .
+_:b0005n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#OpenQuestion> .
+_:b0005n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0005n0002 .
+_:b0005n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0005n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .

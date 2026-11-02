@@ -46,6 +46,7 @@ needs to recognize classes, properties, descriptions, and RDF lists:
 
 ```rust {#vocabulary}
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 pub const X0K_NS: &str = "https://0k.computer/ontology#";
 pub const CONCEPT_URI: &str = "https://0k.computer/ontology#Concept";
@@ -63,6 +64,7 @@ pub const RDFS_DOMAIN: &str = "http://www.w3.org/2000/01/rdf-schema#domain";
 pub const RDFS_RANGE: &str = "http://www.w3.org/2000/01/rdf-schema#range";
 pub const RDFS_IS_DEFINED_BY: &str = "http://www.w3.org/2000/01/rdf-schema#isDefinedBy";
 pub const OWL_CLASS: &str = "http://www.w3.org/2002/07/owl#Class";
+pub const OWL_THING: &str = "http://www.w3.org/2002/07/owl#Thing";
 pub const OWL_OBJECT_PROPERTY: &str = "http://www.w3.org/2002/07/owl#ObjectProperty";
 pub const OWL_DATATYPE_PROPERTY: &str = "http://www.w3.org/2002/07/owl#DatatypeProperty";
 pub const OWL_ANNOTATION_PROPERTY: &str = "http://www.w3.org/2002/07/owl#AnnotationProperty";
@@ -147,13 +149,16 @@ assertions collapse without reordering the first observation:
 #[derive(Debug, Clone)]
 pub struct OntologyModel {
     facts: Vec<OntologyFact>,
+    /// The modules' extension namespaces, folded on first use and
+    /// forgotten when a fact is added.
+    namespaces: OnceLock<Vec<(String, String)>>,
 }
 
 impl OntologyModel {
     pub fn new(facts: impl IntoIterator<Item = OntologyFact>) -> Self {
         let mut seen = BTreeSet::new();
         let facts = facts.into_iter().filter(|fact| seen.insert(fact.clone())).collect();
-        Self { facts }
+        Self { facts, namespaces: OnceLock::new() }
     }
 
     pub fn facts(&self) -> &[OntologyFact] {
@@ -188,7 +193,10 @@ impl OntologyModel {
     }
 
     fn ensure(&mut self, fact: OntologyFact) {
-        if !self.facts.contains(&fact) { self.facts.push(fact); }
+        if !self.facts.contains(&fact) {
+            self.facts.push(fact);
+            self.namespaces = OnceLock::new();
+        }
     }
 }
 ```
@@ -257,12 +265,28 @@ the base namespace and silently dropped everything else, so the first
 extension in its own namespace was invisible to every table; the rule
 was declared and not exercised.
 
+The namespaces are folded once per model, not once per name. `compact` is
+on the path of every fact a store stages: the entry store's declared
+indexes key each predicate by its compact name (`declared-indexes`), and a
+fresh store's concept-region bootstrap stages every term of the vocabulary
+in one transaction. Folded per call, each name scanned the whole model
+twice; on a fresh x0kd that bootstrap held the spine's appender for
+seconds, and a SIGTERM's shutdown waited for it.
+
 <a name="chunk-class-view"></a><sub>[`src/concept_facts.rs`](../../crates/x0k-ontology/src/concept_facts.rs) · `#class-view`</sub>
 
 ```rust {#class-view}
 impl OntologyModel {
     /// The extension namespaces the modules declare, as `(prefix, namespace)`.
     pub fn extension_namespaces(&self) -> Vec<(String, String)> {
+        self.namespaces().to_vec()
+    }
+
+    fn namespaces(&self) -> &[(String, String)] {
+        self.namespaces.get_or_init(|| self.fold_namespaces())
+    }
+
+    fn fold_namespaces(&self) -> Vec<(String, String)> {
         let mut out = BTreeSet::new();
         for iri in self.entities_typed_as(OWL_ONTOLOGY) {
             let mut prefixes = self.text_values(&iri, VANN_PREFERRED_NAMESPACE_PREFIX);
@@ -285,7 +309,7 @@ impl OntologyModel {
         if let Some(local) = iri.strip_prefix(X0K_NS) {
             return Some(format!("x0k:{local}"));
         }
-        self.extension_namespaces().into_iter()
+        self.namespaces().iter()
             .find_map(|(prefix, namespace)| iri.strip_prefix(namespace.as_str()).map(|local| format!("{prefix}:{local}")))
     }
 
@@ -295,7 +319,7 @@ impl OntologyModel {
         if let Some(local) = bare.strip_prefix("x0k:") {
             return format!("{X0K_NS}{local}");
         }
-        self.extension_namespaces().into_iter()
+        self.namespaces().iter()
             .find_map(|(prefix, namespace)| bare.strip_prefix(&format!("{prefix}:")).map(|local| format!("{namespace}{local}")))
             .unwrap_or_else(|| bare.to_string())
     }
@@ -423,6 +447,15 @@ impl OntologyModel {
             }
         }
         closure
+    }
+
+    /// The classes `property` admits on one side, `RDFS_DOMAIN` or
+    /// `RDFS_RANGE`: each it names and everything beneath them. `None` when
+    /// it names none, or `owl:Thing`, either of which admits every class.
+    pub fn admitted_classes(&self, property: &str, side: &str) -> Option<BTreeSet<String>> {
+        let named = self.class_references(property, side);
+        let open = named.is_empty() || named.iter().any(|class| class == OWL_THING);
+        (!open).then(|| named.iter().flat_map(|class| self.subclass_closure(class)).collect())
     }
 }
 ```

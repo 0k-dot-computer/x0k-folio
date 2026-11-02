@@ -54,8 +54,8 @@
 <https://0k.computer/ontology#defines> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
-<https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#comment> "The specific surface on which a signifier is presented — a keybinding on an input surface, a button on a graphical one." .
-<https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#domain> <https://0k.computer/ontology#Signifier> .
+<https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#comment> "The specific surface on which a signifier is presented — a keybinding on an input surface, a button on a graphical one. An affordance may state its surface directly while its cue is undecided; a signifier then says how it is reached there." .
+<https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#presentedOn> <http://www.w3.org/2000/01/rdf-schema#range> <https://0k.computer/ontology#Surface> .
 <https://0k.computer/ontology#presentedOn> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
@@ -97,7 +97,7 @@
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://0k.computer/ontology#Concept> .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#comment> "What proves an affordance holds: an executable spec at any rung - a LiterateSpec the eval harness drives, or a chunk of an Implementation that tangles a test and declares proves= for it (the derived dual of proves). The admissible targets are a shape on software; the term itself has no range, because the two classes live in document and the constraint is contextual (vocabulary-shapes §3)." .
-<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0000n0000 .
+<https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#domain> _:b0001n0000 .
 <https://0k.computer/ontology#verifiedBy> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/software> .
 <https://0k.computer/ontology#verifiedBy> <https://0k.computer/ontology#termKind> <https://0k.computer/ontology#kind/relation> .
 <https://0k.computer/ontology/software> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
@@ -105,9 +105,14 @@
 <https://0k.computer/ontology/software> <http://www.w3.org/2000/01/rdf-schema#label> "software" .
 <https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/core> .
 <https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#imports> <https://0k.computer/ontology/document> .
-<https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/software/0.5.0> .
+<https://0k.computer/ontology/software> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/software/0.6.0> .
 _:b0000n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0000n0001 .
-_:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Affordance> .
+_:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Signifier> .
 _:b0000n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0000n0002 .
-_:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Affordance> .
 _:b0000n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+_:b0001n0000 <http://www.w3.org/2002/07/owl#unionOf> _:b0001n0001 .
+_:b0001n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Affordance> .
+_:b0001n0001 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:b0001n0002 .
+_:b0001n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://0k.computer/ontology#Decision> .
+_:b0001n0002 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .

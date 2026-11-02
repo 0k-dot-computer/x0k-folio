@@ -28,6 +28,113 @@ are exactly the crates whose numbers moved in it, and each heading names
 the number. Reading a crate's version as "how recent is this bundle" will
 mislead you — read the release it is listed under instead.
 
+## 0.6.0 — 2026-11-02
+
+On GitHub as
+[v0.6.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.6.0):
+a binary per platform, `install.sh`, the source closure, and one
+`SHA256SUMS`.
+
+**A term now holds wherever it is written.** Until this release `check` read a
+term's domain and range on one thing only: a block's edge to a declaration. A
+header's edges skipped them, a block's edge to a document skipped its range, and
+no literal met its term's domain. So a collection could declare `rdfs:domain`
+carefully and have it enforced in about half the places it was stated. All of
+that holds now, in headers and in blocks, with a subclass standing for its
+parent as it has since 0.5.0.
+
+**Some of what passed will now fail.** These are the cases to expect:
+
+- **A class outside a term's domain.** The words are a block's, on either
+  surface: `` `paper:note/n`: `paper:cites` does not accept `paper:Note` ``.
+  This reaches the shipped vocabulary too. A shipped term that names a domain
+  refuses a class of yours unless that class sits beneath it, so a header that
+  writes `x0k:supersededBy` on a class of your own needs that class to be
+  `rdfs:subClassOf x0k:Decision`.
+- **A target outside a term's range,** when the set says what the target is:
+  `` `paper:paper/report`: `paper:cites` target `paper:note/n` has type
+  `paper:Note`, expected `paper:Paper` ``.
+- **A literal outside its term's domain,** for a datatype property, in a header
+  or a block.
+- **A literal on an object property.** `` `paper:paper/report` gives
+  `paper:cites` a literal, but it names an id ``. An id in quotes reads fine and
+  was never an edge: a typo in it could not dangle, and nothing checked it.
+
+Four things are deliberately not refused. A target outside the set has no class
+to read, so it stays a dangling edge, and only `--closed` minds. A class the
+vocabulary does not declare is not judged, so `--only-vocabulary` refuses
+nothing it cannot place. `x0k:mentions` takes any subject, because anything may
+point at anything. A term naming `owl:Thing` admits every class.
+
+These are `check`'s rules. `ingest` does not run them, so `check` still goes
+first.
+
+**The first run found more wrong with our vocabulary than with our documents.**
+It refused 582 statements in our own corpus. In 570 the document was right and
+the term was not: `x0k:realizedBy` had a comment saying "the techne or
+implementation" and a range naming Techne alone. Nine used a term for something
+it does not mean, and three held an id in quotes, in a chain of affordance
+dependencies that had never been in the graph. A domain nothing enforces drifts
+from what it means, and ours had.
+
+Four crates move, because only two changed. `x0k-folio` moves its minor number
+for the types below, and `x0k-ontology` a patch, for a method and a constant
+added and terms that admit more. `x0k-tangle` and `x0k-folio-cli` take the
+release's number with no change to their own source. The other six keep theirs.
+
+### x0k-tangle 0.6.0
+
+- Built on `x0k-folio` 0.5.0, so `check` applies everything above. No line of
+  its source changed, but its public reports carry `x0k-folio`'s types.
+
+### x0k-ontology 0.3.3
+
+- `OntologyModel::admitted_classes` answers what a term admits on one side: each
+  class it names and everything beneath them, or `None` when it names none or
+  `owl:Thing`. `x0k-folio` calls it, so a release of that crate needs this one.
+  `OWL_THING` is new.
+- Terms that admit more, none removed:
+  - `x0k:realizedBy` ranges over Techne or Implementation.
+  - `x0k:dependsOn` ranges over Decision too.
+  - `x0k:motivatedBy` takes a Wiki subject as well as a Decision.
+  - `x0k:resolves` ranges over Decision too, for a question held inside
+    another decision.
+  - `x0k:mentions` takes any subject.
+  - `x0k:status` has no domain.
+  - `x0k:presentedOn` takes an Affordance subject as well as a Signifier, for a
+    surface decided before its cue.
+
+### x0k-folio 0.5.0
+
+- **A term's domain and range hold on a header.** `check_corpus` reads a
+  header's subject and its targets among the set's documents, and
+  `resolve_across` reads the edges that cross between documents and
+  declarations, which neither pass could judge alone.
+- **`check_literal_fields` and a header's literals** refuse a literal on an
+  object property, and read a datatype property's domain.
+- **A declared genus keeps its class.** `DocType::Declared` was a kebab-case
+  name, so `class_iri` spelled `mycorp:Brief` as `x0k:Brief`. It now carries
+  the class as stated, and a rendered header states it.
+- **What breaks for a caller:** `Defect` gains `LiteralOnEdge`,
+  `UnacceptedSubject` and `UnacceptedTarget`, so an exhaustive match stops
+  compiling. `DocType::Declared` is `{ genus, class }`, so code naming it stops
+  compiling; `layout::declared_genus_subpath` gives a declared genus its path
+  from a name alone. `EnvelopeReport.class` and `CorpusReport.classes` are new
+  public fields, so a struct literal naming every field stops compiling.
+  `InstanceCheck.declared` maps to `DeclaredInstanceAt`, which holds the block
+  and the class.
+
+### x0k-folio-cli 0.6.0
+
+- Carries the release number. Its source is unchanged, and it is built on
+  `x0k-folio` 0.5.0.
+
+### Guides
+
+- The guide says what holds on each side, what is left unread, and that a
+  literal on an object property is refused.
+- The guide's release examples name v0.6.0.
+
 ## 0.5.0 — 2026-11-01
 
 On GitHub as

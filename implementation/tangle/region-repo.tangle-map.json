@@ -1,12 +1,16 @@
 {
   "source": "implementation/tangle/region-repo.md",
-  "source_hash": "03e21038962a1986",
+  "source_hash": "b8dd7f6ff7f61bed",
   "pipelines": [
     {
       "kind": "identity-tangle",
       "input_hashes": {},
       "config_hash": "40c6dd6c36334d6e",
       "outputs": [
+        {
+          "path": "crates/x0k-tangle/src/region_repo/dependency_closure.rs",
+          "hash": "23f6b41254ff27f2"
+        },
         {
           "path": "crates/x0k-tangle/src/region_repo/affordance_links.rs",
           "hash": "38aba7503d29c6db"
@@ -17,11 +21,11 @@
         },
         {
           "path": "crates/x0k-tangle/tests/region_repo_modules.rs",
-          "hash": "f836915f001af3e5"
+          "hash": "85fd91fe729363bd"
         },
         {
           "path": "crates/x0k-tangle/src/region_repo.rs",
-          "hash": "82f64cf203f4a97f"
+          "hash": "b75c5853588fdfcf"
         }
       ]
     }

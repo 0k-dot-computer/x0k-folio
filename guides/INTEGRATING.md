@@ -23,7 +23,7 @@ and signed in it also runs `gh attestation verify` against the release's SLSA
 build provenance and refuses if that fails; without it, it prints one line
 saying the check was skipped and the command that runs it. It installs to
 `~/.local/bin` with no `sudo` (`FOLIO_INSTALL_DIR` moves it), pins a release
-when told to (`curl -fsSL https://0k.computer/folio/install.sh | FOLIO_VERSION=0.5.0 sh`),
+when told to (`curl -fsSL https://0k.computer/folio/install.sh | FOLIO_VERSION=0.6.0 sh`),
 and its last lines say what it installed, where, and whether that directory
 is on your `PATH`. **Windows is not covered by the script**:
 take the `.zip` from [the release page](https://github.com/0k-dot-computer/x0k-folio/releases),
@@ -77,7 +77,7 @@ The binaries the script installs come from the release lane in this
 repository: `.github/workflows/release.yml` builds a static binary per
 platform on a tag, attests each with SLSA build provenance, and attaches
 them — with one `SHA256SUMS` and `install.sh` itself — to the tag's release.
-[v0.5.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.5.0) is such a release: a static binary for five platforms,
+[v0.6.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.6.0) is such a release: a static binary for five platforms,
 `install.sh`, the source closure below, and one `SHA256SUMS`, attested at
 build.
 
@@ -89,8 +89,8 @@ attested like the binaries: the repository at that tag, every crate its
 with no network, and no GitHub, at all:
 
 ```sh
-tar -xzf x0k-folio-v0.5.0-vendor.tar.gz
-cd x0k-folio-v0.5.0
+tar -xzf x0k-folio-v0.6.0-vendor.tar.gz
+cd x0k-folio-v0.6.0
 cargo build --offline --locked --release -p x0k-tangle -p x0k-folio-cli
 ```
 
@@ -306,9 +306,14 @@ carries still fails. One id cannot be both, and that fails with or without
 `paper:report/one` names both the document reports/one.md and the declaration at papers/alpha.md:9; an id names one thing, so give one of them another
 ```
 
-A block's edge to a document resolves but its range is not read, because only
-a declaration's class is known to that check. A header's edges have no range
-check either.
+An edge's term holds on both sides wherever the edge is written. A header or a
+block whose class falls outside its term's `rdfs:domain` is refused, and so is
+a target the set types outside its `rdfs:range`, a subclass standing for its
+parent in both. A target outside the set has no class to read, so it is only a
+dangling edge. A literal's term holds the same way: its subject must fall
+within the term's `rdfs:domain`, in a header or a block. A literal on an object
+property is refused outright, because its value is an id, and text there could
+never dangle.
 
 **Pass the whole set.** The shape a CI job reaches for first — check only the
 files this pull request touched — is the one shape `--closed` cannot be given,

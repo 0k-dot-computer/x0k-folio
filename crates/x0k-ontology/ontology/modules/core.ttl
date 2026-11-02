@@ -123,4 +123,4 @@
 <https://0k.computer/ontology/core> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
 <https://0k.computer/ontology/core> <http://www.w3.org/2000/01/rdf-schema#comment> "The self-typed root every x0k vocabulary module stands on: Concept, which every term occupies, and the term kinds that say what each term names." .
 <https://0k.computer/ontology/core> <http://www.w3.org/2000/01/rdf-schema#label> "core" .
-<https://0k.computer/ontology/core> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/core/0.5.0> .
+<https://0k.computer/ontology/core> <http://www.w3.org/2002/07/owl#versionIRI> <https://0k.computer/ontology/core/0.6.0> .

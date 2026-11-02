@@ -363,8 +363,8 @@ document as its source. Expected when the set is a projection and the
 design stayed home; the thing to read when a test was renamed or a
 declaration deleted, since the edge on the chunk outlives both. It resolves
 as every other edge does, so a `proves=` naming a document or some other
-declaration resolves too: the term's `x0k:Affordance` range is not read here,
-as no header edge's range is. A `proves=` value that is not an id at all is a
+declaration resolves too, and is refused when its class falls outside the
+term's `x0k:Affordance` range, as any edge's is. A `proves=` value that is not an id at all is a
 defect, the same one a malformed edge target is.
 
 A header defect that names an undeclared term — an edge's predicate or a

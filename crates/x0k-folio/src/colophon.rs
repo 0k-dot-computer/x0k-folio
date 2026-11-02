@@ -335,9 +335,10 @@ pub enum DocType {
     /// addressed `x0k:affordance/<id>`.
     Affordance,
     /// A class a loaded vocabulary declares that this crate has no variant
-    /// for, named by the kebab-case of its local name. Nothing dispatches on
+    /// for: the kebab-case of its local name, and the class as stated, so a
+    /// term's domain and range can be read against it. Nothing dispatches on
     /// it, because nothing compiled in knows what it means.
-    Declared(String),
+    Declared { genus: String, class: String },
 }
 
 impl DocType {
@@ -360,7 +361,7 @@ impl DocType {
             DocType::Seed => "seed",
             DocType::Intent => "intent",
             DocType::Affordance => "affordance",
-            DocType::Declared(name) => name.as_str(),
+            DocType::Declared { genus, .. } => genus.as_str(),
         }
     }
 
@@ -383,11 +384,13 @@ impl DocType {
         })
     }
 
-    /// The class this genus names in the shared namespace: `design` is
-    /// `https://0k.computer/ontology#Design`. A declared genus is spelled
-    /// back into the shared namespace too, which is what a renderer writing
-    /// x0k's own documents wants.
+    /// The class this genus names: `design` is
+    /// `https://0k.computer/ontology#Design`, in the shared namespace, and a
+    /// declared genus is the class its header stated, in its module's.
     pub fn class_iri(&self) -> String {
+        if let DocType::Declared { class, .. } = self {
+            return class.clone();
+        }
         let pascal: String = self
             .as_str()
             .split('-')
@@ -419,7 +422,7 @@ impl DocType {
         };
         let declared = model.classes().iter().any(|class| model.expand(&class.uri) == class_iri);
         if declared {
-            return Ok(DocType::Declared(kebab));
+            return Ok(DocType::Declared { genus: kebab, class: class_iri.to_string() });
         }
         Err(Self::declared_beyond_named(model))
     }
@@ -1354,7 +1357,8 @@ mod tests {
         assert!(matches!(parse_envelope(content), Err(FolioError::Turtle { .. })));
         let (env, _) = parse_envelope_in(&model, content).expect("a declared genus parses");
         assert_eq!(env.id, "x0k:brief/tender-process");
-        assert_eq!(env.doc_type, DocType::Declared("brief".to_string()));
+        assert_eq!(env.doc_type.as_str(), "brief");
+        assert_eq!(env.doc_type.class_iri(), format!("{X0K_NS}Brief"));
         let unknown = content.replace("x0k:Brief", "x0k:Pamphlet");
         let message = parse_envelope_in(&model, &unknown).unwrap_err().to_string();
         assert!(message.contains("a class a loaded vocabulary module declares: brief"), "{message}");

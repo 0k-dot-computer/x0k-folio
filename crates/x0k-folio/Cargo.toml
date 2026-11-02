@@ -1,6 +1,6 @@
 [package]
 name = "x0k-folio"
-version = "0.4.0"
+version = "0.5.0"
 edition = { workspace = true }
 description = "Reads and writes the folio document header (the Turtle block under a Markdown document's title that gives it an id, a class and typed links), extracts the graph blocks in its body, and puts HTML document bodies into one canonical form."
 license = "MIT"
@@ -55,7 +55,7 @@ walkdir = { version = "2", optional = true }
 # loader for Turtle carried in documents. The dev-dependency below also
 # switches the loader on for the tests, which
 # build vocabularies out of scratch module directories.
-x0k-ontology = { path = "../x0k-ontology", default-features = false, optional = true , version = "0.3.2" }
+x0k-ontology = { path = "../x0k-ontology", default-features = false, optional = true , version = "0.3.3" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -101,5 +101,5 @@ required-features = ["plugins"]
 x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core", "envelope"] , version = "0.3.0" }
 # The loader, for tests that read a genus or a namespace off a scratch
 # module directory rather than out of the compiled tables.
-x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.3.2" }
+x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.3.3" }
 tempfile = "3"

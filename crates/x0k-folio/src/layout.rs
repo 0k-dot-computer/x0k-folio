@@ -88,8 +88,13 @@ pub fn genus_subpath(t: &DocType) -> PathBuf {
         DocType::Affordance => PathBuf::from("affordances"),
         // A genus this build has no variant for, named by a vocabulary
         // module the caller loaded. It gets the shape its neighbours have.
-        DocType::Declared(name) => under_decisions(name),
+        DocType::Declared { genus, .. } => declared_genus_subpath(genus),
     }
+}
+
+/// Where a genus no variant names lives, by its kebab-case name.
+pub fn declared_genus_subpath(genus: &str) -> PathBuf {
+    PathBuf::from("decisions").join(genus)
 }
 
 /// How deep a walk must go to see every document of a genus, counting the
@@ -106,7 +111,7 @@ pub fn walk_depth(t: &DocType) -> usize {
         // `manuscripts/<work>/<part>.md`.
         DocType::Manuscript => 3,
         DocType::Seed | DocType::Intent | DocType::Affordance => 1,
-        DocType::Declared(_) => 3,
+        DocType::Declared { .. } => 3,
     }
 }
 

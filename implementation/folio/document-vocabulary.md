@@ -646,12 +646,12 @@ pub fn validate_relationships(model: &OntologyModel, instances: &[DeclaredInstan
                     return Err(error(VocabularyErrorKind::Unsupported, format!("{predicate}: unsupported class constraint"), std::slice::from_ref(&instance.source)));
                 }
             }
-            let admits = |allowed: &[String], class: &str| allowed.iter().any(|named| model.subclass_closure(named).contains(class));
-            if !domain.is_empty() && !admits(&allowed_domain, &instance.concept) {
+            let admits = |side: &str, class: &str| model.admitted_classes(predicate, side).is_none_or(|classes| classes.contains(class));
+            if !admits(RDFS_DOMAIN, &instance.concept) {
                 return Err(error(VocabularyErrorKind::InvalidDeclaration, format!("{predicate} does not accept {}", instance.concept), std::slice::from_ref(&instance.source)));
             }
             if let Some(actual) = by_id.get(object) {
-                if !range.is_empty() && !admits(&allowed_range, actual) {
+                if !admits(RDFS_RANGE, actual) {
                     let required = allowed_range.join(", ");
                     return Err(error(VocabularyErrorKind::InvalidDeclaration, format!("{predicate} target {object} has type {actual}, expected {required}"), std::slice::from_ref(&instance.source)));
                 }

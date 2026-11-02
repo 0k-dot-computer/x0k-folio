@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::collection::Vocabulary;
-use crate::region_repo::{project_publication_repo_in, Proofs, RepoProjectOptions, RepoProjectReport};
+use crate::region_repo::{project_publication_repo_in, released_crates_of, Proofs, RepoProjectOptions, RepoProjectReport};
 
 /// Options for a publish-repo run.
 #[derive(Debug, Clone, Default)]
@@ -159,6 +159,14 @@ pub fn publish_repo_with_index(
         emit_github: opts.emit_github,
     };
     let registry = publish_registry(region_doc, vocabulary)?;
+    let waiting = unreleased(&released_crates_of(region_doc, workspace, vocabulary)?, index)?;
+    if !waiting.is_empty() {
+        bail!(
+            "this publication builds on {}, which the registry does not serve yet: publish \
+             the publication that releases it first",
+            waiting.join(", ")
+        );
+    }
     // Resolve the remote before anything is written or built, whether or
     // not we push: the report shows where a real publish would land, and an
     // unreadable config refuses here, not after the minutes-long build.
@@ -637,6 +645,20 @@ fn projection_head(output_dir: &Path) -> Option<String> {
     (out.status.success() && !head.is_empty()).then_some(head)
 }
 
+/// The crates of `released`, as `name version`, that `index` does not serve.
+fn unreleased(
+    released: &BTreeMap<String, String>,
+    index: &dyn RegistryIndex,
+) -> Result<Vec<String>> {
+    let mut waiting = Vec::new();
+    for (name, version) in released {
+        if !index.published_versions(name)?.contains(version) {
+            waiting.push(format!("{name} {version}"));
+        }
+    }
+    Ok(waiting)
+}
+
 /// The one registry this pipeline uploads crates to.
 const CRATES_IO: &str = "crates.io";
 
@@ -841,6 +863,17 @@ mod tests {
             assert_eq!(excluded, ["base"], "only the already-published crate is excluded: {args:?}");
             assert_eq!(args.iter().any(|a| a == "--dry-run"), dry_run, "{args:?}");
         }
+    }
+
+    #[test]
+    fn a_publication_waits_for_the_versions_it_builds_on() {
+        let index = StubIndex::serving(&[("types", &["0.1.0"]), ("derive", &["0.1.0"])]);
+        let released = BTreeMap::from([
+            ("types".to_string(), "0.1.0".to_string()),
+            ("derive".to_string(), "0.2.0".to_string()),
+            ("never".to_string(), "0.1.0".to_string()),
+        ]);
+        assert_eq!(unreleased(&released, &index).unwrap(), ["derive 0.2.0", "never 0.1.0"]);
     }
 
     #[test]

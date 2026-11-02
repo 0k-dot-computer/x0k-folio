@@ -2819,6 +2819,71 @@ fn relocated_workspace_inherited_paths_are_materialized_and_guarded() {
     assert!(project_err(root).contains("escaping path dep"));
 }
 
+/// `moved_workspace` with `helper-crate` shipped by a second publication,
+/// `support`, which states `registry`; the first ships `demo-crate` and uses it.
+fn workspace_using_a_publication(registry: bool) -> tempfile::TempDir {
+    let ws = moved_workspace();
+    let root = ws.path();
+    let used = publication(&["helper-crate"], &["core"], true).replace("publication:demo", "publication:support");
+    let statement = if registry { "    x0k:publishRegistry \"crates.io\" ;\n" } else { "" };
+    std::fs::write(
+        root.join(PUB_REL).with_file_name("support.md"),
+        with_statements(&used, statement),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join(PUB_REL),
+        with_statements(
+            &publication(&["demo-crate"], &["core"], true),
+            "    x0k:usesPublication publication:support ;\n",
+        ),
+    )
+    .unwrap();
+    ws
+}
+
+#[test]
+fn a_dependency_on_a_used_publication_projects_to_its_released_version() {
+    let ws = workspace_using_a_publication(true);
+    let out = tempfile::tempdir().unwrap();
+    // Nothing serves `helper-crate`, so the lock refuses: the projection
+    // really does resolve it from the registry.
+    let err = format!("{:#}", project(ws.path(), out.path()).expect_err("no registry serves it"));
+    assert!(err.contains("helper-crate") && !err.contains("escaping path dep"), "{err}");
+    let text = std::fs::read_to_string(out.path().join("demo-crate/Cargo.toml")).unwrap();
+    let manifest = text.parse::<toml_edit::DocumentMut>().unwrap();
+    let dep = &manifest["dependencies"]["support"];
+    assert_eq!(dep["version"].as_str(), Some("0.1.0"));
+    assert_eq!(dep["package"].as_str(), Some("helper-crate"));
+    assert!(dep.get("path").is_none(), "{text}");
+    assert!(text.contains("build-dependencies"), "{text}");
+    assert!(!text.contains("path ="), "{text}");
+    assert!(!out.path().join("helper-crate").exists());
+}
+
+#[test]
+fn a_used_publication_that_states_no_registry_is_refused() {
+    let ws = workspace_using_a_publication(false);
+    let err = project_err(ws.path());
+    assert!(err.contains("publication:support") || err.contains("x0k:publication/support"), "{err}");
+    assert!(err.contains("x0k:publishRegistry"), "{err}");
+}
+
+#[test]
+fn a_crate_ships_from_one_publication() {
+    let ws = workspace_using_a_publication(true);
+    std::fs::write(
+        ws.path().join(PUB_REL),
+        with_statements(
+            &publication(&["demo-crate", "helper-crate"], &["core"], true),
+            "    x0k:usesPublication publication:support ;\n",
+        ),
+    )
+    .unwrap();
+    let err = project_err(ws.path());
+    assert!(err.contains("helper-crate") && err.contains("one publication"), "{err}");
+}
+
 #[test]
 fn relocated_target_and_development_dependencies_obey_the_same_closure() {
     for table in ["dev-dependencies", "build-dependencies", "target.'cfg(unix)'.dependencies"] {

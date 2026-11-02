@@ -106,10 +106,12 @@ than a term filed in the wrong house.
 //! prefix the collection defined for itself.
 //!
 //! The same pass reads a block's other keys — its **fields** — against
-//! that vocabulary: a key naming no declared property, and a value
-//! contradicting its property's XSD range, on any instance
-//! (`check_literal_fields`). A header's literals answer to the same value
-//! rule, in the same words ([`Defect::ContradictedLiteral`]).
+//! that vocabulary: a key naming no declared property, a literal on an object
+//! property, a subject outside its property's domain, and a value contradicting
+//! its property's XSD range, on any instance (`check_literal_fields`). A
+//! header's literals answer to the same rules, in the same words
+//! ([`Defect::LiteralOnEdge`], [`Defect::UnacceptedSubject`],
+//! [`Defect::ContradictedLiteral`]).
 //!
 //! A header names a document and a block names a declaration, and each
 //! pass sees only its own list. `resolve_across` (with the
@@ -119,7 +121,7 @@ than a term filed in the wrong house.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use x0k_ontology::concept_facts::{OntologyModel, OntologyValue, X0K_NS};
+use x0k_ontology::concept_facts::{OntologyModel, OntologyValue, RDFS_DOMAIN, RDFS_RANGE, X0K_NS};
 
 use crate::colophon::{Colophon, Literal, XSD_NS};
 use crate::entity_id::EntityId;
@@ -241,6 +243,12 @@ outlive the vocabulary it came from.
 <a name="chunk-vocabulary"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#vocabulary`</sub>
 
 ```rust {#vocabulary}
+/// The classes a property admits on each side, `None` for a side naming none.
+struct AdmittedClasses {
+    domain: Option<BTreeSet<String>>,
+    range: Option<BTreeSet<String>>,
+}
+
 /// The folds this module needs, taken once from a model.
 struct Vocabulary {
     /// The Decision-domain slice the model computes for `x0k:`, compact.
@@ -260,6 +268,10 @@ struct Vocabulary {
     /// Full IRI of each of `terms` → every `rdfs:range` value it declares:
     /// what a literal statement's value is read against.
     ranges: BTreeMap<String, Vec<String>>,
+    /// Full IRI of each of `terms` → the classes it admits.
+    admitted: BTreeMap<String, AdmittedClasses>,
+    /// Every class the model declares, as a full IRI.
+    classes: BTreeSet<String>,
     /// The extension namespaces, `(prefix, namespace)`, for spelling a term
     /// between its compact and full forms without a fold per term.
     namespaces: Vec<(String, String)>,
@@ -282,8 +294,52 @@ impl Vocabulary {
             decision_domains: decision_domains(model),
             schemes: model.schemes(),
             ranges: declared_ranges(model, &terms),
+            classes: model.classes().iter().map(|class| model.expand(&class.uri)).collect(),
+            admitted: terms
+                .iter()
+                .map(|iri| {
+                    let domain = model.admitted_classes(iri, RDFS_DOMAIN);
+                    let range = model.admitted_classes(iri, RDFS_RANGE);
+                    (iri.clone(), AdmittedClasses { domain, range })
+                })
+                .collect(),
             terms,
             namespaces: model.extension_namespaces(),
+        }
+    }
+
+    /// Does `predicate`'s domain admit a subject of `class`? A class the
+    /// vocabulary does not declare has no place in it to be judged by: one of
+    /// the ten genera, under a vocabulary that does not name it.
+    fn admits_subject(&self, predicate: &str, class: &str) -> bool {
+        let sides = self.admitted.get(&self.expand(predicate));
+        !self.classes.contains(class)
+            || sides.and_then(|sides| sides.domain.as_ref()).is_none_or(|classes| classes.contains(class))
+    }
+
+    /// Is `predicate` an object property, whose value is an id?
+    fn names_ids(&self, predicate: &str) -> bool {
+        self.properties.contains_key(&self.compact(&self.expand(predicate)))
+    }
+
+    /// Does `predicate`'s range admit a target of `class`? As for
+    /// [`Self::admits_subject`].
+    fn admits_target(&self, predicate: &str, class: &str) -> bool {
+        let sides = self.admitted.get(&self.expand(predicate));
+        !self.classes.contains(class)
+            || sides.and_then(|sides| sides.range.as_ref()).is_none_or(|classes| classes.contains(class))
+    }
+
+    /// The refusal of an edge whose target is of `class`.
+    fn unaccepted_target(&self, subject: &str, predicate: &str, target: &str, class: &str) -> Defect {
+        let range = self.properties.get(predicate).and_then(|(_, range)| range.as_deref());
+        Defect::UnacceptedTarget {
+            subject: subject.to_string(),
+            predicate: predicate.to_string(),
+            target: target.to_string(),
+            class: self.compact(class),
+            expected: range.map_or_else(|| "its range".to_string(), |range| self.compact(&self.expand(range))),
+            line: None,
         }
     }
 
@@ -393,7 +449,6 @@ fn declared_properties(model: &OntologyModel) -> BTreeSet<String> {
 /// Property IRI → every `rdfs:range` value `model` states of it, for the
 /// declared `properties`.
 fn declared_ranges(model: &OntologyModel, properties: &BTreeSet<String>) -> BTreeMap<String, Vec<String>> {
-    use x0k_ontology::concept_facts::RDFS_RANGE;
     let mut ranges: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for fact in model.facts() {
         let OntologyValue::Entity(value) = &fact.value else { continue };
@@ -495,6 +550,40 @@ pub enum Defect {
         /// As for [`Defect::UndeclaredPredicate`].
         line: Option<usize>,
     },
+    /// A literal on an object property, whose value is an id. Text there
+    /// could never dangle, so a typo in it would pass every other check.
+    LiteralOnEdge {
+        /// The header's subject, compact.
+        subject: String,
+        predicate: String,
+        /// As for [`Defect::UndeclaredPredicate`].
+        line: Option<usize>,
+    },
+    /// An edge whose term's `rdfs:domain` does not reach the document's
+    /// class: the rule a block's edge answers to, read on a header.
+    UnacceptedSubject {
+        /// The header's subject, compact.
+        subject: String,
+        predicate: String,
+        /// The document's class, compact.
+        class: String,
+        /// As for [`Defect::UndeclaredPredicate`].
+        line: Option<usize>,
+    },
+    /// An edge whose target the set types outside the term's `rdfs:range`.
+    UnacceptedTarget {
+        /// The header's subject, compact.
+        subject: String,
+        predicate: String,
+        /// The target, compact.
+        target: String,
+        /// The target's class, compact.
+        class: String,
+        /// What the range names, compact.
+        expected: String,
+        /// As for [`Defect::UndeclaredPredicate`].
+        line: Option<usize>,
+    },
 }
 
 impl std::fmt::Display for Defect {
@@ -509,6 +598,10 @@ impl std::fmt::Display for Defect {
                 write!(f, "; the nearest declared term is `{term}`")?;
             }
             write!(f, "; either select the module that defines it or stop using the term")
+        };
+        let located = |f: &mut std::fmt::Formatter<'_>, line: &Option<usize>| match line {
+            Some(line) => write!(f, " at line {line}"),
+            None => Ok(()),
         };
         match self {
             Self::MalformedId { value, reason } => {
@@ -530,10 +623,19 @@ impl std::fmt::Display for Defect {
             }
             Self::ContradictedLiteral { subject, predicate, literal, datatype, line } => {
                 write!(f, "{}", contradiction(subject, predicate, literal, *datatype))?;
-                match line {
-                    Some(line) => write!(f, " at line {line}"),
-                    None => Ok(()),
-                }
+                located(f, line)
+            }
+            Self::LiteralOnEdge { subject, predicate, line } => {
+                write!(f, "`{subject}` gives `{predicate}` a literal, but it names an id")?;
+                located(f, line)
+            }
+            Self::UnacceptedSubject { subject, predicate, class, line } => {
+                write!(f, "`{subject}`: `{predicate}` does not accept `{class}`")?;
+                located(f, line)
+            }
+            Self::UnacceptedTarget { subject, predicate, target, class, expected, line } => {
+                write!(f, "`{subject}`: `{predicate}` target `{target}` has type `{class}`, expected `{expected}`")?;
+                located(f, line)
             }
         }
     }
@@ -542,8 +644,8 @@ impl std::fmt::Display for Defect {
 impl std::error::Error for Defect {}
 
 impl Defect {
-    /// Give an undeclared term or a contradicted literal the file line of
-    /// the header statement that writes its term, read off `content` — the
+    /// Give an undeclared term, a contradicted literal or a refused edge the
+    /// file line of the header statement that writes its term, read off `content` — the
     /// whole document the header was parsed from, so the line is one an
     /// editor opens. A term the header spells some other way than its
     /// compact form (a full `<…>` IRI, a block-local prefix) is given the
@@ -551,7 +653,10 @@ impl Defect {
     pub fn locate(&mut self, content: &str) {
         let (Self::UndeclaredPredicate { predicate, line, .. }
         | Self::UndeclaredLiteral { predicate, line, .. }
-        | Self::ContradictedLiteral { predicate, line, .. }) = self
+        | Self::ContradictedLiteral { predicate, line, .. }
+        | Self::LiteralOnEdge { predicate, line, .. }
+        | Self::UnacceptedSubject { predicate, line, .. }
+        | Self::UnacceptedTarget { predicate, line, .. }) = self
         else {
             return;
         };
@@ -612,6 +717,8 @@ usually wants to know what it points at.
 pub struct EnvelopeReport {
     /// The document's own id, when it parsed.
     pub id: Option<EntityId>,
+    /// The document's class, as a full IRI.
+    pub class: String,
     /// Every `(predicate, target)` pair whose target parsed, ordered by
     /// predicate then by statement — the header holds its edges in a
     /// `BTreeMap`, so the order is the vocabulary's, not the author's.
@@ -646,6 +753,7 @@ fn check_envelope_with(vocabulary: &Vocabulary, envelope: &Colophon) -> Envelope
             reason: e.to_string(),
         }),
     }
+    report.class = envelope.doc_type.class_iri();
 
     for (predicate, targets) in &envelope.edges {
         if matches!(vocabulary.standing(predicate), PredicateStanding::Undeclared) {
@@ -653,6 +761,14 @@ fn check_envelope_with(vocabulary: &Vocabulary, envelope: &Colophon) -> Envelope
                 predicate: predicate.clone(),
                 line: None,
                 nearest: vocabulary.nearest(predicate),
+            });
+        }
+        if !vocabulary.admits_subject(predicate, &report.class) {
+            report.defects.push(Defect::UnacceptedSubject {
+                subject: envelope.id.clone(),
+                predicate: predicate.clone(),
+                class: vocabulary.compact(&report.class),
+                line: None,
             });
         }
         for target in targets {
@@ -678,6 +794,22 @@ fn check_envelope_with(vocabulary: &Vocabulary, envelope: &Colophon) -> Envelope
                 nearest: vocabulary.nearest(predicate),
             });
             continue;
+        }
+        if vocabulary.names_ids(predicate) {
+            report.defects.push(Defect::LiteralOnEdge {
+                subject: envelope.id.clone(),
+                predicate: predicate.clone(),
+                line: None,
+            });
+            continue;
+        }
+        if !vocabulary.admits_subject(predicate, &report.class) {
+            report.defects.push(Defect::UnacceptedSubject {
+                subject: envelope.id.clone(),
+                predicate: predicate.clone(),
+                class: vocabulary.compact(&report.class),
+                line: None,
+            });
         }
         let property = vocabulary.expand(predicate);
         for literal in literals {
@@ -744,6 +876,8 @@ pub struct CorpusReport {
     /// The id of every document in the set whose id parsed, with the
     /// caller's name for the document.
     pub ids: BTreeMap<EntityId, String>,
+    /// The class of each of `ids`, as a full IRI.
+    pub classes: BTreeMap<EntityId, String>,
 }
 
 impl CorpusReport {
@@ -771,6 +905,10 @@ where
         .iter()
         .filter_map(|(source, report)| Some((report.id.clone()?, source.to_string())))
         .collect();
+    let classes: BTreeMap<EntityId, String> = reports
+        .iter()
+        .filter_map(|(_, report)| Some((report.id.clone()?, report.class.clone())))
+        .collect();
 
     let mut out = CorpusReport {
         checked: reports.len(),
@@ -785,18 +923,24 @@ where
             continue;
         };
         for (predicate, target) in &report.edges {
-            if !ids.contains_key(target) {
-                out.dangling.push(DanglingEdge {
+            match classes.get(target) {
+                Some(class) if !vocabulary.admits_target(predicate, class) => out.defects.push((
+                    source.to_string(),
+                    vocabulary.unaccepted_target(&subject.to_string(), predicate, &target.to_string(), class),
+                )),
+                Some(_) => {}
+                None => out.dangling.push(DanglingEdge {
                     source: source.to_string(),
                     subject: subject.clone(),
                     predicate: predicate.clone(),
                     target: target.clone(),
-                });
+                }),
             }
         }
     }
 
     out.ids = ids;
+    out.classes = classes;
     out
 }
 ```
@@ -1078,8 +1222,18 @@ pub struct InstanceCheck {
     /// Instances checked, faults found, and targets that left the set.
     pub report: DeclarationReport,
     /// The full IRI of every instance that parsed, with the block that
-    /// declares it. A document whose blocks did not all parse has none here.
-    pub declared: BTreeMap<String, crate::document_vocabulary::BlockSource>,
+    /// declares it and its class. A document whose blocks did not all parse
+    /// has none here.
+    pub declared: BTreeMap<String, DeclaredInstanceAt>,
+}
+
+/// Where a set declares an instance, and what it declares it to be.
+#[cfg(feature = "document-vocabulary")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredInstanceAt {
+    pub source: crate::document_vocabulary::BlockSource,
+    /// The instance's class, as a full IRI.
+    pub class: String,
 }
 
 /// Assemble the vocabulary `documents` carry on top of `base`, then check
@@ -1129,11 +1283,12 @@ pub fn check_instances(
     // two files, and a range constraint whose target lives elsewhere.
     let mut declared = BTreeMap::new();
     for instance in &instances {
-        if let Some(prior) = declared.insert(instance.iri.clone(), instance.source.clone()) {
+        let at = DeclaredInstanceAt { source: instance.source.clone(), class: instance.concept.clone() };
+        if let Some(prior) = declared.insert(instance.iri.clone(), at) {
             report.defects.push(DeclarationDefect::Instance {
                 reason: format!(
                     "duplicate instance {} at {}, already declared at {}",
-                    instance.iri, instance.source, prior.document
+                    instance.iri, instance.source, prior.source.document
                 ),
             });
         }
@@ -1191,10 +1346,17 @@ one id. The join runs after both passes because of their order: the header pass
 reads under the model the instance pass extends, so neither has the other's
 list when it runs.
 
-The join changes resolution, not typing. A block edge to a document gets no
-range check, because `validate_relationships` knows the class of a declared
-instance and nothing about a document. A target that resolves here may
-therefore be of a class the predicate's range refuses, and nothing says so.
+The join finishes the typing as well as the resolution. Each pass knows only
+its own list's classes, so an edge that crosses is the one neither pass could
+judge, and it is judged here: a target the other list types outside the term's
+`rdfs:range` is refused, in the words its own side uses. A header's edges meet
+the same rule at home. Its subject's class answers to the term's `rdfs:domain`,
+and a target among the set's documents to its range, through the one question
+blocks ask, `OntologyModel::admitted_classes`. A target outside the set has no
+class to read, so it stays a dangling edge and is refused only by `--closed`.
+Nor is a class the vocabulary does not declare judged: the ten genera parse
+under any vocabulary, and one that omits `x0k:Design` says nothing of where
+it stands.
 
 <a name="chunk-resolve-across"></a><sub>[`src/envelope_check.rs`](../../crates/x0k-folio/src/envelope_check.rs) · `#resolve-across`</sub>
 
@@ -1205,7 +1367,7 @@ therefore be of a class the predicate's range refuses, and nothing says so.
 #[cfg(feature = "document-vocabulary")]
 pub fn resolve_across(
     model: &OntologyModel,
-    declared: &BTreeMap<String, crate::document_vocabulary::BlockSource>,
+    declared: &BTreeMap<String, DeclaredInstanceAt>,
     corpus: &mut CorpusReport,
     declarations: &mut DeclarationReport,
 ) {
@@ -1214,6 +1376,32 @@ pub fn resolve_across(
         .iter()
         .map(|(id, document)| (model.expand(&id.to_string()), (id, document)))
         .collect();
+    let vocabulary = Vocabulary::of(model);
+    let header_edges: Vec<(String, Defect)> = corpus
+        .dangling
+        .iter()
+        .filter_map(|edge| {
+            let target = edge.target.to_string();
+            let class = &declared.get(&model.expand(&target))?.class;
+            (!vocabulary.admits_target(&edge.predicate, class)).then(|| {
+                (edge.source.clone(), vocabulary.unaccepted_target(&edge.subject.to_string(), &edge.predicate, &target, class))
+            })
+        })
+        .collect();
+    corpus.defects.extend(header_edges);
+    for edge in &declarations.dangling {
+        let target = model.expand(&edge.target);
+        let Some(class) = documents.get(&target).and_then(|(id, _)| corpus.classes.get(*id)) else {
+            continue;
+        };
+        if !vocabulary.admits_target(&edge.predicate, class) {
+            let predicate = model.expand(&edge.predicate);
+            let expected = model.class_references(&predicate, RDFS_RANGE).join(", ");
+            declarations.defects.push(DeclarationDefect::Instance {
+                reason: format!("{predicate} target {target} has type {class}, expected {expected} at {}", edge.source),
+            });
+        }
+    }
     let in_the_set = |iri: String| declared.contains_key(&iri) || documents.contains_key(&iri);
     corpus.dangling.retain(|edge| !in_the_set(model.expand(&edge.target.to_string())));
     declarations.dangling.retain(|edge| !in_the_set(model.expand(&edge.target)));
@@ -1222,7 +1410,7 @@ pub fn resolve_across(
             declarations.defects.push(DeclarationDefect::IdCollision {
                 id: id.clone(),
                 document: document.clone(),
-                declaration: block.to_string(),
+                declaration: block.source.to_string(),
             });
         }
     }
@@ -1492,8 +1680,10 @@ fn contradiction(subject: &str, property: &str, literal: &Literal, datatype: Dat
 <<lexical-spaces>>
 
 /// Read every field of every instance against the vocabulary: a predicate
-/// no module declares, and a literal its property's XSD range contradicts,
-/// on any instance. One defect per field, each at its block's line.
+/// no module declares, a literal on an object property, a subject its
+/// property's domain does not admit, and a literal its property's XSD range
+/// contradicts, on any instance. One defect
+/// per field, each at its block's line.
 #[cfg(feature = "document-vocabulary")]
 pub fn check_literal_fields(
     model: &OntologyModel,
@@ -1527,6 +1717,23 @@ pub fn check_literal_fields(
                     });
                 }
                 continue;
+            }
+            if vocabulary.names_ids(property) {
+                if reported.insert(property.as_str()) {
+                    defects.push(DeclarationDefect::Instance {
+                        reason: format!(
+                            "`{subject}` gives `{}` a literal, but it names an id at {}",
+                            spell(property),
+                            instance.source
+                        ),
+                    });
+                }
+                continue;
+            }
+            if !vocabulary.admits_subject(property, &instance.concept) && reported.insert(property.as_str()) {
+                defects.push(DeclarationDefect::Instance {
+                    reason: format!("{property} does not accept {} at {}", instance.concept, instance.source),
+                });
             }
             for datatype in vocabulary.contradicted(property, literal) {
                 defects.push(DeclarationDefect::Instance {
@@ -1944,7 +2151,7 @@ mod tests {
         let content = "```turtle folio:document\nmycorp:brief\\/tender-process a mycorp:Brief ;\n    x0k:status \"proposed\" .\n```\nBody.\n";
         let (envelope, _) = crate::colophon::parse_envelope_in(&model, content)
             .expect("a genus the loaded vocabulary declares");
-        assert_eq!(envelope.doc_type, crate::colophon::DocType::Declared("brief".to_string()));
+        assert_eq!(envelope.doc_type.as_str(), "brief");
         let report = check_envelope(&model, &envelope);
         assert!(report.is_clean(), "unexpected defects: {:?}", report.defects);
         assert_eq!(report.id.as_ref().map(ToString::to_string).as_deref(), Some("mycorp:brief/tender-process"));
@@ -2193,6 +2400,129 @@ paper:pages a owl:DatatypeProperty ;
         let block = ALPHA_CITES_BETA.replace("paper:paper\\/beta", "paper:paper\\/report");
         let (_, declarations) = check_set(&report_beside("", &block));
         assert_eq!(declarations.dangling, vec![], "the document is in the set");
+        assert!(declarations.is_clean(), "{:?}", declarations.defects);
+    }
+
+    /// `paper:Note` beside `paper:Paper`, which `paper:cites` does not name,
+    /// and `paper:Letter`, a kind of paper.
+    #[cfg(feature = "document-vocabulary")]
+    const NOTES: &str = "paper:Note a owl:Class ;\n    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\npaper:Letter a owl:Class ;\n    rdfs:subClassOf paper:Paper ;\n    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n";
+
+    /// The papers set, with the notes vocabulary, and one more document.
+    #[cfg(feature = "document-vocabulary")]
+    fn noted(block: &str, header: &str) -> (CorpusReport, DeclarationReport) {
+        let mut documents = papers_with(NOTES, block).to_vec();
+        documents.push(("report.md", format!("# Report\n\n```turtle folio:document\n{header} .\n```\n")));
+        check_set(&documents)
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    fn corpus_refusals(corpus: &CorpusReport) -> Vec<String> {
+        corpus.defects.iter().map(|(_, defect)| defect.to_string()).collect()
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_edge_outside_its_domain_is_refused_in_a_blocks_words() {
+        let (corpus, _) = noted(ALPHA_CITES_BETA, "paper:note\\/n a paper:Note ;\n    paper:cites paper:paper\\/alpha");
+        assert_eq!(corpus_refusals(&corpus), vec!["`paper:note/n`: `paper:cites` does not accept `paper:Note`"]);
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_edge_to_a_document_outside_its_range_is_refused() {
+        let mut documents = papers_with(NOTES, ALPHA_CITES_BETA).to_vec();
+        documents.push(("note.md", "# Note\n\n```turtle folio:document\npaper:note\\/n a paper:Note .\n```\n".to_string()));
+        documents.push(("report.md", "# Report\n\n```turtle folio:document\npaper:paper\\/report a paper:Paper ;\n    paper:cites paper:note\\/n .\n```\n".to_string()));
+        let (corpus, _) = check_set(&documents);
+        assert_eq!(corpus_refusals(&corpus), vec!["`paper:paper/report`: `paper:cites` target `paper:note/n` has type `paper:Note`, expected `paper:Paper`"]);
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_edge_to_a_declaration_outside_its_range_is_refused() {
+        let block = format!("{ALPHA_CITES_BETA}\n```turtle folio:graph\npaper:note\\/n a paper:Note .\n```\n");
+        let (corpus, _) = noted(&block, "paper:paper\\/report a paper:Paper ;\n    paper:cites paper:note\\/n");
+        assert_eq!(corpus_refusals(&corpus), vec!["`paper:paper/report`: `paper:cites` target `paper:note/n` has type `paper:Note`, expected `paper:Paper`"]);
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_block_edge_to_a_document_outside_its_range_is_refused() {
+        let block = ALPHA_CITES_BETA.replace("paper:paper\\/beta", "paper:note\\/n");
+        let (_, declarations) = noted(&block, "paper:note\\/n a paper:Note");
+        let reasons: Vec<String> = declarations.defects.iter().map(ToString::to_string).collect();
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
+        assert!(reasons[0].contains("has type https://example.org/papers#Note, expected"), "{reasons:?}");
+        assert!(reasons[0].contains("alpha.md"), "the refusal names its block: {reasons:?}");
+    }
+
+    /// The same walk a block gets: a subclass stands on either side.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_edge_takes_a_subclass_on_either_side() {
+        let (corpus, _) = noted(ALPHA_CITES_BETA, "paper:letter\\/l a paper:Letter ;\n    paper:cites paper:paper\\/alpha");
+        assert!(corpus.is_clean(), "{:?}", corpus.defects);
+    }
+
+    /// A target outside the set has no class to read, and an open run stays open.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_edge_leaving_the_set_is_dangling_and_not_refused() {
+        let (corpus, _) = noted(ALPHA_CITES_BETA, "paper:paper\\/report a paper:Paper ;\n    paper:cites paper:paper\\/elsewhere");
+        assert!(corpus.is_clean(), "{:?}", corpus.defects);
+        assert_eq!(corpus.dangling.len(), 1);
+    }
+
+    /// An object property's value is an id, so text there is a mistake
+    /// however well it reads, and a typo in it could never dangle.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_literal_on_an_object_property_is_refused_on_both_surfaces() {
+        let block = format!("{ALPHA_CITES_BETA}\n```turtle folio:graph\npaper:letter\\/c a paper:Letter ;\n    paper:cites \"beta\" .\n```\n");
+        let (corpus, declarations) = noted(&block, "paper:paper\\/report a paper:Paper ;\n    paper:cites \"beta\"");
+        assert_eq!(corpus_refusals(&corpus), vec!["`paper:paper/report` gives `paper:cites` a literal, but it names an id"]);
+        let reasons: Vec<String> = declarations.defects.iter().map(ToString::to_string).collect();
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
+        assert!(reasons[0].contains("`paper:letter/c` gives `paper:cites` a literal, but it names an id"), "{reasons:?}");
+        assert!(reasons[0].contains("alpha.md"), "the refusal names its block: {reasons:?}");
+    }
+
+    /// `x0k:mentions` is soft by design: a reader's class may mention, with
+    /// no place in the shipped hierarchy, and a mention stays a document edge.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn any_class_may_mention() {
+        let (corpus, _) = noted(ALPHA_CITES_BETA, "paper:note\\/n a paper:Note ;\n    x0k:mentions paper:paper\\/alpha");
+        assert!(corpus.is_clean(), "{:?}", corpus.defects);
+        assert_eq!(corpus.dangling, vec![], "the mention resolves");
+        assert!(OntologyModel::shipped().decision_edge_predicates().iter().any(|(_, camel)| camel == "mentions"));
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_literal_outside_its_terms_domain_is_refused() {
+        let (corpus, _) = noted(ALPHA_CITES_BETA, "paper:note\\/n a paper:Note ;\n    paper:reviewed true");
+        assert_eq!(corpus_refusals(&corpus), vec!["`paper:note/n`: `paper:reviewed` does not accept `paper:Note`"]);
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_block_literal_outside_its_terms_domain_is_refused() {
+        let block = format!("{ALPHA_CITES_BETA}\n```turtle folio:graph\npaper:note\\/n a paper:Note ;\n    paper:reviewed true .\n```\n");
+        let (_, declarations) = noted(&block, "paper:paper\\/report a paper:Paper");
+        let reasons: Vec<String> = declarations.defects.iter().map(ToString::to_string).collect();
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
+        assert!(reasons[0].contains("does not accept https://example.org/papers#Note"), "{reasons:?}");
+        assert!(reasons[0].contains("alpha.md"), "the refusal names its block: {reasons:?}");
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_literal_takes_a_subclass_for_its_terms_domain() {
+        let block = format!("{ALPHA_CITES_BETA}\n```turtle folio:graph\npaper:letter\\/b a paper:Letter ;\n    paper:reviewed true .\n```\n");
+        let (corpus, declarations) = noted(&block, "paper:letter\\/h a paper:Letter ;\n    paper:reviewed true");
+        assert!(corpus.is_clean(), "{:?}", corpus.defects);
         assert!(declarations.is_clean(), "{:?}", declarations.defects);
     }
 
