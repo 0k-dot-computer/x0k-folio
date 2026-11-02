@@ -656,9 +656,10 @@ fn main() -> anyhow::Result<()> {
 
 ```rust {#cli-imports file="src/cli.rs"}
 use anyhow::{Context, Result};
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use x0k_ontology::concept_facts::OntologyModel;
 
 use crate::PipelineRegistry;
 ```
@@ -744,6 +745,8 @@ Tangle {
     /// Overwrite outputs holding content this tangler did not write
     #[arg(long)]
     force: bool,
+    #[command(flatten)]
+    vocabulary: VocabularyArgs,
 },
 ```
 
@@ -773,6 +776,13 @@ told about *those*. Without the flag the verb finds the answer itself,
 from this projection's own `PROVENANCE.json` and then from the compiled
 set ([`cli-faces.md`](cli-faces.md)).
 
+Both halves of the verb read a header under that one vocabulary, extended
+by whatever the documents under the paths declare. So the header that
+reads for the vocabulary half reads for the chunk half: the document gets
+its splice, mirror and duplicate-id checks whatever prefix its id is
+spelled with. A document leaves the chunk half unchecked only when its
+header reads under nothing, and the run then says so once and fails.
+
 <a name="folio-instance-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d636865636b-2"></a><sub data-instance-iri="https://0k.computer/ontology#signifier/x0k-tangle-check" data-concept-iri="https://0k.computer/ontology#Signifier" data-source-document="corpora/x0k/implementation/tangle/crate.md"><strong>Signifier</strong> · x0k-tangle check · <code>https://0k.computer/ontology#signifier/x0k-tangle-check</code> · <a href="#folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d636865636b-2">source declaration</a></sub><a name="folio-source-68747470733a2f2f306b2e636f6d70757465722f6f6e746f6c6f6779237369676e69666965722f78306b2d74616e676c652d636865636b-2"></a>
 
 ```turtle folio:graph
@@ -791,9 +801,11 @@ signifier:x0k-tangle-check a x0k:Signifier ;
 /// apart. A defect — a malformed id or edge target, a predicate no
 /// module of the vocabulary declares, a header that does not parse —
 /// is a gap in what this publication selected, and fails the check. An
-/// edge whose target names no document under the paths scanned simply
-/// leaves the set — often into a wider corpus this selection was drawn
-/// from, and expected either way: printed as a note, never a failure.
+/// edge whose target names no document or declaration under the paths
+/// scanned simply leaves the set — often into a wider corpus this selection
+/// was drawn from, and expected either way: printed as a note, never a
+/// failure. An edge may name a document or a declaration, whichever side
+/// wrote it; one id naming both is a defect.
 /// `--closed` is the reader saying there is no wider corpus: under
 /// it, an edge that leaves the set is a defect like any other.
 /// A Markdown file with no folio header at all — or an untyped `<>`
@@ -822,20 +834,11 @@ Check {
     /// (defaults to current directory)
     #[arg(long)]
     workspace: Option<PathBuf>,
-    /// Directory of ontology module files (*.ttl) to check against,
-    /// read in addition to the set this build compiled. Defaults to the
-    /// modules this projection's PROVENANCE.json names, then to the set
-    /// this build compiled.
-    #[arg(long)]
-    vocabulary: Option<PathBuf>,
-    /// Read --vocabulary alone, without the compiled set. Say this only
-    /// when that directory holds every term the documents use, the
-    /// header's own included.
-    #[arg(long, requires = "vocabulary")]
-    only_vocabulary: bool,
-    /// Fail on an edge whose target names no document under the paths
-    /// scanned. Say this when the collection is a closed set: every
-    /// document an edge can name is here, so a target that resolves to
+    #[command(flatten)]
+    vocabulary: VocabularyArgs,
+    /// Fail on an edge whose target names no document or declaration under
+    /// the paths scanned. Say this when the collection is a closed set:
+    /// everything an edge can name is here, so a target that resolves to
     /// nothing is a broken link rather than a boundary.
     #[arg(long)]
     closed: bool,
@@ -847,6 +850,40 @@ Check {
     #[arg(long)]
     require_header: bool,
 },
+```
+
+Every verb that reads a header for what it holds takes the same two flags,
+from one definition, and asks for the model the same way. Without them a
+verb reads against what `check` would: this projection's recorded modules,
+then the compiled set. What differs is the set: only `check` also reads the
+vocabulary the documents under its paths declare, because only `check` is a
+judgement about a set of documents.
+
+<a name="chunk-vocabulary-args"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#vocabulary-args`</sub>
+
+```rust {#vocabulary-args file="src/cli.rs"}
+// A plain comment: clap applies a flattened struct's doc comment to the
+// verb it joins, and each verb's own line is its `--help` text.
+#[derive(Args)]
+struct VocabularyArgs {
+    /// Directory of ontology module files (*.ttl) to read headers against,
+    /// read in addition to the set this build compiled. Defaults to the
+    /// modules this projection's PROVENANCE.json names, then to the set
+    /// this build compiled.
+    #[arg(long)]
+    vocabulary: Option<PathBuf>,
+    /// Read --vocabulary alone, without the compiled set. Say this only
+    /// when that directory holds every term the documents use, the
+    /// header's own included.
+    #[arg(long, requires = "vocabulary")]
+    only_vocabulary: bool,
+}
+
+impl VocabularyArgs {
+    fn model(&self) -> Result<OntologyModel> {
+        crate::faces::vocabulary(self.vocabulary.as_deref(), self.only_vocabulary)
+    }
+}
 ```
 
 ### `x0k-tangle affordances`
@@ -914,6 +951,8 @@ Declarations {
     classes: Vec<String>,
     /// Paths to scan for Markdown documents
     paths: Vec<PathBuf>,
+    #[command(flatten)]
+    vocabulary: VocabularyArgs,
 },
 ```
 
@@ -988,6 +1027,8 @@ Sync {
     /// Workspace root (defaults to current directory)
     #[arg(long)]
     workspace: Option<PathBuf>,
+    #[command(flatten)]
+    vocabulary: VocabularyArgs,
 },
 ```
 
@@ -1083,6 +1124,8 @@ Weave {
 List {
     /// Path to a literate document
     path: PathBuf,
+    #[command(flatten)]
+    vocabulary: VocabularyArgs,
 },
 ```
 
@@ -1219,20 +1262,24 @@ rather than of how it was reached.
 <a name="chunk-dispatch-tangle"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-tangle`</sub>
 
 ```rust {#dispatch-tangle file="src/cli.rs"}
-Command::Tangle { paths, workspace, force } => {
+Command::Tangle { paths, workspace, force, vocabulary } => {
     // Route every document through the unified dispatcher with the
     // host's registry: a document declaring a pipeline that registry
     // does not carry errors here rather than tangling half of itself.
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let docs = discover_documents(&paths)?;
+    let model = vocabulary.model()?;
+    let docs = discover_documents(&model, &paths)?;
     let registry = (host.registry)();
-    let settings = clobber_settings(force);
+    let settings = crate::TangleSettings {
+        vocabulary: Some(model.clone()),
+        ..clobber_settings(force)
+    };
     let mut total_files = 0;
     let mut tangled_docs = 0;
     let mut nowhere_to_write = 0;
 
     for doc_path in &docs {
-        let declared = declares(doc_path);
+        let declared = declares(&model, doc_path);
         if !declared.target {
             if declared.mirrors_only {
                 eprintln!("  {}", mirror_only(doc_path, declared.chunks));
@@ -1287,14 +1334,15 @@ something in a tree that mostly does not use the feature.
 <a name="chunk-dispatch-sync"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-sync`</sub>
 
 ```rust {#dispatch-sync file="src/cli.rs"}
-Command::Sync { paths, workspace } => {
+Command::Sync { paths, workspace, vocabulary } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let docs = discover_documents_any(&paths)?;
+    let model = vocabulary.model()?;
+    let docs = discover_documents_any(&model, &paths)?;
     let mut total_populated = 0;
     let mut unfilled = 0;
 
     for doc_path in &docs {
-        let result = crate::sync::sync_document(doc_path, &ws)?;
+        let result = crate::sync::sync_document_in(&model, doc_path, &ws)?;
 
         for err in &result.errors {
             eprintln!("  error: {}: {}", doc_path.display(), err);
@@ -1363,12 +1411,15 @@ Command::Check {
     paths,
     workspace,
     vocabulary,
-    only_vocabulary,
     closed,
     require_header,
 } => {
     let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-    let model = crate::faces::vocabulary(vocabulary.as_deref(), only_vocabulary)?;
+    let model = vocabulary.model()?;
+    // First, because its model is the one every header here is read under:
+    // the run's vocabulary, extended by what the set declares. Its findings
+    // print after the chunk pass's.
+    let report = crate::faces::check_vocabulary(&model, &paths)?;
     let mut has_errors = false;
     let mut chunked_documents = 0;
     let mut splice_failed = 0;
@@ -1389,13 +1440,14 @@ Command::Check {
             }
         };
         let carries_header = crate::faces::carries_header(&content);
-        let parsed = match crate::parser::parse_document(&content) {
+        let parsed = match crate::parser::parse_document_in(&report.model, &content) {
             Ok(parsed) => parsed,
             Err(e) => {
                 // The only thing that stops a document parsing is its
-                // header, and a header that does not read is the vocabulary
-                // pass's to report — once, with the parser's reason.
-                if !carries_header {
+                // header. A document leaves this pass only with that said
+                // once, with the parser's reason: by the vocabulary pass
+                // when its list names the document, and here otherwise.
+                if !report.unparsed.iter().any(|(path, _)| Path::new(path) == doc_path.as_path()) {
                     eprintln!("{}: does not parse: {e}", doc_path.display());
                     has_errors = true;
                 }
@@ -1450,7 +1502,6 @@ Command::Check {
         }
     }
 
-    let report = crate::faces::check_vocabulary(&model, &paths)?;
     for (path, reason) in &report.unparsed {
         eprintln!("{path}: header does not parse: {reason}");
         has_errors = true;
@@ -1471,14 +1522,14 @@ Command::Check {
     for edge in &report.corpus.dangling {
         eprintln!(
             "{}",
-            dangling_finding(closed, &edge.source, &edge.predicate, &edge.target)
+            dangling_finding(closed, &edge.source, "edge", &edge.predicate, &edge.target)
         );
         has_errors |= closed;
     }
     for edge in &report.declarations.dangling {
         eprintln!(
             "{}",
-            dangling_declaration_finding(closed, &edge.source, &edge.predicate, &edge.target)
+            dangling_finding(closed, &edge.source, "declared edge", &edge.predicate, &edge.target)
         );
         has_errors |= closed;
     }
@@ -1639,8 +1690,8 @@ modules name the prefixes its blocks use.
 <a name="chunk-dispatch-declarations"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-declarations`</sub>
 
 ```rust {#dispatch-declarations file="src/cli.rs"}
-Command::Declarations { classes, paths } => {
-    let model = crate::faces::vocabulary(None, false)?;
+Command::Declarations { classes, paths, vocabulary } => {
+    let model = vocabulary.model()?;
     let report = crate::faces::declared_instances(&model, &paths, &classes)?;
     for (place, reason) in &report.skipped {
         eprintln!("{place}: skipped: {reason}");
@@ -1736,9 +1787,9 @@ Command::Weave { path, output_dir } => {
 <a name="chunk-dispatch-list"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#dispatch-list`</sub>
 
 ```rust {#dispatch-list file="src/cli.rs"}
-Command::List { path } => {
+Command::List { path, vocabulary } => {
     let content = std::fs::read_to_string(&path)?;
-    let parsed = crate::parser::parse_document(&content)?;
+    let parsed = crate::parser::parse_document_in(&vocabulary.model()?, &content)?;
 
     if let Some(ref c) = parsed.tangle_crate {
         println!("crate: {}", c);
@@ -1818,7 +1869,7 @@ lives in one place, because it is a claim about the reader's tree and
 the tree is the one thing this process cannot see past.
 
 Which is why the reader gets to settle it. A collection whose edges can
-only name documents inside it — an ADR directory, a docs tree that is
+only name things inside it — an ADR directory, a docs tree that is
 the whole world it links into — has no boundary for an edge to cross, so
 every edge that leaves is a rename nobody finished. `--closed` is that
 sentence said once on the command line, and it moves the finding from a
@@ -1844,28 +1895,19 @@ be a gate nobody ran.
 /// the finding and not a word of what it observed — the same sentence,
 /// with `note:` dropped, because under `--closed` there is nothing left
 /// for the reader to go and look at.
+///
+/// `edge` says where the edge is written: a header's `edge`, or a block's
+/// `declared edge`. Either may name a document or a declaration, so the line
+/// names both, and the reader looks for the id in both places.
 fn dangling_finding(
     closed: bool,
     source: &str,
+    edge: &str,
     predicate: &str,
     target: impl std::fmt::Display,
 ) -> String {
     let standing = if closed { "" } else { "note: " };
-    format!("{source}: {standing}edge `{predicate}` → `{target}` names no document under the paths scanned")
-}
-
-/// The same finding one level down: a declared instance's edge target that
-/// names no declaration in the set. Separate wording because a
-/// declaration lives inside a document, so "names no document" would
-/// send its reader looking for the wrong thing.
-fn dangling_declaration_finding(
-    closed: bool,
-    source: &str,
-    predicate: &str,
-    target: impl std::fmt::Display,
-) -> String {
-    let standing = if closed { "" } else { "note: " };
-    format!("{source}: {standing}declared edge `{predicate}` → `{target}` names no declaration under the paths scanned")
+    format!("{source}: {standing}{edge} `{predicate}` → `{target}` names no document or declaration under the paths scanned")
 }
 ```
 
@@ -2017,11 +2059,11 @@ impl Declares {
     }
 }
 
-fn declares(path: &Path) -> Declares {
+fn declares(model: &OntologyModel, path: &Path) -> Declares {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Declares::nothing();
     };
-    let Ok(parsed) = crate::parser::parse_document(&content) else {
+    let Ok(parsed) = crate::parser::parse_document_in(model, &content) else {
         return Declares::nothing();
     };
     let bodies: Vec<_> = parsed.chunks.values().flatten().collect();
@@ -2051,24 +2093,24 @@ that are simply not its business.
 <a name="chunk-discover-documents"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#discover-documents`</sub>
 
 ```rust {#discover-documents file="src/cli.rs"}
-fn discover_documents_any(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+fn discover_documents_any(model: &OntologyModel, paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let named = named_files(paths);
     Ok(markdown_under(paths)
         .into_iter()
         .filter(|p| {
             named.contains(p) || {
-                let d = declares(p);
+                let d = declares(model, p);
                 d.fills || d.target
             }
         })
         .collect())
 }
 
-fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+fn discover_documents(model: &OntologyModel, paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let named = named_files(paths);
     Ok(markdown_under(paths)
         .into_iter()
-        .filter(|p| named.contains(p) || declares(p).target)
+        .filter(|p| named.contains(p) || declares(model, p).target)
         .collect())
 }
 
@@ -2132,7 +2174,7 @@ fn mirror_only(path: &Path, chunks: usize) -> String {
 <<bin-main>>
 ```
 
-<a name="chunk-cli-root"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-root` · assembles [cli-doc](#chunk-cli-doc) · [cli-imports](#chunk-cli-imports) · [cli-host](#chunk-cli-host) · [cli-struct](#chunk-cli-struct) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [clobber-settings](#chunk-clobber-settings) · [dangling-finding](#chunk-dangling-finding) · [title-warning](#chunk-title-warning) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
+<a name="chunk-cli-root"></a><sub>[`src/cli.rs`](../../crates/x0k-tangle/src/cli.rs) · `#cli-root` · assembles [cli-doc](#chunk-cli-doc) · [cli-imports](#chunk-cli-imports) · [cli-host](#chunk-cli-host) · [cli-struct](#chunk-cli-struct) · [vocabulary-args](#chunk-vocabulary-args) · [command-enum](#chunk-command-enum) · [main-fn](#chunk-main-fn) · [clobber-settings](#chunk-clobber-settings) · [dangling-finding](#chunk-dangling-finding) · [title-warning](#chunk-title-warning) · [references-verdict](#chunk-references-verdict) · [nothing-to-write](#chunk-nothing-to-write) · [markdown-under](#chunk-markdown-under) · [declares](#chunk-declares) · [discover-documents](#chunk-discover-documents)</sub>
 
 ```rust {#cli-root file="src/cli.rs"}
 <<cli-doc>>
@@ -2142,6 +2184,8 @@ fn mirror_only(path: &Path, chunks: usize) -> String {
 <<cli-host>>
 
 <<cli-struct>>
+
+<<vocabulary-args>>
 
 <<command-enum>>
 
@@ -2216,6 +2260,17 @@ document and survives, `--force` overwrites it, and a document that
 simply moved forward re-tangles with no flag at all. That last one is
 the important one — it is the whole corpus, and a guard that got it
 wrong would refuse everything.
+
+A group pins the one vocabulary `check` reads under. A document whose
+header is spelled with a prefix only `--vocabulary` declares, or only the
+set declares, gets the same verdict as one spelled with a shipped prefix:
+a stale mirror, a broken splice, an id declared twice and a `proves=` that
+names nothing are all found, and a fresh mirror is counted rather than
+passed unread. The other side is pinned with them: a header no vocabulary
+reads is reported once, with the parser's reason, and fails the run.
+`sync`, `list`, `tangle` and `declarations` each read such a document under
+`--vocabulary`, and `tangle`'s refusal to write a publication into a corpus
+root holds for one whose id is spelled that way.
 
 The last pins what folding the bundle's copy into this one must not
 change: `--version` still names this package and nothing else. The
@@ -2848,7 +2903,7 @@ fn the_dangling_edge_note_claims_only_what_is_true_of_any_tree() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "check failed: {stderr}");
     assert!(
-        stderr.contains("names no document under the paths scanned"),
+        stderr.contains("names no document or declaration under the paths scanned"),
         "the note names the set it scanned: {stderr}"
     );
     assert!(
@@ -2877,7 +2932,7 @@ fn closed_makes_an_edge_that_leaves_the_set_fail_the_run() {
         "the set is closed and an edge left it, and check passed: {stderr}"
     );
     assert!(
-        stderr.contains("`x0k:design/elsewhere` names no document under the paths scanned"),
+        stderr.contains("`x0k:design/elsewhere` names no document or declaration under the paths scanned"),
         "the defect names the target that resolves to nothing: {stderr}"
     );
     assert!(
@@ -2912,9 +2967,147 @@ fn a_declared_edge_that_leaves_the_set_fails_the_run_under_closed_too() {
         "a declared edge left a closed set and check passed: {stderr}"
     );
     assert!(
-        stderr.contains("names no declaration under the paths scanned"),
-        "the defect says which level it is about: {stderr}"
+        stderr.contains("declared edge `x0k:enabledBy` → `x0k:software-module/elsewhere` names no document or declaration under the paths scanned"),
+        "the defect says where the edge is written: {stderr}"
     );
+}
+
+/// A collection's vocabulary and one document of instances, for the tests
+/// below. `Paper` is the domain and range of `cites`; `Preprint` is stated a
+/// subclass of it, and `Letter` is unrelated.
+fn papers(tree: &Path, instances: &str) {
+    write(
+        tree,
+        "vocabulary.md",
+        "# Vocabulary\n\n```turtle folio:document\nwiki:paper-vocabulary a x0k:Wiki .\n```\n\n```turtle folio:graph\n\
+         @prefix paper: <https://example.org/papers#> .\n\n\
+         <https://example.org/paper-vocabulary> a owl:Ontology ;\n    \
+         vann:preferredNamespacePrefix \"paper\" ;\n    \
+         vann:preferredNamespaceUri \"https://example.org/papers#\" .\n\
+         paper:Paper a owl:Class ;\n    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+         paper:Preprint a owl:Class ;\n    rdfs:subClassOf paper:Paper ;\n    \
+         rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+         paper:Letter a owl:Class ;\n    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+         paper:cites a owl:ObjectProperty ;\n    rdfs:domain paper:Paper ;\n    \
+         rdfs:range paper:Paper ;\n    rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n```\n",
+    );
+    write(
+        tree,
+        "instances.md",
+        &format!("# Instances\n\n```turtle folio:document\nwiki:paper-instances a x0k:Wiki .\n```\n\n{instances}"),
+    );
+}
+
+#[test]
+fn a_block_of_a_subclass_passes_where_its_parent_is_the_domain() {
+    let tmp = TempDir::new().unwrap();
+    papers(
+        tmp.path(),
+        "## One\n\n```turtle folio:graph\npaper:preprint\\/one a paper:Preprint ;\n    \
+         paper:cites paper:preprint\\/two .\n```\n\n\
+         ## Two\n\n```turtle folio:graph\npaper:preprint\\/two a paper:Preprint .\n```\n",
+    );
+
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "a preprint is a paper: {stderr}");
+    assert!(stderr.contains("2 declaration(s) checked"), "both blocks were read: {stderr}");
+}
+
+#[test]
+fn a_block_of_an_unrelated_class_is_still_refused_its_domain() {
+    let tmp = TempDir::new().unwrap();
+    papers(
+        tmp.path(),
+        "## One\n\n```turtle folio:graph\npaper:letter\\/one a paper:Letter ;\n    \
+         paper:cites paper:letter\\/two .\n```\n\n\
+         ## Two\n\n```turtle folio:graph\npaper:letter\\/two a paper:Letter .\n```\n",
+    );
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a letter is no paper: {stderr}");
+    assert!(stderr.contains("does not accept https://example.org/papers#Letter"), "{stderr}");
+}
+
+/// A report document whose header cites `target`, beside [`papers`].
+fn report(tree: &Path, target: &str) {
+    write(
+        tree,
+        "report.md",
+        &format!("# Report\n\n```turtle folio:document\npaper:paper\\/report a paper:Paper ;\n    x0k:cites {target} .\n```\n"),
+    );
+}
+
+/// One block, under a heading, citing `target`.
+fn cited_by_a_preprint(target: &str) -> String {
+    format!("## One\n\n```turtle folio:graph\npaper:preprint\\/one a paper:Preprint ;\n    paper:cites {target} .\n```\n")
+}
+
+#[test]
+fn an_edge_resolves_across_documents_and_declarations_from_either_side() {
+    let tmp = TempDir::new().unwrap();
+    papers(tmp.path(), &cited_by_a_preprint("paper:paper\\/report"));
+    report(tmp.path(), "paper:preprint\\/one");
+
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "both targets are in the set: {stderr}");
+    assert!(stderr.contains(" 0 edge(s) leave the set"), "{stderr}");
+}
+
+#[test]
+fn closed_still_fails_a_target_in_neither_list_from_either_side() {
+    let tmp = TempDir::new().unwrap();
+    papers(tmp.path(), &cited_by_a_preprint("paper:paper\\/reportt"));
+    report(tmp.path(), "paper:preprint\\/onee");
+
+    let open = run(&["check"], tmp.path());
+    assert!(open.status.success(), "the default notes them: {}", String::from_utf8_lossy(&open.stderr));
+
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "two misspelled ids and check passed: {stderr}");
+    for target in ["`paper:paper/reportt`", "`paper:preprint/onee`"] {
+        assert!(stderr.contains(target), "missing {target}: {stderr}");
+    }
+    assert!(stderr.contains(" 2 edge(s) leave the set"), "{stderr}");
+}
+
+#[test]
+fn one_id_on_a_document_and_a_declaration_fails_naming_both_places() {
+    let tmp = TempDir::new().unwrap();
+    papers(tmp.path(), "## One\n\n```turtle folio:graph\npaper:paper\\/report a paper:Paper .\n```\n");
+    report(tmp.path(), "paper:paper\\/report");
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "one id names two things, and check passed: {stderr}");
+    for part in ["`paper:paper/report`", "report.md", "instances.md:"] {
+        assert!(stderr.contains(part), "missing {part}: {stderr}");
+    }
+}
+
+#[test]
+fn a_chapters_prose_link_to_an_affordance_in_the_set_resolves() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "chapter.md",
+        "# Chapter\n\n```turtle folio:document\nimplementation:chapter a x0k:Implementation ;\n    \
+         x0k:status \"draft\" .\n```\n\nThis chapter [reads a thing](x0k:affordance/read_a_thing).\n",
+    );
+    write(
+        tmp.path(),
+        "design.md",
+        "# Design\n\n```turtle folio:document\ndesign:reading a x0k:Design ;\n    x0k:status \"draft\" .\n```\n\n\
+         ## Read a thing\n\n```turtle folio:graph\naffordance:read_a_thing a x0k:Affordance ;\n    \
+         x0k:status \"wip\" .\n```\n",
+    );
+
+    let out = run(&["check", "--closed"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the affordance is declared in the set: {stderr}");
 }
 
 #[test]
@@ -3394,6 +3587,304 @@ fn check_passes_an_unfilled_mirror() {
     );
 }
 
+/// The smallest module a reader writes: a prefix of their own and nothing
+/// else. No build compiled it, so only `--vocabulary` makes a header
+/// spelled with it read.
+const ACME_MODULE: &str = "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+     @prefix vann: <http://purl.org/vocab/vann/> .\n\n\
+     <https://example.test/acme/vocabulary> a owl:Ontology ;\n    \
+     vann:preferredNamespacePrefix \"acme\" ;\n    \
+     vann:preferredNamespaceUri \"https://example.test/acme/ontology#\" .\n";
+
+/// A document under `subject`, with `chunk` after its header.
+fn headed_doc(subject: &str, chunk: &str) -> String {
+    format!("# T\n\n```turtle folio:document\n{subject} a x0k:Wiki .\n```\n\n{chunk}")
+}
+
+/// A chunk mirroring `VERSION` out of `scripts/thing.py`, showing `value`.
+fn version_mirror(value: &str) -> String {
+    format!(
+        "```python {{#ver from=\"scripts/thing.py\" symbol=\"VERSION\"}}\n\
+         VERSION = \"{value}\"\n```\n"
+    )
+}
+
+/// `args --vocabulary modules`, run from `dir`, with [`ACME_MODULE`] in that
+/// directory and `scripts/thing.py` holding `0.4.0`.
+fn under_acme(dir: &Path, args: &[&str]) -> Output {
+    write(dir, "modules/acme.ttl", ACME_MODULE);
+    write(dir, "scripts/thing.py", "VERSION = \"0.4.0\"\n");
+    Command::new(env!("CARGO_BIN_EXE_x0k-tangle"))
+        .args(args)
+        .args(["--vocabulary", "modules"])
+        .current_dir(dir)
+        .output()
+        .expect("the x0k-tangle binary runs")
+}
+
+fn check_under_acme(dir: &Path) -> Output {
+    under_acme(dir, &["check", "docs", "--workspace", "."])
+}
+
+/// A header that reads under the vocabulary the run names reads under it
+/// for the chunk pass too, so a mirror in that document is compared. The
+/// same stale body under a shipped id is the control: only the spelling of
+/// the id may differ, and the verdict does not.
+#[test]
+fn check_fails_a_stale_mirror_under_a_prefix_only_the_vocabulary_declares() {
+    for subject in ["acme:wiki\\/t", "wiki:acme-t"] {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "docs/t.md", &headed_doc(subject, &version_mirror("9")));
+
+        let out = check_under_acme(tmp.path());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{subject}: a stale mirror passed: {stderr}");
+        assert!(
+            stderr.contains("the mirrored body and scripts/thing.py disagree"),
+            "{subject}: the finding names the source it disagrees with: {stderr}"
+        );
+        assert!(
+            stderr.contains("0 of 1 from= source references resolve"),
+            "{subject}: the summary counts the mirror it read: {stderr}"
+        );
+    }
+}
+
+/// The count is the claim: a green that read no mirror looks the same as
+/// this one on the exit code, and says `no chunk references to check`.
+#[test]
+fn check_reads_a_fresh_mirror_under_a_prefix_only_the_vocabulary_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/t.md", &headed_doc("acme:wiki\\/t", &version_mirror("0.4.0")));
+
+    let out = check_under_acme(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "a matching mirror was called drift: {stderr}");
+    assert!(
+        stderr.contains("1 from= source reference resolves"),
+        "the green names the mirror it compared: {stderr}"
+    );
+}
+
+/// A prefix can come from the set as well as from a module directory: a
+/// `turtle folio:graph` block declares it, for every document beside it.
+/// `check` reads headers under that assembled vocabulary, so its chunk
+/// pass does too.
+#[test]
+fn check_fails_a_stale_mirror_under_a_prefix_the_set_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/vocabulary.md",
+        "# Vocabulary\n\n```turtle folio:document\nwiki:paper-vocabulary a x0k:Wiki .\n```\n\n\
+         ```turtle folio:graph\n\
+         @prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
+         @prefix vann: <http://purl.org/vocab/vann/> .\n\
+         @prefix p: <https://example.test/paper#> .\n\
+         <https://example.test/module/paper> a owl:Ontology ;\n    \
+         vann:preferredNamespacePrefix \"paper\" ;\n    \
+         vann:preferredNamespaceUri \"https://example.test/paper#\" .\n\
+         p:Paper a owl:Class ; rdfs:isDefinedBy <https://example.test/module/paper> .\n```\n",
+    );
+    write(tmp.path(), "docs/t.md", &headed_doc("paper:note\\/t", &version_mirror("9")));
+
+    let out = check_under_acme(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a stale mirror passed: {stderr}");
+    assert!(
+        stderr.contains("the mirrored body and scripts/thing.py disagree"),
+        "the finding names the source it disagrees with: {stderr}"
+    );
+}
+
+/// The splice half of the chunk pass, under the same header.
+#[test]
+fn check_fails_a_broken_splice_under_a_prefix_only_the_vocabulary_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/t.md",
+        &headed_doc("acme:wiki\\/t", "```rust {#root}\nfn f() {\n    <<nope>>\n}\n```\n"),
+    );
+
+    let out = check_under_acme(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a broken splice passed: {stderr}");
+    assert!(stderr.contains("nope"), "the finding names the reference: {stderr}");
+}
+
+/// An id spelled with a module's prefix is an id, so two documents
+/// declaring it collide.
+#[test]
+fn check_fails_two_documents_that_declare_one_id_under_a_vocabulary_prefix() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/one.md", &headed_doc("acme:wiki\\/same", ""));
+    write(tmp.path(), "docs/two.md", &headed_doc("acme:wiki\\/same", ""));
+
+    let out = check_under_acme(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "one id, two documents, and a pass: {stderr}");
+    assert!(
+        stderr.contains("duplicate document id `acme:wiki/same`"),
+        "the finding names the id: {stderr}"
+    );
+}
+
+/// A chunk's `proves=` is judged under the header's vocabulary too: a proof
+/// of nothing is a note on the run, not a chunk nobody read.
+#[test]
+fn check_notes_a_proof_of_nothing_under_a_prefix_only_the_vocabulary_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/t.md",
+        "# T\n\n```turtle folio:document\nacme:wiki\\/t a x0k:Wiki ;\n    \
+         folio:tangleCrate \"x\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n\n\
+         ```rust {#pin file=\"tests/pin.rs\" proves=\"x0k:affordance/declared_nowhere\"}\n\
+         #[test]\nfn pin() {}\n```\n",
+    );
+
+    let out = check_under_acme(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("edge `proves` → `x0k:affordance/declared_nowhere`"),
+        "the proof was read and leaves the set: {stderr}"
+    );
+}
+
+/// A header no vocabulary reads stops the chunk pass, and the run says so:
+/// once, with the parser's reason, and failing. Skipping the document is
+/// only sound because that sentence is printed.
+#[test]
+fn check_reports_a_header_no_vocabulary_reads_once() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/t.md", &headed_doc("nosuch:wiki\\/t", &version_mirror("9")));
+
+    let out = check_under_acme(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "an unreadable header passed: {stderr}");
+    assert!(
+        stderr.contains("t.md: header does not parse") && stderr.contains("nosuch"),
+        "the document is named with the parser's reason: {stderr}"
+    );
+    assert_eq!(stderr.matches("t.md").count(), 1, "reported once: {stderr}");
+}
+
+/// `sync` over a directory finds the document `check` reads, and what it
+/// writes is what `check` then compares.
+#[test]
+fn sync_fills_a_mirror_under_a_prefix_only_the_vocabulary_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/t.md", &headed_doc("acme:wiki\\/t", &version_mirror("9")));
+
+    let out = under_acme(tmp.path(), &["sync", "docs", "--workspace", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "sync failed: {stderr}");
+    assert!(
+        stderr.contains("synced 1 chunk(s) across 1 document(s)"),
+        "the document was found and filled: {stderr}"
+    );
+    let synced = fs::read_to_string(tmp.path().join("docs/t.md")).unwrap();
+    assert!(synced.contains("VERSION = \"0.4.0\""), "got {synced}");
+
+    let out = check_under_acme(tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the synced mirror is stale: {stderr}");
+}
+
+#[test]
+fn list_reads_a_document_under_a_prefix_only_the_vocabulary_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/t.md", &headed_doc("acme:wiki\\/t", &version_mirror("9")));
+
+    let out = under_acme(tmp.path(), &["list", "docs/t.md"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        stdout.contains("scripts/thing.py") && stdout.contains("symbol=VERSION"),
+        "the chunk is listed with its source: {stdout}"
+    );
+}
+
+/// A tangle target read off such a header is a target: this also proves
+/// the header's tool configuration reads under the vocabulary.
+#[test]
+fn tangle_writes_a_document_under_a_prefix_only_the_vocabulary_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/t.md",
+        "# T\n\n```turtle folio:document\nacme:wiki\\/t a x0k:Wiki ;\n    \
+         folio:tangleCrate \"out\" ;\n    folio:tangleRoot \"src/lib.rs\" .\n```\n\n\
+         ```rust {#root file=\"src/lib.rs\"}\npub fn f() {}\n```\n",
+    );
+
+    let out = under_acme(tmp.path(), &["tangle", "docs", "--workspace", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "tangle failed: {stderr}");
+    assert!(stderr.contains("tangled 1 file(s) from 1 document(s)"), "got {stderr}");
+    let written = fs::read_to_string(tmp.path().join("out/src/lib.rs")).unwrap();
+    assert!(written.contains("pub fn f()"), "got {written}");
+}
+
+/// A publication tangles only into a projection root. The refusal reads the
+/// header's class, so it reads it under the vocabulary that let the
+/// document tangle at all: a publication with an id of the reader's own
+/// is still a publication.
+#[test]
+fn tangle_refuses_a_publication_under_a_vocabulary_prefix_outside_a_projection() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "docs/p.md",
+        "# P\n\n```turtle folio:document\nacme:publication\\/p a x0k:Publication ;\n    \
+         x0k:status \"proposed\" ;\n    folio:tangleRoot \"README.md\" .\n```\n\n\
+         ```markdown {#readme file=\"README.md\"}\n# P\n```\n",
+    );
+
+    let out = under_acme(tmp.path(), &["tangle", "docs", "--workspace", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a publication tangled into a corpus root: {stderr}");
+    assert!(
+        stderr.contains("refusing to tangle publication document"),
+        "the refusal names itself: {stderr}"
+    );
+    assert!(!tmp.path().join("README.md").exists(), "nothing was written");
+}
+
+/// An instance's id names its class, so this one needs a module that
+/// declares a class of its own.
+#[test]
+fn declarations_reads_an_instance_of_a_class_only_the_vocabulary_declares() {
+    let tmp = TempDir::new().unwrap();
+    write(
+        tmp.path(),
+        "modules/things.ttl",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
+         @prefix vann: <http://purl.org/vocab/vann/> .\n\
+         @prefix t: <https://example.test/things#> .\n\n\
+         <https://example.test/things/vocabulary> a owl:Ontology ;\n    \
+         vann:preferredNamespacePrefix \"things\" ;\n    \
+         vann:preferredNamespaceUri \"https://example.test/things#\" .\n\n\
+         t:Thing a owl:Class ;\n    \
+         rdfs:isDefinedBy <https://example.test/things/vocabulary> .\n",
+    );
+    write(
+        tmp.path(),
+        "docs/t.md",
+        "# T\n\n### One\n\nThe first.\n\n```turtle folio:graph\n\
+         things:thing\\/one a things:Thing ;\n    x0k:status \"wip\" .\n```\n",
+    );
+
+    let out = under_acme(tmp.path(), &["declarations", "docs"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "declarations failed: {stderr}");
+    assert!(stdout.contains("things:thing/one"), "the instance is listed: {stdout}{stderr}");
+}
+
 /// `--version` is the line a CI log reads to say which tangler ran, and
 /// the name on it is this package's: another binary linking the same CLI
 /// prints its own.
@@ -3423,7 +3914,7 @@ The manifest is a complete chunk so repository projection can carry its public f
 ```toml {#package-manifest file="Cargo.toml"}
 [package]
 name = "x0k-tangle"
-version = "0.4.0"
+version = "0.5.0"
 edition = { workspace = true }
 description = "Literate programming for folio Markdown: writes source files from a document's named code blocks, fills quoted blocks from source that already exists, renders a document as an HTML page, and checks the code against the tree and each document's header against the vocabulary."
 license = "MIT"
@@ -3456,7 +3947,7 @@ corpus = [] # severed in this publication: not supported here; the crate declare
 motifs = [] # severed in this publication: its dependency is not published; enabling it does not build
 
 [dependencies]
-x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.3.0" }
+x0k-folio = { path = "../x0k-folio", features = ["document-vocabulary"] , version = "0.4.0" }
 # The triples `colophon::parse_turtle` hands back: `index` lists a header's
 # literal statements off them.
 oxrdf = "0.3"
@@ -3464,7 +3955,7 @@ oxrdf = "0.3"
 # the runtime module loader, which is what `--vocabulary <dir>` and the
 # PROVENANCE-recorded default are: a projected repository checks its own
 # documents against the module files it actually shipped.
-x0k-ontology = { path = "../x0k-ontology" , version = "0.3.1" }
+x0k-ontology = { path = "../x0k-ontology" , version = "0.3.2" }
 # Shared renderer-agnostic syntax tokenizer; weave uses it to emit
 # highlighted <span class="tok-*"> spans in the HTML output.
 x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
@@ -3472,7 +3963,7 @@ x0k-syntax = { path = "../x0k-syntax" , version = "0.1.0" }
 # declares as `svg x0k:icon` through this crate's checker, binds it to a
 # publication's palette, and writes the per-scheme files. Nothing in this
 # crate draws a mark.
-x0k-icon = { path = "../x0k-icon" , version = "0.2.0" }
+x0k-icon = { path = "../x0k-icon" , version = "0.3.0" }
 
 pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
 # TeX → MathML at weave time. Browsers (the Chromium-only 0k.computer target)

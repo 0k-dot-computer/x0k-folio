@@ -60,7 +60,7 @@ fixes all three before asking again.
 use std::fmt;
 use std::ops::Deref;
 
-use crate::parse::{Element, Grid, Icon, Paint, PathCommand, Role, Shape, Transform};
+use crate::parse::{Element, Grid, Icon, Paint, PathCommand, Role, Shape, Transform, COLOUR_ROLES};
 ```
 
 ## The rules, as a type
@@ -213,6 +213,69 @@ impl Deref for Accepted {
 }
 ```
 
+## The figure grade
+
+A world draws some members larger than an icon, in this same language at
+the profile's **figure grade** (`x0k:design/icon-profile` § "The figure
+grade"): a landing queue as a whorl with its waiting changes entering it.
+The figure grade is the icon vocabulary with `ellipse`, a free `viewBox`,
+the three opacities, any dash pattern, and the theme colour roles among
+its paints. Its checker is the icon's walk with five rules relaxed: rule 2
+admits any `viewBox` with a width and a height, rule 3 admits `ellipse`,
+rule 4 admits the opacities, rule 5 admits the colour roles, and rule 8
+admits any dash. Rules 7, 10, 11 and 12 are stated in grid units, so they
+do not apply on a free `viewBox`. Every other rule holds: one root, no
+text, no filter, no literal colour, no relative path command, no paper
+stroke, something painted.
+
+`Figure` is to the figure grade what `Accepted` is to an icon: the only
+way to one is `validate_figure`, and it carries the view box it was drawn
+in.
+
+<a name="chunk-figure"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#figure`</sub>
+
+```rust {#figure}
+/// The grade a declaration is checked at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Grade {
+    /// An icon, on one of the two grids.
+    Icon,
+    /// A figure-grade mark: a free `viewBox` and the figure's additions.
+    Figure,
+}
+
+/// A mark the checker accepted at the figure grade, with its view box.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Figure {
+    icon: Icon,
+    view_box: [f64; 4],
+}
+
+impl Figure {
+    /// The view box the mark is drawn in: `[x, y, width, height]`.
+    pub fn view_box(&self) -> [f64; 4] {
+        self.view_box
+    }
+}
+
+impl Deref for Figure {
+    type Target = Icon;
+    fn deref(&self) -> &Icon {
+        &self.icon
+    }
+}
+
+/// Check a parsed declaration at the figure grade: the figure, or every
+/// defect found.
+pub fn validate_figure(icon: Icon) -> Result<Figure, Vec<Defect>> {
+    let defects = check(&icon, Grade::Figure);
+    match (icon.view_box, defects.is_empty()) {
+        (Some(view_box), true) => Ok(Figure { icon, view_box }),
+        _ => Err(defects),
+    }
+}
+```
+
 ## The walk
 
 `validate` is one pass: the root's two rules first, then every element
@@ -234,24 +297,31 @@ off-grid refusal already says what to fix.
 /// accepted; `Err` is every defect found, in document order, the
 /// whole-drawing rules last.
 pub fn validate(icon: Icon) -> Result<Accepted, Vec<Defect>> {
+    let defects = check(&icon, Grade::Icon);
+    match (icon.grid(), defects.is_empty()) {
+        (Some(grid), true) => Ok(Accepted { icon, grid }),
+        _ => Err(defects),
+    }
+}
+
+/// Every defect `icon` has at `grade`, in document order, the
+/// whole-drawing rules last.
+fn check(icon: &Icon, grade: Grade) -> Vec<Defect> {
     let mut defects = Vec::new();
-    check_root(&icon, &mut defects);
-    let grid = icon.grid();
-    let mut walk = Walk { grid, defects, painted: false };
+    check_root(icon, grade, &mut defects);
+    let grid = icon.grid().filter(|_| grade == Grade::Icon);
+    let mut walk = Walk { grade, grid, defects, painted: false };
     let inherited = Inherited { fill: None, stroke: None, offset: (0.0, 0.0), parent: "svg" };
     for el in &icon.children {
         walk.element(el, &inherited);
     }
     if let Some(grid) = grid {
-        walk.budget(&icon, grid);
+        walk.budget(icon, grid);
     }
     if !walk.painted {
         walk.report(Rule::NothingPainted, ElementRef::root(), "no element carries a visible paint");
     }
-    match (grid, walk.defects.is_empty()) {
-        (Some(grid), true) => Ok(Accepted { icon, grid }),
-        _ => Err(walk.defects),
-    }
+    walk.defects
 }
 ```
 
@@ -273,7 +343,7 @@ the first rule like any other thing the root may not carry.
 <a name="chunk-check-root"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#check-root`</sub>
 
 ```rust {#check-root}
-fn check_root(icon: &Icon, defects: &mut Vec<Defect>) {
+fn check_root(icon: &Icon, grade: Grade, defects: &mut Vec<Defect>) {
     let root = ElementRef { ordinal: 0, tag: icon.root_tag.clone() };
     if icon.root_tag != "svg" {
         defects.push(Defect {
@@ -296,16 +366,16 @@ fn check_root(icon: &Icon, defects: &mut Vec<Defect>) {
             detail: format!("flair=\"{flair}\" is not a treatment name (a-z, then a-z, 0-9 and single hyphens)"),
         });
     }
-    if icon.grid().is_none() {
-        let written = match icon.view_box {
-            Some(vb) => format!("viewBox=\"{}\"", vb.map(num).join(" ")),
-            None => "no viewBox".to_string(),
-        };
-        defects.push(Defect {
-            rule: Rule::OffGridViewBox,
-            element: root,
-            detail: format!("{written}; the grids are `0 0 16 16` and `0 0 24 24`"),
-        });
+    let written = match icon.view_box {
+        Some(vb) => format!("viewBox=\"{}\"", vb.map(num).join(" ")),
+        None => "no viewBox".to_string(),
+    };
+    let (fits, wants) = match grade {
+        Grade::Icon => (icon.grid().is_some(), "the grids are `0 0 16 16` and `0 0 24 24`"),
+        Grade::Figure => (icon.view_box.is_some_and(|[_, _, w, h]| w > 0.0 && h > 0.0), "a figure's viewBox has a width and a height above 0"),
+    };
+    if !fits {
+        defects.push(Defect { rule: Rule::OffGridViewBox, element: root, detail: format!("{written}; {wants}") });
     }
 }
 ```
@@ -333,6 +403,7 @@ accumulated translation, and the parent's tag.
 
 ```rust {#walk-state}
 struct Walk {
+    grade: Grade,
     grid: Option<Grid>,
     defects: Vec<Defect>,
     painted: bool,
@@ -368,6 +439,10 @@ impl Walk {
             self.report(Rule::UnknownElement, at, format!("`{what}` is not in the vocabulary"));
             return;
         }
+        if matches!(el.shape, Shape::Ellipse { .. }) && self.grade == Grade::Icon {
+            self.report(Rule::UnknownElement, at, "`ellipse` is the figure grade's; an icon draws a circle or a path");
+            return;
+        }
         if inherited.parent != "svg" && inherited.parent != "g" {
             let detail = format!("`{}` inside a `{}`", el.tag(), inherited.parent);
             self.report(Rule::UnknownElement, at.clone(), detail);
@@ -393,23 +468,35 @@ impl Walk {
 ```
 
 The parser already sorted each element's attributes against its row, so
-rule 4 is a report of what it set aside.
+rule 4 is a report of what it set aside. A figure admits the three
+opacities the parser set aside too, each a number from 0 to 1.
 
 <a name="chunk-check-attributes"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#check-attributes`</sub>
 
 ```rust {#check-attributes}
 impl Walk {
     fn attributes(&mut self, el: &Element, at: &ElementRef) {
+        let figure = self.grade == Grade::Figure;
         for name in &el.unknown_attrs {
+            if figure && el.opacity.written().iter().any(|(admitted, _)| admitted == name) {
+                continue;
+            }
             let detail = format!("`{name}` is not admitted on `{}`", el.tag());
             self.report(Rule::UnknownAttribute, at.clone(), detail);
+        }
+        for (name, value) in el.opacity.written() {
+            if let Some(v) = value.filter(|v| figure && !(0.0..=1.0).contains(v)) {
+                let detail = format!("{name}=\"{}\"; an opacity is from 0 to 1", num(v));
+                self.report(Rule::UnknownAttribute, at.clone(), detail);
+            }
         }
     }
 }
 ```
 
 A paint is a role or `none`; anything else was kept verbatim and is
-quoted back. `paper` is the ground and is a fill only — on a stroke it
+quoted back. A theme colour role is a figure's paint and an icon's
+literal. `paper` is the ground and is a fill only — on a stroke it
 would draw the ground as a line, which no surface can mean.
 
 <a name="chunk-check-paints"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#check-paints`</sub>
@@ -418,9 +505,20 @@ would draw the ground as a line, which no surface can mean.
 impl Walk {
     fn paints(&mut self, el: &Element, at: &ElementRef) {
         for (attr, paint) in [("fill", &el.fill), ("stroke", &el.stroke)] {
-            if let Some(Paint::Literal(value)) = paint {
-                let detail = format!("{attr}=\"{value}\"; a paint is ink, line, paper, accent or none");
-                self.report(Rule::LiteralPaint, at.clone(), detail);
+            match (paint, self.grade) {
+                (Some(Paint::Literal(value)), Grade::Icon) => {
+                    let detail = format!("{attr}=\"{value}\"; a paint is ink, line, paper, accent or none");
+                    self.report(Rule::LiteralPaint, at.clone(), detail);
+                }
+                (Some(Paint::Colour(value)), Grade::Icon) => {
+                    let detail = format!("{attr}=\"{value}\"; a theme colour role is a figure's paint, not an icon's");
+                    self.report(Rule::LiteralPaint, at.clone(), detail);
+                }
+                (Some(Paint::Literal(value)), Grade::Figure) => {
+                    let detail = format!("{attr}=\"{value}\"; a figure paints ink, line, paper, accent, none or a theme colour role ({})", COLOUR_ROLES.join(", "));
+                    self.report(Rule::LiteralPaint, at.clone(), detail);
+                }
+                _ => {}
             }
         }
         if el.stroke == Some(Paint::Role(Role::Paper)) {
@@ -451,7 +549,7 @@ impl Walk {
                 self.report(Rule::OffRegisterStroke, at.clone(), detail);
             }
         }
-        if let Some(dash) = &el.dasharray {
+        if let Some(dash) = el.dasharray.as_ref().filter(|_| self.grade == Grade::Icon) {
             if dash != &[1.0, 2.0] {
                 let written = dash.iter().map(|v| num(*v)).collect::<Vec<_>>().join(" ");
                 let detail = format!("stroke-dasharray=\"{written}\"; the one dash is `1 2`");
@@ -542,7 +640,7 @@ impl Walk {
     }
 
     fn half_unit(&mut self, at: &ElementRef, name: &str, v: f64) {
-        if (v * 2.0).fract() != 0.0 {
+        if self.grade == Grade::Icon && (v * 2.0).fract() != 0.0 {
             let detail = format!("{name} = {}; coordinates sit on multiples of 0.5", num(v));
             self.report(Rule::OffTheHalfUnit, at.clone(), detail);
         }
@@ -603,6 +701,11 @@ fn geometry_of(shape: &Shape) -> (Values, Points) {
                 values.extend([("point x", *x), ("point y", *y)]);
                 points.push(("point", (*x, *y)));
             }
+        }
+        Shape::Ellipse { cx, cy, rx, ry } => {
+            values.extend([("cx", *cx), ("cy", *cy), ("rx", *rx), ("ry", *ry)]);
+            points.extend([("left extreme", (cx - rx, *cy)), ("right extreme", (cx + rx, *cy))]);
+            points.extend([("top extreme", (*cx, cy - ry)), ("bottom extreme", (*cx, cy + ry))]);
         }
         Shape::Path { d, .. } => path_geometry(d, &mut values, &mut points),
     }
@@ -685,7 +788,7 @@ impl Walk {
 }
 
 fn is_painted(el: &Element, effective: &Inherited<'_>) -> bool {
-    let visible = |paint: Option<&Paint>| matches!(paint, Some(Paint::Role(_) | Paint::Literal(_)));
+    let visible = |paint: Option<&Paint>| matches!(paint, Some(Paint::Role(_) | Paint::Colour(_) | Paint::Literal(_)));
     match &el.shape {
         Shape::Group | Shape::Foreign(_) => false,
         Shape::Line { .. } | Shape::Polyline { .. } => visible(effective.stroke),
@@ -885,12 +988,32 @@ mod tests {
         assert_eq!(defects[0].rule, Rule::TwoIconsOnOneGrid);
         assert_eq!(one_per_grid(&[&a]), vec![]);
     }
+
+    #[test]
+    fn a_figure_admits_its_additions_and_an_icon_refuses_them() {
+        let figure = r#"<svg viewBox="-50 -30 100 60">
+  <ellipse cx="0" cy="0" rx="40" ry="14" fill="none" stroke="process" stroke-width="1.7" stroke-opacity="0.8" stroke-dasharray="5 4"/>
+  <circle cx="-33.4" cy="4.2" r="4.5" fill="paper" stroke="ink" stroke-width="0.8"/>
+</svg>"#;
+        let accepted = validate_figure(parse(figure).unwrap()).unwrap();
+        assert_eq!(accepted.view_box(), [-50.0, -30.0, 100.0, 60.0]);
+        let as_icon: Vec<Rule> = match validate(parse(figure).unwrap()) {
+            Ok(_) => panic!("an icon has no ellipse, opacity or process paint"),
+            Err(defects) => defects.into_iter().map(|d| d.rule).collect(),
+        };
+        assert!(as_icon.contains(&Rule::OffGridViewBox) && as_icon.contains(&Rule::UnknownElement), "{as_icon:?}");
+        let literal = figure.replace(r#"stroke="process""#, r##"stroke="#93abe0""##);
+        let rules: Vec<Rule> = validate_figure(parse(&literal).unwrap()).unwrap_err().into_iter().map(|d| d.rule).collect();
+        assert_eq!(rules, vec![Rule::LiteralPaint], "a figure paints roles, never colours");
+        let faded = figure.replace(r#"stroke-opacity="0.8""#, r#"stroke-opacity="2""#);
+        assert!(validate_figure(parse(&faded).unwrap()).is_err(), "an opacity is from 0 to 1");
+    }
 }
 ```
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [num](#chunk-num) · [rule](#chunk-rule) · [defect](#chunk-defect) · [accepted](#chunk-accepted) · [validate](#chunk-validate) · [check-root](#chunk-check-root) · [treatment-name](#chunk-treatment-name) · [walk-state](#chunk-walk-state) · [walk-element](#chunk-walk-element) · [check-attributes](#chunk-check-attributes) · [check-paints](#chunk-check-paints) · [check-stroke](#chunk-check-stroke) · [check-path-commands](#chunk-check-path-commands) · [check-transform](#chunk-check-transform) · [check-geometry](#chunk-check-geometry) · [geometry-of](#chunk-geometry-of) · [path-geometry](#chunk-path-geometry) · [check-budget](#chunk-check-budget) · [one-per-grid](#chunk-one-per-grid) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/validate.rs`](../../crates/x0k-icon/src/validate.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [num](#chunk-num) · [rule](#chunk-rule) · [defect](#chunk-defect) · [accepted](#chunk-accepted) · [figure](#chunk-figure) · [validate](#chunk-validate) · [check-root](#chunk-check-root) · [treatment-name](#chunk-treatment-name) · [walk-state](#chunk-walk-state) · [walk-element](#chunk-walk-element) · [check-attributes](#chunk-check-attributes) · [check-paints](#chunk-check-paints) · [check-stroke](#chunk-check-stroke) · [check-path-commands](#chunk-check-path-commands) · [check-transform](#chunk-check-transform) · [check-geometry](#chunk-check-geometry) · [geometry-of](#chunk-geometry-of) · [path-geometry](#chunk-path-geometry) · [check-budget](#chunk-check-budget) · [one-per-grid](#chunk-one-per-grid) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -904,6 +1027,8 @@ mod tests {
 <<defect>>
 
 <<accepted>>
+
+<<figure>>
 
 <<validate>>
 

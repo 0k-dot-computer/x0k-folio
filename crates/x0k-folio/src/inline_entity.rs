@@ -20,6 +20,9 @@
 //!   class is an error against that block, not against the section.
 //! - **No enclosing heading** is an error — an inline entity needs a title.
 //!
+//! A block that states `x0k:text` owns no section. That text is its title,
+//! `x0k:description` is its description, and a section may hold several.
+//!
 //! A graph block that declares vocabulary (a class, a property, a module)
 //! is not an instance and is left to the vocabulary loader. One class is
 //! drawn rather than stated: an icon is an `svg x0k:icon` block
@@ -432,7 +435,7 @@ pub fn panel_params(text: &str) -> Result<serde_json::Map<String, serde_json::Va
 pub const FIGURE_NS: &str = "urn:x0k:figure:";
 
 /// One moment's scene, as a section states it, and the loop its host runs
-/// while the moment rests: the values every home of a sequence shares.
+/// while the moment rests: the values every sequence store shares.
 pub use x0k_sequence::{Loop, Scene};
 /// Read a scene block's Turtle: one subject typed `x0k:Scene`, setting params
 /// under `figure:` and stating at most one `x0k:loop` literal and one
@@ -997,6 +1000,9 @@ pub fn extract_located(
             _ => None,
         }
     };
+    let owns_section = |index: usize| -> bool {
+        !matches!(&read[index], Some(Ok(GraphContent::Instance { statements, .. })) if stated_literal(statements, "text").is_some())
+    };
 
     let mut out = Vec::new();
     for (index, block) in blocks.iter().enumerate() {
@@ -1034,7 +1040,7 @@ pub fn extract_located(
             0
         } else {
             (0..index)
-                .filter(|&i| in_section(&blocks[i]) && class_of(i) == this_class)
+                .filter(|&i| in_section(&blocks[i]) && owns_section(i) && class_of(i) == this_class)
                 .count()
         };
         let spans: Vec<Range<usize>> = blocks.iter().filter(|b| in_section(b)).map(|b| b.span.clone()).collect();
@@ -1048,13 +1054,20 @@ pub fn extract_located(
             },
             Some((subject, class, statements)) => {
                 let name = class_name(&class);
-                match heading {
-                    None => Err(InlineEntityError::MissingHeading { class: name }),
-                    Some(_) if earlier_of_class > 0 => Err(InlineEntityError::MultipleBlocksInSection {
-                        class: name,
-                        heading: heading.unwrap_or_default().to_string(),
-                    }),
-                    Some(heading) => instance_record(
+                match (stated_literal(&statements, "text").map(str::to_string), heading) {
+                    (Some(text), _) => {
+                        let description = stated_literal(&statements, "description").unwrap_or_default().trim().to_string();
+                        let statements = statements
+                            .into_iter()
+                            .filter(|(predicate, _)| predicate.strip_prefix(X0K_NS) != Some("description"))
+                            .collect();
+                        instance_record(&subject, &class, statements, text.trim(), description, block, prefixes, model)
+                    }
+                    (None, None) => Err(InlineEntityError::MissingHeading { class: name }),
+                    (None, Some(heading)) if earlier_of_class > 0 => {
+                        Err(InlineEntityError::MultipleBlocksInSection { class: name, heading: heading.to_string() })
+                    }
+                    (None, Some(heading)) => instance_record(
                         &subject, &class, statements, heading, description, block, prefixes, model,
                     ),
                 }
@@ -1129,6 +1142,70 @@ fn instance_record(
         requires_resources,
         span: block.span.clone(),
         line: block.line,
+    })
+}
+
+/// A literal a block states under `x0k:<name>`.
+fn stated_literal<'a>(statements: &'a [(String, Object)], name: &str) -> Option<&'a str> {
+    statements.iter().find_map(|(predicate, object)| match object {
+        Object::Literal(literal) if predicate.strip_prefix(X0K_NS) == Some(name) => Some(literal.value.as_str()),
+        _ => None,
+    })
+}
+
+/// An open question whose block states its own text, as a host shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatedQuestion {
+    /// The id's last segment: `no-genealogy` for
+    /// `open-question:no-genealogy`.
+    pub slug: String,
+    pub text: String,
+    pub description: String,
+    pub status: String,
+    pub resolution: Option<String>,
+}
+
+impl StatedQuestion {
+    /// The question as prose for a host to render: one markdown source, so
+    /// every renderer shows the same thing.
+    pub fn markdown(&self) -> String {
+        let label = match self.status.as_str() {
+            "resolved" => "Resolved question",
+            "abandoned" => "Abandoned question",
+            _ => "Open question",
+        };
+        let mut out = format!("**{label}:** {}", self.text);
+        if !self.description.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(&self.description);
+        }
+        if let Some(resolution) = &self.resolution {
+            out.push_str("\n\n**Resolution:** ");
+            out.push_str(resolution);
+        }
+        out
+    }
+}
+
+/// The open question a graph block states, when it states one. `info` is
+/// the fence's info string and `body` its text.
+pub fn stated_question(info: &str, body: &str) -> Option<StatedQuestion> {
+    if !is_marker(info, GRAPH_MARKER) || !body.contains("OpenQuestion") {
+        return None;
+    }
+    let GraphContent::Instance { subject, class, statements } = read_graph_block(body, shipped_prefixes(), 1).ok()? else {
+        return None;
+    };
+    if class.strip_prefix(X0K_NS) != Some("OpenQuestion") {
+        return None;
+    }
+    let literal = |name: &str| stated_literal(&statements, name).map(|value| value.trim().to_string());
+    Some(StatedQuestion {
+        slug: subject.rsplit(['/', '#']).next().unwrap_or(&subject).to_string(),
+        text: literal("text")?,
+        description: literal("description").unwrap_or_default(),
+        status: literal("status").unwrap_or_else(|| "open".to_string()),
+        resolution: literal("resolution"),
     })
 }
 
@@ -1545,6 +1622,48 @@ mod tests {
     }
 
     #[test]
+    fn a_block_that_states_its_text_owns_no_section() {
+        let allowed = HashSet::from(["open-question".to_string()]);
+        let body = "### Lineage\n\nA part keeps how it was made.\n\n\
+            ```turtle folio:graph\nopen-question:first a x0k:OpenQuestion ;\n    x0k:text \"Is it kept?\" ;\n    \
+            x0k:description \"\"\"It may not be.\n\"\"\" ;\n    x0k:status \"open\" .\n```\n\n\
+            ```turtle folio:graph\nopen-question:second a x0k:OpenQuestion ;\n    x0k:text \"For how long?\" ;\n    x0k:status \"open\" .\n```\n";
+        let found: Vec<_> = extract_from_markdown(body, &allowed).into_iter().map(|r| r.unwrap()).collect();
+        assert_eq!(found[0].title, "Is it kept?");
+        assert_eq!(found[0].description, "It may not be.");
+        assert_eq!(found[1].title, "For how long?");
+        assert_eq!(found[1].description, "");
+        let facts = declared_facts(&found[0]);
+        assert_eq!(facts.iter().filter(|(p, _)| p == "x0k:description").count(), 1, "{facts:?}");
+    }
+
+    #[test]
+    fn a_block_that_states_its_text_needs_no_heading() {
+        let allowed = HashSet::from(["open-question".to_string()]);
+        let body = "```turtle folio:graph\nopen-question:bare a x0k:OpenQuestion ;\n    x0k:text \"Why?\" .\n```\n";
+        assert_eq!(extract_from_markdown(body, &allowed)[0].as_ref().unwrap().title, "Why?");
+    }
+
+    #[test]
+    fn a_question_left_to_its_heading_keeps_the_section_rule() {
+        let allowed = HashSet::from(["open-question".to_string()]);
+        let body = "#### Why?\n\nContext.\n\n```turtle folio:graph\nopen-question:why a x0k:OpenQuestion ;\n    x0k:status \"open\" .\n```\n";
+        let found = extract_from_markdown(body, &allowed).remove(0).unwrap();
+        assert_eq!((found.title.as_str(), found.description.as_str()), ("Why?", "Context."));
+        assert_eq!(stated_question("turtle folio:graph", "open-question:why a x0k:OpenQuestion ;\n    x0k:status \"open\" .\n"), None);
+    }
+
+    #[test]
+    fn a_stated_question_reads_as_prose() {
+        let body = "open-question:no-genealogy a x0k:OpenQuestion ;\n    x0k:text \"Why?\" ;\n    \
+            x0k:description \"Because.\" ;\n    x0k:status \"resolved\" ;\n    x0k:resolution \"Settled.\" .\n";
+        let question = stated_question("turtle folio:graph", body).unwrap();
+        assert_eq!(question.slug, "no-genealogy");
+        assert_eq!(question.markdown(), "**Resolved question:** Why?\n\nBecause.\n\n**Resolution:** Settled.");
+        assert_eq!(stated_question("turtle", body), None);
+    }
+
+    #[test]
     fn an_id_carrying_a_content_state_pin_errors() {
         let body = "### A\n\n```turtle folio:graph\n<https://0k.computer/ontology#affordance/authenticate@file-content:abcd> a x0k:Affordance .\n```\n";
         assert!(matches!(extract_from_markdown(body, &allowed_set())[0], Err(InlineEntityError::InvalidUri { .. })));
@@ -1552,8 +1671,8 @@ mod tests {
 
     /// The regression the old shape heuristic existed for: an ordinary fence
     /// whose info string holds a colon is a code fence
-    /// (`docs/backend-system/building-backends/08-migrating.md:896` in the
-    /// Backstage tree, 2026-09-23). Only the marker declares.
+    /// (line 896 of Backstage's backend migration guide, `08-migrating.md`).
+    /// Only the marker declares.
     #[test]
     fn a_fence_title_is_a_code_fence() {
         let body = "### The Auth Plugin\n\n```yaml title:\"app-config.yaml\"\nauth: {}\n```\n";

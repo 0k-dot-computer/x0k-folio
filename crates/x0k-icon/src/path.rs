@@ -9,8 +9,8 @@
 //! group's translation is applied to its descendants. Strokes are round
 //! capped and joined, always, which is why [`StrokeSpec`] does not say so.
 
-use crate::parse::{Element, Paint, PathCommand, Role, Shape, Transform};
-use crate::validate::Accepted;
+use crate::parse::{Element, Opacity, Paint, PathCommand, Role, Shape, Transform};
+use crate::validate::{Accepted, Figure};
 
 /// One segment of an outline, absolute, in grid units.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,6 +66,10 @@ fn outline(shape: &Shape) -> Option<Vec<Segment>> {
             .map(|(i, &(x, y))| if i == 0 { MoveTo(x, y) } else { LineTo(x, y) })
             .collect(),
         Shape::Circle { cx, cy, r } => vec![MoveTo(cx - r, cy), quarter(r, cx + r, cy), quarter(r, cx - r, cy), Close],
+        Shape::Ellipse { cx, cy, rx, ry } => {
+            let half = |x: f64| ArcTo { rx, ry, rotation: 0.0, large_arc: false, sweep: true, x, y: cy };
+            vec![MoveTo(cx - rx, cy), half(cx + rx), half(cx - rx), Close]
+        }
         Shape::Rect { x, y, width: w, height: h, rx } => match rx.map(|rx| rx.min(w / 2.0).min(h / 2.0)) {
             Some(r) if r > 0.0 => vec![
                 MoveTo(x + r, y),
@@ -192,6 +196,113 @@ fn walk<'a>(el: &'a Element, inherited: &Inherited<'a>, out: &mut Vec<Draw>) {
     }
     for child in &el.children {
         walk(child, &here, out);
+    }
+}
+
+/// What a figure paints with: one of the four roles, or a theme colour
+/// role's name (`process`, `error`), which the painter resolves against
+/// its theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FigurePaint {
+    Role(Role),
+    Colour(&'static str),
+}
+
+impl FigurePaint {
+    /// The name an author writes for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            FigurePaint::Role(role) => role.name(),
+            FigurePaint::Colour(name) => name,
+        }
+    }
+
+    fn of(paint: Option<&Paint>) -> Option<FigurePaint> {
+        match paint? {
+            Paint::Role(role) => Some(FigurePaint::Role(*role)),
+            Paint::Colour(name) => Some(FigurePaint::Colour(name)),
+            Paint::None | Paint::Literal(_) => None,
+        }
+    }
+}
+
+/// A figure's stroke: its paint and alpha, its width in view-box units,
+/// and its dash pattern, empty for none. Caps and joins are round.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FigureStroke {
+    pub paint: FigurePaint,
+    pub alpha: f64,
+    pub width: f64,
+    pub dash: Vec<f64>,
+}
+
+/// One outline a figure paints, in view-box units.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FigureDraw {
+    pub outline: Vec<Segment>,
+    /// The fill's paint, rule and alpha.
+    pub fill: Option<(FigurePaint, FillRule, f64)>,
+    pub stroke: Option<FigureStroke>,
+}
+
+/// What a figure's element inherits from the groups around it.
+#[derive(Clone, Copy)]
+struct FigureInherited<'a> {
+    paints: Inherited<'a>,
+    opacity: Opacity,
+    whole: f64,
+}
+
+/// Everything `figure` paints, in the order it is painted, in the units
+/// of its view box.
+pub fn figure_draws(figure: &Figure) -> Vec<FigureDraw> {
+    let paints = Inherited { fill: None, stroke: None, stroke_width: None, offset: (0.0, 0.0) };
+    let root = FigureInherited { paints, opacity: Opacity::default(), whole: 1.0 };
+    let mut out = Vec::new();
+    for element in &figure.children {
+        figure_walk(element, &root, &mut out);
+    }
+    out
+}
+
+fn figure_walk<'a>(el: &'a Element, inherited: &FigureInherited<'a>, out: &mut Vec<FigureDraw>) {
+    let (dx, dy) = match el.transform {
+        Some(Transform::Translate(x, y)) => (x, y),
+        _ => (0.0, 0.0),
+    };
+    let up = &inherited.paints;
+    let here = FigureInherited {
+        paints: Inherited {
+            fill: el.fill.as_ref().or(up.fill),
+            stroke: el.stroke.as_ref().or(up.stroke),
+            stroke_width: el.stroke_width.or(up.stroke_width),
+            offset: (up.offset.0 + dx, up.offset.1 + dy),
+        },
+        opacity: Opacity {
+            whole: None,
+            fill: el.opacity.fill.or(inherited.opacity.fill),
+            stroke: el.opacity.stroke.or(inherited.opacity.stroke),
+        },
+        whole: inherited.whole * el.opacity.whole.unwrap_or(1.0),
+    };
+    if let Some(outline) = outline(&el.shape) {
+        let has_inside = !matches!(el.shape, Shape::Line { .. } | Shape::Polyline { .. });
+        let rule = if matches!(el.shape, Shape::Path { evenodd: true, .. }) { FillRule::EvenOdd } else { FillRule::NonZero };
+        out.push(FigureDraw {
+            outline: translated(outline, here.paints.offset),
+            fill: FigurePaint::of(here.paints.fill)
+                .filter(|_| has_inside)
+                .map(|paint| (paint, rule, here.whole * here.opacity.fill.unwrap_or(1.0))),
+            stroke: FigurePaint::of(here.paints.stroke).map(|paint| FigureStroke {
+                paint,
+                alpha: here.whole * here.opacity.stroke.unwrap_or(1.0),
+                width: here.paints.stroke_width.unwrap_or(1.0),
+                dash: el.dasharray.clone().unwrap_or_default(),
+            }),
+        });
+    }
+    for child in &el.children {
+        figure_walk(child, &here, out);
     }
 }
 

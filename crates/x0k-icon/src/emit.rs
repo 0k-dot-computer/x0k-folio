@@ -13,9 +13,9 @@
 //! are not here: the first is `x0k-ui-draw`'s adapter, the second needs a
 //! rasterizer (`x0k:architecture/entity-iconography`, amendment).
 
-use crate::bind::{bind, BoundElement, BoundIcon, Palette, RoleBinding, Scheme};
+use crate::bind::{bind, bind_figure, BoundElement, BoundIcon, Palette, RoleBinding, Scheme};
 use crate::parse::{PathCommand, Shape};
-use crate::validate::Accepted;
+use crate::validate::{Accepted, Figure};
 
 /// The namespace every emitted `<svg>` root declares.
 pub const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
@@ -91,6 +91,37 @@ pub fn svg(bound: &BoundIcon, label: &Label) -> String {
 /// The icon as inline SVG for a themed page: roles as `var(--icon-<role>)`.
 pub fn inline_svg(icon: &Accepted, label: &Label) -> String {
     svg(&bind(icon, &RoleBinding::css_variables()), label)
+}
+
+/// A figure-grade mark as inline SVG for a themed page, in its own
+/// `viewBox`, with the profile's round caps and joins and its unpainted
+/// default fill on the root.
+pub fn figure_svg(figure: &Figure, label: &Label) -> String {
+    let mut w = Writer::default();
+    w.open(
+        "svg",
+        &[
+            ("xmlns", SVG_NAMESPACE.to_string()),
+            ("viewBox", figure.view_box().map(num).join(" ")),
+            ("role", "img".to_string()),
+            ("aria-label", label.title.clone()),
+            ("fill", "none".to_string()),
+            ("stroke-linecap", "round".to_string()),
+            ("stroke-linejoin", "round".to_string()),
+        ],
+        false,
+    );
+    w.children(&bind_figure(figure, &RoleBinding::css_variables()));
+    w.close("svg");
+    w.out
+}
+
+/// A figure-grade mark's elements alone, bound as [`figure_svg`] binds
+/// them, for a renderer to place under a group of its own.
+pub fn figure_elements(figure: &Figure) -> String {
+    let mut w = Writer::default();
+    w.children(&bind_figure(figure, &RoleBinding::css_variables()));
+    w.out
 }
 
 /// The per-scheme files a publication ships for one icon: `(name, text)`
@@ -191,6 +222,7 @@ impl Writer {
             Shape::Circle { .. } => "circle",
             Shape::Rect { .. } => "rect",
             Shape::Polyline { .. } => "polyline",
+            Shape::Ellipse { .. } => "ellipse",
             Shape::Foreign(name) => name.as_str(),
         };
         let mut attrs = geometry_attrs(&el.shape);
@@ -198,6 +230,9 @@ impl Writer {
         push(&mut attrs, "stroke", el.stroke.clone());
         push(&mut attrs, "stroke-width", el.stroke_width.map(num));
         push(&mut attrs, "stroke-dasharray", el.dasharray.as_deref().map(nums));
+        for (name, value) in el.opacity.written() {
+            push(&mut attrs, name, value.map(num));
+        }
         if let Shape::Path { evenodd: true, .. } = el.shape {
             attrs.push(("fill-rule", "evenodd".to_string()));
         }
@@ -225,6 +260,9 @@ fn geometry_attrs(shape: &Shape) -> Vec<(&'static str, String)> {
             vec![("x1", num(*x1)), ("y1", num(*y1)), ("x2", num(*x2)), ("y2", num(*y2))]
         }
         Shape::Circle { cx, cy, r } => vec![("cx", num(*cx)), ("cy", num(*cy)), ("r", num(*r))],
+        Shape::Ellipse { cx, cy, rx, ry } => {
+            vec![("cx", num(*cx)), ("cy", num(*cy)), ("rx", num(*rx)), ("ry", num(*ry))]
+        }
         Shape::Rect { x, y, width, height, rx } => {
             let mut attrs =
                 vec![("x", num(*x)), ("y", num(*y)), ("width", num(*width)), ("height", num(*height))];

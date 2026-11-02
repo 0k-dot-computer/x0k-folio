@@ -28,6 +28,216 @@ are exactly the crates whose numbers moved in it, and each heading names
 the number. Reading a crate's version as "how recent is this bundle" will
 mislead you — read the release it is listed under instead.
 
+## 0.5.0 — 2026-11-01
+
+On GitHub as
+[v0.5.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.5.0):
+a binary per platform, `install.sh`, the source closure, and one
+`SHA256SUMS`.
+
+**`check` reads what it said it read.** Four reports against 0.4.0 came in
+from outside, and each was `check` getting a typed collection wrong. A
+document whose header used a prefix from `--vocabulary` skipped its chunk
+pass, so a stale mirror passed and the summary said "no chunk references to
+check" (#4). A header's literals were never read against their term's range,
+though a graph block's were (#3). A subclass did not satisfy a domain or a
+range (#1). An edge could not cross between a header and a graph block, in
+either direction, under `--closed` (#2). All four are fixed, in `check` and in
+the verbs that read a header with it.
+
+**Some of what passed will now fail.** That is most of the point, and these
+are the cases to expect on your own documents:
+
+- **One id on a document and a declaration.** A set in which one id is both a
+  document's and a declaration's now fails, open or `--closed`, naming the two
+  places. An id names one thing.
+- **A plain string on `xsd:date`.** `"2026-11-01"` is a string, and an
+  `xsd:date` range refuses it. Write `"2026-11-01"^^xsd:date`.
+- **A literal whose text is not its datatype's.** `"yes"^^xsd:boolean`,
+  `"twelve"^^xsd:integer` and `"1e3"^^xsd:decimal` are refused. `check` reads
+  the text of a literal for `xsd:string`, `xsd:integer`, `xsd:boolean`,
+  `xsd:decimal` and `xsd:date`, in headers and in blocks; any other range is
+  carried and not read.
+- **A vocabulary that will not load.** With no flag, `sync`, `list`, `tangle`
+  and `declarations` now resolve the vocabulary as `check` does, so a
+  `PROVENANCE.json` naming a directory that exists but will not load fails
+  them too.
+- **A script that matches the finding's words.** A dangling edge now reads
+  `names no document or declaration under the paths scanned`.
+
+Two things pass that did not. A subclass at any depth satisfies a domain or a
+range, through `check` and through `ingest`. An edge may name a document or a
+declaration from either side, and `--closed` stays as strict as it was: an id
+that neither a header nor a block carries still fails.
+
+Two limits remain. A block's edge to a document resolves, but its range is not
+read, because only a declaration's class is known to that check. And `sync`
+and `tangle` over a directory stay quiet about a header they cannot read when
+no `--vocabulary` is given; `check` says so, which is one more reason it goes
+first.
+
+Everything else in this release moved between tags. Three projections reached
+this repository after `v0.4.0` with no release of their own, and more of the
+same work followed them, so this section covers all of it: `x0k-sequence`
+shipping, `x0k-tangle retarget`, stable block ids and editing support in
+`x0k-folio`, figures in `x0k-icon`, and a README that now answers, in order,
+what Folio is, what you or your agent can do with it, how to start, what state
+it is in and how it works.
+
+Eight crates move. `x0k-tangle` and `x0k-folio-cli` take the release's number.
+`x0k-folio`, `x0k-fact-projection` and `x0k-icon` move their minor numbers,
+because each changed a type a caller may build or match on. `x0k-sequence` is
+at 0.2.0 because it renamed what 0.1.0 named. `x0k-folio-ingest` moves its
+minor number with no change to its source: its public traits take
+`x0k-fact-projection`'s `FactEntry`, so it has to be built on the same version
+of that crate as its callers are. `x0k-ontology` moves a patch, for terms and
+one method added and nothing removed. `x0k-syntax` and `x0k-folio-dialog` did
+not change and keep their numbers.
+
+### x0k-tangle 0.5.0
+
+- **`check` reads every header under one vocabulary.** The vocabulary pass
+  runs first and hands the model it read under to the chunk pass and the
+  `proves=` collection, so a document whose id uses a prefix only
+  `--vocabulary` or the set itself declares gets its mirror, splice, id and
+  `proves=` checks. A header that cannot be read is reported, never skipped in
+  silence.
+- **`sync`, `list`, `tangle` and `declarations` take `--vocabulary <dir>`** and
+  `--only-vocabulary`, as `check` does, and agree with it on such a document.
+- **`retarget <from> <to>`** moves a tangled output: it rewrites the documents
+  that write it, re-tangles them and proves every byte stayed. `--crate <dir>`
+  moves a single-output document to another crate. A refusal touches nothing,
+  and a byte mismatch restores everything.
+- **An affordance-links marker can name what it lists.** Ids inside
+  `<!-- x0k:affordance-links … -->` list exactly those, in that order. An id
+  the publication does not publish, one named twice, or a marker never closed
+  is refused. The bare marker lists every published record, as it did.
+- **A figure receives its blocks.** The weave gives an `x0k:media` embed with
+  `source="<name>"` the data block and the parameter panel of that name, as
+  `data-media-source`, `data-media-payload` and `data-media-params`, and a
+  named panel carries `data-block`.
+- **Library callers:** `VocabularyReport` gains `model` and no longer
+  implements `Default`. `TangleSettings` gains `vocabulary`, so a struct
+  literal naming every field stops compiling. `parse_document_in` and
+  `sync_document_in` take a model, and `retarget` is a new public module.
+
+### x0k-ontology 0.3.2
+
+- `OntologyModel::subclass_closure` returns a class and every class beneath
+  it, at any depth, and ends on a cycle. `x0k-folio` calls it, so a release of
+  that crate needs this one.
+- Terms added, none removed: `x0k:Class`, `x0k:Kind`, `x0k:termKind` and the
+  eight kinds under `x0k:kind/`, which say what kind of thing a term names and
+  so whether facts may be typed by it; `x0k:decidedBy`; `x0k:text`, the words
+  a block states itself; `x0k:depicts`; `x0k:ExternalService`, `x0k:Operator`
+  and `x0k:Tangle`; and `x0k:admitsReaderVerb` and `x0k:readerAcceptance`, a
+  publication's reader statements.
+
+### x0k-sequence 0.2.0
+
+- This crate's first section. It is the state over a sequence: the scene of a
+  moment, the address of a moment, the `set-scene` op and the sequence store
+  that applies it. `x0k-folio` reads a scene through it and writes one back.
+  0.1.0 reached crates.io between releases, with no section here.
+- **`MomentHome` is `SequenceStore`, and `check_home` is `check_store`.** Code
+  naming either stops compiling.
+
+### x0k-folio 0.4.0
+
+- **A header's literal answers to its term's range**, by the one test a
+  block's field answers to and in the same words: `Defect::ContradictedLiteral`.
+  A literal conforms by its datatype and its text; `xsd:decimal` and `xsd:date`
+  are interpreted now. `Datatype` is public.
+- **Domains and ranges walk `rdfs:subClassOf`**, by
+  `OntologyModel::subclass_closure`, in `check` and `ingest` alike.
+- **A set's documents and declarations resolve against each other.**
+  `resolve_across` joins the two lists of ids, and
+  `DeclarationDefect::IdCollision` refuses one id on both.
+- **What breaks for a caller:** `Defect` and `DeclarationDefect` gained
+  variants, so an exhaustive match stops compiling. `CorpusReport.ids`,
+  `InstanceCheck.declared` and `WritingRun.object` are new public fields, so a
+  struct literal naming every field stops compiling.
+- **A new default feature, `envelope`,** holds header and graph parsing and
+  materialization, for a guest that edits bodies and reads no header. A caller
+  with `default-features = false` that reads headers now names it;
+  `document-vocabulary` turns it on.
+- **Blocks have stable ids.** `block_identity` writes an id into the body
+  itself, a link reference definition in Markdown and `data-block-id` in HTML,
+  and carries it through edits by lineage, to anchor a selection, a scroll
+  position or a proposal.
+- **`markdown_html`** is public: Markdown to the HTML a page holds, with its
+  media mounts and block summaries.
+- **`html_canonical` works on one block of a page**: `serialized_blocks`,
+  `scope` and `scopes`, `compare_blocks`, `changed_blocks`,
+  `block_list_change`, `text_points`, and `marked_elements` and
+  `without_marked` for the elements a host marks. `OBJECT_SOURCE_ATTRIBUTE`
+  names a source-backed object.
+- **`inline_entity` reads what a figure binds:** `document_data`,
+  `document_params`, `bound_data`, `bound_params`, `panel_params`,
+  `media_source`, `declared_parameters` and `declared_defaults`. A scene is
+  read by `read_scene` and written by `scene_turtle`, and `Scene` and `Loop`
+  are re-exported from `x0k-sequence`. `concepts_block` reads what a moment
+  introduces and assumes, and `stated_question` an open question's block.
+- **`transclusion::resolve_within`** treats a reference to any ancestor as a
+  cycle, so an excerpt shown in a page never shows that page again.
+- **`writing_presentation` keeps source-backed objects**: `WritingObject`,
+  `with_objects`, `object_source_range`, `admits_text_changes` and the two
+  `reveal_` selections.
+- **A header's reader statements project.** The materializer reads
+  `x0k:admitsReaderVerb` and `x0k:projection` into `ColophonView`.
+- **`projection` keeps the author's bytes.** An import writes the new content
+  as given, without normalizing an HTML body first, and the round trip holds
+  byte for byte.
+- `read_tool_config_in` is the tool-config reader with its prefixes taken
+  from a model you pass.
+  `BODY_FORMAT_MARKDOWN` and `BODY_FORMAT_HTML` moved to `canonical_patch` and
+  `colophon` still re-exports them.
+
+### x0k-fact-projection 0.3.0
+
+- `ColophonView` gains `json_statements`, so a struct literal naming every
+  field stops compiling. `envelope_predicates` gains `ADMITS_READER_VERB`,
+  `PROJECTION` and `JSON_STATEMENTS`, and `project_envelope` writes each
+  statement as a text fact on the document, after everything else.
+- The description rewritten in 0.4.0 reaches crates.io with this upload.
+
+### x0k-icon 0.3.0
+
+- **Figures.** A mark may be checked at a figure grade: a free `viewBox` and
+  the additions a larger drawing needs. `check_figure`, `validate_figure`,
+  `Figure`, `Grade`, `bind_figure`, `figure_svg`, `figure_elements` and
+  `figure_draws` are new, with `FigureDraw`, `FigurePaint` and `FigureStroke`.
+- **What breaks for a caller:** `Shape` gains `Ellipse` and `Paint` gains
+  `Colour`, so an exhaustive match stops compiling. `Element` and
+  `BoundElement` gain `opacity`, so a struct literal naming every field stops
+  compiling. `Opacity` and `COLOUR_ROLES` are new.
+- The description rewritten in 0.4.0 reaches crates.io with this upload.
+
+### x0k-folio-ingest 0.3.0
+
+- Built on `x0k-fact-projection` 0.3.0, whose `FactEntry` its public traits
+  take. No line of its source changed.
+
+### x0k-folio-cli 0.5.0
+
+- Carries the release number. Its own code changed only in its tests: the
+  binary is built on `x0k-folio` 0.4.0, `x0k-ontology` 0.3.2 and
+  `x0k-folio-ingest` 0.3.0, and `ingest` accepts a subclass where a domain or
+  range names its parent.
+
+### Guides
+
+- The README answers its five questions in that order, and quoting code a
+  document does not own is listed among the things it can do.
+- The guide says what an edge can name, how a literal conforms, and which
+  verbs take `--vocabulary`, and its examples show the new finding.
+- `deny.toml` ignores RUSTSEC-2026-0387, with its argument in the file: no
+  code path here creates or signs with a key.
+- The workspace passes `cargo clippy -D warnings` on its pinned Rust 1.95, its
+  crates pass their tests standalone, and a test reads `CARGO_MANIFEST_DIR` at
+  run time instead of baking in the path it was built at.
+- The guide's release examples name v0.5.0.
+
 ## 0.4.0 — 2026-10-04
 
 On GitHub as

@@ -1,6 +1,6 @@
 [package]
 name = "x0k-icon"
-version = "0.2.0"
+version = "0.3.0"
 edition = { workspace = true }
 description = "Icons declared inside folio documents: parses a small SVG drawn on a fixed grid in four named paint roles, refuses one that breaks the icon rules, binds the roles to a palette, and writes it as per-colour-scheme files, inline SVG, a sprite, or outlines for a native painter."
 license = "MIT"

@@ -5,9 +5,10 @@
 //! registers more plugins passes its own registry and its own name.
 
 use anyhow::{Context, Result};
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use x0k_ontology::concept_facts::OntologyModel;
 
 use crate::PipelineRegistry;
 
@@ -53,6 +54,29 @@ struct Cli {
     command: Command,
 }
 
+// A plain comment: clap applies a flattened struct's doc comment to the
+// verb it joins, and each verb's own line is its `--help` text.
+#[derive(Args)]
+struct VocabularyArgs {
+    /// Directory of ontology module files (*.ttl) to read headers against,
+    /// read in addition to the set this build compiled. Defaults to the
+    /// modules this projection's PROVENANCE.json names, then to the set
+    /// this build compiled.
+    #[arg(long)]
+    vocabulary: Option<PathBuf>,
+    /// Read --vocabulary alone, without the compiled set. Say this only
+    /// when that directory holds every term the documents use, the
+    /// header's own included.
+    #[arg(long, requires = "vocabulary")]
+    only_vocabulary: bool,
+}
+
+impl VocabularyArgs {
+    fn model(&self) -> Result<OntologyModel> {
+        crate::faces::vocabulary(self.vocabulary.as_deref(), self.only_vocabulary)
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Tangle .md documents to their source files (writes .tangle-map.json sidecars)
@@ -65,6 +89,8 @@ enum Command {
         /// Overwrite outputs holding content this tangler did not write
         #[arg(long)]
         force: bool,
+        #[command(flatten)]
+        vocabulary: VocabularyArgs,
     },
     /// Verify chunk references resolve and no cycles exist, and read every
     /// folio header against a vocabulary.
@@ -73,9 +99,11 @@ enum Command {
     /// apart. A defect — a malformed id or edge target, a predicate no
     /// module of the vocabulary declares, a header that does not parse —
     /// is a gap in what this publication selected, and fails the check. An
-    /// edge whose target names no document under the paths scanned simply
-    /// leaves the set — often into a wider corpus this selection was drawn
-    /// from, and expected either way: printed as a note, never a failure.
+    /// edge whose target names no document or declaration under the paths
+    /// scanned simply leaves the set — often into a wider corpus this selection
+    /// was drawn from, and expected either way: printed as a note, never a
+    /// failure. An edge may name a document or a declaration, whichever side
+    /// wrote it; one id naming both is a defect.
     /// `--closed` is the reader saying there is no wider corpus: under
     /// it, an edge that leaves the set is a defect like any other.
     /// A Markdown file with no folio header at all — or an untyped `<>`
@@ -104,20 +132,11 @@ enum Command {
         /// (defaults to current directory)
         #[arg(long)]
         workspace: Option<PathBuf>,
-        /// Directory of ontology module files (*.ttl) to check against,
-        /// read in addition to the set this build compiled. Defaults to the
-        /// modules this projection's PROVENANCE.json names, then to the set
-        /// this build compiled.
-        #[arg(long)]
-        vocabulary: Option<PathBuf>,
-        /// Read --vocabulary alone, without the compiled set. Say this only
-        /// when that directory holds every term the documents use, the
-        /// header's own included.
-        #[arg(long, requires = "vocabulary")]
-        only_vocabulary: bool,
-        /// Fail on an edge whose target names no document under the paths
-        /// scanned. Say this when the collection is a closed set: every
-        /// document an edge can name is here, so a target that resolves to
+        #[command(flatten)]
+        vocabulary: VocabularyArgs,
+        /// Fail on an edge whose target names no document or declaration under
+        /// the paths scanned. Say this when the collection is a closed set:
+        /// everything an edge can name is here, so a target that resolves to
         /// nothing is a broken link rather than a boundary.
         #[arg(long)]
         closed: bool,
@@ -159,6 +178,8 @@ enum Command {
         classes: Vec<String>,
         /// Paths to scan for Markdown documents
         paths: Vec<PathBuf>,
+        #[command(flatten)]
+        vocabulary: VocabularyArgs,
     },
     /// Check every `svg x0k:icon` declaration in the folio documents
     /// under the paths against the icon profile, and with `--out` write
@@ -186,6 +207,8 @@ enum Command {
         /// Workspace root (defaults to current directory)
         #[arg(long)]
         workspace: Option<PathBuf>,
+        #[command(flatten)]
+        vocabulary: VocabularyArgs,
     },
     /// Build a JSON index of every document whose folio header names it
     Index {
@@ -210,6 +233,8 @@ enum Command {
     List {
         /// Path to a literate document
         path: PathBuf,
+        #[command(flatten)]
+        vocabulary: VocabularyArgs,
     },
     /// Move a tangled output to a new path: rewrite the documents that write it, re-tangle, and prove every byte stayed
     Retarget {
@@ -244,20 +269,24 @@ pub fn run(host: &Host) -> Result<()> {
     let cli = Cli::from_arg_matches(&command.get_matches()).unwrap_or_else(|e| e.exit());
 
     match cli.command {
-        Command::Tangle { paths, workspace, force } => {
+        Command::Tangle { paths, workspace, force, vocabulary } => {
             // Route every document through the unified dispatcher with the
             // host's registry: a document declaring a pipeline that registry
             // does not carry errors here rather than tangling half of itself.
             let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let docs = discover_documents(&paths)?;
+            let model = vocabulary.model()?;
+            let docs = discover_documents(&model, &paths)?;
             let registry = (host.registry)();
-            let settings = clobber_settings(force);
+            let settings = crate::TangleSettings {
+                vocabulary: Some(model.clone()),
+                ..clobber_settings(force)
+            };
             let mut total_files = 0;
             let mut tangled_docs = 0;
             let mut nowhere_to_write = 0;
 
             for doc_path in &docs {
-                let declared = declares(doc_path);
+                let declared = declares(&model, doc_path);
                 if !declared.target {
                     if declared.mirrors_only {
                         eprintln!("  {}", mirror_only(doc_path, declared.chunks));
@@ -299,14 +328,15 @@ pub fn run(host: &Host) -> Result<()> {
             }
         }
 
-        Command::Sync { paths, workspace } => {
+        Command::Sync { paths, workspace, vocabulary } => {
             let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let docs = discover_documents_any(&paths)?;
+            let model = vocabulary.model()?;
+            let docs = discover_documents_any(&model, &paths)?;
             let mut total_populated = 0;
             let mut unfilled = 0;
 
             for doc_path in &docs {
-                let result = crate::sync::sync_document(doc_path, &ws)?;
+                let result = crate::sync::sync_document_in(&model, doc_path, &ws)?;
 
                 for err in &result.errors {
                     eprintln!("  error: {}: {}", doc_path.display(), err);
@@ -339,12 +369,15 @@ pub fn run(host: &Host) -> Result<()> {
             paths,
             workspace,
             vocabulary,
-            only_vocabulary,
             closed,
             require_header,
         } => {
             let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let model = crate::faces::vocabulary(vocabulary.as_deref(), only_vocabulary)?;
+            let model = vocabulary.model()?;
+            // First, because its model is the one every header here is read under:
+            // the run's vocabulary, extended by what the set declares. Its findings
+            // print after the chunk pass's.
+            let report = crate::faces::check_vocabulary(&model, &paths)?;
             let mut has_errors = false;
             let mut chunked_documents = 0;
             let mut splice_failed = 0;
@@ -365,13 +398,14 @@ pub fn run(host: &Host) -> Result<()> {
                     }
                 };
                 let carries_header = crate::faces::carries_header(&content);
-                let parsed = match crate::parser::parse_document(&content) {
+                let parsed = match crate::parser::parse_document_in(&report.model, &content) {
                     Ok(parsed) => parsed,
                     Err(e) => {
                         // The only thing that stops a document parsing is its
-                        // header, and a header that does not read is the vocabulary
-                        // pass's to report — once, with the parser's reason.
-                        if !carries_header {
+                        // header. A document leaves this pass only with that said
+                        // once, with the parser's reason: by the vocabulary pass
+                        // when its list names the document, and here otherwise.
+                        if !report.unparsed.iter().any(|(path, _)| Path::new(path) == doc_path.as_path()) {
                             eprintln!("{}: does not parse: {e}", doc_path.display());
                             has_errors = true;
                         }
@@ -426,7 +460,6 @@ pub fn run(host: &Host) -> Result<()> {
                 }
             }
 
-            let report = crate::faces::check_vocabulary(&model, &paths)?;
             for (path, reason) in &report.unparsed {
                 eprintln!("{path}: header does not parse: {reason}");
                 has_errors = true;
@@ -447,14 +480,14 @@ pub fn run(host: &Host) -> Result<()> {
             for edge in &report.corpus.dangling {
                 eprintln!(
                     "{}",
-                    dangling_finding(closed, &edge.source, &edge.predicate, &edge.target)
+                    dangling_finding(closed, &edge.source, "edge", &edge.predicate, &edge.target)
                 );
                 has_errors |= closed;
             }
             for edge in &report.declarations.dangling {
                 eprintln!(
                     "{}",
-                    dangling_declaration_finding(closed, &edge.source, &edge.predicate, &edge.target)
+                    dangling_finding(closed, &edge.source, "declared edge", &edge.predicate, &edge.target)
                 );
                 has_errors |= closed;
             }
@@ -493,8 +526,8 @@ pub fn run(host: &Host) -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&report.records)?);
         }
-        Command::Declarations { classes, paths } => {
-            let model = crate::faces::vocabulary(None, false)?;
+        Command::Declarations { classes, paths, vocabulary } => {
+            let model = vocabulary.model()?;
             let report = crate::faces::declared_instances(&model, &paths, &classes)?;
             for (place, reason) in &report.skipped {
                 eprintln!("{place}: skipped: {reason}");
@@ -567,9 +600,9 @@ pub fn run(host: &Host) -> Result<()> {
             }
         }
 
-        Command::List { path } => {
+        Command::List { path, vocabulary } => {
             let content = std::fs::read_to_string(&path)?;
-            let parsed = crate::parser::parse_document(&content)?;
+            let parsed = crate::parser::parse_document_in(&vocabulary.model()?, &content)?;
 
             if let Some(ref c) = parsed.tangle_crate {
                 println!("crate: {}", c);
@@ -658,28 +691,19 @@ pub(crate) fn clobber_settings(force: bool) -> crate::TangleSettings {
 /// the finding and not a word of what it observed — the same sentence,
 /// with `note:` dropped, because under `--closed` there is nothing left
 /// for the reader to go and look at.
+///
+/// `edge` says where the edge is written: a header's `edge`, or a block's
+/// `declared edge`. Either may name a document or a declaration, so the line
+/// names both, and the reader looks for the id in both places.
 fn dangling_finding(
     closed: bool,
     source: &str,
+    edge: &str,
     predicate: &str,
     target: impl std::fmt::Display,
 ) -> String {
     let standing = if closed { "" } else { "note: " };
-    format!("{source}: {standing}edge `{predicate}` → `{target}` names no document under the paths scanned")
-}
-
-/// The same finding one level down: a declared instance's edge target that
-/// names no declaration in the set. Separate wording because a
-/// declaration lives inside a document, so "names no document" would
-/// send its reader looking for the wrong thing.
-fn dangling_declaration_finding(
-    closed: bool,
-    source: &str,
-    predicate: &str,
-    target: impl std::fmt::Display,
-) -> String {
-    let standing = if closed { "" } else { "note: " };
-    format!("{source}: {standing}declared edge `{predicate}` → `{target}` names no declaration under the paths scanned")
+    format!("{source}: {standing}{edge} `{predicate}` → `{target}` names no document or declaration under the paths scanned")
 }
 
 /// What `check` says about a document that names itself twice. Never part
@@ -859,11 +883,11 @@ impl Declares {
     }
 }
 
-fn declares(path: &Path) -> Declares {
+fn declares(model: &OntologyModel, path: &Path) -> Declares {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Declares::nothing();
     };
-    let Ok(parsed) = crate::parser::parse_document(&content) else {
+    let Ok(parsed) = crate::parser::parse_document_in(model, &content) else {
         return Declares::nothing();
     };
     let bodies: Vec<_> = parsed.chunks.values().flatten().collect();
@@ -879,24 +903,24 @@ fn declares(path: &Path) -> Declares {
     }
 }
 
-fn discover_documents_any(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+fn discover_documents_any(model: &OntologyModel, paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let named = named_files(paths);
     Ok(markdown_under(paths)
         .into_iter()
         .filter(|p| {
             named.contains(p) || {
-                let d = declares(p);
+                let d = declares(model, p);
                 d.fills || d.target
             }
         })
         .collect())
 }
 
-fn discover_documents(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+fn discover_documents(model: &OntologyModel, paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let named = named_files(paths);
     Ok(markdown_under(paths)
         .into_iter()
-        .filter(|p| named.contains(p) || declares(p).target)
+        .filter(|p| named.contains(p) || declares(model, p).target)
         .collect())
 }
 

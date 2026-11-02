@@ -60,11 +60,12 @@ use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{anyhow, Context, Result};
 use tracing::warn;
-use x0k_folio::colophon::{parse_envelope, DocType, PipelineDecl};
+use x0k_folio::colophon::{parse_envelope, parse_envelope_in, DocType, PipelineDecl};
+use x0k_ontology::concept_facts::OntologyModel;
 use serde::{Deserialize, Serialize};
 
 use crate::identity_pipeline::IDENTITY_KIND;
-use crate::parser::parse_document;
+use crate::parser::{parse_document, parse_document_in};
 use crate::pipeline::{
     classify_output, guard_outputs, ChunkInput, ChunkVariant, ClobberPolicy, CommentStyle,
     OutputProvenance, PipelineContext, PipelineError, PipelineOutput, PipelineRegistry,
@@ -337,9 +338,9 @@ impl DocSite {
 
 /// What a tangle run knows that no document carries.
 ///
-/// Two fields, and the reason it is a struct rather than two parameters:
-/// every run-scoped fact the tangler grows next belongs here, not in a
-/// fifth positional argument to the entry points.
+/// A struct rather than parameters, because every run-scoped fact the
+/// tangler grows next belongs here, not in another positional argument to
+/// the entry points.
 #[derive(Debug, Clone, Default)]
 pub struct TangleSettings {
     /// Where this run's source documents can be read by someone who does
@@ -350,6 +351,9 @@ pub struct TangleSettings {
     /// [`ClobberPolicy::Refuse`] — the default — stops the document
     /// rather than destroy them; a caller that means to overwrite says so.
     pub clobber: ClobberPolicy,
+    /// The vocabulary this run reads a header under. `None` — the default —
+    /// reads it under the set this build compiled.
+    pub vocabulary: Option<OntologyModel>,
 }
 
 /// Screen every output one document composed, before any is written.
@@ -439,13 +443,22 @@ pub fn tangle_document_with(
 
     let content = std::fs::read_to_string(doc_path)
         .with_context(|| format!("reading {}", doc_path.display()))?;
-    let parsed = parse_document(&content)
-        .with_context(|| format!("parsing {}", doc_path.display()))?;
+    let parsed = match &settings.vocabulary {
+        Some(model) => parse_document_in(model, &content),
+        None => parse_document(&content),
+    }
+    .with_context(|| format!("parsing {}", doc_path.display()))?;
 
     // A publication's `folio:tangleRoot` targets a projection root (its
     // README), never the corpus root it lives in. Only a root that
     // already carries `PROVENANCE.json` — a projection — may receive it.
-    let is_publication = parse_envelope(&content)
+    // The class is read under the vocabulary the document was parsed
+    // under; pinned by tests/cli_verdicts.rs::tangle_refuses_a_publication_under_a_vocabulary_prefix_outside_a_projection.
+    let header = match &settings.vocabulary {
+        Some(model) => parse_envelope_in(model, &content),
+        None => parse_envelope(&content),
+    };
+    let is_publication = header
         .map(|(env, _)| env.doc_type == DocType::Publication)
         .unwrap_or(false);
     if is_publication && !workspace_root.join("PROVENANCE.json").is_file() {

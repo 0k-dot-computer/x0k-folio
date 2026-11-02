@@ -1,6 +1,6 @@
 [package]
 name = "x0k-fact-projection"
-version = "0.2.0"
+version = "0.3.0"
 edition = { workspace = true }
 description = "The fact shape folio documents are projected into (entity, predicate, typed value, and the cause that produced it), the projection of a document's header into those facts, and the read interface a consumer gets them through; no storage dependency, and it builds for wasm."
 license = "MIT"

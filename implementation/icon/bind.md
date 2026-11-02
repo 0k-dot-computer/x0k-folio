@@ -62,8 +62,8 @@ the block's `ink` becomes `#111111` and `#e2e8f0`; its `paper` fill,
 ```rust {#imports}
 use serde::{Deserialize, Serialize};
 
-use crate::parse::{Element, Grid, Paint, Role, Shape, Transform};
-use crate::validate::Accepted;
+use crate::parse::{Element, Grid, Opacity, Paint, Role, Shape, Transform};
+use crate::validate::{Accepted, Figure};
 ```
 
 ## A binding of the four roles
@@ -226,6 +226,8 @@ pub struct BoundElement {
     pub stroke: Option<String>,
     pub stroke_width: Option<f64>,
     pub dasharray: Option<Vec<f64>>,
+    /// A figure's opacities; none is written on an icon.
+    pub opacity: Opacity,
     pub translate: Option<(f64, f64)>,
     pub children: Vec<BoundElement>,
 }
@@ -246,11 +248,19 @@ pub fn bind(icon: &Accepted, binding: &RoleBinding) -> BoundIcon {
     }
 }
 
+/// Bind a figure-grade mark: its four roles under `binding`, and each
+/// theme colour role as the variable a themed page resolves,
+/// `var(--color-<name>)`.
+pub fn bind_figure(figure: &Figure, binding: &RoleBinding) -> Vec<BoundElement> {
+    figure.children.iter().map(|el| bind_element(el, binding)).collect()
+}
+
 fn bind_element(el: &Element, binding: &RoleBinding) -> BoundElement {
     let paint = |paint: &Option<Paint>| {
         paint.as_ref().map(|p| match p {
             Paint::None => "none".to_string(),
             Paint::Role(role) => binding.get(*role).to_string(),
+            Paint::Colour(name) => format!("var(--color-{name})"),
             Paint::Literal(text) => text.clone(),
         })
     };
@@ -260,6 +270,7 @@ fn bind_element(el: &Element, binding: &RoleBinding) -> BoundElement {
         stroke: paint(&el.stroke),
         stroke_width: el.stroke_width,
         dasharray: el.dasharray.clone(),
+        opacity: el.opacity,
         translate: match el.transform {
             Some(Transform::Translate(x, y)) => Some((x, y)),
             _ => None,

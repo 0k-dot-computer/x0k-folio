@@ -41,10 +41,11 @@ body. Running it again replaces the body with whatever `my_fn` is now.
 <a name="chunk-module-doc"></a><sub>[`src/sync.rs`](../../crates/x0k-tangle/src/sync.rs) · `#module-doc`</sub>
 
 ```rust {#module-doc}
-use crate::parser::{parse_document, ParsedDocument};
+use crate::parser::{parse_document, parse_document_in, ParsedDocument};
 use crate::source_ref::{extract_symbol_in, SymbolLanguage};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use x0k_ontology::concept_facts::OntologyModel;
 ```
 
 ## The contract of a sync
@@ -63,6 +64,10 @@ with the source it names, which is the whole condition the verb exists to
 remove — so the CLI turns any error into a non-zero exit
 ([`crate.md`](crate.md)).
 
+`sync_document_in` is the same sync with the header read against a vocabulary
+the caller holds, which is how a document whose id uses a prefix of the
+reader's own gets filled.
+
 <a name="chunk-sync-result"></a><sub>[`src/sync.rs`](../../crates/x0k-tangle/src/sync.rs) · `#sync-result`</sub>
 
 ```rust {#sync-result}
@@ -80,7 +85,26 @@ pub struct SyncResult {
 pub fn sync_document(doc_path: &Path, workspace_root: &Path) -> Result<SyncResult> {
     let content = std::fs::read_to_string(doc_path)?;
     let parsed = parse_document(&content)?;
+    sync_parsed(doc_path, workspace_root, &content, &parsed)
+}
 
+/// [`sync_document`] with the header read against `model`.
+pub fn sync_document_in(
+    model: &OntologyModel,
+    doc_path: &Path,
+    workspace_root: &Path,
+) -> Result<SyncResult> {
+    let content = std::fs::read_to_string(doc_path)?;
+    let parsed = parse_document_in(model, &content)?;
+    sync_parsed(doc_path, workspace_root, &content, &parsed)
+}
+
+fn sync_parsed(
+    doc_path: &Path,
+    workspace_root: &Path,
+    content: &str,
+    parsed: &ParsedDocument,
+) -> Result<SyncResult> {
     let mut patches: Vec<FromPatch> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     let mut skipped = 0;
@@ -149,7 +173,7 @@ pub fn sync_document(doc_path: &Path, workspace_root: &Path) -> Result<SyncResul
         });
     }
 
-    let new_content = apply_from_patches(&content, &parsed, &patches)?;
+    let new_content = apply_from_patches(content, parsed, &patches)?;
     std::fs::write(doc_path, &new_content)?;
 
     Ok(SyncResult {

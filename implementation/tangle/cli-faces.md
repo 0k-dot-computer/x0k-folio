@@ -75,12 +75,13 @@ use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::inline_entity::{extract_located, Object};
 use x0k_folio::{
     check_corpus, check_declarations, check_instances, declared_facts, document_edges,
+    resolve_across,
     extract_from_markdown, CorpusReport, DeclarationReport, EntityId, InlineEntity, ICON_CLASS,
 };
 use x0k_icon::{check, emit, one_per_grid, Accepted, Grid, Label, Palette};
 use x0k_ontology::concept_facts::OntologyModel;
 
-use crate::parser::{parse_document, ParsedDocument};
+use crate::parser::{parse_document, parse_document_in, ParsedDocument};
 ```
 
 ## The proving chunks
@@ -275,7 +276,7 @@ projection's whole vocabulary, not an extension of some other build's.
 <a name="chunk-vocabulary"></a><sub>[`src/faces.rs`](../../crates/x0k-tangle/src/faces.rs) · `#vocabulary`</sub>
 
 ```rust {#vocabulary}
-/// The vocabulary a check reads against.
+/// The vocabulary a verb reads a header against.
 ///
 /// `explicit` is `--vocabulary <dir>`, a directory of `*.ttl` module
 /// files, read on top of the set this build compiled — `only` reads it
@@ -314,14 +315,15 @@ The affordance's text names the two outcomes, and
 [`checking.md`](../folio/checking.md) keeps them structurally apart: a
 **defect** is the vocabulary failing to express what a document
 says, and a **dangling edge** is a well-formed target naming no
-document in the set — the publication boundary doing its job. The
+document and no declaration in the set — the publication boundary doing
+its job. The
 report here adds one thing in front of the corpus report: a document
 whose header does not parse. The affordance promises that the header is
 well formed, and a parse failure is that promise broken, so it counts as
 a defect and not as a document to skip.
 
 The check runs over the whole set at once rather than one document at
-a time, because "names no document here" is a question about the set.
+a time, because whether a target is here is a question about the set.
 
 So is the third outcome. The set's inline declarations — affordances
 and the signifiers that present them — are read together and handed to
@@ -347,17 +349,23 @@ with the definition in the same directory. Both are
 header is parsed because its extended model is what the headers are
 then read against. Its defects join the declaration report's and its
 dangling targets join the note list, at the same grain and with the same
-meaning.
+meaning. The two passes hold one list of ids each, and an edge may aim at
+either, so [`resolve_across`](../folio/checking.md) joins them last: an edge
+that lands on the other list is taken back, and an id on both is refused.
+The report hands that model back, because `check`'s chunk pass
+reads the same headers and must not disagree about which of them read.
 
 And so is the fourth, which is the second outcome again from the code's
 side. A chunk's `proves=` is an edge from the chapter to an affordance,
-and one naming no affordance declared in the set is a dangling edge —
+and one naming nothing in the set is a dangling edge —
 reported beside the header's own, as `proves`, with the chunk's
 document as its source. Expected when the set is a projection and the
 design stayed home; the thing to read when a test was renamed or a
-declaration deleted, since the edge on the chunk outlives both. A
-`proves=` value that is not an id at all is a defect, the same one a
-malformed edge target is.
+declaration deleted, since the edge on the chunk outlives both. It resolves
+as every other edge does, so a `proves=` naming a document or some other
+declaration resolves too: the term's `x0k:Affordance` range is not read here,
+as no header edge's range is. A `proves=` value that is not an id at all is a
+defect, the same one a malformed edge target is.
 
 A header defect that names an undeclared term — an edge's predicate or a
 literal statement's, on a document of any class — is located before it
@@ -369,8 +377,12 @@ header parse does not keep.
 
 ```rust {#vocabulary-report}
 /// What `check` found reading a set of headers against a vocabulary.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct VocabularyReport {
+    /// The vocabulary the set was read under: the one asked for, extended
+    /// by what the set carries. A caller reading the same documents again
+    /// reads them under this, so it agrees with `unparsed`.
+    pub model: OntologyModel,
     /// Documents whose header does not parse, each with the parser's
     /// reason. A defect: the header is not well formed.
     pub unparsed: Vec<(String, String)>,
@@ -445,7 +457,7 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());
                 if header.tangle.is_some() {
-                    if let Ok(parsed) = parse_document(content) {
+                    if let Ok(parsed) = parse_document_in(model, content) {
                         for chunk in proving_chunks(&parsed) {
                             proofs.push((name.clone(), header.id.clone(), chunk));
                         }
@@ -512,7 +524,10 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
             }
         }
     }
+    // Last, so every edge above answers to both lists of ids.
+    resolve_across(model, &instances.declared, &mut corpus, &mut declarations);
     Ok(VocabularyReport {
+        model: instances.model,
         unparsed,
         corpus,
         declarations,
@@ -1614,6 +1629,20 @@ fn check_notes_a_proof_naming_no_affordance_here_and_passes() {
         stderr.contains("note:") && stderr.contains("`proves`") && stderr.contains("x0k:affordance/absent"),
         "the edge is named as such: {stderr}"
     );
+}
+
+/// A proof resolves as every edge does: a finding that says it names no
+/// document or declaration is true of it too.
+#[test]
+fn check_resolves_a_proof_naming_a_document_in_the_set() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
+    write(tmp.path(), "docs/proof.md", &proof_doc("x0k:design/fixture"));
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(!stderr.contains("`proves`"), "the target is in the set: {stderr}");
 }
 ```
 

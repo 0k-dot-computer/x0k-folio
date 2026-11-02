@@ -15,10 +15,10 @@
 //!   a literal, whatever the document's class. The last is a packaging
 //!   fault or a typo: a publication selected a module set that does not
 //!   span its own corpus, or the author misspelled a term it does.
-//! - **Does this edge's target name a document in the set being
-//!   checked?** A `no` is a [`DanglingEdge`], which is ordinary and
-//!   expected: a publication is a region of a graph, and an edge leaving
-//!   the region is the boundary working, not a failure.
+//! - **Does this edge's target name a document or a declaration in the
+//!   set being checked?** A `no` is a [`DanglingEdge`], which is ordinary
+//!   and expected: a publication is a region of a graph, and an edge
+//!   leaving the region is the boundary working, not a failure.
 //!
 //! Which modules the model holds decides the first answer, so the same
 //! document checks differently against a monorepo vocabulary and a
@@ -43,13 +43,20 @@
 //! The same pass reads a block's other keys — its **fields** — against
 //! that vocabulary: a key naming no declared property, and a value
 //! contradicting its property's XSD range, on any instance
-//! (`check_literal_fields`).
+//! (`check_literal_fields`). A header's literals answer to the same value
+//! rule, in the same words ([`Defect::ContradictedLiteral`]).
+//!
+//! A header names a document and a block names a declaration, and each
+//! pass sees only its own list. `resolve_across` (with the
+//! `document-vocabulary` feature) reads the two as one: an edge from either
+//! side resolves against both, and an id on both sides is refused
+//! ([`DeclarationDefect::IdCollision`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use x0k_ontology::concept_facts::{OntologyModel, OntologyValue, RDFS_SUBCLASS_OF, X0K_NS};
+use x0k_ontology::concept_facts::{OntologyModel, OntologyValue, X0K_NS};
 
-use crate::colophon::Colophon;
+use crate::colophon::{Colophon, Literal, XSD_NS};
 use crate::entity_id::EntityId;
 use crate::inline_entity::{declared_facts, InlineEntity};
 
@@ -95,6 +102,9 @@ struct Vocabulary {
     /// Every term the model types a property — object, datatype or
     /// annotation — as a full IRI: what a literal statement's term must be.
     terms: BTreeSet<String>,
+    /// Full IRI of each of `terms` → every `rdfs:range` value it declares:
+    /// what a literal statement's value is read against.
+    ranges: BTreeMap<String, Vec<String>>,
     /// The extension namespaces, `(prefix, namespace)`, for spelling a term
     /// between its compact and full forms without a fold per term.
     namespaces: Vec<(String, String)>,
@@ -102,6 +112,7 @@ struct Vocabulary {
 
 impl Vocabulary {
     fn of(model: &OntologyModel) -> Self {
+        let terms = declared_properties(model);
         Self {
             document_edges: model
                 .decision_edge_predicates()
@@ -115,7 +126,8 @@ impl Vocabulary {
                 .collect(),
             decision_domains: decision_domains(model),
             schemes: model.schemes(),
-            terms: declared_properties(model),
+            ranges: declared_ranges(model, &terms),
+            terms,
             namespaces: model.extension_namespaces(),
         }
     }
@@ -154,6 +166,19 @@ impl Vocabulary {
         nearest_declared(&self.terms, &self.expand(compact)).map(|iri| self.compact(iri))
     }
 
+    /// The datatypes among a property's ranges that refuse this literal,
+    /// the property given as a full IRI. The value rule's one test: the
+    /// header pass and the field pass both ask it.
+    fn contradicted(&self, property: &str, literal: &Literal) -> Vec<Datatype> {
+        self.ranges
+            .get(property)
+            .into_iter()
+            .flatten()
+            .filter_map(|range| Datatype::named(range))
+            .filter(|datatype| !datatype.admits(literal))
+            .collect()
+    }
+
     fn standing(&self, spelled: &str) -> PredicateStanding {
         if self.document_edges.contains(spelled) {
             return PredicateStanding::DocumentEdge { uri: spelled.to_string() };
@@ -184,19 +209,14 @@ impl Vocabulary {
     }
 }
 
-/// `x0k:Decision` and every class declared a direct subclass of it, in the
-/// compact spelling `object_properties` reports a domain in. Direct
-/// subclasses only, which is the definition the model's own edge table has
-/// always used.
+/// `x0k:Decision` and every class that reaches it by `rdfs:subClassOf`, in
+/// the compact spelling `object_properties` reports a domain in.
 fn decision_domains(model: &OntologyModel) -> BTreeSet<String> {
-    let decision = OntologyValue::Entity(format!("{X0K_NS}Decision"));
-    let mut out = BTreeSet::from(["x0k:Decision".to_string()]);
-    for fact in model.facts() {
-        if fact.predicate == RDFS_SUBCLASS_OF && fact.value == decision {
-            out.insert(model.compact(&fact.entity).unwrap_or_else(|| fact.entity.clone()));
-        }
-    }
-    out
+    model
+        .subclass_closure(&format!("{X0K_NS}Decision"))
+        .into_iter()
+        .map(|class| model.compact(&class).unwrap_or(class))
+        .collect()
 }
 
 /// Every IRI `model` types as a datatype, object or annotation property —
@@ -213,6 +233,20 @@ fn declared_properties(model: &OntologyModel) -> BTreeSet<String> {
         })
         .map(|fact| fact.entity.clone())
         .collect()
+}
+
+/// Property IRI → every `rdfs:range` value `model` states of it, for the
+/// declared `properties`.
+fn declared_ranges(model: &OntologyModel, properties: &BTreeSet<String>) -> BTreeMap<String, Vec<String>> {
+    use x0k_ontology::concept_facts::RDFS_RANGE;
+    let mut ranges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for fact in model.facts() {
+        let OntologyValue::Entity(value) = &fact.value else { continue };
+        if fact.predicate == RDFS_RANGE && properties.contains(&fact.entity) {
+            ranges.entry(fact.entity.clone()).or_default().push(value.clone());
+        }
+    }
+    ranges
 }
 
 /// The declared property nearest `iri` in its own namespace: at most two
@@ -280,6 +314,18 @@ pub enum Defect {
         /// As for [`Defect::UndeclaredPredicate`].
         nearest: Option<String>,
     },
+    /// A literal statement whose term declares an XSD range its value
+    /// contradicts: the rule a block's field answers to, read on a header.
+    ContradictedLiteral {
+        /// The header's subject, compact.
+        subject: String,
+        predicate: String,
+        literal: Literal,
+        /// The range it contradicts.
+        datatype: Datatype,
+        /// As for [`Defect::UndeclaredPredicate`].
+        line: Option<usize>,
+    },
 }
 
 impl std::fmt::Display for Defect {
@@ -313,6 +359,13 @@ impl std::fmt::Display for Defect {
             Self::UndeclaredLiteral { predicate, line, nearest } => {
                 undeclared(f, "literal statement", predicate, line, nearest)
             }
+            Self::ContradictedLiteral { subject, predicate, literal, datatype, line } => {
+                write!(f, "{}", contradiction(subject, predicate, literal, *datatype))?;
+                match line {
+                    Some(line) => write!(f, " at line {line}"),
+                    None => Ok(()),
+                }
+            }
         }
     }
 }
@@ -320,14 +373,16 @@ impl std::fmt::Display for Defect {
 impl std::error::Error for Defect {}
 
 impl Defect {
-    /// Give an undeclared term the file line of the header statement that
-    /// writes it, read off `content` — the whole document the header was
-    /// parsed from, so the line is one an editor opens. A term the header
-    /// spells some other way than its compact form (a full `<…>` IRI, a
-    /// block-local prefix) is given the header's own line instead. Every
-    /// other defect is left as it was.
+    /// Give an undeclared term or a contradicted literal the file line of
+    /// the header statement that writes its term, read off `content` — the
+    /// whole document the header was parsed from, so the line is one an
+    /// editor opens. A term the header spells some other way than its
+    /// compact form (a full `<…>` IRI, a block-local prefix) is given the
+    /// header's own line instead. Every other defect is left as it was.
     pub fn locate(&mut self, content: &str) {
-        let (Self::UndeclaredPredicate { predicate, line, .. } | Self::UndeclaredLiteral { predicate, line, .. }) = self
+        let (Self::UndeclaredPredicate { predicate, line, .. }
+        | Self::UndeclaredLiteral { predicate, line, .. }
+        | Self::ContradictedLiteral { predicate, line, .. }) = self
         else {
             return;
         };
@@ -415,23 +470,37 @@ fn check_envelope_with(vocabulary: &Vocabulary, envelope: &Colophon) -> Envelope
     }
 
     // Every literal the parser did not read for itself, whatever the
-    // document's class ("A literal statement is a term too", above).
-    for predicate in envelope.properties.keys() {
+    // document's class: its term ("A literal statement is a term too",
+    // above), then its value ("Literal fields", below).
+    for (predicate, literals) in &envelope.properties {
         if !vocabulary.declares(predicate) {
             report.defects.push(Defect::UndeclaredLiteral {
                 predicate: predicate.clone(),
                 line: None,
                 nearest: vocabulary.nearest(predicate),
             });
+            continue;
+        }
+        let property = vocabulary.expand(predicate);
+        for literal in literals {
+            for datatype in vocabulary.contradicted(&property, literal) {
+                report.defects.push(Defect::ContradictedLiteral {
+                    subject: envelope.id.clone(),
+                    predicate: predicate.clone(),
+                    literal: literal.clone(),
+                    datatype,
+                    line: None,
+                });
+            }
         }
     }
 
     report
 }
 
-/// A well-formed edge whose target names no document in the checked set.
-/// Ordinary on a published region: an edge out of the region is the
-/// publication boundary, not a fault.
+/// A well-formed edge whose target is not in the checked set. Ordinary on a
+/// published region: an edge out of the region is the publication boundary,
+/// not a fault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DanglingEdge {
     /// Caller-supplied name for the document that declared the edge —
@@ -452,6 +521,9 @@ pub struct CorpusReport {
     pub defects: Vec<(String, Defect)>,
     /// Edges leaving the checked set.
     pub dangling: Vec<DanglingEdge>,
+    /// The id of every document in the set whose id parsed, with the
+    /// caller's name for the document.
+    pub ids: BTreeMap<EntityId, String>,
 }
 
 impl CorpusReport {
@@ -475,9 +547,9 @@ where
         .map(|(source, envelope)| (source, check_envelope_with(&vocabulary, envelope)))
         .collect();
 
-    let present: BTreeSet<&EntityId> = reports
+    let ids: BTreeMap<EntityId, String> = reports
         .iter()
-        .filter_map(|(_, report)| report.id.as_ref())
+        .filter_map(|(source, report)| Some((report.id.clone()?, source.to_string())))
         .collect();
 
     let mut out = CorpusReport {
@@ -493,7 +565,7 @@ where
             continue;
         };
         for (predicate, target) in &report.edges {
-            if !present.contains(target) {
+            if !ids.contains_key(target) {
                 out.dangling.push(DanglingEdge {
                     source: source.to_string(),
                     subject: subject.clone(),
@@ -504,6 +576,7 @@ where
         }
     }
 
+    out.ids = ids;
     out
 }
 
@@ -527,6 +600,15 @@ pub enum DeclarationDefect {
     /// declares, a target whose type the predicate's range refuses. The
     /// reason names its document and line.
     Instance { reason: String },
+    /// One id on a document's header and on a block's subject. An edge to it
+    /// could mean either, so it names neither.
+    IdCollision {
+        id: EntityId,
+        /// The caller's name for the document.
+        document: String,
+        /// The block's document and line.
+        declaration: String,
+    },
 }
 
 impl std::fmt::Display for DeclarationDefect {
@@ -544,6 +626,11 @@ impl std::fmt::Display for DeclarationDefect {
                  be checked: {reason}"
             ),
             Self::Instance { reason } => write!(f, "declaration does not hold: {reason}"),
+            Self::IdCollision { id, document, declaration } => write!(
+                f,
+                "`{id}` names both the document {document} and the declaration at {declaration}; \
+                 an id names one thing, so give one of them another"
+            ),
         }
     }
 }
@@ -574,9 +661,9 @@ impl std::fmt::Display for DeclarationNote {
     }
 }
 
-/// A declared relationship whose target is well formed and names no
-/// declaration in the set. The instance-level twin of [`DanglingEdge`],
-/// and ordinary for the same reason: a collection is a region.
+/// A declared relationship whose target is well formed and is not in the
+/// set. The instance-level twin of [`DanglingEdge`], and ordinary for the
+/// same reason: a collection is a region.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DanglingDeclaration {
     /// The caller's name for the document that declared the instance.
@@ -596,7 +683,7 @@ pub struct DeclarationReport {
     pub checked: usize,
     /// Faults, in the order the affordances were given.
     pub defects: Vec<DeclarationDefect>,
-    /// Relationship targets that name no declaration in the set.
+    /// Relationship targets that are not in the set.
     pub dangling: Vec<DanglingDeclaration>,
     /// Questions this set could not answer, in the order asked.
     pub notes: Vec<DeclarationNote>,
@@ -671,6 +758,9 @@ pub struct InstanceCheck {
     pub model: OntologyModel,
     /// Instances checked, faults found, and targets that left the set.
     pub report: DeclarationReport,
+    /// The full IRI of every instance that parsed, with the block that
+    /// declares it. A document whose blocks did not all parse has none here.
+    pub declared: BTreeMap<String, crate::document_vocabulary::BlockSource>,
 }
 
 /// Assemble the vocabulary `documents` carry on top of `base`, then check
@@ -691,7 +781,7 @@ pub fn check_instances(
         Ok(vocabulary) => vocabulary,
         Err(e) => {
             report.defects.push(DeclarationDefect::Vocabulary { reason: e.to_string() });
-            return InstanceCheck { model: OntologyModel::new(base.facts().to_vec()), report };
+            return InstanceCheck { model: OntologyModel::new(base.facts().to_vec()), report, declared: BTreeMap::new() };
         }
     };
 
@@ -718,26 +808,25 @@ pub fn check_instances(
 
     // The questions one document cannot answer: an id declared twice in
     // two files, and a range constraint whose target lives elsewhere.
-    let mut first_declared: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut declared = BTreeMap::new();
     for instance in &instances {
-        let document = instance.source.document.as_str();
-        if let Some(prior) = first_declared.insert(instance.iri.as_str(), document) {
+        if let Some(prior) = declared.insert(instance.iri.clone(), instance.source.clone()) {
             report.defects.push(DeclarationDefect::Instance {
                 reason: format!(
-                    "duplicate instance {} at {}, already declared at {prior}",
-                    instance.iri, instance.source
+                    "duplicate instance {} at {}, already declared at {}",
+                    instance.iri, instance.source, prior.document
                 ),
             });
         }
     }
     if !every_document_parsed {
-        return InstanceCheck { model: vocabulary.model, report };
+        return InstanceCheck { model: vocabulary.model, report, declared };
     }
     match validate_relationships(&vocabulary.model, &instances) {
         Ok(relationships) => {
             let spell = |iri: &str| vocabulary.model.compact(iri).unwrap_or_else(|| iri.to_string());
             for relationship in relationships {
-                if first_declared.contains_key(relationship.object.as_str()) {
+                if declared.contains_key(&relationship.object) {
                     continue;
                 }
                 report.dangling.push(DanglingDeclaration {
@@ -751,23 +840,50 @@ pub fn check_instances(
         Err(e) => report.defects.push(DeclarationDefect::Instance { reason: e.to_string() }),
     }
 
-    InstanceCheck { model: vocabulary.model, report }
+    InstanceCheck { model: vocabulary.model, report, declared }
 }
 
+/// Read a set's two lists of ids as one. Take back every edge that lands on
+/// either list, and refuse an id on both. `declared` is
+/// [`InstanceCheck::declared`], and `model` the one [`InstanceCheck`] returned.
 #[cfg(feature = "document-vocabulary")]
-const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema#";
+pub fn resolve_across(
+    model: &OntologyModel,
+    declared: &BTreeMap<String, crate::document_vocabulary::BlockSource>,
+    corpus: &mut CorpusReport,
+    declarations: &mut DeclarationReport,
+) {
+    let documents: BTreeMap<String, (&EntityId, &String)> = corpus
+        .ids
+        .iter()
+        .map(|(id, document)| (model.expand(&id.to_string()), (id, document)))
+        .collect();
+    let in_the_set = |iri: String| declared.contains_key(&iri) || documents.contains_key(&iri);
+    corpus.dangling.retain(|edge| !in_the_set(model.expand(&edge.target.to_string())));
+    declarations.dangling.retain(|edge| !in_the_set(model.expand(&edge.target)));
+    for (iri, (id, document)) in documents {
+        if let Some(block) = declared.get(&iri) {
+            declarations.defects.push(DeclarationDefect::IdCollision {
+                id: id.clone(),
+                document: document.clone(),
+                declaration: block.to_string(),
+            });
+        }
+    }
+}
 
-/// The XSD datatypes a range can name that this check interprets: the two
-/// the shipped modules use and the one the shipped papers example adds.
-#[cfg(feature = "document-vocabulary")]
+/// The XSD datatypes a range can name that this check interprets: the five
+/// the shipped modules name. A range naming any other refuses nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Datatype {
+#[non_exhaustive]
+pub enum Datatype {
     String,
     Integer,
     Boolean,
+    Decimal,
+    Date,
 }
 
-#[cfg(feature = "document-vocabulary")]
 impl Datatype {
     /// The datatype a range IRI names, or `None` for one not interpreted.
     fn named(iri: &str) -> Option<Self> {
@@ -775,6 +891,8 @@ impl Datatype {
             "string" => Some(Self::String),
             "integer" => Some(Self::Integer),
             "boolean" => Some(Self::Boolean),
+            "decimal" => Some(Self::Decimal),
+            "date" => Some(Self::Date),
             _ => None,
         }
     }
@@ -784,6 +902,8 @@ impl Datatype {
             Self::String => "xsd:string",
             Self::Integer => "xsd:integer",
             Self::Boolean => "xsd:boolean",
+            Self::Decimal => "xsd:decimal",
+            Self::Date => "xsd:date",
         }
     }
 
@@ -794,57 +914,108 @@ impl Datatype {
             Self::String => "text is a quoted string",
             Self::Integer => "an integer is written bare, with no fraction or exponent",
             Self::Boolean => "a boolean is a bare `true` or `false`",
+            Self::Decimal => "a decimal is written bare, as `12` or `12.5`, with no exponent",
+            Self::Date => "a date is a real calendar day, written `\"2026-11-01\"^^xsd:date`",
         }
     }
 
-    /// Does one literal belong to this datatype? Judged by the datatype the
-    /// block wrote, which is the type `ingest` stores.
-    fn admits(self, literal: &crate::colophon::Literal) -> bool {
-        literal.datatype == format!("{XSD_NS}{}", &self.spelled()[4..])
+    /// Does one literal conform to this range? Its datatype must match and
+    /// its text must lie in that datatype's lexical space. An `xsd:integer`
+    /// literal matches `xsd:decimal` too: the one derivation read here.
+    fn admits(self, literal: &Literal) -> bool {
+        let Some(written) = Self::named(&literal.datatype) else { return false };
+        let matches = written == self || (self == Self::Decimal && written == Self::Integer);
+        matches && written.holds(&literal.value)
+    }
+
+    /// Does this text lie in the datatype's lexical space?
+    fn holds(self, text: &str) -> bool {
+        match self {
+            Self::String => true,
+            Self::Integer => digits(text.strip_prefix(['+', '-']).unwrap_or(text)),
+            Self::Boolean => matches!(text, "true" | "false" | "1" | "0"),
+            Self::Decimal => is_decimal(text),
+            Self::Date => is_date(text),
+        }
     }
 }
 
 /// One literal, the way a refusal names it.
-#[cfg(feature = "document-vocabulary")]
-fn describe_value(literal: &crate::colophon::Literal) -> String {
+fn describe_value(literal: &Literal) -> String {
+    if let Some(written) = Datatype::named(&literal.datatype).filter(|written| !written.holds(&literal.value)) {
+        return format!("{:?}^^{}", literal.value, written.spelled());
+    }
     match literal.datatype.strip_prefix(XSD_NS) {
         Some("string") => format!("the string {:?}", literal.value),
         Some("boolean") => format!("the boolean `{}`", literal.value),
         Some("integer") => format!("the integer `{}`", literal.value),
         Some("decimal") | Some("double") => format!("the number `{}`", literal.value),
+        Some("date") => format!("the date `{}`", literal.value),
         _ if literal.datatype == crate::colophon::RDF_JSON => "a JSON value".to_string(),
         _ => format!("`{}` typed `{}`", literal.value, literal.datatype),
     }
 }
 
-/// The folds the literal rule reads, taken once from a model.
-#[cfg(feature = "document-vocabulary")]
-struct FieldVocabulary {
-    /// Every IRI typed as a datatype, object or annotation property.
-    properties: BTreeSet<String>,
-    /// Property IRI → every `rdfs:range` value it declares.
-    ranges: BTreeMap<String, Vec<String>>,
+/// The refusal of one value, in the words a header and a block share.
+fn contradiction(subject: &str, property: &str, literal: &Literal, datatype: Datatype) -> String {
+    format!(
+        "`{subject}` gives `{property}` {}, which contradicts its declared datatype `{}`: {}",
+        describe_value(literal),
+        datatype.spelled(),
+        datatype.hint()
+    )
 }
 
-#[cfg(feature = "document-vocabulary")]
-impl FieldVocabulary {
-    fn of(model: &OntologyModel) -> Self {
-        use x0k_ontology::concept_facts::RDFS_RANGE;
-        let properties = declared_properties(model);
-        let mut ranges: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for fact in model.facts() {
-            let OntologyValue::Entity(value) = &fact.value else { continue };
-            if fact.predicate == RDFS_RANGE && properties.contains(&fact.entity) {
-                ranges.entry(fact.entity.clone()).or_default().push(value.clone());
-            }
-        }
-        Self { properties, ranges }
-    }
+/// One or more ASCII digits.
+fn digits(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
 
-    /// The declared property nearest `predicate`, compact — the header
-    /// pass's rule, [`nearest_declared`].
-    fn nearest(&self, model: &OntologyModel, predicate: &str) -> Option<String> {
-        nearest_declared(&self.properties, predicate).map(|iri| model.compact(iri).unwrap_or_else(|| iri.clone()))
+/// `[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)`: a decimal has no exponent.
+fn is_decimal(text: &str) -> bool {
+    let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
+    match unsigned.split_once('.') {
+        Some(("", fraction)) => digits(fraction),
+        Some((whole, "")) => digits(whole),
+        Some((whole, fraction)) => digits(whole) && digits(fraction),
+        None => digits(unsigned),
+    }
+}
+
+/// `-?[0-9]{4,}-[0-9]{2}-[0-9]{2}` with an optional zone, naming a day the
+/// calendar holds.
+fn is_date(text: &str) -> bool {
+    let Some((year, rest)) = text.strip_prefix('-').unwrap_or(text).split_once('-') else { return false };
+    let (Some(month), Some("-"), Some(day), Some(zone)) = (rest.get(..2), rest.get(2..3), rest.get(3..5), rest.get(5..)) else {
+        return false;
+    };
+    if year.len() < 4 || !digits(year) || !digits(month) || !digits(day) || !is_zone(zone) {
+        return false;
+    }
+    let number = |text: &str| text.parse::<u32>().unwrap_or(0);
+    (1..=days_in_month(number(&year[year.len() - 4..]), number(month))).contains(&number(day))
+}
+
+/// No zone, `Z`, or `[+-]hh:mm` up to the fourteen hours XSD allows.
+fn is_zone(zone: &str) -> bool {
+    let Some(offset) = zone.strip_prefix(['+', '-']) else { return zone.is_empty() || zone == "Z" };
+    let Some((hours, minutes)) = offset.split_once(':') else { return false };
+    if hours.len() != 2 || minutes.len() != 2 || !digits(hours) || !digits(minutes) {
+        return false;
+    }
+    let number = |text: &str| text.parse::<u32>().unwrap_or(u32::MAX / 120);
+    number(minutes) < 60 && number(hours) * 60 + number(minutes) <= 14 * 60
+}
+
+/// The days a month holds, in a year known by its last four digits; none
+/// for a month that does not exist.
+fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => 29,
+        2 => 28,
+        _ => 0,
     }
 }
 
@@ -857,7 +1028,7 @@ pub fn check_literal_fields(
     instances: &[crate::document_vocabulary::DeclaredInstance],
 ) -> Vec<DeclarationDefect> {
     use crate::inline_entity::Object;
-    let vocabulary = FieldVocabulary::of(model);
+    let vocabulary = Vocabulary::of(model);
     let spell = |iri: &str| model.compact(iri).unwrap_or_else(|| iri.to_string());
     let mut defects = Vec::new();
     for instance in instances {
@@ -868,10 +1039,10 @@ pub fn check_literal_fields(
             if property.ends_with("requiresResources") {
                 continue;
             }
-            if !vocabulary.properties.contains(property) {
+            if !vocabulary.terms.contains(property) {
                 if reported.insert(property.as_str()) {
-                    let nearest = match vocabulary.nearest(model, property) {
-                        Some(term) => format!("; the nearest declared property is `{term}`"),
+                    let nearest = match nearest_declared(&vocabulary.terms, property) {
+                        Some(term) => format!("; the nearest declared property is `{}`", spell(term)),
                         None => String::new(),
                     };
                     defects.push(DeclarationDefect::Instance {
@@ -885,25 +1056,11 @@ pub fn check_literal_fields(
                 }
                 continue;
             }
-            let datatypes: Vec<Datatype> = vocabulary
-                .ranges
-                .get(property)
-                .into_iter()
-                .flatten()
-                .filter_map(|range| Datatype::named(range))
-                .collect();
-            for datatype in datatypes {
-                if datatype.admits(literal) {
-                    continue;
-                }
+            for datatype in vocabulary.contradicted(property, literal) {
                 defects.push(DeclarationDefect::Instance {
                     reason: format!(
-                        "`{subject}` gives `{}` {}, which contradicts its declared datatype \
-                         `{}`: {} at {}",
-                        spell(property),
-                        describe_value(literal),
-                        datatype.spelled(),
-                        datatype.hint(),
+                        "{} at {}",
+                        contradiction(&subject, &spell(property), literal, datatype),
                         instance.source
                     ),
                 });
@@ -1003,6 +1160,29 @@ mod tests {
         );
         assert_eq!(predicate_standing(&shipped(), "mycorp:supersededBy"), PredicateStanding::Undeclared);
         assert_eq!(predicate_standing(&model, "mycorp:shreds"), PredicateStanding::Undeclared);
+    }
+
+    /// A subject two axioms under `x0k:Decision` is a decision's subject: the
+    /// rule the guide states has no depth.
+    #[test]
+    fn a_readers_predicate_over_a_grandchild_of_decision_stands_as_a_document_edge() {
+        use x0k_ontology::concept_facts::{OntologyFact, RDFS_DOMAIN, RDFS_SUBCLASS_OF};
+        const MYCORP: &str = "https://mycorp.example/ontology#";
+        let entity = |subject: &str, predicate: &str, value: String| OntologyFact {
+            entity: format!("{MYCORP}{subject}"),
+            predicate: predicate.to_string(),
+            value: OntologyValue::Entity(value),
+        };
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut facts = scratch_vocabulary(&tmp.path().join("modules")).facts().to_vec();
+        facts.push(entity("supersededBy", RDFS_DOMAIN, format!("{MYCORP}Brief")));
+        facts.retain(|fact| !(fact.predicate == RDFS_DOMAIN && fact.value == OntologyValue::Entity(format!("{X0K_NS}Decision"))));
+        facts.push(entity("Brief", RDFS_SUBCLASS_OF, format!("{MYCORP}Proposal")));
+        facts.push(entity("Proposal", RDFS_SUBCLASS_OF, format!("{X0K_NS}Decision")));
+        assert_eq!(
+            predicate_standing(&OntologyModel::new(facts), "mycorp:supersededBy"),
+            PredicateStanding::DocumentEdge { uri: "mycorp:supersededBy".to_string() }
+        );
     }
 
     #[test]
@@ -1162,6 +1342,9 @@ mod tests {
 <https://mycorp.example/ontology#owner> <http://www.w3.org/2000/01/rdf-schema#domain> <https://mycorp.example/ontology#Brief> .
 <https://mycorp.example/ontology#owner> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
 <https://mycorp.example/ontology#owner> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/mycorp> .
+<https://mycorp.example/ontology#due> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<https://mycorp.example/ontology#due> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#date> .
+<https://mycorp.example/ontology#due> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> <https://0k.computer/ontology/mycorp> .
 ";
         std::fs::create_dir_all(dir).expect("scratch module directory");
         std::fs::write(dir.join("core.ttl"), CORE).expect("write core");
@@ -1375,6 +1558,136 @@ paper:pages a owl:DatatypeProperty ;
         assert!(EntityId::parse_in(&OntologyModel::new([]), "paper:paper/alpha").is_err());
     }
 
+    /// A set read the way `check` reads it: the instance pass, the header
+    /// pass under the model it extended, then the two lists joined.
+    #[cfg(feature = "document-vocabulary")]
+    fn check_set(documents: &[(&'static str, String)]) -> (CorpusReport, DeclarationReport) {
+        let sources: Vec<_> = documents
+            .iter()
+            .map(|(id, body)| crate::document_vocabulary::DocumentSource { id, body })
+            .collect();
+        let instances = check_instances(&OntologyModel::shipped(), &sources);
+        let headers: Vec<(&str, Colophon)> = documents
+            .iter()
+            .map(|(name, body)| {
+                let (header, _) = crate::colophon::parse_envelope_in(&instances.model, body).expect("fixture header parses");
+                (*name, header)
+            })
+            .collect();
+        let mut corpus = check_corpus(&instances.model, headers.iter().map(|(name, header)| (*name, header)));
+        let mut declarations = instances.report;
+        resolve_across(&instances.model, &instances.declared, &mut corpus, &mut declarations);
+        (corpus, declarations)
+    }
+
+    /// The vocabulary, and a report document whose id is in the paper
+    /// namespace. `report_edge` is Turtle appended to its header; `block` is
+    /// the block `alpha.md` carries.
+    #[cfg(feature = "document-vocabulary")]
+    fn report_beside(report_edge: &str, block: &str) -> Vec<(&'static str, String)> {
+        let mut documents = papers(block).to_vec();
+        documents.push((
+            "report.md",
+            format!("# Report\n\n```turtle folio:document\npaper:paper\\/report a paper:Paper{report_edge} .\n```\n"),
+        ));
+        documents
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_edge_to_a_declaration_stays_in_the_set() {
+        let documents = report_beside(" ;\n    x0k:cites paper:paper\\/alpha", ALPHA_CITES_BETA);
+        let (corpus, declarations) = check_set(&documents);
+        assert_eq!(corpus.dangling, vec![], "the block is in the set");
+        assert!(declarations.is_clean(), "{:?}", declarations.defects);
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_block_edge_to_a_document_stays_in_the_set() {
+        let block = ALPHA_CITES_BETA.replace("paper:paper\\/beta", "paper:paper\\/report");
+        let (_, declarations) = check_set(&report_beside("", &block));
+        assert_eq!(declarations.dangling, vec![], "the document is in the set");
+        assert!(declarations.is_clean(), "{:?}", declarations.defects);
+    }
+
+    /// Resolution reaches both lists and nothing further: a misspelled id
+    /// names neither, whichever side wrote it.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_target_in_neither_list_still_dangles_from_either_side() {
+        let block = ALPHA_CITES_BETA.replace("paper:paper\\/beta", "paper:paper\\/reportt");
+        let documents = report_beside(" ;\n    x0k:cites paper:paper\\/alphaa", &block);
+        let (corpus, declarations) = check_set(&documents);
+        let header: Vec<String> = corpus.dangling.iter().map(|edge| edge.target.to_string()).collect();
+        assert_eq!(header, vec!["paper:paper/alphaa"]);
+        let block: Vec<&str> = declarations.dangling.iter().map(|edge| edge.target.as_str()).collect();
+        assert_eq!(block, vec!["paper:paper/reportt"]);
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn one_id_on_a_document_and_a_declaration_is_a_defect_naming_both() {
+        let block = ALPHA_CITES_BETA.replace("paper:paper\\/alpha", "paper:paper\\/report");
+        let (_, declarations) = check_set(&report_beside("", &block));
+        match declarations.defects.as_slice() {
+            [DeclarationDefect::IdCollision { id, document, declaration }] => {
+                assert_eq!(id.to_string(), "paper:paper/report");
+                assert_eq!(document, "report.md");
+                assert!(declaration.starts_with("alpha.md:"), "{declaration}");
+            }
+            other => panic!("expected one IdCollision, got {other:?}"),
+        }
+        let rendered = declarations.defects[0].to_string();
+        for part in ["`paper:paper/report`", "report.md", "alpha.md:"] {
+            assert!(rendered.contains(part), "missing {part}: {rendered}");
+        }
+    }
+
+    /// Ids compare by the IRI they expand to, so a second prefix for the
+    /// namespace does not hide a collision.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_collision_is_found_across_two_spellings_of_one_namespace() {
+        let alias = "<https://example.org/paper-vocabulary> vann:preferredNamespacePrefix \"papers\" .\n";
+        let mut documents = papers_with(alias, &ALPHA_CITES_BETA.replace("paper:paper\\/alpha", "papers:paper\\/report")).to_vec();
+        documents.push(("report.md", "# Report\n\n```turtle folio:document\npaper:paper\\/report a paper:Paper .\n```\n".to_string()));
+        let (_, declarations) = check_set(&documents);
+        assert!(
+            declarations.defects.iter().any(|defect| matches!(defect, DeclarationDefect::IdCollision { .. })),
+            "{:?}",
+            declarations.defects
+        );
+    }
+
+    /// A block lost to a parse failure contributes no id, and what pointed
+    /// at it is visible: the failure is reported at its source and the edge
+    /// still dangles.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_block_that_does_not_parse_contributes_no_id() {
+        let block = ALPHA_CITES_BETA.replace("paper:paper\\/alpha a paper:Paper", "paper:monograph\\/alpha a paper:Monograph");
+        let documents = report_beside(" ;\n    x0k:cites paper:monograph\\/alpha", &block);
+        let (corpus, declarations) = check_set(&documents);
+        assert!(only_defect(&declarations).contains("unknown concept paper:Monograph"));
+        assert_eq!(corpus.dangling.len(), 1, "{:?}", corpus.dangling);
+    }
+
+    /// `check_instances` stops before its whole-set pass when a block fails,
+    /// and the ids that parsed still have to reach the header pass.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_failed_block_elsewhere_leaves_the_ids_that_parsed_in_the_set() {
+        let mut documents = report_beside(" ;\n    x0k:cites paper:paper\\/alpha", ALPHA_CITES_BETA);
+        documents.push((
+            "broken.md",
+            "# Broken\n\n```turtle folio:document\nwiki:broken a x0k:Wiki .\n```\n\n```turtle folio:graph\npaper:paper\\/broken a paper:Monograph .\n```\n".to_string(),
+        ));
+        let (corpus, declarations) = check_set(&documents);
+        assert_eq!(corpus.dangling, vec![], "alpha parsed, and it is in the set");
+        assert!(only_defect(&declarations).contains("broken.md:"));
+    }
+
     /// Incident: the Backstage maintainer's second and third rounds
     /// (2026-09-23) — a misspelled field in the shipped papers example
     /// passed at exit 0.
@@ -1403,22 +1716,21 @@ paper:pages a owl:DatatypeProperty ;
     #[cfg(feature = "document-vocabulary")]
     #[test]
     fn each_interpreted_datatype_admits_its_values_and_refuses_the_rest() {
-        const VENUE: &str = "paper:venue a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
-                             rdfs:range xsd:string ;\n    \
-                             rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n";
-        let cases: [(&str, &[&str], &[&str]); 3] = [
+        let cases: [(&str, &[&str], &[&str]); 5] = [
             ("venue", &["\"Proceedings\"", "\"a\", \"b\""], &["12", "true", "'{\"at\":\"home\"}'^^rdf:JSON"]),
             ("pages", &["12", "-3", "1, 2"], &["\"12\"", "12.5", "12.0", "true", "1, \"two\""]),
             ("reviewed", &["true", "false"], &["\"true\"", "1", "0", "\"not-a-boolean\""]),
+            ("score", &["12.5", "-3.0", "12"], &["\"12.5\"", "1e3", "true"]),
+            ("published", &["\"2026-11-01\"^^xsd:date"], &["\"2026-11-01\"", "20261101", "true"]),
         ];
         for (field, conforming, contradicting) in cases {
             let block = |value: &str| format!("```turtle folio:graph\npaper:paper\\/alpha a paper:Paper ;\n    paper:{field} {value} .\n```\n");
             for value in conforming {
-                let report = check_collection(&papers_with(VENUE, &block(value))).report;
+                let report = check_collection(&papers_with(FIELDS, &block(value))).report;
                 assert!(report.is_clean(), "{field}: {value} conforms: {:?}", report.defects);
             }
             for value in contradicting {
-                let rendered = only_defect(&check_collection(&papers_with(VENUE, &block(value))).report);
+                let rendered = only_defect(&check_collection(&papers_with(FIELDS, &block(value))).report);
                 assert!(rendered.contains(&format!("`paper:{field}`")), "{field}: {value}: {rendered}");
                 assert!(rendered.contains("contradicts its declared datatype"), "{rendered}");
             }
@@ -1430,10 +1742,10 @@ paper:pages a owl:DatatypeProperty ;
     fn no_range_or_an_uninterpreted_datatype_refuses_nothing() {
         const OPEN: &str = "paper:note a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
                             rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
-                            paper:published a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
-                            rdfs:range xsd:date ;\n    \
+                            paper:homepage a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                            rdfs:range xsd:anyURI ;\n    \
                             rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n";
-        let block = "```turtle folio:graph\npaper:paper\\/alpha a paper:Paper ;\n    paper:note 12 ;\n    paper:published \"not a date\" .\n```\n";
+        let block = "```turtle folio:graph\npaper:paper\\/alpha a paper:Paper ;\n    paper:note 12 ;\n    paper:homepage \"not a uri\" .\n```\n";
         let report = check_collection(&papers_with(OPEN, block)).report;
         assert!(report.is_clean(), "{:?}", report.defects);
     }
@@ -1487,5 +1799,294 @@ paper:pages a owl:DatatypeProperty ;
         assert!(report.is_clean(), "{:?}", report.defects);
         let rendered = only_defect(&check("3"));
         assert!(rendered.contains("`x0k:status` the integer `3`") && rendered.contains("`xsd:string`"), "{rendered}");
+    }
+
+    /// A range of each kind the two passes have to agree about: the
+    /// datatypes the check interprets that the papers vocabulary does not
+    /// already declare, two it leaves uninterpreted, and none at all.
+    #[cfg(feature = "document-vocabulary")]
+    const FIELDS: &str = "paper:venue a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                          rdfs:range xsd:string ;\n    \
+                          rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+                          paper:published a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                          rdfs:range xsd:date ;\n    \
+                          rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+                          paper:score a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                          rdfs:range xsd:decimal ;\n    \
+                          rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+                          paper:homepage a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                          rdfs:range xsd:anyURI ;\n    \
+                          rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+                          paper:seen a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                          rdfs:range xsd:dateTime ;\n    \
+                          rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n\
+                          paper:note a owl:DatatypeProperty ;\n    rdfs:domain paper:Paper ;\n    \
+                          rdfs:isDefinedBy <https://example.org/paper-vocabulary> .\n";
+
+    /// One statement in the header of a paper, read as `check` reads it: the
+    /// set's vocabulary first, then the header against that vocabulary.
+    #[cfg(feature = "document-vocabulary")]
+    fn check_header(statement: &str) -> EnvelopeReport {
+        let model = check_collection(&papers_with(FIELDS, ALPHA_CITES_BETA)).model;
+        let document = format!("```turtle folio:document\npaper:paper\\/alpha a paper:Paper ;\n    {statement} .\n```\nBody.\n");
+        let (header, _) = crate::colophon::parse_envelope_in(&model, &document).expect("fixture parses");
+        check_envelope(&model, &header)
+    }
+
+    /// The refusals of one statement, in the words a header and a block
+    /// share, with the two surfaces held equal: every caller proves both.
+    #[cfg(feature = "document-vocabulary")]
+    fn verdict(statement: &str) -> Vec<String> {
+        let words = |refusal: String| {
+            let refusal = refusal.strip_prefix("declaration does not hold: ").unwrap_or(&refusal);
+            refusal.split(" at ").next().unwrap_or(refusal).to_string()
+        };
+        let block = format!("```turtle folio:graph\npaper:paper\\/alpha a paper:Paper ;\n    {statement} .\n```\n");
+        let report = check_collection(&papers_with(FIELDS, &block)).report;
+        let in_block: Vec<String> = report.defects.iter().map(|defect| words(defect.to_string())).collect();
+        let in_header: Vec<String> = rendered(&check_header(statement)).into_iter().map(words).collect();
+        assert_eq!(in_block, in_header, "{statement}");
+        in_block
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_literal_its_range_contradicts_is_refused_naming_property_value_and_datatype() {
+        match rendered(&check_header("paper:reviewed \"yes\"")).as_slice() {
+            [one] => {
+                for part in ["`paper:paper/alpha`", "`paper:reviewed`", "\"yes\"", "`xsd:boolean`"] {
+                    assert!(one.contains(part), "missing {part}: {one}");
+                }
+            }
+            other => panic!("expected one refusal, got {other:?}"),
+        }
+    }
+
+    /// A value a block refuses, a header refuses in the same words, and a
+    /// value a block lets through, a header lets through: one rule, read
+    /// from two places.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_and_a_block_give_one_value_the_same_verdict() {
+        for statement in [
+            "paper:reviewed true",
+            "paper:reviewed \"true\"",
+            "paper:reviewed 1",
+            "paper:pages 12",
+            "paper:pages \"12\"",
+            "paper:pages 12.5",
+            "paper:pages 1, \"two\"",
+            "paper:venue \"Proceedings\"",
+            "paper:venue 12",
+            "paper:venue '{\"at\":\"home\"}'^^rdf:JSON",
+            "paper:published \"not a date\"",
+            "paper:published \"not a date\"^^xsd:date",
+            "paper:note 12",
+        ] {
+            verdict(statement);
+        }
+    }
+
+    /// A value outside its range is refused on both surfaces in one
+    /// sentence, and the sentence is true of the value: a literal typed
+    /// correctly is named as written, never as the wrong datatype, and the
+    /// hint spells the right form.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_value_outside_its_range_is_refused_in_one_true_sentence() {
+        const DATE: (&str, &str) = ("xsd:date", "a date is a real calendar day, written `\"2026-11-01\"^^xsd:date`");
+        const DECIMAL: (&str, &str) = ("xsd:decimal", "a decimal is written bare, as `12` or `12.5`, with no exponent");
+        const INTEGER: (&str, &str) = ("xsd:integer", "an integer is written bare, with no fraction or exponent");
+        const BOOLEAN: (&str, &str) = ("xsd:boolean", "a boolean is a bare `true` or `false`");
+        for (statement, value, (datatype, hint)) in [
+            ("paper:published \"not a date\"^^xsd:date", "\"not a date\"^^xsd:date", DATE),
+            ("paper:published \"not a date\"", "the string \"not a date\"", DATE),
+            ("paper:reviewed \"yes\"^^xsd:boolean", "\"yes\"^^xsd:boolean", BOOLEAN),
+            ("paper:pages \"twelve\"^^xsd:integer", "\"twelve\"^^xsd:integer", INTEGER),
+            ("paper:published \"2026-11-01\"", "the string \"2026-11-01\"", DATE),
+            ("paper:published \"2026-02-30\"^^xsd:date", "\"2026-02-30\"^^xsd:date", DATE),
+            ("paper:published \"2026-13-01\"^^xsd:date", "\"2026-13-01\"^^xsd:date", DATE),
+            ("paper:published \"2025-02-29\"^^xsd:date", "\"2025-02-29\"^^xsd:date", DATE),
+            ("paper:score \"1e3\"^^xsd:decimal", "\"1e3\"^^xsd:decimal", DECIMAL),
+            ("paper:score 1e3", "the number `1e3`", DECIMAL),
+            ("paper:pages \"2026-11-01\"^^xsd:date", "the date `2026-11-01`", INTEGER),
+            ("paper:pages \"yes\"^^xsd:boolean", "\"yes\"^^xsd:boolean", INTEGER),
+        ] {
+            let (term, _) = statement.split_once(' ').expect("a statement has a term");
+            let refusal = format!("`paper:paper/alpha` gives `{term}` {value}, which contradicts its declared datatype `{datatype}`: {hint}");
+            assert_eq!(verdict(statement), [refusal], "{statement}");
+        }
+    }
+
+    /// A value inside its range passes on both surfaces, in every spelling
+    /// its lexical space holds.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_value_inside_its_range_passes_in_every_spelling_of_its_lexical_space() {
+        for statement in [
+            "paper:published \"2026-11-01\"^^xsd:date",
+            "paper:published \"2024-02-29\"^^xsd:date",
+            "paper:published \"2000-02-29\"^^xsd:date",
+            "paper:published \"2026-11-01Z\"^^xsd:date",
+            "paper:published \"2026-11-01+05:30\"^^xsd:date",
+            "paper:published \"2026-11-01-14:00\"^^xsd:date",
+            "paper:published \"-0044-03-15\"^^xsd:date",
+            "paper:published \"12026-11-01\"^^xsd:date",
+            "paper:score 12.5",
+            "paper:score \"12.5\"^^xsd:decimal",
+            "paper:score \"-.5\"^^xsd:decimal",
+            "paper:score \"+12.\"^^xsd:decimal",
+            "paper:score \"12\"^^xsd:decimal",
+            "paper:pages 12",
+            "paper:pages \"12\"^^xsd:integer",
+            "paper:pages \"+12\"^^xsd:integer",
+            "paper:pages \"-012\"^^xsd:integer",
+            "paper:reviewed true",
+            "paper:reviewed \"true\"^^xsd:boolean",
+            "paper:reviewed \"false\"^^xsd:boolean",
+            "paper:reviewed \"1\"^^xsd:boolean",
+            "paper:reviewed \"0\"^^xsd:boolean",
+            "paper:venue \"\"",
+        ] {
+            assert_eq!(verdict(statement), Vec::<String>::new(), "{statement}");
+        }
+    }
+
+    /// Each lexical space ends where the datatype says it does: a calendar
+    /// that knows its months and centuries, a sign that needs a digit, a
+    /// zone with a real offset.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn the_text_of_a_typed_literal_is_refused_past_the_edge_of_its_lexical_space() {
+        for statement in [
+            "paper:published \"1900-02-29\"^^xsd:date",
+            "paper:published \"2026-04-31\"^^xsd:date",
+            "paper:published \"2026-00-10\"^^xsd:date",
+            "paper:published \"2026-01-00\"^^xsd:date",
+            "paper:published \"2026-1-01\"^^xsd:date",
+            "paper:published \"2026-01-1\"^^xsd:date",
+            "paper:published \"026-01-01\"^^xsd:date",
+            "paper:published \"+2026-01-01\"^^xsd:date",
+            "paper:published \"2026-01-01z\"^^xsd:date",
+            "paper:published \"2026-01-01+0530\"^^xsd:date",
+            "paper:published \"2026-01-01+14:01\"^^xsd:date",
+            "paper:published \"2026-01-01+05:60\"^^xsd:date",
+            "paper:published \"2026-11-01T00:00:00\"^^xsd:date",
+            "paper:published \"\"^^xsd:date",
+            "paper:score \".\"^^xsd:decimal",
+            "paper:score \"\"^^xsd:decimal",
+            "paper:score \"1.2.3\"^^xsd:decimal",
+            "paper:score \"INF\"^^xsd:decimal",
+            "paper:pages \"\"^^xsd:integer",
+            "paper:pages \"-\"^^xsd:integer",
+            "paper:pages \"1.0\"^^xsd:integer",
+            "paper:reviewed \"TRUE\"^^xsd:boolean",
+            "paper:reviewed \"2\"^^xsd:boolean",
+            "paper:reviewed \"\"^^xsd:boolean",
+        ] {
+            match verdict(statement).as_slice() {
+                [one] => assert!(one.contains("contradicts its declared datatype"), "{statement}: {one}"),
+                other => panic!("{statement}: expected one refusal, got {other:?}"),
+            }
+        }
+    }
+
+    /// An integer is a decimal, and that one derivation is the only one: an
+    /// integer literal must still be an integer, and a decimal never stands
+    /// in for an integer.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn an_integer_stands_on_a_decimal_range_and_nothing_else_stands_for_another() {
+        for statement in ["paper:score 12", "paper:score -3", "paper:score \"12\"^^xsd:integer"] {
+            assert_eq!(verdict(statement), Vec::<String>::new(), "{statement}");
+        }
+        for statement in [
+            "paper:score \"twelve\"^^xsd:integer",
+            "paper:score \"12.5\"^^xsd:integer",
+            "paper:pages 12.0",
+            "paper:pages \"12\"^^xsd:decimal",
+            "paper:venue \"12\"^^xsd:integer",
+            "paper:published 12",
+        ] {
+            assert_eq!(verdict(statement).len(), 1, "{statement}");
+        }
+    }
+
+    /// A range the check does not interpret, or no range, says nothing
+    /// about a value, on either surface and in any spelling.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn an_uninterpreted_range_refuses_nothing_on_either_surface() {
+        for statement in [
+            "paper:homepage \"not a uri\"^^xsd:anyURI",
+            "paper:homepage \"not a uri\"",
+            "paper:homepage 12",
+            "paper:seen \"not a time\"^^xsd:dateTime",
+            "paper:seen \"2026-11-01\"",
+            "paper:note \"not a date\"^^xsd:date",
+            "paper:note \"yes\"^^xsd:boolean",
+        ] {
+            assert_eq!(verdict(statement), Vec::<String>::new(), "{statement}");
+        }
+    }
+
+    /// A property with no declared range says nothing about a value, in a
+    /// header as in a block.
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_header_literal_with_no_declared_range_passes() {
+        for statement in ["paper:note \"anything\"", "paper:note 12", "paper:note true"] {
+            let report = check_header(statement);
+            assert!(report.is_clean(), "{statement}: {:?}", report.defects);
+        }
+    }
+
+    #[cfg(feature = "document-vocabulary")]
+    #[test]
+    fn a_well_formed_date_passes_in_a_header() {
+        let report = check_header("paper:published \"2026-11-01\"^^xsd:date");
+        assert!(report.is_clean(), "{:?}", report.defects);
+    }
+
+    /// The header rule needs no document vocabulary: a module directory
+    /// declares the range, and the refusal reads as a block's does, at the
+    /// line that wrote the term.
+    #[test]
+    fn a_header_value_is_refused_at_the_line_that_wrote_it() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = scratch_vocabulary(&tmp.path().join("modules"));
+        let content = "# Brief\n\n```turtle folio:document\nmycorp:brief\\/tender a mycorp:Brief ;\n    x0k:status \"proposed\" ;\n    mycorp:owner 3 .\n```\nBody.\n";
+        let (header, _) = crate::colophon::parse_envelope_in(&model, content).expect("fixture parses");
+        let mut report = check_envelope(&model, &header);
+        for defect in &mut report.defects {
+            defect.locate(content);
+        }
+        match rendered(&report).as_slice() {
+            [one] => assert_eq!(
+                one,
+                "`mycorp:brief/tender` gives `mycorp:owner` the integer `3`, which contradicts its declared datatype `xsd:string`: text is a quoted string at line 6"
+            ),
+            other => panic!("expected one refusal, got {other:?}"),
+        }
+    }
+
+    /// The text is read with no document vocabulary either: a date a module
+    /// declares answers on a header alone.
+    #[test]
+    fn a_header_date_is_read_by_its_text_against_a_module_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = scratch_vocabulary(&tmp.path().join("modules"));
+        let refusals = |value: &str| {
+            let content = format!("```turtle folio:document\nmycorp:brief\\/tender a mycorp:Brief ;\n    mycorp:due {value} .\n```\nBody.\n");
+            let (header, _) = crate::colophon::parse_envelope_in(&model, &content).expect("fixture parses");
+            rendered(&check_envelope(&model, &header))
+        };
+        assert_eq!(refusals("\"2024-02-29\"^^xsd:date"), Vec::<String>::new());
+        for value in ["\"2025-02-29\"^^xsd:date", "\"2024-02-29\""] {
+            match refusals(value).as_slice() {
+                [one] => assert!(one.contains("contradicts its declared datatype `xsd:date`"), "{one}"),
+                other => panic!("{value}: expected one refusal, got {other:?}"),
+            }
+        }
     }
 }

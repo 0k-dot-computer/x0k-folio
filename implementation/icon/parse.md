@@ -201,6 +201,12 @@ and `none`. A `fill` or `stroke` that says anything else — a hex value, a
 named colour, `currentColor`, a `url()` — is kept verbatim as a
 `Literal`, because the checker's refusal of it wants to quote it back.
 
+A mark drawn at the profile's figure grade may also name a theme colour
+role: `process` for a living thing, `error` for its failure
+(`x0k:design/icon-profile` § "The figure grade"). Such a name is read as a
+`Colour`, a role the live theme resolves, and the icon checker refuses it
+as a literal paint, so an icon still speaks only the four roles.
+
 <a name="chunk-role"></a><sub>[`src/parse.rs`](../../crates/x0k-icon/src/parse.rs) · `#role`</sub>
 
 ```rust {#role}
@@ -252,9 +258,15 @@ pub enum Paint {
     None,
     /// One of the four roles.
     Role(Role),
+    /// A theme colour role, one of [`COLOUR_ROLES`]: a figure's paint.
+    Colour(&'static str),
     /// A value outside the profile, kept verbatim.
     Literal(String),
 }
+
+/// The theme colour roles a figure-grade mark may paint, by the name an
+/// author writes and the stem of the theme's `--color-<name>` variable.
+pub const COLOUR_ROLES: [&str; 8] = ["process", "error", "warning", "success", "thinking", "ghost", "text", "border"];
 
 impl Paint {
     fn parse(value: &str) -> Paint {
@@ -262,8 +274,11 @@ impl Paint {
         if value == "none" {
             return Paint::None;
         }
-        match Role::from_name(value) {
-            Some(role) => Paint::Role(role),
+        if let Some(role) = Role::from_name(value) {
+            return Paint::Role(role);
+        }
+        match COLOUR_ROLES.iter().find(|name| **name == value) {
+            Some(name) => Paint::Colour(name),
             None => Paint::Literal(value.to_string()),
         }
     }
@@ -273,7 +288,9 @@ impl Paint {
 ## The geometry
 
 Six elements, each with the geometry its row in the vocabulary admits, and
-a seventh case for what is not in the vocabulary at all. `Foreign` is the
+a seventh case for what is not in the vocabulary at all. An `ellipse` is
+read too, for the figure grade, which admits it; the icon checker refuses
+it as an unknown element. `Foreign` is the
 permissive parser's honesty: a `<text>`, a `<defs>`, a comment or a run of
 character data is read as an element of that name and nothing beneath it
 is read, so the checker can point at it.
@@ -299,6 +316,8 @@ pub enum Shape {
     Rect { x: f64, y: f64, width: f64, height: f64, rx: Option<f64> },
     /// `<polyline points=…>`.
     Polyline { points: Vec<(f64, f64)> },
+    /// `<ellipse cx cy rx ry>`: the figure grade's, refused on an icon.
+    Ellipse { cx: f64, cy: f64, rx: f64, ry: f64 },
     /// An element, text run, comment or processing instruction outside
     /// the vocabulary, named; nothing beneath it is read.
     Foreign(String),
@@ -382,7 +401,9 @@ position in document order, root excluded — which is how a refusal says
 "the fourth element". Paints are `Option` because absence and `none` are
 different facts: an absent `fill` on a `path` is SVG's default black,
 which the checker treats as unpainted, while `fill="none"` is an author
-saying so.
+saying so. The three opacities are read as numbers wherever they are
+written, and also named among the unadmitted attributes: the figure grade
+admits them, and the icon checker refuses them by that name.
 
 <a name="chunk-element"></a><sub>[`src/parse.rs`](../../crates/x0k-icon/src/parse.rs) · `#element`</sub>
 
@@ -399,6 +420,8 @@ pub struct Element {
     pub stroke_width: Option<f64>,
     /// `stroke-dasharray`, as a list of lengths.
     pub dasharray: Option<Vec<f64>>,
+    /// `opacity`, `fill-opacity` and `stroke-opacity`, as written.
+    pub opacity: Opacity,
     pub transform: Option<Transform>,
     /// Attributes the element's row does not admit, by name — `style`,
     /// `id`, `opacity`, a cap or join — kept for the checker.
@@ -416,8 +439,29 @@ impl Element {
             Shape::Circle { .. } => "circle",
             Shape::Rect { .. } => "rect",
             Shape::Polyline { .. } => "polyline",
+            Shape::Ellipse { .. } => "ellipse",
             Shape::Foreign(name) => name,
         }
+    }
+}
+
+/// An element's three opacities, each absent where it is not written.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Opacity {
+    pub whole: Option<f64>,
+    pub fill: Option<f64>,
+    pub stroke: Option<f64>,
+}
+
+impl Opacity {
+    /// The attribute names, each with its value.
+    pub fn written(&self) -> [(&'static str, Option<f64>); 3] {
+        [("opacity", self.whole), ("fill-opacity", self.fill), ("stroke-opacity", self.stroke)]
+    }
+
+    /// Whether any of the three is written.
+    pub fn is_written(&self) -> bool {
+        self.written().iter().any(|(_, v)| v.is_some())
     }
 }
 ```
@@ -495,7 +539,7 @@ impl Icon {
             .iter()
             .map(|el| match &el.shape {
                 Shape::Path { d, .. } => d.len(),
-                Shape::Line { .. } | Shape::Circle { .. } | Shape::Rect { .. } => 1,
+                Shape::Line { .. } | Shape::Circle { .. } | Shape::Rect { .. } | Shape::Ellipse { .. } => 1,
                 Shape::Polyline { points } => points.len(),
                 Shape::Group | Shape::Foreign(_) => 0,
             })
@@ -640,6 +684,7 @@ fn foreign_element(ordinal: usize, what: &str) -> Element {
         stroke: None,
         stroke_width: None,
         dasharray: None,
+        opacity: Opacity::default(),
         transform: None,
         unknown_attrs: Vec::new(),
         children: Vec::new(),
@@ -690,6 +735,11 @@ fn read_element(node: Node, ordinal: &mut usize) -> Result<Element, ParseError> 
         dasharray: attr("stroke-dasharray")
             .map(|v| number_list(tag, "stroke-dasharray", v))
             .transpose()?,
+        opacity: Opacity {
+            whole: attr("opacity").map(|v| number(tag, "opacity", v)).transpose()?,
+            fill: attr("fill-opacity").map(|v| number(tag, "fill-opacity", v)).transpose()?,
+            stroke: attr("stroke-opacity").map(|v| number(tag, "stroke-opacity", v)).transpose()?,
+        },
         transform: attr("transform").map(Transform::parse),
         unknown_attrs,
         children,
@@ -699,8 +749,9 @@ fn read_element(node: Node, ordinal: &mut usize) -> Result<Element, ParseError> 
 
 The vocabulary table, as data. `g` admits no dash and no geometry; `line`
 and `polyline` admit no fill; a `rect`'s `rx` is the one optional
-geometry attribute. An element not in the table admits nothing, which is
-consistent: it is refused whole.
+geometry attribute. An `ellipse` admits what a `circle` does, with its two
+radii. An element not in the table admits nothing, which is consistent: it
+is refused whole.
 
 <a name="chunk-admitted-attributes"></a><sub>[`src/parse.rs`](../../crates/x0k-icon/src/parse.rs) · `#admitted-attributes`</sub>
 
@@ -716,6 +767,7 @@ fn admitted_attributes(tag: &str) -> &'static [&'static str] {
             "x", "y", "width", "height", "rx", "fill", "stroke", "stroke-width", "stroke-dasharray",
         ],
         "polyline" => &["points", "stroke", "stroke-width", "stroke-dasharray"],
+        "ellipse" => &["cx", "cy", "rx", "ry", "fill", "stroke", "stroke-width", "stroke-dasharray"],
         _ => &[],
     }
 }
@@ -759,6 +811,7 @@ fn read_shape(node: Node, tag: &str) -> Result<Shape, ParseError> {
         "polyline" => Shape::Polyline {
             points: read_points(tag, node.attribute("points").unwrap_or_default())?,
         },
+        "ellipse" => Shape::Ellipse { cx: required("cx")?, cy: required("cy")?, rx: required("rx")?, ry: required("ry")? },
         _ => Shape::Foreign(tag.to_string()),
     })
 }

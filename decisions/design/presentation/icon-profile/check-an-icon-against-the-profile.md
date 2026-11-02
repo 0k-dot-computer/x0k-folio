@@ -205,6 +205,32 @@ fn a_second_icon_on_one_grid_is_refused_by_rule_15() {
 
 </details>
 
+<details><summary><code>a_figure_admits_its_additions_and_an_icon_refuses_them</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/icon/validate.md#chunk-tests">#tests</a> in The checker</summary>
+
+```rust
+#[test]
+fn a_figure_admits_its_additions_and_an_icon_refuses_them() {
+    let figure = r#"<svg viewBox="-50 -30 100 60">
+<ellipse cx="0" cy="0" rx="40" ry="14" fill="none" stroke="process" stroke-width="1.7" stroke-opacity="0.8" stroke-dasharray="5 4"/>
+<circle cx="-33.4" cy="4.2" r="4.5" fill="paper" stroke="ink" stroke-width="0.8"/>
+</svg>"#;
+    let accepted = validate_figure(parse(figure).unwrap()).unwrap();
+    assert_eq!(accepted.view_box(), [-50.0, -30.0, 100.0, 60.0]);
+    let as_icon: Vec<Rule> = match validate(parse(figure).unwrap()) {
+        Ok(_) => panic!("an icon has no ellipse, opacity or process paint"),
+        Err(defects) => defects.into_iter().map(|d| d.rule).collect(),
+    };
+    assert!(as_icon.contains(&Rule::OffGridViewBox) && as_icon.contains(&Rule::UnknownElement), "{as_icon:?}");
+    let literal = figure.replace(r#"stroke="process""#, r##"stroke="#93abe0""##);
+    let rules: Vec<Rule> = validate_figure(parse(&literal).unwrap()).unwrap_err().into_iter().map(|d| d.rule).collect();
+    assert_eq!(rules, vec![Rule::LiteralPaint], "a figure paints roles, never colours");
+    let faded = figure.replace(r#"stroke-opacity="0.8""#, r#"stroke-opacity="2""#);
+    assert!(validate_figure(parse(&faded).unwrap()).is_err(), "an opacity is from 0 to 1");
+}
+```
+
+</details>
+
 <details><summary><code>icon_accepts_a_declaration_in_the_profile</code> · <picture><source media="(prefers-color-scheme: dark)" srcset="../../../../assets/icons/passed-dark.svg"><img alt="passed" src="../../../../assets/icons/passed-light.svg" height="16"></picture> passed · <a href="../../../../implementation/tangle/cli-faces.md#chunk-tests-icon">#tests-icon</a> in The faces behind `check`, `affordances`, `declarations` and `icon`</summary>
 
 ```rust

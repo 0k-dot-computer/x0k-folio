@@ -28,15 +28,21 @@ class with `a`. Classes compare by full IRI, so paper:Paper and archive:Paper
 stay distinct.
 
 This collector validates the named-node class/object-property/datatype-property
-subset: one owning module per term, at most one domain and range per property, and exact
-class membership. It refuses blank-node shapes, non-string Turtle
-literals in definitions, and colliding class names. It does not perform OWL entailment or
-choose a rendered appearance. A block's scalar fields are read against the
+subset: one owning module per term, at most one domain and range per property, and
+class membership by stated axioms. A class satisfies a domain or range when it
+is a class the constraint names, or reaches one by `rdfs:subClassOf`. It refuses
+blank-node shapes, non-string Turtle literals in definitions, and colliding class
+names. It does not perform general OWL entailment: `rdfs:subClassOf` is the one
+axiom it follows. It does not choose a rendered appearance. A block's scalar fields are read against the
 datatype properties it loads by `check`
 ([`checking.md`](checking.md), *Literal fields*), not here.
 A reference is whatever IRI the block states; an unknown prefix or a relative
 IRI is a syntax error. Unresolved relationship targets remain explicit
-relationships; known targets must match the declared range.
+relationships; a target this collector declares must match the declared range.
+A target it does not declare gets no range check, even when `check` finds a
+document of that id ([`checking.md`](checking.md), *One set, one space of
+ids*): this collector reads instances, and a document's class is the header
+parser's to know.
 
 ## The collection and its source locations
 
@@ -593,16 +599,23 @@ fn class_index(model: &OntologyModel) -> Result<BTreeMap<(String, String), Strin
 An object property connects instance identities. A statement whose object is
 an IRI is a relationship; its predicate must be an object property the
 vocabulary declares. Its domain constrains the source, and its range
-constrains a target when that target is present. An absent target remains a
-relationship whose resolution is unknown.
+constrains a target when that target is a declared instance. Any other target
+remains a relationship whose resolution is unknown here.
+
+A constraint names a class and admits what that class answers for. With
+`paper:Preprint rdfs:subClassOf paper:Paper` stated, a preprint satisfies a
+domain of `paper:Paper`, and so does a class two axioms below it. The reverse
+does not hold: a paper does not satisfy a domain of `paper:Preprint`. The walk
+is [`OntologyModel::subclass_closure`](../ontology/concept-facts.md), and a
+refusal names the classes the constraint states, not everything they admit.
 
 <a name="chunk-validate-relationships"></a><sub>[`src/document_vocabulary.rs`](../../crates/x0k-folio/src/document_vocabulary.rs) · `#validate-relationships`</sub>
 
 ```rust {#validate-relationships}
 /// Validate every statement an instance makes whose object is an entity: its
 /// predicate must be a declared object property, the instance's class must
-/// be in its domain, and a target the collection declares must be in its
-/// range. Returns one relationship per such statement.
+/// reach a class its domain names, and a target the collection declares must
+/// reach one its range names. Returns one relationship per such statement.
 pub fn validate_relationships(model: &OntologyModel, instances: &[DeclaredInstance]) -> Result<Vec<Relationship>, VocabularyError> {
     let mut out = Vec::new();
     let by_id: BTreeMap<_, _> = instances.iter().map(|instance| (&instance.iri, &instance.concept)).collect();
@@ -633,11 +646,12 @@ pub fn validate_relationships(model: &OntologyModel, instances: &[DeclaredInstan
                     return Err(error(VocabularyErrorKind::Unsupported, format!("{predicate}: unsupported class constraint"), std::slice::from_ref(&instance.source)));
                 }
             }
-            if !domain.is_empty() && !allowed_domain.contains(&instance.concept) {
+            let admits = |allowed: &[String], class: &str| allowed.iter().any(|named| model.subclass_closure(named).contains(class));
+            if !domain.is_empty() && !admits(&allowed_domain, &instance.concept) {
                 return Err(error(VocabularyErrorKind::InvalidDeclaration, format!("{predicate} does not accept {}", instance.concept), std::slice::from_ref(&instance.source)));
             }
             if let Some(actual) = by_id.get(object) {
-                if !range.is_empty() && !allowed_range.contains(actual) {
+                if !range.is_empty() && !admits(&allowed_range, actual) {
                     let required = allowed_range.join(", ");
                     return Err(error(VocabularyErrorKind::InvalidDeclaration, format!("{predicate} target {object} has type {actual}, expected {required}"), std::slice::from_ref(&instance.source)));
                 }
@@ -650,8 +664,8 @@ pub fn validate_relationships(model: &OntologyModel, instances: &[DeclaredInstan
 ```
 
 Supplied vocabularies may use a union of named classes in one domain or
-range. Validation uses the model's existing union resolver and accepts an
-explicit member; it does not infer subclass membership. Multiple domain
+range. Validation uses the model's existing union resolver and accepts a
+member, or a class that reaches a member by `rdfs:subClassOf`. Multiple domain
 axioms and nested anonymous constraints remain unsupported. Document-carried
 definitions still require named nodes.
 
@@ -739,6 +753,108 @@ p:cites a owl:ObjectProperty ; rdfs:domain p:Paper ; rdfs:range p:Paper ;
         let error = load_documents(&[DocumentSource { id: "note.md", body: &note },
             DocumentSource { id: "other.md", body: &other_target }], &base).err().unwrap();
         assert!(error.message.contains("expected"));
+    }
+
+    /// The paper vocabulary with `terms` added to its one block.
+    fn extended(terms: &str) -> String {
+        definition("paper", "https://example.test/paper#")
+            .replace("p:cites a owl:ObjectProperty", &format!("{terms}\np:cites a owl:ObjectProperty"))
+    }
+
+    /// A class of the paper module, stated a subclass of `parent`.
+    fn subclass(class: &str, parent: &str) -> String {
+        format!("p:{class} a owl:Class ; rdfs:subClassOf p:{parent} ;\n    rdfs:isDefinedBy <https://example.test/module/paper> .")
+    }
+
+    /// An unrelated class of the paper module.
+    const OTHER: &str = "p:Other a owl:Class ; rdfs:isDefinedBy <https://example.test/module/paper> .";
+
+    /// An instance of `class` in a graph block of its own.
+    fn of_class(class: &str, name: &str, target: Option<&str>) -> String {
+        instance("paper", name, target).replace(
+            &format!("paper:paper\\/{name} a paper:Paper"),
+            &format!("paper:{}\\/{name} a paper:{class}", class.to_lowercase()),
+        )
+    }
+
+    /// What loading `vocabulary` beside `documents` says: the number of
+    /// relationships, or the refusal.
+    fn relationships(vocabulary: &str, documents: &[&str]) -> Result<usize, String> {
+        let names: Vec<String> = (0..documents.len()).map(|at| format!("{at}.md")).collect();
+        let mut sources = vec![("vocabulary.md", vocabulary)];
+        sources.extend(names.iter().map(String::as_str).zip(documents.iter().copied()));
+        load(&sources).map(|loaded| loaded.relationships.len()).map_err(|refused| refused.message)
+    }
+
+    #[test]
+    fn a_subclass_satisfies_a_domain() {
+        let vocabulary = extended(&subclass("Preprint", "Paper"));
+        let citing = of_class("Preprint", "one", Some("<https://example.test/elsewhere>"));
+        assert_eq!(relationships(&vocabulary, &[&citing]), Ok(1));
+    }
+
+    #[test]
+    fn a_subclass_satisfies_a_domain_through_a_two_level_chain() {
+        let vocabulary = extended(&format!("{}\n{}", subclass("Preprint", "Paper"), subclass("Draft", "Preprint")));
+        let citing = of_class("Draft", "one", Some("<https://example.test/elsewhere>"));
+        assert_eq!(relationships(&vocabulary, &[&citing]), Ok(1));
+    }
+
+    #[test]
+    fn a_subclass_satisfies_a_range() {
+        let vocabulary = extended(&format!("{}\n{}", subclass("Preprint", "Paper"), subclass("Draft", "Preprint")));
+        let citing = instance("paper", "one", Some("paper:draft\\/two"));
+        assert_eq!(relationships(&vocabulary, &[&citing, &of_class("Draft", "two", None)]), Ok(1));
+    }
+
+    #[test]
+    fn a_subclass_of_a_union_member_satisfies_the_union() {
+        let text = ttl("paper", "https://example.test/paper#")
+            .replace("rdfs:domain p:Paper ; rdfs:range p:Paper",
+                "rdfs:domain [ owl:unionOf (p:Paper p:Note) ] ; rdfs:range [ owl:unionOf (p:Paper p:Note) ]")
+            + "\np:Note a owl:Class ; rdfs:isDefinedBy <https://example.test/module/paper> .\n"
+            + &subclass("Sketch", "Note") + "\n" + OTHER + "\n";
+        let base = OntologyModel::parse_turtle_sources(&[TurtleSource { name: Path::new("selected.ttl"), text: &text }]).unwrap();
+        let load_two = |subject: &str, target: &str| {
+            let documents = [DocumentSource { id: "subject.md", body: subject }, DocumentSource { id: "target.md", body: target }];
+            load_documents(&documents, &base).map(|loaded| loaded.relationships.len()).map_err(|refused| refused.message)
+        };
+        let sketch = of_class("Sketch", "one", Some("paper:sketch\\/two"));
+        assert_eq!(load_two(&sketch, &of_class("Sketch", "two", None)), Ok(1));
+        let outsider = of_class("Other", "one", Some("paper:sketch\\/two"));
+        assert!(load_two(&outsider, &of_class("Sketch", "two", None)).unwrap_err().contains("does not accept"));
+        let aimed_outside = of_class("Sketch", "one", Some("paper:other\\/two"));
+        assert!(load_two(&aimed_outside, &of_class("Other", "two", None)).unwrap_err().contains("expected"));
+    }
+
+    #[test]
+    fn a_class_unrelated_to_the_constraint_is_still_refused() {
+        let vocabulary = extended(&format!("{}\n{OTHER}", subclass("Preprint", "Paper")));
+        let citing = of_class("Other", "one", Some("<https://example.test/elsewhere>"));
+        assert!(relationships(&vocabulary, &[&citing]).unwrap_err().contains("does not accept"), "domain");
+        let citing = instance("paper", "one", Some("paper:other\\/two"));
+        let refused = relationships(&vocabulary, &[&citing, &of_class("Other", "two", None)]).unwrap_err();
+        assert!(refused.contains("expected https://example.test/paper#Paper"), "range: {refused}");
+    }
+
+    /// The axiom reads one way: a preprint is a paper, and a paper is not
+    /// thereby a preprint.
+    #[test]
+    fn a_superclass_does_not_satisfy_a_constraint_on_its_subclass() {
+        let vocabulary = extended(&subclass("Preprint", "Paper"))
+            .replace("rdfs:domain p:Paper", "rdfs:domain p:Preprint");
+        let citing = instance("paper", "one", Some("<https://example.test/elsewhere>"));
+        assert!(relationships(&vocabulary, &[&citing]).unwrap_err().contains("does not accept"));
+    }
+
+    #[test]
+    fn a_subclass_cycle_terminates_and_accepts_only_its_members() {
+        let cycle = format!("{}\np:Paper rdfs:subClassOf p:Draft .\n{OTHER}", subclass("Draft", "Paper"));
+        let vocabulary = extended(&cycle);
+        let member = of_class("Draft", "one", Some("<https://example.test/elsewhere>"));
+        assert_eq!(relationships(&vocabulary, &[&member]), Ok(1));
+        let outsider = of_class("Other", "one", Some("<https://example.test/elsewhere>"));
+        assert!(relationships(&vocabulary, &[&outsider]).unwrap_err().contains("does not accept"));
     }
 
     #[test]

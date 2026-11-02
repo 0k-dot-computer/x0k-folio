@@ -1,6 +1,6 @@
 {
   "source": "implementation/icon/emit.md",
-  "source_hash": "fc61011d9bdd7740",
+  "source_hash": "cd1a437fa8195bac",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-icon/src/emit.rs",
-          "hash": "3bd438b6e9ac7726"
+          "hash": "f90d5e8988ff4fd7"
         }
       ]
     }

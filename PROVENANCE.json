@@ -1,8 +1,8 @@
 {
   "schema": "x0k.provenance/v1",
   "publication_uri": "x0k:publication/x0k-folio",
-  "corpus_rev": "zuxprklwxozoyuvvrussymxwuwlsyuoz",
-  "corpus_commit": "3e67a0a4d99a5f76a0f858b3c681f1f66d06b287",
+  "corpus_rev": "zvyszsnoozyxympkoopowxslvuvwpyow",
+  "corpus_commit": "67ceb04db5ae7413af4070f024e58df95bf8f226",
   "path_map": {
     "background/event-graph-crdts.md": "corpora/x0k/wiki/event-graph-crdts.md",
     "background/literate-programming.md": "corpora/x0k/wiki/literate-programming.md",
@@ -240,7 +240,7 @@
     "software"
   ],
   "modules_dir": "crates/x0k-ontology/ontology/modules",
-  "module_version": "0.4.0",
+  "module_version": "0.5.0",
   "module_version_source": "entry-point-crate",
   "proofs": {
     "x0k:test/x0k-icon/src/bind.rs::a_fifth_role_or_a_missing_scheme_does_not_read": "passed",
@@ -256,6 +256,7 @@
     "x0k:test/x0k-icon/src/emit.rs::the_stem_is_the_entity_ids_last_segment_in_file_form": "passed",
     "x0k:test/x0k-icon/src/emit.rs::the_tangle_icon_normalizes_to_the_designs_bytes": "passed",
     "x0k:test/x0k-icon/src/validate.rs::a_corner_past_the_safe_area_is_refused_by_rule_11": "passed",
+    "x0k:test/x0k-icon/src/validate.rs::a_figure_admits_its_additions_and_an_icon_refuses_them": "passed",
     "x0k:test/x0k-icon/src/validate.rs::a_flair_name_is_accepted_whatever_theme_it_names": "passed",
     "x0k:test/x0k-icon/src/validate.rs::a_literal_colour_is_refused_by_rule_5": "passed",
     "x0k:test/x0k-icon/src/validate.rs::a_page_over_budget_is_refused_by_rule_12": "passed",
@@ -332,8 +333,8 @@
   },
   "proofs_run": true,
   "prebuilt": {
-    "version": "0.4.0",
-    "tag": "v0.4.0",
+    "version": "0.5.0",
+    "tag": "v0.5.0",
     "targets": [
       "x86_64-unknown-linux-musl",
       "aarch64-unknown-linux-musl",

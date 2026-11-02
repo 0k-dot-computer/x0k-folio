@@ -173,6 +173,14 @@ pub mod envelope_predicates {
     pub const MATERIALIZATION_LORO_DOC: &str = "x0k:folio/loroDocId";
     pub const MATERIALIZATION_REVISION: &str = "x0k:folio/documentRevisionId";
     pub const MATERIALIZATION_CONTENT_HASH: &str = "x0k:folio/contentHash";
+    /// One verb a publication admits to an anonymous reader, as JSON.
+    pub const ADMITS_READER_VERB: &str = "x0k:admitsReaderVerb";
+    /// A publication's field allowlist by class, as JSON.
+    pub const PROJECTION: &str = "x0k:projection";
+    /// The header statements a document makes in JSON (`'…'^^rdf:JSON`)
+    /// that a view carries: the ones a node reads back about the document
+    /// itself, a publication's reader gate.
+    pub const JSON_STATEMENTS: [&str; 2] = [ADMITS_READER_VERB, PROJECTION];
 }
 
 // The envelope PROJECTION is severable; the predicate NAMES above are not.
@@ -221,13 +229,19 @@ mod envelope {
         pub edges: Vec<(String, Vec<String>)>,
         /// Unknown-predicate edges, preserved verbatim (forward-compat).
         pub unknown_edges: Vec<(String, Vec<String>)>,
+        /// The header's JSON statements whose predicate is one of
+        /// [`envelope_predicates::JSON_STATEMENTS`]: `(predicate, JSON text)`,
+        /// grouped by predicate in that list's order, each predicate's
+        /// statements in the order the header states them.
+        pub json_statements: Vec<(String, String)>,
     }
 
     /// Project a folio header into substrate-neutral facts.
     ///
     /// Emission order is preserved exactly: status, class, subtype, body
     /// format, concerns,
-    /// materialization fields, known edges, unknown edges. Scalars become
+    /// materialization fields, known edges, unknown edges, JSON statements.
+    /// Scalars and JSON statements' text become
     /// [`FactValue::Text`]; edge targets become [`FactValue::EntityRef`] —
     /// the typing the Dialog-DB writer encodes as `string:`/`entity:` and a
     /// spine writer will frame as fact-entry payloads.
@@ -308,6 +322,11 @@ mod envelope {
             }
         }
 
+        // JSON statements, each as its JSON text.
+        for (predicate, json) in &view.json_statements {
+            out.push(FactEntry::new(uri, predicate.clone(), FactValue::Text(json.clone())));
+        }
+
         out
     }
 
@@ -373,7 +392,30 @@ mod tests {
                 "future_predicate".to_string(),
                 vec!["x0k:thing/x".to_string()],
             )],
+            json_statements: Vec::new(),
         }
+    }
+
+    /// A publication's reader statements project as text facts on the
+    /// document, one per statement, after everything else it states.
+    #[test]
+    fn json_statements_project_as_text_after_the_rest() {
+        let verb = r#"{"verb":"intent.status","args":{}}"#;
+        let projection = r#"{"plan":{"include":["ready"]}}"#;
+        let view = ColophonView {
+            json_statements: vec![
+                (envelope_predicates::ADMITS_READER_VERB.to_string(), verb.to_string()),
+                (envelope_predicates::PROJECTION.to_string(), projection.to_string()),
+            ],
+            ..sample_view()
+        };
+        let facts = project_envelope(&view);
+        let tail: Vec<(&str, &FactValue)> = facts[facts.len() - 2..].iter().map(|f| (f.predicate.as_str(), &f.value)).collect();
+        assert_eq!(tail, [
+            (envelope_predicates::ADMITS_READER_VERB, &FactValue::Text(verb.to_string())),
+            (envelope_predicates::PROJECTION, &FactValue::Text(projection.to_string())),
+        ]);
+        assert_eq!(facts.len(), project_envelope(&sample_view()).len() + 2);
     }
 
     #[test]

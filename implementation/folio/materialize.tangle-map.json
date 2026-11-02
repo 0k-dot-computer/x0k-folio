@@ -1,6 +1,6 @@
 {
   "source": "implementation/folio/materialize.md",
-  "source_hash": "9c0283ce57628611",
+  "source_hash": "a9cc77db3bce1cee",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-folio/src/materialize.rs",
-          "hash": "5b3eca4c46bcddcf"
+          "hash": "951aafd78e8a6e0d"
         }
       ]
     }

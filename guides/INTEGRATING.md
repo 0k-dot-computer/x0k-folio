@@ -23,7 +23,7 @@ and signed in it also runs `gh attestation verify` against the release's SLSA
 build provenance and refuses if that fails; without it, it prints one line
 saying the check was skipped and the command that runs it. It installs to
 `~/.local/bin` with no `sudo` (`FOLIO_INSTALL_DIR` moves it), pins a release
-when told to (`curl -fsSL https://0k.computer/folio/install.sh | FOLIO_VERSION=0.4.0 sh`),
+when told to (`curl -fsSL https://0k.computer/folio/install.sh | FOLIO_VERSION=0.5.0 sh`),
 and its last lines say what it installed, where, and whether that directory
 is on your `PATH`. **Windows is not covered by the script**:
 take the `.zip` from [the release page](https://github.com/0k-dot-computer/x0k-folio/releases),
@@ -77,7 +77,7 @@ The binaries the script installs come from the release lane in this
 repository: `.github/workflows/release.yml` builds a static binary per
 platform on a tag, attests each with SLSA build provenance, and attaches
 them — with one `SHA256SUMS` and `install.sh` itself — to the tag's release.
-[v0.4.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.4.0) is such a release: a static binary for five platforms,
+[v0.5.0](https://github.com/0k-dot-computer/x0k-folio/releases/tag/v0.5.0) is such a release: a static binary for five platforms,
 `install.sh`, the source closure below, and one `SHA256SUMS`, attested at
 build.
 
@@ -89,8 +89,8 @@ attested like the binaries: the repository at that tag, every crate its
 with no network, and no GitHub, at all:
 
 ```sh
-tar -xzf x0k-folio-v0.4.0-vendor.tar.gz
-cd x0k-folio-v0.4.0
+tar -xzf x0k-folio-v0.5.0-vendor.tar.gz
+cd x0k-folio-v0.5.0
 cargo build --offline --locked --release -p x0k-tangle -p x0k-folio-cli
 ```
 
@@ -102,9 +102,9 @@ Five verbs are the ones you will use, and each has a `--help`:
 
 | verb | what it does |
 |---|---|
-| `x0k-tangle tangle <doc…> --workspace <root>` | write a document's chunks to their files, and a sidecar beside the document |
+| `x0k-tangle tangle <doc…> --workspace <root>` | write a document's chunks to their files, and a sidecar beside the document; `--vocabulary <dir>` reads a header written with your own modules, here and on `sync`, `list` and `declarations` |
 | `x0k-tangle sync <path…> --workspace <root>` | the other direction: fill each `from=`/`symbol=` chunk's body from the source file it names |
-| `x0k-tangle check <path…> --workspace <root>` | verify chunk references — including each `from=`/`symbol=` mirror against the source file it names, which is what `--workspace` resolves — and read every document header under the paths against the vocabulary (`--vocabulary <dir>` adds modules of your own) |
+| `x0k-tangle check <path…> --workspace <root>` | verify chunk references — including each `from=`/`symbol=` mirror against the source file it names, which is what `--workspace` resolves — and read every document header under the paths against the vocabulary (`--vocabulary <dir>` adds modules of your own, for the chunk checks as much as the header ones) |
 | `x0k-tangle affordances <path…>` | print every affordance the documents declare, as JSON |
 | `x0k-tangle weave <doc> --output-dir <dir>` | render one document as an HTML page |
 
@@ -191,8 +191,10 @@ for themselves is carried as written, keyed by its term — and its term, like
 an edge's, is one some loaded module declares, whatever the document's
 class: `check` refuses `x0k:fooBar "x"` by its term and the line that wrote
 it, and names the declared term it is nearest when one is close
-(`x0k:tells` is told `x0k:tell`). "As written" is what `ingest` and `index`
-do with a statement; neither refuses one, so `check` goes first.
+(`x0k:tells` is told `x0k:tell`). Its value answers to the term's declared
+datatype by the rule a graph block's field answers to, below, in the same
+words. "As written" is what `ingest` and `index` do with a statement; neither
+reads it against a declared range, so `check` goes first.
 
 There is one spelling, and you meet it everywhere: the term in the header is
 the term in the vocabulary file and the predicate in the store. The graph
@@ -267,11 +269,12 @@ x0k-tangle check docs/decisions
 Two kinds of thing come back, and they are kept apart. A **defect** exits
 non-zero: a header that does not parse, a prefix nothing declares, a class
 the vocabulary does not declare, a predicate no loaded module declares —
-an edge's or a literal statement's, named with its line. A
+an edge's or a literal statement's, named with its line — and one id
+carried by both a document and a declaration. A
 **note** does not: ``edge `x0k:refinedBy` → `x0k:architecture/retry-queue`
-names no document here`` says the edge is well formed and its target is
-absent. The note's wording was written for this repository's own edges,
-which leave for a private corpus; on your folder it means a document you have
+names no document or declaration under the paths scanned`` says the edge is
+well formed and its target is absent. The note's wording was written for this
+repository's own edges, which leave for a private corpus; on your folder it means a document you have
 not typed yet, and that is the ordinary state of a set of documents, not an
 error. The last line counts what it read and how many edges left the set.
 
@@ -290,6 +293,23 @@ You get the same sentence with the `note:` dropped and an exit code of 1.
 leave the flag off and nothing changes, which is what a set with edges into a
 wider corpus wants.
 
+**An edge can name a document or a declaration.** A header names a document
+and a graph block names a declaration, and both are in the set. So a report's
+header can cite `paper:paper/alpha`, which a block declares, and a block's edge
+can name `paper:report/one`, which a header declares. Either edge resolves. `ingest`
+stores it the same way, so a query that walks the edge reaches the target.
+`--closed` stays as strict as it was: an id that neither a header nor a block
+carries still fails. One id cannot be both, and that fails with or without
+`--closed`, naming the two places:
+
+```sh
+`paper:report/one` names both the document reports/one.md and the declaration at papers/alpha.md:9; an id names one thing, so give one of them another
+```
+
+A block's edge to a document resolves but its range is not read, because only
+a declaration's class is known to that check. A header's edges have no range
+check either.
+
 **Pass the whole set.** The shape a CI job reaches for first — check only the
 files this pull request touched — is the one shape `--closed` cannot be given,
 because the edges that leave a subset are mostly the ordinary edges into the
@@ -297,7 +317,7 @@ rest of your own tree, and every one of them comes back as a defect:
 
 ```sh
 x0k-tangle check docs/concepts/retries.md --closed
-docs/concepts/retries.md: edge `x0k:informedBy` → `acme:policy/versioning` names no document under the paths scanned
+docs/concepts/retries.md: edge `x0k:informedBy` → `acme:policy/versioning` names no document or declaration under the paths scanned
 ```
 
 Nothing is wrong with that tree. `--closed` is a claim about a *set*, so the
@@ -386,9 +406,17 @@ naming the nearest declared property (`paper:revieweddd` is told
 datatype is refused, naming the property, the value and the datatype
 (`paper:reviewed "yes"` is a string, not an `xsd:boolean`, for a module that
 declares `paper:reviewed` an `xsd:boolean` over `paper:Paper`; a boolean is
-a bare `true` or `false`). So a field your documents carry is a term your
-module declares — an `owl:DatatypeProperty`, with a range when you want its
-values read.
+a bare `true` or `false`). A header's literals are read the same way. So a
+field your documents carry is a term your module declares — an
+`owl:DatatypeProperty`, with a range when you want its values read. `check`
+reads an `xsd:string`, `xsd:integer`, `xsd:boolean`, `xsd:decimal` or
+`xsd:date` range. A literal conforms when its datatype matches the range and
+its text lies in that datatype's lexical space, so `"yes"^^xsd:boolean` is
+refused as `"yes"` is, and so is `"2026-02-30"^^xsd:date`, a day no calendar
+holds. An integer also conforms to an `xsd:decimal` range, so a bare `12` is
+a decimal. A date has no bare form: `"2026-11-01"` is a string, and refused
+on an `xsd:date`, where the spelling is `"2026-11-01"^^xsd:date`. Any other
+range is carried and not read.
 
 The declaration that makes a prefix yours is one statement of that block,
 and `owl:` and `vann:` are predeclared there:
@@ -456,9 +484,12 @@ Six lines, in `docs/.folio/acme.ttl`:
 Now a header whose subject is `acme:design\/retry-budget`, `a x0k:Design`,
 with an `x0k:supersededBy` edge checks clean under `--vocabulary docs/.folio`,
 ingests, and answers `--named status` and `--named superseded` with
-`acme:`-shaped ids — your prefix, our vocabulary. Without the module the same
-header does not parse, because `acme:` is a prefix nothing declares. The
-alternative is to write your ids under the predeclared class prefixes
+`acme:`-shaped ids — your prefix, our vocabulary. The rest of `check` reads the
+document under the module too, so its mirrors, its splices and its id are
+checked as any other document's are, and `sync`, `tangle`, `list` and
+`declarations` take the same `--vocabulary`. Without the module the same header does
+not parse, because `acme:` is a prefix nothing declares, and `check` says so
+and fails. The alternative is to write your ids under the predeclared class prefixes
 (`design:retry-budget`), which works and files every document you have under
 `https://0k.computer/ontology#` — our namespace, in every IRI your queries
 return.

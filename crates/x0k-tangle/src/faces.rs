@@ -20,12 +20,13 @@ use x0k_folio::envelope_check::{DanglingEdge, Defect};
 use x0k_folio::inline_entity::{extract_located, Object};
 use x0k_folio::{
     check_corpus, check_declarations, check_instances, declared_facts, document_edges,
+    resolve_across,
     extract_from_markdown, CorpusReport, DeclarationReport, EntityId, InlineEntity, ICON_CLASS,
 };
 use x0k_icon::{check, emit, one_per_grid, Accepted, Grid, Label, Palette};
 use x0k_ontology::concept_facts::OntologyModel;
 
-use crate::parser::{parse_document, ParsedDocument};
+use crate::parser::{parse_document, parse_document_in, ParsedDocument};
 
 /// One chunk of a tangled document that says what it proves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,8 +154,12 @@ pub fn carries_header(content: &str) -> bool {
 }
 
 /// What `check` found reading a set of headers against a vocabulary.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct VocabularyReport {
+    /// The vocabulary the set was read under: the one asked for, extended
+    /// by what the set carries. A caller reading the same documents again
+    /// reads them under this, so it agrees with `unparsed`.
+    pub model: OntologyModel,
     /// Documents whose header does not parse, each with the parser's
     /// reason. A defect: the header is not well formed.
     pub unparsed: Vec<(String, String)>,
@@ -178,7 +183,7 @@ impl VocabularyReport {
     }
 }
 
-/// The vocabulary a check reads against.
+/// The vocabulary a verb reads a header against.
 ///
 /// `explicit` is `--vocabulary <dir>`, a directory of `*.ttl` module
 /// files, read on top of the set this build compiled — `only` reads it
@@ -257,7 +262,7 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
                 // report; the declaration check reads what parsed.
                 entities.extend(extract_from_markdown(&body, &classes).into_iter().flatten());
                 if header.tangle.is_some() {
-                    if let Ok(parsed) = parse_document(content) {
+                    if let Ok(parsed) = parse_document_in(model, content) {
                         for chunk in proving_chunks(&parsed) {
                             proofs.push((name.clone(), header.id.clone(), chunk));
                         }
@@ -324,7 +329,10 @@ pub fn check_vocabulary(model: &OntologyModel, paths: &[PathBuf]) -> Result<Voca
             }
         }
     }
+    // Last, so every edge above answers to both lists of ids.
+    resolve_across(model, &instances.declared, &mut corpus, &mut declarations);
     Ok(VocabularyReport {
+        model: instances.model,
         unparsed,
         corpus,
         declarations,

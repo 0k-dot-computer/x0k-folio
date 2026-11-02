@@ -2,13 +2,13 @@
 use super::*;
 use std::collections::BTreeMap;
 
-/// A home that keeps each moment's scene in a map.
+/// A sequence store that keeps each moment's scene in a map.
 #[derive(Default)]
-struct MemoryHome {
+struct MemoryStore {
     scenes: BTreeMap<MomentRef, Scene>,
 }
 
-impl MomentHome for MemoryHome {
+impl SequenceStore for MemoryStore {
     type Error = std::convert::Infallible;
 
     fn scene(&self, moment: &MomentRef) -> Result<Option<Scene>, Self::Error> {
@@ -39,21 +39,21 @@ fn slide() -> Scene {
 }
 
 #[test]
-fn a_home_that_keeps_its_scenes_keeps_the_contract() {
-    let mut home = MemoryHome::default();
+fn a_store_that_keeps_its_scenes_keeps_the_contract() {
+    let mut store = MemoryStore::default();
     let neighbour = Scene { params: vec![("letters".into(), serde_json::json!("N"))], looping: None, data: None };
-    home.set_scene(&SetScene { moment: moment("17"), scene: neighbour.clone() }).unwrap();
-    assert_eq!(check_home(&mut home, &moment("18"), &moment("17"), &slide()), Ok(()));
-    assert_eq!(home.scene(&moment("18")).unwrap(), Some(slide()));
-    assert_eq!(home.scene(&moment("17")).unwrap(), Some(neighbour));
-    assert_eq!(home.scene(&moment("19")).unwrap(), None, "a moment never written holds no scene");
+    store.set_scene(&SetScene { moment: moment("17"), scene: neighbour.clone() }).unwrap();
+    assert_eq!(check_store(&mut store, &moment("18"), &moment("17"), &slide()), Ok(()));
+    assert_eq!(store.scene(&moment("18")).unwrap(), Some(slide()));
+    assert_eq!(store.scene(&moment("17")).unwrap(), Some(neighbour));
+    assert_eq!(store.scene(&moment("19")).unwrap(), None, "a moment never written holds no scene");
 }
 
-/// A home that merges a new scene's params into the old one's.
+/// A sequence store that merges a new scene's params into the old one's.
 #[derive(Default)]
-struct MergingHome(MemoryHome);
+struct MergingStore(MemoryStore);
 
-impl MomentHome for MergingHome {
+impl SequenceStore for MergingStore {
     type Error = std::convert::Infallible;
 
     fn scene(&self, moment: &MomentRef) -> Result<Option<Scene>, Self::Error> {
@@ -71,11 +71,11 @@ impl MomentHome for MergingHome {
     }
 }
 
-/// A home that writes every scene to the first moment it was given.
+/// A sequence store that writes every scene to the first moment it was given.
 #[derive(Default)]
-struct StuckHome(MemoryHome, Option<MomentRef>);
+struct StuckStore(MemoryStore, Option<MomentRef>);
 
-impl MomentHome for StuckHome {
+impl SequenceStore for StuckStore {
     type Error = std::convert::Infallible;
 
     fn scene(&self, moment: &MomentRef) -> Result<Option<Scene>, Self::Error> {
@@ -89,20 +89,20 @@ impl MomentHome for StuckHome {
 }
 
 #[test]
-fn a_home_that_merges_or_writes_elsewhere_breaks_the_contract() {
-    let mut merging = MergingHome::default();
-    let refused = check_home(&mut merging, &moment("18"), &moment("17"), &slide());
+fn a_store_that_merges_or_writes_elsewhere_breaks_the_contract() {
+    let mut merging = MergingStore::default();
+    let refused = check_store(&mut merging, &moment("18"), &moment("17"), &slide());
     assert_eq!(refused, Err(Breach::Unread { wrote: Scene::default(), read: Some(slide()) }), "the empty scene must replace");
-    let mut stuck = StuckHome::default();
+    let mut stuck = StuckStore::default();
     stuck.set_scene(&SetScene { moment: moment("17"), scene: Scene::default() }).unwrap();
-    assert!(matches!(check_home(&mut stuck, &moment("18"), &moment("17"), &slide()), Err(Breach::Unread { .. })), "it never reads back at 18");
+    assert!(matches!(check_store(&mut stuck, &moment("18"), &moment("17"), &slide()), Err(Breach::Unread { .. })), "it never reads back at 18");
 }
 
-/// A home that forgets every other moment's scene when it writes one.
+/// A sequence store that forgets every other moment's scene when it writes one.
 #[derive(Default)]
-struct SweepingHome(MemoryHome);
+struct SweepingStore(MemoryStore);
 
-impl MomentHome for SweepingHome {
+impl SequenceStore for SweepingStore {
     type Error = std::convert::Infallible;
 
     fn scene(&self, moment: &MomentRef) -> Result<Option<Scene>, Self::Error> {
@@ -116,10 +116,10 @@ impl MomentHome for SweepingHome {
 }
 
 #[test]
-fn a_home_that_changes_another_moment_breaks_the_contract() {
-    let mut home = SweepingHome::default();
+fn a_store_that_changes_another_moment_breaks_the_contract() {
+    let mut store = SweepingStore::default();
     let neighbour = Scene { params: vec![("letters".into(), serde_json::json!("N"))], looping: None, data: None };
-    home.set_scene(&SetScene { moment: moment("17"), scene: neighbour.clone() }).unwrap();
-    let refused = check_home(&mut home, &moment("18"), &moment("17"), &slide());
+    store.set_scene(&SetScene { moment: moment("17"), scene: neighbour.clone() }).unwrap();
+    let refused = check_store(&mut store, &moment("18"), &moment("17"), &slide());
     assert_eq!(refused, Err(Breach::Disturbed { before: Some(neighbour), after: None }));
 }

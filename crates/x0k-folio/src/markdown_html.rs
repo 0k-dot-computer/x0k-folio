@@ -29,6 +29,10 @@
 //! (`[block-7a3f]: #block-7a3f`, `x0k:implementation/folio/block-identity`)
 //! carries that id, so a link's `#block-…` names it too.
 //!
+//! A graph block that states an open question
+//! ([`crate::inline_entity::stated_question`]) becomes a blockquote with
+//! the class `x0k-open-question`, and its Turtle is not shown.
+//!
 //! An `x0k:transclude` fence becomes the empty element that names its
 //! source, `<div class="transclusion" data-ref="…">`; the host that shows
 //! the page fills it (`x0k:design/transclusion`, "The primitive").
@@ -74,12 +78,24 @@ pub fn markdown_to_html(markdown: &str) -> String {
     // The blocks this body's figures bind, by name: data and panels.
     let data = crate::inline_entity::document_data(markdown);
     let panels = crate::inline_entity::document_params(markdown);
-    // An `x0k:media` fence becomes a mount point and an `x0k:transclude`
-    // fence the element its host fills; the body of either is dropped.
+    // An `x0k:media` fence becomes a mount point, an `x0k:transclude`
+    // fence the element its host fills, and a stated open question a
+    // blockquote; the body of each is dropped.
     let mut media = 0usize;
     let mut in_media = false;
 
     for (event, range) in parser {
+        let question = match &event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                stated_question_at(info, &markdown[range.clone()])
+            }
+            _ => None,
+        };
+        if let Some(question) = question {
+            write_open_question(&mut out, &question);
+            in_media = true;
+            continue;
+        }
         match event {
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(ref info))) if media_fence(info).is_some() => {
                 let (media_ref, height) = media_fence(info).unwrap_or_default();
@@ -713,6 +729,24 @@ fn escape_attr(out: &mut String, s: &str) {
     }
 }
 
+/// The open question a whole fence states: `fence` runs from its opening
+/// marker to its closing one.
+fn stated_question_at(info: &str, fence: &str) -> Option<crate::inline_entity::StatedQuestion> {
+    let inner = fence.split_once('\n').map_or("", |(_, rest)| rest);
+    let body = inner.trim_end().rsplit_once('\n').map_or("", |(body, _)| body);
+    crate::inline_entity::stated_question(info, body)
+}
+
+fn write_open_question(out: &mut String, question: &crate::inline_entity::StatedQuestion) {
+    out.push_str("<blockquote class=\"x0k-blockquote x0k-open-question\" id=\"open-question-");
+    escape_attr(out, &question.slug);
+    out.push_str("\" data-status=\"");
+    escape_attr(out, &question.status);
+    out.push_str("\">");
+    out.push_str(&markdown_to_html(&question.markdown()));
+    out.push_str("</blockquote>");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -848,6 +882,26 @@ mod tests {
             (Some("knobs"), None, Some(r#"{"gap":1.5}"#)),
             "{html}"
         );
+    }
+
+    #[test]
+    fn a_stated_open_question_reads_as_a_quoted_question() {
+        let html = markdown_to_html(
+            "Before.\n\n```turtle folio:graph\nopen-question:why a x0k:OpenQuestion ;\n    \
+             x0k:text \"Why `this`?\" ;\n    x0k:description \"\"\"Because.\n\"\"\" ;\n    x0k:status \"open\" .\n```\n\nAfter.\n",
+        );
+        assert!(html.contains("<blockquote class=\"x0k-blockquote x0k-open-question\" id=\"open-question-why\" data-status=\"open\">"), "{html}");
+        assert!(html.contains("<strong>Open question:</strong> Why <code"), "{html}");
+        assert!(html.contains("Because.</p>"), "{html}");
+        assert!(!html.contains("x0k:OpenQuestion"), "{html}");
+        assert!(html.contains("After.</p>"), "{html}");
+    }
+
+    #[test]
+    fn a_question_left_to_its_heading_stays_a_fence() {
+        let html = markdown_to_html("#### Why?\n\n```turtle folio:graph\nopen-question:why a x0k:OpenQuestion ;\n    x0k:status \"open\" .\n```\n");
+        assert!(html.contains("<pre"), "{html}");
+        assert!(!html.contains("x0k-open-question"), "{html}");
     }
 
     #[test]

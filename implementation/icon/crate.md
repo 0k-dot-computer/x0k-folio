@@ -71,7 +71,8 @@ drew rather than marks of its own.
 //!   outline in grid units with its fill and stroke resolved, for a
 //!   native painter to adapt to its own geometry types.
 //!
-//! [`check`] runs the first two as one call. The raster a favicon needs
+//! [`check`] runs the first two as one call; [`check_figure`] runs them
+//! at the figure grade, for a mark larger than an icon. The raster a favicon needs
 //! is not this crate's.
 ```
 
@@ -98,11 +99,11 @@ pub(crate) mod fixtures;
 <a name="chunk-exports"></a><sub>[`src/lib.rs`](../../crates/x0k-icon/src/lib.rs) · `#exports`</sub>
 
 ```rust {#exports}
-pub use bind::{bind, BoundElement, BoundIcon, Palette, RoleBinding, Scheme};
-pub use emit::{files, inline_svg, normalized, sprite, stem_of, svg, Label, SVG_NAMESPACE};
-pub use parse::{parse, Element, Grid, Icon, Paint, ParseError, PathCommand, Role, Shape, Transform};
-pub use path::{draws, Draw, FillRule, Segment, StrokeSpec};
-pub use validate::{one_per_grid, validate, Accepted, Defect, ElementRef, Rule};
+pub use bind::{bind, bind_figure, BoundElement, BoundIcon, Palette, RoleBinding, Scheme};
+pub use emit::{figure_elements, figure_svg, files, inline_svg, normalized, sprite, stem_of, svg, Label, SVG_NAMESPACE};
+pub use parse::{parse, Element, Grid, Icon, Opacity, Paint, ParseError, PathCommand, Role, Shape, Transform, COLOUR_ROLES};
+pub use path::{draws, figure_draws, Draw, FigureDraw, FigurePaint, FigureStroke, FillRule, Segment, StrokeSpec};
+pub use validate::{one_per_grid, validate, validate_figure, Accepted, Defect, ElementRef, Figure, Grade, Rule};
 ```
 
 ## The face
@@ -156,6 +157,13 @@ impl std::error::Error for Refusal {}
 pub fn check(text: &str) -> Result<Accepted, Refusal> {
     let icon = parse(text).map_err(Refusal::Malformed)?;
     validate(icon).map_err(Refusal::Rules)
+}
+
+/// Read a mark and check it at the figure grade in one call: the figure,
+/// or the [`Refusal`] naming every rule it broke.
+pub fn check_figure(text: &str) -> Result<Figure, Refusal> {
+    let icon = parse(text).map_err(Refusal::Malformed)?;
+    validate_figure(icon).map_err(Refusal::Rules)
 }
 ```
 

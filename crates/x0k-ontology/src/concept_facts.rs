@@ -235,14 +235,28 @@ impl OntologyModel {
     }
 }
 impl OntologyModel {
-    pub fn decision_edge_predicates(&self) -> Vec<(String, String)> {
-        let decision = format!("{X0K_NS}Decision");
-        let mut classes = BTreeSet::from([decision.clone()]);
-        for fact in &self.facts {
-            if fact.predicate == RDFS_SUBCLASS_OF && fact.value == OntologyValue::Entity(decision.clone()) {
-                classes.insert(fact.entity.clone());
+    /// `class` and every class that reaches it by stated `rdfs:subClassOf`
+    /// axioms, at any depth. Terminates on a cycle.
+    pub fn subclass_closure(&self, class: &str) -> BTreeSet<String> {
+        let axioms: Vec<(&str, &str)> = self.facts.iter().filter_map(|fact| match &fact.value {
+            OntologyValue::Entity(parent) if fact.predicate == RDFS_SUBCLASS_OF => Some((fact.entity.as_str(), parent.as_str())),
+            _ => None,
+        }).collect();
+        let mut closure = BTreeSet::from([class.to_string()]);
+        let mut pending = vec![class];
+        while let Some(parent) = pending.pop() {
+            for &(child, stated) in &axioms {
+                if stated == parent && closure.insert(child.to_string()) {
+                    pending.push(child);
+                }
             }
         }
+        closure
+    }
+}
+impl OntologyModel {
+    pub fn decision_edge_predicates(&self) -> Vec<(String, String)> {
+        let classes = self.subclass_closure(&format!("{X0K_NS}Decision"));
         self.entities_typed_as(OWL_OBJECT_PROPERTY).into_iter().filter_map(|iri| {
             let in_scope = self.entity_values(&iri, RDFS_DOMAIN).into_iter()
                 .flat_map(|node| self.resolve_class_set(&node))
@@ -778,6 +792,60 @@ mod tests {
         let generated_edges: Vec<_> = crate::KNOWN_EDGE_PREDICATES.iter()
             .map(|predicate| predicate.to_string()).collect();
         assert_eq!(folded_edges, generated_edges, "Decision predicate view differs");
+    }
+
+    fn is_subclass(child: &str, parent: &str) -> OntologyFact {
+        OntologyFact {
+            entity: format!("{X0K_NS}{child}"),
+            predicate: RDFS_SUBCLASS_OF.to_string(),
+            value: OntologyValue::Entity(format!("{X0K_NS}{parent}")),
+        }
+    }
+
+    fn names(locals: &[&str]) -> BTreeSet<String> {
+        locals.iter().map(|local| format!("{X0K_NS}{local}")).collect()
+    }
+
+    #[test]
+    fn a_subclass_closure_reaches_every_depth_and_only_downward() {
+        let model = OntologyModel::new([
+            is_subclass("Proposal", "Decision"),
+            is_subclass("Brief", "Proposal"),
+            is_subclass("Note", "Wiki"),
+        ]);
+        assert_eq!(model.subclass_closure(&format!("{X0K_NS}Decision")), names(&["Decision", "Proposal", "Brief"]));
+        assert_eq!(model.subclass_closure(&format!("{X0K_NS}Brief")), names(&["Brief"]));
+    }
+
+    #[test]
+    fn a_subclass_closure_ends_on_a_cycle() {
+        let model = OntologyModel::new([
+            is_subclass("Proposal", "Decision"),
+            is_subclass("Decision", "Proposal"),
+            is_subclass("Brief", "Proposal"),
+            is_subclass("Note", "Wiki"),
+        ]);
+        assert_eq!(model.subclass_closure(&format!("{X0K_NS}Proposal")), names(&["Decision", "Proposal", "Brief"]));
+    }
+
+    #[test]
+    fn a_predicate_over_a_grandchild_of_decision_is_a_decision_edge() {
+        let property = format!("{X0K_NS}reviews");
+        let model = OntologyModel::new([
+            is_subclass("Proposal", "Decision"),
+            is_subclass("Brief", "Proposal"),
+            OntologyFact {
+                entity: property.clone(),
+                predicate: RDF_TYPE.to_string(),
+                value: OntologyValue::Entity(OWL_OBJECT_PROPERTY.to_string()),
+            },
+            OntologyFact {
+                entity: property,
+                predicate: RDFS_DOMAIN.to_string(),
+                value: OntologyValue::Entity(format!("{X0K_NS}Brief")),
+            },
+        ]);
+        assert_eq!(model.decision_edge_predicates(), vec![("reviews".to_string(), "reviews".to_string())]);
     }
 
     #[test]

@@ -1515,9 +1515,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "markup5ever"
@@ -3260,7 +3260,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "x0k-fact-projection"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "postcard",
@@ -3269,7 +3269,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-folio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3290,7 +3290,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-folio-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3334,7 +3334,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-folio-ingest"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3348,7 +3348,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-icon"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "roxmltree",
  "serde",
@@ -3357,7 +3357,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-ontology"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "oxrdf",
  "oxttl",
@@ -3366,7 +3366,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-sequence"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
 ]
@@ -3385,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "x0k-tangle"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",

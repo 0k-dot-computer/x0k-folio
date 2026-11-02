@@ -73,7 +73,7 @@ Inclusion by reference instead of copying, and entities authored inside prose an
 
 - [Transclusion: include, don't copy](implementation/folio/transclusion.md) — The shared resolution core for inclusion by reference — spines, section addressing, cycle and depth limits, degrade-to-link on any failure — driven identically by the weaver and by the native document viewer.
 - [Entities authored inside prose](implementation/folio/inline-entities.md) — Pulling an entity that was authored inside a document's prose back out of it — the section is the record, the heading is the title, the graph block is its statements, and the extractor reads declarations without resolving them.
-- [A moment's scene, wherever its sequence lives](implementation/sequence/sequence.md) — The vocabulary every home of a sequence shares: a scene (the params a view is shown with at a moment, the loop its host runs while the moment rests, and the view's private data), a moment's address, the set-scene op that writes a moment's scene, and the home that applies it through its own write path, held to one contract a check runs against any home.
+- [State over a sequence](implementation/sequence/sequence.md) — The parts that all sequence stores share: the scene of a moment, the address of a moment, the set-scene op and the sequence store. One check holds each sequence store to the same contract.
 - [A vocabulary beside its examples](implementation/folio/document-vocabulary.md) — Assemble document-carried vocabulary and instances — one Turtle carrier, `turtle folio:graph` — without a host registry.
 
 ### Querying documents

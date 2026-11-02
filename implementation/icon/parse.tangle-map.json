@@ -1,6 +1,6 @@
 {
   "source": "implementation/icon/parse.md",
-  "source_hash": "cbb2971f47dc83a8",
+  "source_hash": "923d0cc4f66fcb9a",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-icon/src/parse.rs",
-          "hash": "3efa7c694b53d3aa"
+          "hash": "ac7fa4633bafeac4"
         }
       ]
     }

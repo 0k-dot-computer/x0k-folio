@@ -66,8 +66,8 @@ choice: the profile makes them round, always.
 <a name="chunk-imports"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#imports`</sub>
 
 ```rust {#imports}
-use crate::parse::{Element, Paint, PathCommand, Role, Shape, Transform};
-use crate::validate::Accepted;
+use crate::parse::{Element, Opacity, Paint, PathCommand, Role, Shape, Transform};
+use crate::validate::{Accepted, Figure};
 ```
 
 <a name="chunk-types"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#types`</sub>
@@ -127,7 +127,8 @@ worth the name converts SVG arcs natively and to its own tolerance — the
 path form has no business choosing a flattening. A circle is two half
 arcs, which keeps each within the one-arc-per-half-turn a converter can
 always solve; a rounded rect is four lines and four quarter arcs, its
-radius clamped to half the shorter side as SVG clamps it.
+radius clamped to half the shorter side as SVG clamps it. A figure's
+ellipse is two half arcs, as a circle is, with its two radii.
 
 <a name="chunk-outline"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#outline`</sub>
 
@@ -147,6 +148,10 @@ fn outline(shape: &Shape) -> Option<Vec<Segment>> {
             .map(|(i, &(x, y))| if i == 0 { MoveTo(x, y) } else { LineTo(x, y) })
             .collect(),
         Shape::Circle { cx, cy, r } => vec![MoveTo(cx - r, cy), quarter(r, cx + r, cy), quarter(r, cx - r, cy), Close],
+        Shape::Ellipse { cx, cy, rx, ry } => {
+            let half = |x: f64| ArcTo { rx, ry, rotation: 0.0, large_arc: false, sweep: true, x, y: cy };
+            vec![MoveTo(cx - rx, cy), half(cx + rx), half(cx - rx), Close]
+        }
         Shape::Rect { x, y, width: w, height: h, rx } => match rx.map(|rx| rx.min(w / 2.0).min(h / 2.0)) {
             Some(r) if r > 0.0 => vec![
                 MoveTo(x + r, y),
@@ -320,6 +325,132 @@ fn walk<'a>(el: &'a Element, inherited: &Inherited<'a>, out: &mut Vec<Draw>) {
 }
 ```
 
+## A figure's path form
+
+A figure-grade mark reaches a painter the same way, with three things an
+icon never says. Its paint may be a theme colour role, so a figure's
+paint is a [`FigurePaint`]: one of the four roles or a colour role's name,
+which the painter resolves against the live theme. Each paint carries an
+alpha, the product of the `opacity` written on the element and every
+group above it, times its own `fill-opacity` or `stroke-opacity`, the
+nearest written one winning as SVG inherits it. A group's `opacity` is
+applied to each element under it rather than to the group composited
+whole: the two differ only where a group's own children overlap, and a
+painter that composites groups is not required. And its dash is any
+pattern. Units are the figure's own `viewBox`; a painter maps the view
+box onto the box it draws the mark in.
+
+<a name="chunk-figure-draws"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#figure-draws`</sub>
+
+```rust {#figure-draws}
+/// What a figure paints with: one of the four roles, or a theme colour
+/// role's name (`process`, `error`), which the painter resolves against
+/// its theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FigurePaint {
+    Role(Role),
+    Colour(&'static str),
+}
+
+impl FigurePaint {
+    /// The name an author writes for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            FigurePaint::Role(role) => role.name(),
+            FigurePaint::Colour(name) => name,
+        }
+    }
+
+    fn of(paint: Option<&Paint>) -> Option<FigurePaint> {
+        match paint? {
+            Paint::Role(role) => Some(FigurePaint::Role(*role)),
+            Paint::Colour(name) => Some(FigurePaint::Colour(name)),
+            Paint::None | Paint::Literal(_) => None,
+        }
+    }
+}
+
+/// A figure's stroke: its paint and alpha, its width in view-box units,
+/// and its dash pattern, empty for none. Caps and joins are round.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FigureStroke {
+    pub paint: FigurePaint,
+    pub alpha: f64,
+    pub width: f64,
+    pub dash: Vec<f64>,
+}
+
+/// One outline a figure paints, in view-box units.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FigureDraw {
+    pub outline: Vec<Segment>,
+    /// The fill's paint, rule and alpha.
+    pub fill: Option<(FigurePaint, FillRule, f64)>,
+    pub stroke: Option<FigureStroke>,
+}
+
+/// What a figure's element inherits from the groups around it.
+#[derive(Clone, Copy)]
+struct FigureInherited<'a> {
+    paints: Inherited<'a>,
+    opacity: Opacity,
+    whole: f64,
+}
+
+/// Everything `figure` paints, in the order it is painted, in the units
+/// of its view box.
+pub fn figure_draws(figure: &Figure) -> Vec<FigureDraw> {
+    let paints = Inherited { fill: None, stroke: None, stroke_width: None, offset: (0.0, 0.0) };
+    let root = FigureInherited { paints, opacity: Opacity::default(), whole: 1.0 };
+    let mut out = Vec::new();
+    for element in &figure.children {
+        figure_walk(element, &root, &mut out);
+    }
+    out
+}
+
+fn figure_walk<'a>(el: &'a Element, inherited: &FigureInherited<'a>, out: &mut Vec<FigureDraw>) {
+    let (dx, dy) = match el.transform {
+        Some(Transform::Translate(x, y)) => (x, y),
+        _ => (0.0, 0.0),
+    };
+    let up = &inherited.paints;
+    let here = FigureInherited {
+        paints: Inherited {
+            fill: el.fill.as_ref().or(up.fill),
+            stroke: el.stroke.as_ref().or(up.stroke),
+            stroke_width: el.stroke_width.or(up.stroke_width),
+            offset: (up.offset.0 + dx, up.offset.1 + dy),
+        },
+        opacity: Opacity {
+            whole: None,
+            fill: el.opacity.fill.or(inherited.opacity.fill),
+            stroke: el.opacity.stroke.or(inherited.opacity.stroke),
+        },
+        whole: inherited.whole * el.opacity.whole.unwrap_or(1.0),
+    };
+    if let Some(outline) = outline(&el.shape) {
+        let has_inside = !matches!(el.shape, Shape::Line { .. } | Shape::Polyline { .. });
+        let rule = if matches!(el.shape, Shape::Path { evenodd: true, .. }) { FillRule::EvenOdd } else { FillRule::NonZero };
+        out.push(FigureDraw {
+            outline: translated(outline, here.paints.offset),
+            fill: FigurePaint::of(here.paints.fill)
+                .filter(|_| has_inside)
+                .map(|paint| (paint, rule, here.whole * here.opacity.fill.unwrap_or(1.0))),
+            stroke: FigurePaint::of(here.paints.stroke).map(|paint| FigureStroke {
+                paint,
+                alpha: here.whole * here.opacity.stroke.unwrap_or(1.0),
+                width: here.paints.stroke_width.unwrap_or(1.0),
+                dash: el.dasharray.clone().unwrap_or_default(),
+            }),
+        });
+    }
+    for child in &el.children {
+        figure_walk(child, &here, out);
+    }
+}
+```
+
 ## What the tests pin
 
 The carried `claimed` ring is one draw: a circle as two arcs, no fill,
@@ -393,7 +524,7 @@ mod tests {
 
 ## Composing the module
 
-<a name="chunk-root"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [types](#chunk-types) · [outline](#chunk-outline) · [path-outline](#chunk-path-outline) · [translate](#chunk-translate) · [paints](#chunk-paints) · [draws](#chunk-draws) · [tests](#chunk-tests)</sub>
+<a name="chunk-root"></a><sub>[`src/path.rs`](../../crates/x0k-icon/src/path.rs) · `#root` · assembles [module-doc](#chunk-module-doc) · [imports](#chunk-imports) · [types](#chunk-types) · [outline](#chunk-outline) · [path-outline](#chunk-path-outline) · [translate](#chunk-translate) · [paints](#chunk-paints) · [draws](#chunk-draws) · [figure-draws](#chunk-figure-draws) · [tests](#chunk-tests)</sub>
 
 ```rust {#root}
 <<module-doc>>
@@ -411,6 +542,8 @@ mod tests {
 <<paints>>
 
 <<draws>>
+
+<<figure-draws>>
 
 <<tests>>
 ```

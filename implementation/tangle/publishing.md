@@ -1032,7 +1032,7 @@ fn publish_registry(region_doc: &Path, vocabulary: &Vocabulary) -> Result<Option
 The unit-testable pieces are the order computation, the publication
 plan (against a stub index), and the remote resolution; the pipeline's
 cargo stages are exercised by the publication e2e
-(`proof/tests/integration/tests/publication_publishing_e2e.rs`), which
+(`proof/tests/integration/tests/suite/publication_publishing_e2e.rs`), which
 owns a real projected workspace. The manifest-path fix from the 0.1.1
 rehearsal stays pinned three ways: the fixtures write the projector's
 `crates/<name>` layout, the flat layout has its own test, and a missing

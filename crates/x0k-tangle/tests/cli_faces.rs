@@ -427,6 +427,20 @@ fn check_notes_a_proof_naming_no_affordance_here_and_passes() {
     );
 }
 
+/// A proof resolves as every edge does: a finding that says it names no
+/// document or declaration is true of it too.
+#[test]
+fn check_resolves_a_proof_naming_a_document_in_the_set() {
+    let tmp = TempDir::new().unwrap();
+    write(tmp.path(), "docs/fixture.md", &design_doc(&shipped_predicate()));
+    write(tmp.path(), "docs/proof.md", &proof_doc("x0k:design/fixture"));
+
+    let out = run(&["check"], tmp.path());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(!stderr.contains("`proves`"), "the target is in the set: {stderr}");
+}
+
 /// The design's mark for a person (`x0k:design/icon-profile` § "The
 /// first inhabitants"), verbatim.
 const PERSON: &str = "<svg viewBox=\"0 0 16 16\">\n  <circle cx=\"8\" cy=\"4.5\" r=\"2.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n  <path d=\"M2.5 14.5 V13 Q2.5 9 8 9 Q13.5 9 13.5 13 V14.5\" fill=\"none\" stroke=\"ink\" stroke-width=\"1.5\"/>\n</svg>\n";

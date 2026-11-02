@@ -324,6 +324,7 @@ mod tests {
                 "predicateFromTheFuture".to_string(),
                 vec!["x0k:design/other".to_string()],
             )],
+            json_statements: Vec::new(),
         }
     }
 
@@ -365,6 +366,7 @@ mod tests {
                 .map(|(p, t)| (p.strip_prefix("x0k:").unwrap_or(p).to_string(), t.clone()))
                 .collect(),
             unknown_edges: Vec::new(),
+            json_statements: Vec::new(),
         };
         if let Some(m) = &envelope.materialization {
             back.materialization_loro_doc_id = m.loro_doc_id.clone();

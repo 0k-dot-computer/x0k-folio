@@ -1213,13 +1213,30 @@ pub fn is_colophon(content: &str) -> bool {
 /// names an identity or only the document itself (`<>`). This is what the
 /// tangler reads: a literate page need not be a typed document to tangle.
 pub fn read_tool_config(content: &str) -> Result<Option<(TangleConfig, Vec<PipelineDecl>)>, FolioError> {
+    tool_config(content, shipped_prefixes())
+}
+
+/// [`read_tool_config`] against a vocabulary: its prefixes are predeclared,
+/// so a header spelled with a prefix of the reader's own reads here exactly
+/// as it does through [`parse_envelope_in`].
+pub fn read_tool_config_in(
+    model: &OntologyModel,
+    content: &str,
+) -> Result<Option<(TangleConfig, Vec<PipelineDecl>)>, FolioError> {
+    tool_config(content, &predeclared_prefixes(model))
+}
+
+fn tool_config(
+    content: &str,
+    prefixes: &[(String, String)],
+) -> Result<Option<(TangleConfig, Vec<PipelineDecl>)>, FolioError> {
     let Some(header) = find_header(content) else {
         return Ok(None);
     };
-    let triples = parse_turtle(&header.text, shipped_prefixes(), header.line + 1)?;
+    let triples = parse_turtle(&header.text, prefixes, header.line + 1)?;
     let mut read = Statements::default();
     for triple in &triples {
-        read.take(triple, shipped_prefixes())?;
+        read.take(triple, prefixes)?;
     }
     let pipelines = read.pipelines()?;
     Ok(Some((read.tangle.unwrap_or_default(), pipelines)))

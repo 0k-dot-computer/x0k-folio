@@ -23,7 +23,8 @@ reads the header. What this module adds:
   `x0k_folio::colophon::read_tool_config`, which reads a typed header and
   an untyped `<>` header alike, because a literate page need not be a
   typed document to tangle — and the document's id, when the header names
-  one, from `x0k_folio::colophon::parse_envelope`.
+  one, from `x0k_folio::colophon::parse_envelope`. Each has an `_in` form
+  that reads against a vocabulary the caller holds.
 - An info-string parser that recognizes the x0k chunk attributes
   (`{#name}`, `file=`, `symbol=`, `from=`, `proves=`, `x0k:media`)
   and the language token in front of the brace.
@@ -39,7 +40,11 @@ reads the header. What this module adds:
 ```rust {#imports}
 use crate::chunk::{Chunk, ChunkBody};
 use anyhow::{anyhow, Result};
-use x0k_folio::colophon::{host_frontmatter, parse_envelope, read_tool_config, PipelineDecl};
+use x0k_folio::colophon::{
+    host_frontmatter, parse_envelope, parse_envelope_in, read_tool_config, read_tool_config_in,
+    FolioError, PipelineDecl, TangleConfig,
+};
+use x0k_ontology::concept_facts::OntologyModel;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -327,6 +332,13 @@ not read is an error rather than an absence: the tangler cannot know
 where such a document goes, and guessing "nowhere" would silently drop
 its output.
 
+Which prefixes a header may use is a question about a vocabulary, so the
+parse comes in two forms. `parse_document` reads against the vocabulary this
+build compiled. `parse_document_in` reads against one the caller holds, so a
+document whose header is spelled with a prefix of the reader's own parses
+for a verb that was told about that prefix. The two differ only in how the
+header is read: `parse_with_header` is the one reading of what follows it.
+
 Two non-obvious mechanics worth flagging:
 
 - **Line numbers.** Each `ChunkBody` records the 0-based line of its
@@ -346,9 +358,28 @@ Two non-obvious mechanics worth flagging:
 
 ```rust {#parse-document-fn}
 pub fn parse_document(content: &str) -> Result<ParsedDocument> {
+    // Only a typed header names the document; an untyped one leaves the
+    // id `None`, and so does a header this build's vocabulary refuses.
+    let id = parse_envelope(content).ok().map(|(env, _)| env.id);
+    parse_with_header(content, read_tool_config(content), id)
+}
+
+/// [`parse_document`] with the header read against `model`, so a prefix or
+/// a class that vocabulary declares reads here as it does for its reader.
+pub fn parse_document_in(model: &OntologyModel, content: &str) -> Result<ParsedDocument> {
+    let id = parse_envelope_in(model, content).ok().map(|(env, _)| env.id);
+    parse_with_header(content, read_tool_config_in(model, content), id)
+}
+
+/// Everything below the header, given what the header said.
+fn parse_with_header(
+    content: &str,
+    config: Result<Option<(TangleConfig, Vec<PipelineDecl>)>, FolioError>,
+    id: Option<String>,
+) -> Result<ParsedDocument> {
     // The header carries the tool configuration whether it names the
     // document or only `<>`; a document without one has none.
-    let (tangle, pipelines) = read_tool_config(content)
+    let (tangle, pipelines) = config
         .map_err(|e| anyhow!("the document's header does not read: {e}"))?
         .unwrap_or_default();
     let tangle_crate = tangle.crate_name;
@@ -358,10 +389,6 @@ pub fn parse_document(content: &str) -> Result<ParsedDocument> {
         .into_iter()
         .map(|(lang, path)| (lang, PathBuf::from(path)))
         .collect();
-
-    // Only a typed header names the document; an untyped one leaves the
-    // id `None`, and so does a header this build's vocabulary refuses.
-    let id = parse_envelope(content).ok().map(|(env, _)| env.id);
 
     let mut chunks: HashMap<String, Vec<Chunk>> = HashMap::new();
     let mut chunk_order: Vec<String> = Vec::new();

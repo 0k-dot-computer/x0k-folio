@@ -167,8 +167,8 @@ Each way in comes down to a command CI runs:
 |---|---|---|
 | Docs that quote code stay current | `x0k-tangle sync <path…>`, then `check` | a mirror no longer matches the source it quotes |
 | Code written inside the document that explains it | `x0k-tangle tangle <doc>`, then `git diff --exit-code` | a generated file no longer matches its document |
-| Headers and links checked against a vocabulary | `x0k-tangle check <dir>` | a class, an edge or a literal statement whose term the vocabulary does not declare, in a header or a graph block; a literal its datatype contradicts |
-| A CI gate on a closed set | `x0k-tangle check <dir> --closed` | an edge names a document that is not in the set, such as a rename nobody finished |
+| Headers and links checked against a vocabulary | `x0k-tangle check <dir>` | a class, an edge or a literal statement whose term the vocabulary does not declare, in a header or a graph block; a literal its datatype contradicts, in either |
+| A CI gate on a closed set | `x0k-tangle check <dir> --closed` | an edge names an id that no document or declaration in the set carries, such as a rename nobody finished |
 | Questions across the set | `x0k-folio-cli ingest`, then `query --named status` or `--named superseded` | — (lists every document's status, or each replaced decision and what replaced it, read from `x0k:supersededBy` edges) |
 | A set published as its own repository | `x0k-tangle publish-repo <publication> --output-dir <dir>` rehearses and pushes nothing; add `--really` to push | the publication names a document nothing declares, states no licence, or publishes a crate that depends on one it does not publish |
 
@@ -195,8 +195,8 @@ decision:retry-budget a x0k:Decision ;
 ```
 ````
 
-`x0k-tangle check docs --closed` fails when a header names a document that is
-not in the folder, such as after a rename nobody finished. `x0k-folio-cli
+`x0k-tangle check docs --closed` fails when an edge names an id that nothing in
+the folder carries, such as after a rename nobody finished. `x0k-folio-cli
 ingest`, then `query --named status`, lists every document's status, and
 `--named superseded` lists what replaced what.
 [Typing your documents in place](guides/INTEGRATING.md#typing-your-documents-in-place)

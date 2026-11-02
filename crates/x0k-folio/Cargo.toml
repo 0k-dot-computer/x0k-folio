@@ -1,6 +1,6 @@
 [package]
 name = "x0k-folio"
-version = "0.3.0"
+version = "0.4.0"
 edition = { workspace = true }
 description = "Reads and writes the folio document header (the Turtle block under a Markdown document's title that gives it an id, a class and typed links), extracts the graph blocks in its body, and puts HTML document bodies into one canonical form."
 license = "MIT"
@@ -34,7 +34,7 @@ document-vocabulary = ["envelope", "x0k-ontology/load"]
 # library that cannot write a document back out is the missing half
 # `filesystem-graph-materialization` §8 names. Published
 # alongside, with a dependency list of serde/postcard/blake3.
-x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core"], optional = true , version = "0.2.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core"], optional = true , version = "0.3.0" }
 
 # `layout::CorpusScope::find_folio` walks a genus directory to resolve a
 # document by stem, since an id carries no topic.
@@ -55,13 +55,13 @@ walkdir = { version = "2", optional = true }
 # loader for Turtle carried in documents. The dev-dependency below also
 # switches the loader on for the tests, which
 # build vocabularies out of scratch module directories.
-x0k-ontology = { path = "../x0k-ontology", default-features = false, optional = true , version = "0.3.1" }
+x0k-ontology = { path = "../x0k-ontology", default-features = false, optional = true , version = "0.3.2" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
 # A section's scene is the value every home of a sequence shares; this crate
 # reads it from a scene block and writes it back.
-x0k-sequence = { path = "../x0k-sequence" , version = "0.1.0" }
+x0k-sequence = { path = "../x0k-sequence" , version = "0.2.0" }
 # The header and every graph block are Turtle; one parser reads them.
 oxttl = { version = "0.2", optional = true }
 oxrdf = { version = "0.3", optional = true }
@@ -98,8 +98,8 @@ required-features = ["plugins"]
 # library itself needs the predicate NAMES (in `core`) and never
 # `project_envelope`. Declaring it here rather than in `[dependencies]` is
 # what keeps the published crate on the core surface.
-x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core", "envelope"] , version = "0.2.0" }
+x0k-fact-projection = { path = "../x0k-fact-projection", default-features = false, features = ["core", "envelope"] , version = "0.3.0" }
 # The loader, for tests that read a genus or a namespace off a scratch
 # module directory rather than out of the compiled tables.
-x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.3.1" }
+x0k-ontology = { path = "../x0k-ontology", features = ["load"] , version = "0.3.2" }
 tempfile = "3"

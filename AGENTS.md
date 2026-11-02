@@ -71,7 +71,7 @@ x0k-tangle check <dir>
 Read the result in its two categories and report both. A **defect** exits
 non-zero: a header that does not parse, a class or a prefix the vocabulary
 does not declare, a predicate no shipped module declares. A **note** does
-not: an edge whose target names no document under the path. Tell the person which edges dangle
+not: an edge whose target names no document or declaration under the path. Tell the person which edges dangle
 and which document each names — a dangling edge is the next document to type,
 not a line to delete. Nothing about their project moves.
 
